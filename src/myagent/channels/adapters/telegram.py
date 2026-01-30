@@ -90,8 +90,29 @@ class TelegramAdapter(ChannelAdapter):
         """启动 Telegram Bot"""
         _import_telegram()
         
+        from telegram.ext import Defaults
+        from telegram.request import HTTPXRequest
+        
+        # 配置更长的超时时间（默认 5 秒太短）
+        request = HTTPXRequest(
+            connection_pool_size=8,
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=30.0,
+        )
+        
         # 创建 Application
-        self._app = Application.builder().token(self.bot_token).build()
+        self._app = (
+            Application.builder()
+            .token(self.bot_token)
+            .request(request)
+            .get_updates_request(HTTPXRequest(
+                connection_pool_size=4,
+                read_timeout=60.0,  # getUpdates 用更长的超时
+            ))
+            .build()
+        )
         self._bot = self._app.bot
         
         # 注册消息处理器
