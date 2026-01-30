@@ -139,6 +139,31 @@ class Agent:
                 "required": ["skill_name"]
             }
         },
+        # === 自进化工具 ===
+        {
+            "name": "generate_skill",
+            "description": "自动生成新技能 (遵循 SKILL.md 规范)，当现有技能无法满足需求时使用",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "技能功能的详细描述"},
+                    "name": {"type": "string", "description": "技能名称 (可选，使用小写字母和连字符)"}
+                },
+                "required": ["description"]
+            }
+        },
+        {
+            "name": "improve_skill",
+            "description": "根据反馈改进已有技能",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {"type": "string", "description": "要改进的技能名称"},
+                    "feedback": {"type": "string", "description": "改进建议或问题描述"}
+                },
+                "required": ["skill_name", "feedback"]
+            }
+        },
     ]
     
     def __init__(
@@ -165,6 +190,14 @@ class Agent:
         # 初始化技能系统 (SKILL.md 规范)
         self.skill_registry = SkillRegistry()
         self.skill_loader = SkillLoader(self.skill_registry)
+        
+        # 延迟导入自进化系统（避免循环导入）
+        from ..evolution.generator import SkillGenerator
+        self.skill_generator = SkillGenerator(
+            brain=self.brain,
+            skills_dir=settings.skills_path,
+            skill_registry=self.skill_registry,
+        )
         
         # MCP 客户端
         self.mcp_client = mcp_client
@@ -427,6 +460,37 @@ class Agent:
                 else:
                     return f"❌ 未找到参考文档: {skill_name}/{ref_name}"
             
+            # === 自进化工具 ===
+            elif tool_name == "generate_skill":
+                description = tool_input["description"]
+                name = tool_input.get("name")
+                
+                result = await self.skill_generator.generate(description, name)
+                
+                if result.success:
+                    return f"""✅ 技能生成成功！
+
+**名称**: {result.skill_name}
+**目录**: {result.skill_dir}
+**测试**: {'通过' if result.test_passed else '未通过'}
+
+技能已自动加载，可以使用以下工具:
+- `get_skill_info` 查看详细信息
+- `run_skill_script` 运行脚本 (scripts/main.py)"""
+                else:
+                    return f"❌ 技能生成失败: {result.error or '未知错误'}"
+            
+            elif tool_name == "improve_skill":
+                skill_name = tool_input["skill_name"]
+                feedback = tool_input["feedback"]
+                
+                result = await self.skill_generator.improve(skill_name, feedback)
+                
+                if result.success:
+                    return f"✅ 技能已改进: {skill_name}\n测试: {'通过' if result.test_passed else '未通过'}"
+                else:
+                    return f"❌ 技能改进失败: {result.error or '未知错误'}"
+            
             else:
                 return f"未知工具: {tool_name}"
                 
@@ -463,7 +527,11 @@ class Agent:
 - list_skills: 列出已安装的技能
 - get_skill_info: 获取技能详细信息和指令
 - run_skill_script: 运行技能脚本
-- get_skill_reference: 获取技能参考文档"""
+- get_skill_reference: 获取技能参考文档
+
+自进化 (生成新技能):
+- generate_skill: 自动生成新技能 (SKILL.md 规范)
+- improve_skill: 改进已有技能"""
         
         # 添加已安装技能的描述
         installed_skills = self.skill_registry.list_all()
@@ -477,8 +545,13 @@ class Agent:
         system_prompt = self.identity.get_system_prompt() + tools_desc + """
 
 请使用工具来实际执行任务。
-- 对于已安装的技能，先用 get_skill_info 查看使用方法
-- 然后用 run_skill_script 运行相应脚本
+
+执行策略:
+1. 先用 list_skills 查看已有技能
+2. 如果有相关技能，用 get_skill_info 查看使用方法
+3. 用 run_skill_script 运行脚本
+4. 如果没有合适的技能，用 generate_skill 自动生成新技能
+
 永不放弃，直到任务完成！"""
 
         messages = [{"role": "user", "content": task.description}]

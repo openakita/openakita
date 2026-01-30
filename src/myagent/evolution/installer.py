@@ -1,14 +1,13 @@
 """
 自动安装器
 
-自动搜索和安装缺失的能力。
+自动安装缺失的依赖包 (pip/npm)。
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from ..skills.market import SkillMarket
 from ..skills.registry import SkillRegistry
 from ..tools.shell import ShellTool
 from .analyzer import CapabilityGap
@@ -21,7 +20,7 @@ class InstallResult:
     """安装结果"""
     success: bool
     capability: str
-    method: str  # github, pip, npm, generated
+    method: str  # pip, npm, generated
     details: str
     error: Optional[str] = None
 
@@ -30,15 +29,13 @@ class AutoInstaller:
     """
     自动安装器
     
-    根据能力缺口自动搜索和安装所需的技能/工具。
+    根据能力缺口自动安装所需的依赖包。
     """
     
     def __init__(
         self,
-        skill_market: Optional[SkillMarket] = None,
         skill_registry: Optional[SkillRegistry] = None,
     ):
-        self.market = skill_market or SkillMarket()
         self.registry = skill_registry if skill_registry is not None else SkillRegistry()
         self.shell = ShellTool()
     
@@ -56,7 +53,6 @@ class AutoInstaller:
         
         # 按优先级尝试不同的安装方法
         methods = [
-            self._try_github_search,
             self._try_pip_install,
             self._try_npm_install,
         ]
@@ -66,65 +62,14 @@ class AutoInstaller:
             if result.success:
                 return result
         
-        # 都失败了，返回失败结果
+        # 都失败了，建议使用 generate_skill
         return InstallResult(
             success=False,
             capability=gap.name,
             method="none",
-            details="所有安装方法都失败了",
+            details="无法自动安装，建议使用 generate_skill 生成自定义技能",
             error="无法找到或安装此能力",
         )
-    
-    async def _try_github_search(self, gap: CapabilityGap) -> InstallResult:
-        """尝试从 GitHub 搜索安装"""
-        logger.info(f"Searching GitHub for: {gap.name}")
-        
-        try:
-            # 搜索相关项目
-            results = await self.market.search(
-                gap.name,
-                language="python",
-                limit=5,
-            )
-            
-            if not results:
-                return InstallResult(
-                    success=False,
-                    capability=gap.name,
-                    method="github",
-                    details="GitHub 上没有找到相关项目",
-                )
-            
-            # 尝试安装第一个结果
-            best_match = results[0]
-            logger.info(f"Found: {best_match.name} - {best_match.url}")
-            
-            skill = await self.market.install(best_match.url)
-            
-            if skill:
-                return InstallResult(
-                    success=True,
-                    capability=gap.name,
-                    method="github",
-                    details=f"从 {best_match.url} 安装了 {skill.name}",
-                )
-            else:
-                return InstallResult(
-                    success=False,
-                    capability=gap.name,
-                    method="github",
-                    details="安装失败",
-                )
-                
-        except Exception as e:
-            logger.error(f"GitHub search failed: {e}")
-            return InstallResult(
-                success=False,
-                capability=gap.name,
-                method="github",
-                details="搜索失败",
-                error=str(e),
-            )
     
     async def _try_pip_install(self, gap: CapabilityGap) -> InstallResult:
         """尝试通过 pip 安装"""
@@ -139,6 +84,9 @@ class AutoInstaller:
             "excel": "openpyxl",
             "机器学习": "scikit-learn",
             "深度学习": "torch",
+            "数据库": "sqlalchemy",
+            "redis": "redis",
+            "mongodb": "pymongo",
         }
         
         package = None
