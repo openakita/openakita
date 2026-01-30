@@ -488,6 +488,55 @@ class TelegramAdapter(ChannelAdapter):
             logger.error(f"Failed to edit message: {e}")
             return False
     
+    async def send_photo(self, chat_id: str, photo_path: str, caption: str = "") -> str:
+        """发送图片"""
+        if not self._bot:
+            raise RuntimeError("Telegram bot not started")
+        
+        with open(photo_path, "rb") as f:
+            sent = await self._bot.send_photo(
+                chat_id=int(chat_id),
+                photo=f,
+                caption=caption if caption else None,
+            )
+        
+        logger.info(f"Sent photo to {chat_id}: {photo_path}")
+        return str(sent.message_id)
+    
+    async def send_file(self, chat_id: str, file_path: str, caption: str = "") -> str:
+        """发送文件"""
+        if not self._bot:
+            raise RuntimeError("Telegram bot not started")
+        
+        from pathlib import Path
+        filename = Path(file_path).name
+        
+        with open(file_path, "rb") as f:
+            sent = await self._bot.send_document(
+                chat_id=int(chat_id),
+                document=f,
+                filename=filename,
+                caption=caption if caption else None,
+            )
+        
+        logger.info(f"Sent file to {chat_id}: {file_path}")
+        return str(sent.message_id)
+    
+    async def send_voice(self, chat_id: str, voice_path: str, caption: str = "") -> str:
+        """发送语音"""
+        if not self._bot:
+            raise RuntimeError("Telegram bot not started")
+        
+        with open(voice_path, "rb") as f:
+            sent = await self._bot.send_voice(
+                chat_id=int(chat_id),
+                voice=f,
+                caption=caption if caption else None,
+            )
+        
+        logger.info(f"Sent voice to {chat_id}: {voice_path}")
+        return str(sent.message_id)
+    
     async def send_typing(self, chat_id: str) -> None:
         """发送正在输入状态"""
         if self._bot:

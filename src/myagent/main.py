@@ -80,33 +80,11 @@ async def start_im_channels(agent: Agent):
     await _session_manager.start()
     logger.info("SessionManager started")
     
-    # Agent 处理函数
-    async def agent_handler(session, message: str) -> str:
-        """
-        处理来自 IM 通道的消息
-        
-        使用 Session 的对话历史，而不是 Agent 的全局历史
-        """
-        try:
-            # 获取 Session 的对话历史
-            session_messages = session.context.get_messages()
-            
-            # 使用 Session 上下文调用 Agent
-            response = await agent.chat_with_session(
-                message=message,
-                session_messages=session_messages,
-                session_id=session.id,
-            )
-            return response
-        except Exception as e:
-            logger.error(f"Agent handler error: {e}", exc_info=True)
-            return f"❌ 处理出错: {str(e)[:200]}"
-    
-    # 初始化 MessageGateway
+    # 初始化 MessageGateway (先创建，agent_handler 会引用它)
     from .channels import MessageGateway
     _message_gateway = MessageGateway(
         session_manager=_session_manager,
-        agent_handler=agent_handler,
+        agent_handler=None,  # 稍后设置
     )
     
     # 注册启用的适配器
@@ -182,6 +160,33 @@ async def start_im_channels(agent: Agent):
             logger.info("QQ adapter registered")
         except Exception as e:
             logger.error(f"Failed to start QQ adapter: {e}")
+    
+    # 设置 Agent 处理函数（现在可以引用 _message_gateway）
+    async def agent_handler(session, message: str) -> str:
+        """
+        处理来自 IM 通道的消息
+        
+        使用 Session 的对话历史，传递 session 和 gateway 给 Agent
+        以便 Agent 可以发送媒体文件回 IM
+        """
+        try:
+            # 获取 Session 的对话历史
+            session_messages = session.context.get_messages()
+            
+            # 使用 Session 上下文调用 Agent
+            response = await agent.chat_with_session(
+                message=message,
+                session_messages=session_messages,
+                session_id=session.id,
+                session=session,
+                gateway=_message_gateway,
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Agent handler error: {e}", exc_info=True)
+            return f"❌ 处理出错: {str(e)[:200]}"
+    
+    _message_gateway.agent_handler = agent_handler
     
     # 启动网关
     if adapters_started:

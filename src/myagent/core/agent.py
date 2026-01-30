@@ -339,7 +339,35 @@ class Agent:
                 "required": ["task_id"]
             }
         },
+        # === IM 通道工具 ===
+        {
+            "name": "send_to_chat",
+            "description": "发送消息到当前 IM 聊天（仅在 IM 会话中可用）。"
+                           "支持发送文本、图片、文件。"
+                           "当你完成了生成文件（如截图、文档）的任务时，使用此工具将文件发送给用户。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "要发送的文本消息（可选）"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "要发送的文件路径（图片、文档等）"
+                    },
+                    "caption": {
+                        "type": "string",
+                        "description": "文件的说明文字（可选）"
+                    }
+                }
+            }
+        },
     ]
+    
+    # 当前 IM 会话信息（由 chat_with_session 设置）
+    _current_im_session = None
+    _current_im_gateway = None
     
     def __init__(
         self,
@@ -890,7 +918,14 @@ class Agent:
         
         return response_text
     
-    async def chat_with_session(self, message: str, session_messages: list[dict], session_id: str = "") -> str:
+    async def chat_with_session(
+        self, 
+        message: str, 
+        session_messages: list[dict], 
+        session_id: str = "",
+        session: Any = None,
+        gateway: Any = None,
+    ) -> str:
         """
         使用外部 Session 历史进行对话（用于 IM 通道）
         
@@ -901,6 +936,8 @@ class Agent:
             message: 用户消息
             session_messages: Session 的对话历史，格式 [{"role": "user/assistant", "content": "..."}]
             session_id: 会话 ID（用于日志）
+            session: Session 对象（用于发送消息回 IM 通道）
+            gateway: MessageGateway 对象（用于发送消息）
         
         Returns:
             Agent 响应
@@ -908,34 +945,43 @@ class Agent:
         if not self._initialized:
             await self.initialize()
         
-        logger.info(f"[Session:{session_id}] User: {message[:100]}...")
+        # 保存当前 IM 会话信息（供 send_to_chat 工具使用）
+        Agent._current_im_session = session
+        Agent._current_im_gateway = gateway
         
-        # 构建 API 消息格式（从 session_messages 转换）
-        messages = []
-        for msg in session_messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role in ("user", "assistant") and content:
-                messages.append({
-                    "role": role,
-                    "content": content,
-                })
-        
-        # 添加当前用户消息
-        messages.append({
-            "role": "user",
-            "content": message,
-        })
-        
-        # 压缩上下文（如果需要）
-        messages = await self._compress_context(messages)
-        
-        # 调用 Brain 处理（使用 session 的上下文）
-        response_text = await self._chat_with_tools_and_context(messages)
-        
-        logger.info(f"[Session:{session_id}] Agent: {response_text[:100]}...")
-        
-        return response_text
+        try:
+            logger.info(f"[Session:{session_id}] User: {message[:100]}...")
+            
+            # 构建 API 消息格式（从 session_messages 转换）
+            messages = []
+            for msg in session_messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({
+                        "role": role,
+                        "content": content,
+                    })
+            
+            # 添加当前用户消息
+            messages.append({
+                "role": "user",
+                "content": message,
+            })
+            
+            # 压缩上下文（如果需要）
+            messages = await self._compress_context(messages)
+            
+            # 调用 Brain 处理（使用 session 的上下文）
+            response_text = await self._chat_with_tools_and_context(messages)
+            
+            logger.info(f"[Session:{session_id}] Agent: {response_text[:100]}...")
+            
+            return response_text
+        finally:
+            # 清除 IM 会话信息
+            Agent._current_im_session = None
+            Agent._current_im_gateway = None
     
     async def _chat_with_tools_and_context(self, messages: list[dict], use_session_prompt: bool = True) -> str:
         """
@@ -1448,6 +1494,65 @@ class Agent:
                     return f"✅ 任务已触发执行，状态: {status}\n结果: {execution.result or execution.error or 'N/A'}"
                 else:
                     return f"❌ 任务 {task_id} 不存在"
+            
+            # === IM 通道工具 ===
+            elif tool_name == "send_to_chat":
+                # 检查是否在 IM 会话中
+                if not Agent._current_im_session or not Agent._current_im_gateway:
+                    return "❌ 此工具仅在 IM 会话中可用（当前不是 IM 会话）"
+                
+                session = Agent._current_im_session
+                gateway = Agent._current_im_gateway
+                
+                text = tool_input.get("text", "")
+                file_path = tool_input.get("file_path", "")
+                caption = tool_input.get("caption", "")
+                
+                try:
+                    from pathlib import Path
+                    
+                    # 发送文件
+                    if file_path:
+                        file_path_obj = Path(file_path)
+                        if not file_path_obj.exists():
+                            return f"❌ 文件不存在: {file_path}"
+                        
+                        # 获取适配器
+                        adapter = gateway.get_adapter(session.channel)
+                        if not adapter:
+                            return f"❌ 找不到适配器: {session.channel}"
+                        
+                        # 根据文件类型发送
+                        suffix = file_path_obj.suffix.lower()
+                        
+                        if suffix in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
+                            # 发送图片
+                            await adapter.send_photo(
+                                chat_id=session.chat_id,
+                                photo_path=str(file_path_obj),
+                                caption=caption or text,
+                            )
+                            return f"✅ 图片已发送: {file_path}"
+                        else:
+                            # 发送文件
+                            await adapter.send_file(
+                                chat_id=session.chat_id,
+                                file_path=str(file_path_obj),
+                                caption=caption or text,
+                            )
+                            return f"✅ 文件已发送: {file_path}"
+                    
+                    # 只发送文本
+                    elif text:
+                        await gateway.send_to_session(session, text)
+                        return f"✅ 消息已发送"
+                    
+                    else:
+                        return "❌ 请提供要发送的内容（text 或 file_path）"
+                        
+                except Exception as e:
+                    logger.error(f"send_to_chat error: {e}", exc_info=True)
+                    return f"❌ 发送失败: {str(e)}"
             
             else:
                 return f"未知工具: {tool_name}"
