@@ -145,15 +145,21 @@ class TaskExecutor:
         return self.agent_factory()
     
     async def _run_agent(self, agent: Any, prompt: str) -> str:
-        """运行 Agent"""
-        # 调用 Agent 的 chat 方法
-        if hasattr(agent, "chat"):
-            return await agent.chat(prompt)
-        elif hasattr(agent, "execute_task_from_message"):
+        """
+        运行 Agent（使用 Ralph 模式）
+        
+        优先使用 execute_task_from_message（Ralph 循环模式），
+        这样可以支持多轮工具调用，直到任务完成。
+        """
+        # 优先使用 Ralph 模式（execute_task_from_message）
+        if hasattr(agent, "execute_task_from_message"):
             result = await agent.execute_task_from_message(prompt)
             return result.data if result.success else result.error
+        # 降级到普通 chat
+        elif hasattr(agent, "chat"):
+            return await agent.chat(prompt)
         else:
-            raise ValueError("Agent does not have chat or execute_task_from_message method")
+            raise ValueError("Agent does not have execute_task_from_message or chat method")
     
     async def _cleanup_agent(self, agent: Any) -> None:
         """清理 Agent"""
