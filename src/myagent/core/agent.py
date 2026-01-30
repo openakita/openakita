@@ -202,6 +202,61 @@ class Agent:
                 "properties": {}
             }
         },
+        # === 浏览器工具 (browser-use MCP) ===
+        {
+            "name": "browser_navigate",
+            "description": "打开浏览器并导航到指定 URL",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要访问的 URL"}
+                },
+                "required": ["url"]
+            }
+        },
+        {
+            "name": "browser_click",
+            "description": "点击页面上的元素",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS 选择器"},
+                    "text": {"type": "string", "description": "元素文本 (可选)"}
+                }
+            }
+        },
+        {
+            "name": "browser_type",
+            "description": "在输入框中输入文本",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "输入框选择器"},
+                    "text": {"type": "string", "description": "要输入的文本"}
+                },
+                "required": ["selector", "text"]
+            }
+        },
+        {
+            "name": "browser_get_content",
+            "description": "获取页面内容 (文本)",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "元素选择器 (可选)"}
+                }
+            }
+        },
+        {
+            "name": "browser_screenshot",
+            "description": "截取当前页面截图",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "保存路径 (可选)"}
+                }
+            }
+        },
     ]
     
     def __init__(
@@ -241,6 +296,8 @@ class Agent:
         # MCP 系统
         self.mcp_client = mcp_client
         self.mcp_catalog = MCPCatalog()
+        self.browser_mcp = None  # 在 _start_builtin_mcp_servers 中启动
+        self._builtin_mcp_count = 0
         
         # 记忆系统
         self.memory_manager = MemoryManager(
@@ -321,37 +378,53 @@ class Agent:
         """
         加载 MCP 服务器配置
         
-        扫描所有 MCP 配置目录并合并，生成工具清单用于系统提示
+        只加载项目本地的 MCP，不加载 Cursor 的（因为无法实际调用）
         """
-        # 所有可能的 MCP 配置目录 (优先级: 项目本地 > Cursor)
+        # 只加载项目本地 MCP 目录
         possible_dirs = [
-            # 1. 项目本地 MCP 目录 (MyAgent 自己的，优先)
-            (settings.project_root / "mcps", "project"),
-            (settings.project_root / ".mcp", "project"),
-            # 2. Cursor 项目级 MCP 目录 (继承 Cursor 的)
-            (Path.home() / ".cursor" / "projects" / "d-coder-myagent" / "mcps", "cursor"),
-            # 3. 通用 Cursor MCP 目录
-            (Path.home() / ".cursor" / "mcps", "cursor-global"),
+            settings.project_root / "mcps",
+            settings.project_root / ".mcp",
         ]
         
-        # 扫描所有存在的目录并合并
         total_count = 0
-        loaded_dirs = []
         
-        for dir_path, source in possible_dirs:
+        for dir_path in possible_dirs:
             if dir_path.exists():
                 count = self.mcp_catalog.scan_mcp_directory(dir_path)
                 if count > 0:
                     total_count += count
-                    loaded_dirs.append(f"{source}:{dir_path.name}({count})")
-                    logger.info(f"Loaded {count} MCP servers from {dir_path} [{source}]")
+                    logger.info(f"Loaded {count} MCP servers from {dir_path}")
         
-        if total_count > 0:
+        # 启动内置 MCP 服务器
+        await self._start_builtin_mcp_servers()
+        
+        if total_count > 0 or self._builtin_mcp_count > 0:
             self._mcp_catalog_text = self.mcp_catalog.generate_catalog()
-            logger.info(f"Total MCP servers: {total_count} from {loaded_dirs}")
+            logger.info(f"Total MCP servers: {total_count + self._builtin_mcp_count}")
         else:
             self._mcp_catalog_text = ""
-            logger.info("No MCP configuration directory found")
+            logger.info("No MCP servers configured")
+    
+    async def _start_builtin_mcp_servers(self) -> None:
+        """启动内置 MCP 服务器 (如 browser-use)"""
+        self._builtin_mcp_count = 0
+        
+        # 启动浏览器 MCP
+        try:
+            from ..tools.browser_mcp import BrowserMCP
+            self.browser_mcp = BrowserMCP()
+            await self.browser_mcp.start()
+            
+            # 注册到 MCP catalog
+            self.mcp_catalog.register_builtin_server(
+                identifier="browser-use",
+                name="Browser Use (Playwright)",
+                tools=self.browser_mcp.get_tools(),
+            )
+            self._builtin_mcp_count += 1
+            logger.info("Started builtin MCP: browser-use")
+        except Exception as e:
+            logger.warning(f"Failed to start browser-use MCP: {e}")
     
     def _build_system_prompt(self, base_prompt: str, task_description: str = "") -> str:
         """
@@ -747,6 +820,18 @@ You have access to the following built-in tools:
                     output += f"  - {priority}: {count}\n"
                 
                 return output
+            
+            # === 浏览器工具 (browser-use MCP) ===
+            elif tool_name.startswith("browser_"):
+                if not hasattr(self, 'browser_mcp') or not self.browser_mcp:
+                    return "❌ 浏览器 MCP 未启动。请确保已安装 playwright: pip install playwright && playwright install chromium"
+                
+                result = await self.browser_mcp.call_tool(tool_name, tool_input)
+                
+                if result.get("success"):
+                    return f"✅ {result.get('result', 'OK')}"
+                else:
+                    return f"❌ {result.get('error', '未知错误')}"
             
             else:
                 return f"未知工具: {tool_name}"

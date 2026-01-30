@@ -115,6 +115,50 @@ CallMcpTool(server="mysql-test", toolName="execute_query", arguments={{"sql": "S
         logger.info(f"Added {new_count} new MCP servers from {mcp_dir} (total: {len(self._servers)})")
         return new_count
     
+    def register_builtin_server(
+        self,
+        identifier: str,
+        name: str,
+        tools: list[dict],
+        instructions: Optional[str] = None,
+    ) -> None:
+        """
+        注册内置 MCP 服务器 (如 browser-use)
+        
+        Args:
+            identifier: 服务器 ID
+            name: 服务器名称
+            tools: 工具定义列表 [{"name": ..., "description": ..., "inputSchema": ...}]
+            instructions: 使用说明 (可选)
+        """
+        # 检查是否已存在
+        existing_ids = {s.identifier for s in self._servers}
+        if identifier in existing_ids:
+            logger.debug(f"Builtin server already registered: {identifier}")
+            return
+        
+        # 转换工具格式
+        tool_infos = []
+        for tool in tools:
+            tool_info = MCPToolInfo(
+                name=tool.get("name", ""),
+                description=tool.get("description", ""),
+                server=identifier,
+                arguments=tool.get("inputSchema", {}),
+            )
+            tool_infos.append(tool_info)
+        
+        # 创建服务器信息
+        server_info = MCPServerInfo(
+            identifier=identifier,
+            name=name,
+            tools=tool_infos,
+            instructions=instructions,
+        )
+        
+        self._servers.append(server_info)
+        logger.info(f"Registered builtin MCP server: {identifier} ({len(tool_infos)} tools)")
+    
     def _load_server(self, server_dir: Path) -> Optional[MCPServerInfo]:
         """加载单个 MCP 服务器配置"""
         metadata_file = server_dir / "SERVER_METADATA.json"
