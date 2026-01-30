@@ -118,15 +118,33 @@ class TaskExecutor:
         # 基础 prompt
         prompt = task.prompt
         
+        # 判断是否是提醒类任务
+        is_reminder = any(keyword in task.name.lower() or keyword in task.description.lower() 
+                        for keyword in ['提醒', '通知', 'remind', 'alert', 'notify'])
+        
         # 添加上下文信息
         context_parts = [
             f"[定时任务执行]",
             f"任务名称: {task.name}",
             f"任务描述: {task.description}",
             "",
-            "请执行以下任务:",
-            prompt,
         ]
+        
+        if is_reminder:
+            # 提醒类任务：直接输出内容，系统会自动发送给用户
+            context_parts.extend([
+                "这是一个提醒任务。请直接生成提醒内容，系统会自动发送给用户。",
+                "**重要：不要调用 send_to_chat 工具，直接输出提醒文字即可。**",
+                "",
+                "提醒内容要求:",
+                prompt,
+            ])
+        else:
+            # 其他任务：正常执行
+            context_parts.extend([
+                "请执行以下任务:",
+                prompt,
+            ])
         
         # 如果有脚本路径，添加提示
         if task.script_path:
