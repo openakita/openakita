@@ -406,25 +406,21 @@ class Agent:
             logger.info("No MCP servers configured")
     
     async def _start_builtin_mcp_servers(self) -> None:
-        """启动内置 MCP 服务器 (如 browser-use)"""
+        """启动内置服务 (如 browser-use)"""
         self._builtin_mcp_count = 0
         
-        # 启动浏览器 MCP
+        # 启动浏览器服务 (作为内置工具，不是 MCP)
         try:
             from ..tools.browser_mcp import BrowserMCP
-            self.browser_mcp = BrowserMCP()
+            self.browser_mcp = BrowserMCP(headless=True)
             await self.browser_mcp.start()
             
-            # 注册到 MCP catalog
-            self.mcp_catalog.register_builtin_server(
-                identifier="browser-use",
-                name="Browser Use (Playwright)",
-                tools=self.browser_mcp.get_tools(),
-            )
+            # 注意: 浏览器工具已在 BASE_TOOLS 中定义，不需要注册到 MCP catalog
+            # 这样 LLM 就会直接使用 browser_navigate 等工具名，而不是 MCP 格式
             self._builtin_mcp_count += 1
-            logger.info("Started builtin MCP: browser-use")
+            logger.info("Started builtin browser service (Playwright)")
         except Exception as e:
-            logger.warning(f"Failed to start browser-use MCP: {e}")
+            logger.warning(f"Failed to start browser service: {e}")
     
     def _build_system_prompt(self, base_prompt: str, task_description: str = "") -> str:
         """
@@ -479,11 +475,16 @@ You have access to the following built-in tools:
 - **search_memory**: Search for relevant memories
 - **get_memory_stats**: Get memory system statistics
 
-**Important**: 主动使用记忆功能！
-- 学到新东西时，用 add_memory 记住
-- 发现用户偏好时，记录为 preference
-- 找到有效解决方案时，记录为 skill
-- 遇到错误教训时，记录为 error
+### Browser Automation (Playwright)
+- **browser_navigate**: Open browser and navigate to URL
+- **browser_click**: Click an element on the page
+- **browser_type**: Type text into an input field
+- **browser_get_content**: Get page content (text)
+- **browser_screenshot**: Take a screenshot
+
+**重要提示**:
+1. 浏览器工具直接使用工具名 (如 `browser_navigate`)，不需要 MCP 前缀
+2. 主动使用记忆功能记录学到的东西
 """
     
     async def chat(self, message: str) -> str:
@@ -822,11 +823,20 @@ You have access to the following built-in tools:
                 return output
             
             # === 浏览器工具 (browser-use MCP) ===
-            elif tool_name.startswith("browser_"):
+            elif tool_name.startswith("browser_") or "browser_" in tool_name:
                 if not hasattr(self, 'browser_mcp') or not self.browser_mcp:
                     return "❌ 浏览器 MCP 未启动。请确保已安装 playwright: pip install playwright && playwright install chromium"
                 
-                result = await self.browser_mcp.call_tool(tool_name, tool_input)
+                # 提取实际工具名 (处理 mcp__browser-use__browser_navigate 格式)
+                actual_tool_name = tool_name
+                if "browser_" in tool_name and not tool_name.startswith("browser_"):
+                    # 提取 browser_xxx 部分
+                    import re
+                    match = re.search(r'(browser_\w+)', tool_name)
+                    if match:
+                        actual_tool_name = match.group(1)
+                
+                result = await self.browser_mcp.call_tool(actual_tool_name, tool_input)
                 
                 if result.get("success"):
                     return f"✅ {result.get('result', 'OK')}"
