@@ -56,10 +56,15 @@ class TaskExecutor:
             # 1. 创建 Agent
             agent = await self._create_agent()
             
-            # 2. 构建执行 prompt
+            # 2. 如果任务有 IM 通道信息，注入 IM 上下文
+            im_context_set = False
+            if task.channel_id and task.chat_id and self.gateway:
+                im_context_set = await self._setup_im_context(agent, task)
+            
+            # 3. 构建执行 prompt
             prompt = self._build_prompt(task)
             
-            # 3. 执行（带超时）
+            # 4. 执行（带超时）
             try:
                 result = await asyncio.wait_for(
                     self._run_agent(agent, prompt),
@@ -70,11 +75,17 @@ class TaskExecutor:
                 logger.error(f"TaskExecutor: {error_msg}")
                 await self._send_notification(task, success=False, message=error_msg)
                 return False, error_msg
+            finally:
+                # 清理 IM 上下文
+                if im_context_set:
+                    self._cleanup_im_context(agent)
             
-            # 4. 发送结果通知
-            await self._send_notification(task, success=True, message=result)
+            # 5. 发送结果通知（如果 Agent 没有通过 send_to_chat 发送）
+            # 检查 Agent 是否已经发送过消息
+            if not getattr(agent, '_task_message_sent', False):
+                await self._send_notification(task, success=True, message=result)
             
-            # 5. 清理 Agent
+            # 6. 清理 Agent
             await self._cleanup_agent(agent)
             
             logger.info(f"TaskExecutor: task {task.id} completed successfully")
@@ -85,6 +96,41 @@ class TaskExecutor:
             logger.error(f"TaskExecutor: task {task.id} failed: {error_msg}")
             await self._send_notification(task, success=False, message=error_msg)
             return False, error_msg
+    
+    async def _setup_im_context(self, agent: Any, task: ScheduledTask) -> bool:
+        """
+        为定时任务注入 IM 上下文，让 Agent 可以使用 send_to_chat
+        """
+        try:
+            from ..core.agent import Agent
+            from ..sessions import Session
+            
+            # 创建虚拟 Session（用于 send_to_chat）
+            virtual_session = Session(
+                channel=task.channel_id,
+                chat_id=task.chat_id,
+                user_id=task.user_id or "scheduled_task",
+            )
+            
+            # 注入到 Agent 类变量
+            Agent._current_im_session = virtual_session
+            Agent._current_im_gateway = self.gateway
+            
+            logger.debug(f"Set up IM context for task {task.id}: {task.channel_id}/{task.chat_id}")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Failed to set up IM context: {e}")
+            return False
+    
+    def _cleanup_im_context(self, agent: Any) -> None:
+        """清理 IM 上下文"""
+        try:
+            from ..core.agent import Agent
+            Agent._current_im_session = None
+            Agent._current_im_gateway = None
+        except Exception:
+            pass
     
     async def _create_agent(self) -> Any:
         """创建 Agent 实例"""
@@ -118,33 +164,20 @@ class TaskExecutor:
         # 基础 prompt
         prompt = task.prompt
         
-        # 判断是否是提醒类任务
-        is_reminder = any(keyword in task.name.lower() or keyword in task.description.lower() 
-                        for keyword in ['提醒', '通知', 'remind', 'alert', 'notify'])
-        
         # 添加上下文信息
         context_parts = [
             f"[定时任务执行]",
             f"任务名称: {task.name}",
             f"任务描述: {task.description}",
             "",
+            "请执行以下任务:",
+            prompt,
         ]
         
-        if is_reminder:
-            # 提醒类任务：直接输出内容，系统会自动发送给用户
-            context_parts.extend([
-                "这是一个提醒任务。请直接生成提醒内容，系统会自动发送给用户。",
-                "**重要：不要调用 send_to_chat 工具，直接输出提醒文字即可。**",
-                "",
-                "提醒内容要求:",
-                prompt,
-            ])
-        else:
-            # 其他任务：正常执行
-            context_parts.extend([
-                "请执行以下任务:",
-                prompt,
-            ])
+        # 如果任务有 IM 通道，提示可以用 send_to_chat
+        if task.channel_id and task.chat_id:
+            context_parts.append("")
+            context_parts.append("提示: 你可以使用 send_to_chat 工具直接发送消息给用户。")
         
         # 如果有脚本路径，添加提示
         if task.script_path:
