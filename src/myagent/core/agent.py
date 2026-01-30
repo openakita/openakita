@@ -439,8 +439,8 @@ class Agent:
         Returns:
             完整的系统提示词
         """
-        # 技能清单 (Agent Skills 规范)
-        skill_catalog = getattr(self, '_skill_catalog_text', '')
+        # 技能清单 (Agent Skills 规范) - 每次动态生成，确保新创建的技能被包含
+        skill_catalog = self.skill_catalog.generate_catalog()
         
         # MCP 清单 (Model Context Protocol 规范)
         mcp_catalog = getattr(self, '_mcp_catalog_text', '')
