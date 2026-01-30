@@ -2,6 +2,7 @@
 MyAgent CLI 入口
 
 使用 Typer 和 Rich 提供交互式命令行界面
+支持同时运行 CLI 和 IM 通道（Telegram、飞书等）
 """
 
 import asyncio
@@ -40,8 +41,10 @@ app = typer.Typer(
 # Rich 控制台
 console = Console()
 
-# 全局 Agent 实例
+# 全局组件
 _agent: Optional[Agent] = None
+_message_gateway = None
+_session_manager = None
 
 
 def get_agent() -> Agent:
@@ -50,6 +53,156 @@ def get_agent() -> Agent:
     if _agent is None:
         _agent = Agent()
     return _agent
+
+
+async def start_im_channels(agent: Agent):
+    """启动配置的 IM 通道"""
+    global _message_gateway, _session_manager
+    
+    # 检查是否有任何通道启用
+    any_enabled = (
+        settings.telegram_enabled or
+        settings.feishu_enabled or
+        settings.wework_enabled or
+        settings.dingtalk_enabled or
+        settings.qq_enabled
+    )
+    
+    if not any_enabled:
+        logger.info("No IM channels enabled")
+        return
+    
+    # 初始化 SessionManager
+    from .sessions import SessionManager
+    _session_manager = SessionManager(
+        storage_path=settings.project_root / settings.session_storage_path,
+    )
+    await _session_manager.start()
+    logger.info("SessionManager started")
+    
+    # Agent 处理函数
+    async def agent_handler(session, message: str) -> str:
+        """
+        处理来自 IM 通道的消息
+        
+        使用 Session 的对话历史，而不是 Agent 的全局历史
+        """
+        try:
+            # 获取 Session 的对话历史
+            session_messages = session.context.get_messages()
+            
+            # 使用 Session 上下文调用 Agent
+            response = await agent.chat_with_session(
+                message=message,
+                session_messages=session_messages,
+                session_id=session.id,
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Agent handler error: {e}", exc_info=True)
+            return f"❌ 处理出错: {str(e)[:200]}"
+    
+    # 初始化 MessageGateway
+    from .channels import MessageGateway
+    _message_gateway = MessageGateway(
+        session_manager=_session_manager,
+        agent_handler=agent_handler,
+    )
+    
+    # 注册启用的适配器
+    adapters_started = []
+    
+    # Telegram
+    if settings.telegram_enabled and settings.telegram_bot_token:
+        try:
+            from .channels.adapters import TelegramAdapter
+            telegram = TelegramAdapter(
+                bot_token=settings.telegram_bot_token,
+                webhook_url=settings.telegram_webhook_url or None,
+                media_dir=settings.project_root / "data" / "media" / "telegram",
+            )
+            await _message_gateway.register_adapter(telegram)
+            adapters_started.append("telegram")
+            logger.info("Telegram adapter registered")
+        except Exception as e:
+            logger.error(f"Failed to start Telegram adapter: {e}")
+    
+    # 飞书
+    if settings.feishu_enabled and settings.feishu_app_id:
+        try:
+            from .channels.adapters import FeishuAdapter
+            feishu = FeishuAdapter(
+                app_id=settings.feishu_app_id,
+                app_secret=settings.feishu_app_secret,
+            )
+            await _message_gateway.register_adapter(feishu)
+            adapters_started.append("feishu")
+            logger.info("Feishu adapter registered")
+        except Exception as e:
+            logger.error(f"Failed to start Feishu adapter: {e}")
+    
+    # 企业微信
+    if settings.wework_enabled and settings.wework_corp_id:
+        try:
+            from .channels.adapters import WeWorkAdapter
+            wework = WeWorkAdapter(
+                corp_id=settings.wework_corp_id,
+                agent_id=settings.wework_agent_id,
+                secret=settings.wework_secret,
+            )
+            await _message_gateway.register_adapter(wework)
+            adapters_started.append("wework")
+            logger.info("WeWork adapter registered")
+        except Exception as e:
+            logger.error(f"Failed to start WeWork adapter: {e}")
+    
+    # 钉钉
+    if settings.dingtalk_enabled and settings.dingtalk_app_key:
+        try:
+            from .channels.adapters import DingTalkAdapter
+            dingtalk = DingTalkAdapter(
+                app_key=settings.dingtalk_app_key,
+                app_secret=settings.dingtalk_app_secret,
+            )
+            await _message_gateway.register_adapter(dingtalk)
+            adapters_started.append("dingtalk")
+            logger.info("DingTalk adapter registered")
+        except Exception as e:
+            logger.error(f"Failed to start DingTalk adapter: {e}")
+    
+    # QQ
+    if settings.qq_enabled and settings.qq_onebot_url:
+        try:
+            from .channels.adapters import QQAdapter
+            qq = QQAdapter(
+                onebot_url=settings.qq_onebot_url,
+            )
+            await _message_gateway.register_adapter(qq)
+            adapters_started.append("qq")
+            logger.info("QQ adapter registered")
+        except Exception as e:
+            logger.error(f"Failed to start QQ adapter: {e}")
+    
+    # 启动网关
+    if adapters_started:
+        await _message_gateway.start()
+        logger.info(f"MessageGateway started with adapters: {adapters_started}")
+        return adapters_started
+    
+    return []
+
+
+async def stop_im_channels():
+    """停止 IM 通道"""
+    global _message_gateway, _session_manager
+    
+    if _message_gateway:
+        await _message_gateway.stop()
+        logger.info("MessageGateway stopped")
+    
+    if _session_manager:
+        await _session_manager.stop()
+        logger.info("SessionManager stopped")
 
 
 def print_welcome():
@@ -88,6 +241,7 @@ def print_help():
         ("/selfcheck", "运行自检"),
         ("/memory", "显示记忆状态"),
         ("/skills", "列出已安装技能"),
+        ("/channels", "显示 IM 通道状态"),
         ("/clear", "清空对话历史"),
         ("/exit, /quit", "退出程序"),
     ]
@@ -98,8 +252,40 @@ def print_help():
     console.print(table)
 
 
+def show_channels():
+    """显示 IM 通道状态"""
+    table = Table(title="IM 通道状态")
+    table.add_column("通道", style="cyan")
+    table.add_column("启用", style="green")
+    table.add_column("状态", style="yellow")
+    
+    channels = [
+        ("Telegram", settings.telegram_enabled, settings.telegram_bot_token),
+        ("飞书", settings.feishu_enabled, settings.feishu_app_id),
+        ("企业微信", settings.wework_enabled, settings.wework_corp_id),
+        ("钉钉", settings.dingtalk_enabled, settings.dingtalk_app_key),
+        ("QQ", settings.qq_enabled, settings.qq_onebot_url),
+    ]
+    
+    for name, enabled, token in channels:
+        enabled_str = "✓" if enabled else "✗"
+        if enabled and token:
+            status = "已连接" if _message_gateway else "待启动"
+        elif enabled:
+            status = "缺少配置"
+        else:
+            status = "-"
+        table.add_row(name, enabled_str, status)
+    
+    console.print(table)
+    
+    if _message_gateway:
+        adapters = _message_gateway.list_adapters()
+        console.print(f"\n[green]活跃适配器:[/green] {', '.join(adapters) if adapters else '无'}")
+
+
 async def run_interactive():
-    """运行交互式 CLI"""
+    """运行交互式 CLI（同时启动 IM 通道）"""
     print_welcome()
     
     agent = get_agent()
@@ -108,73 +294,95 @@ async def run_interactive():
     with console.status("[bold green]正在初始化 Agent...", spinner="dots"):
         await agent.initialize()
     
-    console.print("[green]✓[/green] Agent 已准备就绪\n")
+    console.print("[green]✓[/green] Agent 已准备就绪")
     
-    while True:
-        try:
-            # 获取用户输入
-            user_input = Prompt.ask("[bold blue]You[/bold blue]")
-            
-            if not user_input.strip():
-                continue
-            
-            # 处理命令
-            if user_input.startswith("/"):
-                cmd = user_input.lower().strip()
+    # 启动 IM 通道
+    im_channels = []
+    with console.status("[bold green]正在启动 IM 通道...", spinner="dots"):
+        im_channels = await start_im_channels(agent)
+    
+    if im_channels:
+        console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
+    else:
+        console.print("[yellow]ℹ[/yellow] 未启用任何 IM 通道 (可在 .env 中配置)")
+    
+    console.print()
+    
+    try:
+        while True:
+            try:
+                # 获取用户输入
+                user_input = Prompt.ask("[bold blue]You[/bold blue]")
                 
-                if cmd in ("/exit", "/quit"):
-                    console.print("[yellow]再见！[/yellow]")
-                    break
-                
-                elif cmd == "/help":
-                    print_help()
+                if not user_input.strip():
                     continue
                 
-                elif cmd == "/status":
-                    await show_status(agent)
-                    continue
+                # 处理命令
+                if user_input.startswith("/"):
+                    cmd = user_input.lower().strip()
+                    
+                    if cmd in ("/exit", "/quit"):
+                        console.print("[yellow]再见！[/yellow]")
+                        break
+                    
+                    elif cmd == "/help":
+                        print_help()
+                        continue
+                    
+                    elif cmd == "/status":
+                        await show_status(agent)
+                        continue
+                    
+                    elif cmd == "/selfcheck":
+                        await run_selfcheck(agent)
+                        continue
+                    
+                    elif cmd == "/memory":
+                        show_memory()
+                        continue
+                    
+                    elif cmd == "/skills":
+                        show_skills()
+                        continue
+                    
+                    elif cmd == "/channels":
+                        show_channels()
+                        continue
+                    
+                    elif cmd == "/clear":
+                        agent._conversation_history.clear()
+                        agent._context.messages.clear()
+                        console.print("[green]对话历史已清空[/green]")
+                        continue
+                    
+                    else:
+                        console.print(f"[red]未知命令: {cmd}[/red]")
+                        print_help()
+                        continue
                 
-                elif cmd == "/selfcheck":
-                    await run_selfcheck(agent)
-                    continue
+                # 正常对话
+                with console.status("[bold green]思考中...", spinner="dots"):
+                    response = await agent.chat(user_input)
                 
-                elif cmd == "/memory":
-                    show_memory()
-                    continue
+                # 显示响应
+                console.print()
+                console.print(Panel(
+                    Markdown(response),
+                    title=f"[bold green]{agent.name}[/bold green]",
+                    border_style="green",
+                ))
+                console.print()
                 
-                elif cmd == "/skills":
-                    show_skills()
-                    continue
-                
-                elif cmd == "/clear":
-                    agent._conversation_history.clear()
-                    agent._context.messages.clear()
-                    console.print("[green]对话历史已清空[/green]")
-                    continue
-                
-                else:
-                    console.print(f"[red]未知命令: {cmd}[/red]")
-                    print_help()
-                    continue
-            
-            # 正常对话
-            with console.status("[bold green]思考中...", spinner="dots"):
-                response = await agent.chat(user_input)
-            
-            # 显示响应
-            console.print()
-            console.print(Panel(
-                Markdown(response),
-                title=f"[bold green]{agent.name}[/bold green]",
-                border_style="green",
-            ))
-            console.print()
-            
-        except KeyboardInterrupt:
-            console.print("\n[yellow]使用 /exit 退出[/yellow]")
-        except Exception as e:
-            logger.error(f"Error: {e}", exc_info=True)
-            console.print(f"[red]错误: {e}[/red]")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]使用 /exit 退出[/yellow]")
+            except Exception as e:
+                logger.error(f"Error: {e}", exc_info=True)
+                console.print(f"[red]错误: {e}[/red]")
+    finally:
+        # 停止 IM 通道
+        with console.status("[bold yellow]正在停止 IM 通道...", spinner="dots"):
+            await stop_im_channels()
+        console.print("[green]✓[/green] 服务已停止")
 
 
 async def show_status(agent: Agent):
@@ -318,6 +526,59 @@ def status():
         await show_status(agent)
     
     asyncio.run(_status())
+
+
+@app.command()
+def serve():
+    """
+    启动服务模式 (无 CLI，只运行 IM 通道)
+    
+    用于后台运行，只处理 IM 消息。
+    """
+    async def _serve():
+        console.print(Panel(
+            "[bold]MyAgent 服务模式[/bold]\n\n"
+            "只运行 IM 通道，不启动 CLI 交互。\n"
+            "按 Ctrl+C 停止服务。",
+            title="Serve Mode",
+            border_style="blue",
+        ))
+        
+        agent = get_agent()
+        
+        # 初始化 Agent
+        console.print("[bold green]正在初始化 Agent...[/bold green]")
+        await agent.initialize()
+        console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
+        
+        # 启动 IM 通道
+        console.print("[bold green]正在启动 IM 通道...[/bold green]")
+        im_channels = await start_im_channels(agent)
+        
+        if not im_channels:
+            console.print("[red]✗[/red] 没有启用任何 IM 通道！")
+            console.print("请在 .env 中配置 IM 通道（如 TELEGRAM_ENABLED=true）")
+            return
+        
+        console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
+        console.print()
+        console.print("[bold]服务运行中...[/bold] 按 Ctrl+C 停止")
+        
+        # 保持运行
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            console.print("\n[yellow]正在停止服务...[/yellow]")
+            await stop_im_channels()
+            console.print("[green]✓[/green] 服务已停止")
+    
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]服务已停止[/yellow]")
 
 
 if __name__ == "__main__":

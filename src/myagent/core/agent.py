@@ -827,12 +827,13 @@ class Agent:
         
         return truncated
     
-    async def chat(self, message: str) -> str:
+    async def chat(self, message: str, session_id: Optional[str] = None) -> str:
         """
-        对话接口
+        对话接口（使用全局会话历史）
         
         Args:
             message: 用户消息
+            session_id: 可选的会话标识（用于日志）
         
         Returns:
             Agent 响应
@@ -840,7 +841,8 @@ class Agent:
         if not self._initialized:
             await self.initialize()
         
-        logger.info(f"User: {message[:100]}...")
+        session_info = f"[{session_id}] " if session_id else ""
+        logger.info(f"{session_info}User: {message[:100]}...")
         
         # 添加到对话历史
         self._conversation_history.append({
@@ -884,9 +886,157 @@ class Agent:
         # 记录到记忆系统
         self.memory_manager.record_turn("assistant", response_text)
         
-        logger.info(f"Agent: {response_text[:100]}...")
+        logger.info(f"{session_info}Agent: {response_text[:100]}...")
         
         return response_text
+    
+    async def chat_with_session(self, message: str, session_messages: list[dict], session_id: str = "") -> str:
+        """
+        使用外部 Session 历史进行对话（用于 IM 通道）
+        
+        与 chat() 不同，这里使用传入的 session_messages 作为对话上下文，
+        而不是全局的 _conversation_history。
+        
+        Args:
+            message: 用户消息
+            session_messages: Session 的对话历史，格式 [{"role": "user/assistant", "content": "..."}]
+            session_id: 会话 ID（用于日志）
+        
+        Returns:
+            Agent 响应
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        logger.info(f"[Session:{session_id}] User: {message[:100]}...")
+        
+        # 构建 API 消息格式（从 session_messages 转换）
+        messages = []
+        for msg in session_messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({
+                    "role": role,
+                    "content": content,
+                })
+        
+        # 添加当前用户消息
+        messages.append({
+            "role": "user",
+            "content": message,
+        })
+        
+        # 压缩上下文（如果需要）
+        messages = await self._compress_context(messages)
+        
+        # 调用 Brain 处理（使用 session 的上下文）
+        response_text = await self._chat_with_tools_and_context(messages)
+        
+        logger.info(f"[Session:{session_id}] Agent: {response_text[:100]}...")
+        
+        return response_text
+    
+    async def _chat_with_tools_and_context(self, messages: list[dict], use_session_prompt: bool = True) -> str:
+        """
+        使用指定的消息上下文进行对话（支持工具调用）
+        
+        这是 _chat_with_tools 的变体，使用传入的 messages 而不是 self._context.messages
+        
+        Args:
+            messages: 对话消息列表
+            use_session_prompt: 是否使用 Session 专用的 System Prompt（不包含全局 Active Task）
+        
+        Returns:
+            最终响应文本
+        """
+        max_iterations = 15  # 最多 15 轮工具调用
+        
+        # 复制消息避免修改原始列表
+        working_messages = list(messages)
+        
+        # 选择 System Prompt
+        if use_session_prompt:
+            # 使用 Session 专用的 System Prompt，不包含全局 Active Task
+            system_prompt = self.identity.get_session_system_prompt()
+        else:
+            system_prompt = self._context.system
+        
+        for iteration in range(max_iterations):
+            # 每次迭代前检查上下文大小
+            if iteration > 0:
+                working_messages = await self._compress_context(working_messages)
+            
+            # 调用 Brain，传递工具列表
+            response = self.brain.client.messages.create(
+                model=self.brain.model,
+                max_tokens=self.brain.max_tokens,
+                system=system_prompt,
+                tools=self._tools,
+                messages=working_messages,
+            )
+            
+            # 处理响应
+            tool_calls = []
+            text_content = ""
+            
+            for block in response.content:
+                if block.type == "text":
+                    text_content += block.text
+                elif block.type == "tool_use":
+                    tool_calls.append({
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    })
+            
+            # 如果没有工具调用，返回文本响应
+            if not tool_calls:
+                return text_content or "我理解了您的请求。"
+            
+            # 有工具调用，添加助手消息
+            assistant_content = []
+            if text_content:
+                assistant_content.append({"type": "text", "text": text_content})
+            for tc in tool_calls:
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": tc["input"],
+                })
+            
+            working_messages.append({
+                "role": "assistant",
+                "content": assistant_content,
+            })
+            
+            # 执行工具调用
+            tool_results = []
+            for tc in tool_calls:
+                try:
+                    result = await self._execute_tool(tc["name"], tc["input"])
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tc["id"],
+                        "content": str(result) if result else "操作已完成",
+                    })
+                except Exception as e:
+                    logger.error(f"Tool {tc['name']} error: {e}")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tc["id"],
+                        "content": f"工具执行错误: {str(e)}",
+                        "is_error": True,
+                    })
+            
+            # 添加工具结果
+            working_messages.append({
+                "role": "user",
+                "content": tool_results,
+            })
+        
+        return "已达到最大工具调用次数，请重新描述您的需求。"
     
     async def _chat_with_tools(self, message: str) -> str:
         """

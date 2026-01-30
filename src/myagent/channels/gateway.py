@@ -233,19 +233,26 @@ class MessageGateway:
             logger.error(f"No adapter for channel: {original.channel}")
             return
         
-        # 构建响应消息
+        # 构建响应消息（不使用 parse_mode，避免特殊字符导致解析失败）
         outgoing = OutgoingMessage.text(
             chat_id=original.chat_id,
             text=response,
             reply_to=original.channel_message_id,
             thread_id=original.thread_id,
-            parse_mode="markdown",
         )
         
         try:
             await adapter.send_message(outgoing)
         except Exception as e:
             logger.error(f"Failed to send response: {e}")
+            # 发送失败时尝试发送纯文本错误提示
+            try:
+                await adapter.send_text(
+                    chat_id=original.chat_id,
+                    text=f"消息发送失败，请稍后重试。",
+                )
+            except:
+                pass
     
     async def _send_error(self, original: UnifiedMessage, error: str) -> None:
         """

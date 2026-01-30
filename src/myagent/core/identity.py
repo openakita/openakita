@@ -185,13 +185,16 @@ MyAgent 是一个全能自进化AI助手，核心目标是成为一个真正对�
         
         return "## User\n\n(用户偏好将在交互中学习)\n"
     
-    def get_memory_summary(self) -> str:
+    def get_memory_summary(self, include_active_task: bool = True) -> str:
         """
         获取 MEMORY.md 中当前任务相关的部分
         
         只提取:
-        - 当前活跃任务
+        - 当前活跃任务（可选）
         - 最近的经验教训
+        
+        Args:
+            include_active_task: 是否包含活跃任务（IM Session 应设为 False）
         """
         memory = self.memory
         if not memory:
@@ -199,19 +202,20 @@ MyAgent 是一个全能自进化AI助手，核心目标是成为一个真正对�
         
         lines = ["## Memory (工作记忆)"]
         
-        # 提取当前任务
-        active_task_match = re.search(
-            r'### Active Task\s*(.*?)(?=###|\Z)',
-            memory,
-            re.DOTALL
-        )
-        if active_task_match:
-            task_content = active_task_match.group(1).strip()
-            if task_content and '[暂无]' not in task_content:
-                lines.append("\n### 当前任务")
-                # 只取前几行
-                task_lines = task_content.split('\n')[:6]
-                lines.extend(task_lines)
+        # 提取当前任务（仅当 include_active_task=True）
+        if include_active_task:
+            active_task_match = re.search(
+                r'### Active Task\s*(.*?)(?=###|\Z)',
+                memory,
+                re.DOTALL
+            )
+            if active_task_match:
+                task_content = active_task_match.group(1).strip()
+                if task_content and '[暂无]' not in task_content:
+                    lines.append("\n### 当前任务")
+                    # 只取前几行
+                    task_lines = task_content.split('\n')[:6]
+                    lines.extend(task_lines)
         
         # 提取成功模式
         success_match = re.search(
@@ -230,11 +234,14 @@ MyAgent 是一个全能自进化AI助手，核心目标是成为一个真正对�
         
         return ""
     
-    def get_system_prompt(self) -> str:
+    def get_system_prompt(self, include_active_task: bool = True) -> str:
         """
         生成系统提示词
         
         包含所有核心文档的精简版本
+        
+        Args:
+            include_active_task: 是否包含活跃任务（IM Session 应设为 False）
         """
         return f"""# MyAgent System
 
@@ -244,7 +251,7 @@ MyAgent 是一个全能自进化AI助手，核心目标是成为一个真正对�
 
 {self.get_user_summary()}
 
-{self.get_memory_summary()}
+{self.get_memory_summary(include_active_task=include_active_task)}
 
 ## 核心指令
 
@@ -256,6 +263,14 @@ MyAgent 是一个全能自进化AI助手，核心目标是成为一个真正对�
 3. **诚实透明** - 清楚说明正在做什么，遇到什么问题
 4. **真正帮助** - 把用户当作聪明的成年人，提供实质性帮助
 """
+    
+    def get_session_system_prompt(self) -> str:
+        """
+        生成用于 IM Session 的系统提示词
+        
+        不包含全局 Active Task，避免与 Session 上下文冲突
+        """
+        return self.get_system_prompt(include_active_task=False)
 
     def get_full_document(self, doc_name: str) -> str:
         """

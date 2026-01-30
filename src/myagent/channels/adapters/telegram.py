@@ -111,19 +111,22 @@ class TelegramAdapter(ChannelAdapter):
             CommandHandler("start", self._handle_start)
         )
         
+        # 初始化
+        await self._app.initialize()
+        
         # 启动
         if self.webhook_url:
             # Webhook 模式
-            await self._app.initialize()
             await self._app.start()
             await self._bot.set_webhook(self.webhook_url)
             logger.info(f"Telegram bot started with webhook: {self.webhook_url}")
         else:
-            # Long Polling 模式
-            await self._app.initialize()
+            # Long Polling 模式 - 使用 updater.start_polling
             await self._app.start()
-            # 开始轮询（非阻塞）
-            asyncio.create_task(self._polling_loop())
+            await self._app.updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=["message"],
+            )
             logger.info("Telegram bot started with long polling")
         
         self._running = True
@@ -133,27 +136,14 @@ class TelegramAdapter(ChannelAdapter):
         self._running = False
         
         if self._app:
+            # 先停止 updater
+            if self._app.updater and self._app.updater.running:
+                await self._app.updater.stop()
+            # 再停止 application
             await self._app.stop()
             await self._app.shutdown()
         
         logger.info("Telegram bot stopped")
-    
-    async def _polling_loop(self) -> None:
-        """Long Polling 循环"""
-        try:
-            await self._app.updater.start_polling(
-                drop_pending_updates=True
-            )
-            # 保持运行
-            while self._running:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Polling error: {e}")
-        finally:
-            if self._app.updater.running:
-                await self._app.updater.stop()
     
     async def _handle_start(self, update: Any, context: Any) -> None:
         """处理 /start 命令"""
