@@ -424,12 +424,13 @@ class Agent:
     
     def _build_system_prompt(self, base_prompt: str, task_description: str = "") -> str:
         """
-        构建系统提示词 (包含技能清单、MCP 清单和相关记忆)
+        构建系统提示词 (动态生成，包含技能清单、MCP 清单和相关记忆)
         
         遵循规范的渐进式披露:
         - Agent Skills: name + description 在系统提示中
         - MCP: server + tool name + description 在系统提示中
         - Memory: 相关记忆按需注入
+        - Tools: 从 BASE_TOOLS 动态生成
         
         Args:
             base_prompt: 基础提示词 (身份信息)
@@ -447,45 +448,64 @@ class Agent:
         # 相关记忆 (按任务相关性注入)
         memory_context = self.memory_manager.get_injection_context(task_description)
         
+        # 动态生成工具列表
+        tools_text = self._generate_tools_text()
+        
         return f"""{base_prompt}
 {skill_catalog}
 {mcp_catalog}
 {memory_context}
 
-## Built-in Tools
-
-You have access to the following built-in tools:
-
-### File System
-- **run_shell**: Execute shell commands
-- **write_file**: Write content to files
-- **read_file**: Read file contents
-- **list_directory**: List directory contents
-
-### Skills Management
-- **list_skills**: List all installed skills
-- **get_skill_info**: Load full instructions for a skill (use when activating a skill)
-- **run_skill_script**: Execute a skill's script
-- **get_skill_reference**: Get reference documentation
-- **generate_skill**: Create a new skill when existing ones don't meet the need
-- **improve_skill**: Improve an existing skill based on feedback
-
-### Memory Management
-- **add_memory**: Save important information to long-term memory
-- **search_memory**: Search for relevant memories
-- **get_memory_stats**: Get memory system statistics
-
-### Browser Automation (Playwright)
-- **browser_navigate**: Open browser and navigate to URL
-- **browser_click**: Click an element on the page
-- **browser_type**: Type text into an input field
-- **browser_get_content**: Get page content (text)
-- **browser_screenshot**: Take a screenshot
+{tools_text}
 
 **重要提示**:
-1. 浏览器工具直接使用工具名 (如 `browser_navigate`)，不需要 MCP 前缀
+1. 工具直接使用工具名调用，不需要任何前缀
 2. 主动使用记忆功能记录学到的东西
 """
+    
+    def _generate_tools_text(self) -> str:
+        """
+        从 BASE_TOOLS 动态生成工具列表文本
+        
+        按类别分组显示
+        """
+        # 工具分类
+        categories = {
+            "File System": ["run_shell", "write_file", "read_file", "list_directory"],
+            "Skills Management": ["list_skills", "get_skill_info", "run_skill_script", "get_skill_reference", "generate_skill", "improve_skill"],
+            "Memory Management": ["add_memory", "search_memory", "get_memory_stats"],
+            "Browser Automation": ["browser_navigate", "browser_click", "browser_type", "browser_get_content", "browser_screenshot"],
+        }
+        
+        # 构建工具名到描述的映射
+        tool_map = {t["name"]: t["description"] for t in self._tools}
+        
+        lines = ["## Available Tools"]
+        
+        for category, tool_names in categories.items():
+            # 过滤出存在的工具
+            existing_tools = [(name, tool_map[name]) for name in tool_names if name in tool_map]
+            
+            if existing_tools:
+                lines.append(f"\n### {category}")
+                for name, desc in existing_tools:
+                    # 截断过长的描述
+                    short_desc = desc[:80] + "..." if len(desc) > 80 else desc
+                    lines.append(f"- **{name}**: {short_desc}")
+        
+        # 添加未分类的工具
+        categorized = set()
+        for names in categories.values():
+            categorized.update(names)
+        
+        uncategorized = [(t["name"], t["description"]) for t in self._tools if t["name"] not in categorized]
+        if uncategorized:
+            lines.append("\n### Other Tools")
+            for name, desc in uncategorized:
+                short_desc = desc[:80] + "..." if len(desc) > 80 else desc
+                lines.append(f"- **{name}**: {short_desc}")
+        
+        return "\n".join(lines)
     
     async def chat(self, message: str) -> str:
         """
