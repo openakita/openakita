@@ -106,7 +106,7 @@ class TaskExecutor:
             from ..sessions import Session
             
             # 创建虚拟 Session（用于 send_to_chat）
-            virtual_session = Session(
+            virtual_session = Session.create(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
                 user_id=task.user_id or "scheduled_task",

@@ -448,12 +448,9 @@ class Brain:
     
     def _maybe_recover_primary(self) -> None:
         """
-        检查是否应该尝试恢复到主端点
+        检查是否应该尝试恢复到主端点（非阻塞）
         
-        只有当：
-        1. 当前不是主端点
-        2. 距离上次检查超过 RECOVERY_CHECK_INTERVAL
-        才会尝试恢复
+        启动后台线程检测，不阻塞正常请求
         """
         if self._current_endpoint_idx == 0:
             return  # 已经是主端点
@@ -465,22 +462,62 @@ class Brain:
         if now - primary.last_check < self.RECOVERY_CHECK_INTERVAL:
             return
         
-        primary.last_check = now
-        logger.info(f"Checking if primary endpoint has recovered...")
+        # 避免重复检测
+        if getattr(self, '_recovery_check_in_progress', False):
+            return
         
-        # 尝试简单请求测试主端点
-        try:
-            self._test_endpoint(primary)
-            
-            # 主端点恢复了
-            logger.info(f"Primary endpoint recovered! Switching back.")
-            primary.healthy = True
-            primary.fail_count = 0
-            self._current_endpoint_idx = 0
-            self._update_public_attrs()
-            
-        except Exception as e:
-            logger.debug(f"Primary endpoint still down: {e}")
+        primary.last_check = now
+        self._recovery_check_in_progress = True
+        
+        # 启动后台线程检测，不阻塞当前请求
+        import threading
+        def check_primary():
+            try:
+                logger.info(f"[Background] Checking if primary endpoint has recovered...")
+                self._test_endpoint_with_timeout(primary, timeout=10)
+                
+                # 主端点恢复了
+                logger.info(f"[Background] Primary endpoint recovered! Will use on next request.")
+                primary.healthy = True
+                primary.fail_count = 0
+                self._current_endpoint_idx = 0
+                self._update_public_attrs()
+                
+            except Exception as e:
+                logger.debug(f"[Background] Primary endpoint still down: {e}")
+            finally:
+                self._recovery_check_in_progress = False
+        
+        thread = threading.Thread(target=check_primary, daemon=True)
+        thread.start()
+    
+    def _test_endpoint_with_timeout(self, endpoint: LLMEndpoint, timeout: float = 10) -> None:
+        """测试端点（带短超时）"""
+        if endpoint.client_type == "openai":
+            # 创建临时客户端（短超时）
+            client = OpenAI(
+                api_key=endpoint.api_key,
+                base_url=endpoint.base_url,
+                timeout=timeout,
+                max_retries=0,
+            )
+            client.chat.completions.create(
+                model=endpoint.model,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        else:
+            client = Anthropic(
+                api_key=endpoint.api_key,
+                base_url=endpoint.base_url,
+                timeout=timeout,
+                max_retries=0,
+            )
+            client.messages.create(
+                model=endpoint.model,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "hi"}],
+            )
     
     def _test_endpoint(self, endpoint: LLMEndpoint) -> None:
         """测试端点是否可用"""
