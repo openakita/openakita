@@ -375,7 +375,10 @@ class Brain:
                 self._update_public_attrs()
                 
                 if idx > 0:
-                    logger.info(f"Using backup endpoint: {endpoint.name}")
+                    logger.info(f"")
+                    logger.info(f"  ╔══════════════════════════════════════════╗")
+                    logger.info(f"  ║  故障切换 → {endpoint.model:<28}║")
+                    logger.info(f"  ╚══════════════════════════════════════════╝")
                 
                 return response
                 
@@ -508,7 +511,10 @@ class Brain:
                 self._test_endpoint_with_timeout(primary, timeout=10)
                 
                 # 主端点恢复了
-                logger.info(f"[Background] Primary endpoint recovered! Will use on next request.")
+                logger.info(f"")
+                logger.info(f"  ╔══════════════════════════════════════════╗")
+                logger.info(f"  ║  主端点恢复 → {primary.model:<26}║")
+                logger.info(f"  ╚══════════════════════════════════════════╝")
                 primary.healthy = True
                 primary.fail_count = 0
                 self._current_endpoint_idx = 0
