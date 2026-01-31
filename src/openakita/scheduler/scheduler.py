@@ -250,8 +250,11 @@ class TaskScheduler:
                     if task.next_run:
                         trigger_time = task.next_run - timedelta(seconds=self.advance_seconds)
                         if now >= trigger_time:
+                            # 重要：先标记为运行中，防止重复触发！
+                            # 必须在 create_task 之前执行
+                            self._running_tasks.add(task_id)
                             # 异步执行任务
-                            asyncio.create_task(self._run_task(task))
+                            asyncio.create_task(self._run_task_safe(task))
                 
                 await asyncio.sleep(self.check_interval)
                 
@@ -261,14 +264,17 @@ class TaskScheduler:
                 logger.error(f"Scheduler loop error: {e}")
                 await asyncio.sleep(1)
     
-    async def _run_task(self, task: ScheduledTask) -> None:
-        """执行任务（带并发控制）"""
-        async with self._semaphore:
-            self._running_tasks.add(task.id)
-            try:
+    async def _run_task_safe(self, task: ScheduledTask) -> None:
+        """
+        安全地执行任务
+        
+        注意：_running_tasks 已经在调度循环中添加了，这里只需要执行和清理
+        """
+        try:
+            async with self._semaphore:
                 await self._execute_task(task)
-            finally:
-                self._running_tasks.discard(task.id)
+        finally:
+            self._running_tasks.discard(task.id)
     
     async def _execute_task(self, task: ScheduledTask) -> TaskExecution:
         """执行任务"""

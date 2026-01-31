@@ -23,6 +23,7 @@ from typing import Any, Optional
 from .brain import Brain, Context, Response
 from .identity import Identity
 from .ralph import RalphLoop, Task, TaskResult, TaskStatus
+from .user_profile import UserProfileManager, get_profile_manager
 
 from ..config import settings
 from ..tools.shell import ShellTool
@@ -169,6 +170,33 @@ class Agent:
                 "required": ["skill_name"]
             }
         },
+        {
+            "name": "install_skill",
+            "description": """从 URL 或 Git 仓库安装技能到本地 skills/ 目录。
+
+支持的安装源：
+1. Git 仓库 URL (如 https://github.com/user/repo 或 git@github.com:user/repo.git)
+   - 自动克隆仓库并查找 SKILL.md
+   - 支持指定子目录路径
+2. 单个 SKILL.md 文件 URL
+   - 创建规范目录结构 (scripts/, references/, assets/)
+
+安装后技能会自动加载到 skills/<skill-name>/ 目录。""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "Git 仓库 URL 或 SKILL.md 文件 URL"},
+                    "name": {"type": "string", "description": "技能名称 (可选，自动从 SKILL.md 提取)"},
+                    "subdir": {"type": "string", "description": "Git 仓库中技能所在的子目录路径 (可选)"},
+                    "extra_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "额外需要下载的文件 URL 列表，会保存到技能目录 (如 HEARTBEAT.md)"
+                    }
+                },
+                "required": ["source"]
+            }
+        },
         # === 自进化工具 ===
         {
             "name": "generate_skill",
@@ -306,13 +334,29 @@ class Agent:
         # === 定时任务工具 ===
         {
             "name": "schedule_task",
-            "description": "创建定时任务。支持三种类型：once(一次性)、interval(间隔)、cron(cron表达式)。"
-                           "任务会在指定时间自动执行，执行时会创建新的 Agent 会话来处理 prompt。",
+            "description": "创建定时任务或提醒。"
+                           "\n\n**⚠️ 重要: 任务类型判断规则**"
+                           "\n✅ **reminder** (默认优先): 所有只需要发送消息的提醒"
+                           "\n   - '提醒我喝水' → reminder"
+                           "\n   - '站立提醒' → reminder"
+                           "\n   - '叫我起床' → reminder"
+                           "\n   - '提醒开会' → reminder"
+                           "\n❌ **task** (仅当需要AI执行操作时):"
+                           "\n   - '查询天气告诉我' → task (需要查询)"
+                           "\n   - '截图发给我' → task (需要操作)"
+                           "\n   - '执行脚本' → task (需要执行)"
+                           "\n\n**90%的提醒都应该是 reminder 类型！只有需要AI主动执行操作的才是 task！**",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "任务名称"},
+                    "name": {"type": "string", "description": "任务/提醒名称"},
                     "description": {"type": "string", "description": "任务描述（用于理解任务目的）"},
+                    "task_type": {
+                        "type": "string",
+                        "enum": ["reminder", "task"],
+                        "default": "reminder",
+                        "description": "**默认使用 reminder！** reminder=发消息提醒用户，task=需要AI执行查询/操作"
+                    },
                     "trigger_type": {
                         "type": "string",
                         "enum": ["once", "interval", "cron"],
@@ -322,9 +366,16 @@ class Agent:
                         "type": "object",
                         "description": "触发配置。once: {run_at: '2026-02-01 10:00'}；interval: {interval_minutes: 30}；cron: {cron: '0 9 * * *'}"
                     },
-                    "prompt": {"type": "string", "description": "执行时发送给 Agent 的提示（任务内容）"}
+                    "reminder_message": {
+                        "type": "string",
+                        "description": "提醒消息内容（仅 reminder 类型需要，到时间会直接发送此消息）"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "执行时发送给 Agent 的提示（仅 task 类型需要，AI 会执行此指令）"
+                    }
                 },
-                "required": ["name", "description", "trigger_type", "trigger_config", "prompt"]
+                "required": ["name", "description", "task_type", "trigger_type", "trigger_config"]
             }
         },
         {
@@ -383,6 +434,72 @@ class Agent:
                 }
             }
         },
+        # === Thinking 模式控制 ===
+        {
+            "name": "enable_thinking",
+            "description": "控制深度思考模式。默认已启用 thinking 模式。"
+                           "如果遇到非常简单的任务（如：简单提醒、简单问候、快速查询），"
+                           "可以临时关闭以加快响应速度。完成后会自动恢复默认启用状态。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "是否启用 thinking 模式。true=启用深度思考，false=关闭"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "简要说明为什么需要（或不需要）开启 thinking 模式"
+                    }
+                },
+                "required": ["enabled", "reason"]
+            }
+        },
+        # === 用户档案工具 ===
+        {
+            "name": "update_user_profile",
+            "description": "更新用户档案信息。当用户告诉你关于他们的偏好、习惯、工作领域等信息时，"
+                           "使用此工具保存。这样你就能更好地了解用户，提供个性化服务。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "档案项键名: name(称呼), agent_role(Agent角色), work_field(工作领域), "
+                                       "preferred_language(编程语言), os(操作系统), ide(开发工具), "
+                                       "detail_level(详细程度), code_comment_lang(代码注释语言), "
+                                       "work_hours(工作时间), timezone(时区), confirm_preference(确认偏好)"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "用户提供的信息值"
+                    }
+                },
+                "required": ["key", "value"]
+            }
+        },
+        {
+            "name": "skip_profile_question",
+            "description": "当用户明确表示不想回答某个问题时，跳过该问题（以后不再询问）。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "要跳过的档案项键名"
+                    }
+                },
+                "required": ["key"]
+            }
+        },
+        {
+            "name": "get_user_profile",
+            "description": "获取当前用户档案信息摘要",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
     ]
     
     # 当前 IM 会话信息（由 chat_with_session 设置）
@@ -438,6 +555,9 @@ class Agent:
             memory_md_path=settings.memory_path,
             brain=self.brain,
         )
+        
+        # 用户档案管理器
+        self.profile_manager = get_profile_manager()
         
         # 动态工具列表（基础工具 + 技能工具）
         self._tools = list(self.BASE_TOOLS)
@@ -515,6 +635,325 @@ class Agent:
         # 基础工具已在 BASE_TOOLS 中定义
         # 这里可以添加动态生成的技能工具
         pass
+    
+    async def _install_skill(
+        self, 
+        source: str, 
+        name: Optional[str] = None,
+        subdir: Optional[str] = None,
+        extra_files: Optional[list[str]] = None
+    ) -> str:
+        """
+        安装技能到本地 skills/ 目录
+        
+        支持：
+        1. Git 仓库 URL (克隆并查找 SKILL.md)
+        2. 单个 SKILL.md 文件 URL (创建规范目录结构)
+        
+        Args:
+            source: Git 仓库 URL 或 SKILL.md 文件 URL
+            name: 技能名称 (可选)
+            subdir: Git 仓库中技能所在的子目录
+            extra_files: 额外文件 URL 列表
+        
+        Returns:
+            安装结果消息
+        """
+        import re
+        import yaml
+        import shutil
+        import tempfile
+        
+        skills_dir = settings.skills_path
+        
+        # 判断是 Git 仓库还是文件 URL
+        is_git = self._is_git_url(source)
+        
+        if is_git:
+            return await self._install_skill_from_git(source, name, subdir, skills_dir)
+        else:
+            return await self._install_skill_from_url(source, name, extra_files, skills_dir)
+    
+    def _is_git_url(self, url: str) -> bool:
+        """判断是否为 Git 仓库 URL"""
+        git_patterns = [
+            r'^git@',  # SSH
+            r'\.git$',  # 以 .git 结尾
+            r'^https?://github\.com/',
+            r'^https?://gitlab\.com/',
+            r'^https?://bitbucket\.org/',
+            r'^https?://gitee\.com/',
+        ]
+        for pattern in git_patterns:
+            if re.search(pattern, url):
+                return True
+        return False
+    
+    async def _install_skill_from_git(
+        self,
+        git_url: str,
+        name: Optional[str],
+        subdir: Optional[str],
+        skills_dir: Path
+    ) -> str:
+        """从 Git 仓库安装技能"""
+        import tempfile
+        import shutil
+        
+        temp_dir = None
+        try:
+            # 1. 克隆仓库到临时目录
+            temp_dir = Path(tempfile.mkdtemp(prefix="skill_install_"))
+            
+            # 执行 git clone
+            result = await self.shell_tool.run(
+                f'git clone --depth 1 "{git_url}" "{temp_dir}"'
+            )
+            
+            if not result.success:
+                return f"❌ Git 克隆失败:\n{result.output}"
+            
+            # 2. 查找 SKILL.md
+            search_dir = temp_dir / subdir if subdir else temp_dir
+            skill_md_path = self._find_skill_md(search_dir)
+            
+            if not skill_md_path:
+                # 列出可能的技能目录
+                possible = self._list_skill_candidates(temp_dir)
+                hint = ""
+                if possible:
+                    hint = f"\n\n可能的技能目录:\n" + "\n".join(f"- {p}" for p in possible[:5])
+                return f"❌ 未找到 SKILL.md 文件{hint}"
+            
+            skill_source_dir = skill_md_path.parent
+            
+            # 3. 解析技能元数据
+            skill_content = skill_md_path.read_text(encoding='utf-8')
+            extracted_name = self._extract_skill_name(skill_content)
+            skill_name = name or extracted_name or skill_source_dir.name
+            skill_name = self._normalize_skill_name(skill_name)
+            
+            # 4. 复制到 skills 目录
+            target_dir = skills_dir / skill_name
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            
+            shutil.copytree(skill_source_dir, target_dir)
+            
+            # 5. 确保有规范的目录结构
+            self._ensure_skill_structure(target_dir)
+            
+            # 6. 加载技能
+            installed_files = self._list_installed_files(target_dir)
+            try:
+                loaded = self.skill_loader.load_skill(target_dir)
+                if loaded:
+                    self._skill_catalog_text = self.skill_catalog.generate_catalog()
+                    logger.info(f"Skill installed from git: {skill_name}")
+            except Exception as e:
+                logger.error(f"Failed to load installed skill: {e}")
+            
+            return f"""✅ 技能从 Git 安装成功！
+
+**技能名称**: {skill_name}
+**来源**: {git_url}
+**安装路径**: {target_dir}
+
+**目录结构**:
+```
+{skill_name}/
+{self._format_tree(target_dir)}
+```
+
+技能已自动加载，可以使用:
+- `get_skill_info("{skill_name}")` 查看详细指令
+- `list_skills` 查看所有已安装技能"""
+            
+        except Exception as e:
+            logger.error(f"Failed to install skill from git: {e}")
+            return f"❌ Git 安装失败: {str(e)}"
+        finally:
+            # 清理临时目录
+            if temp_dir and temp_dir.exists():
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
+    
+    async def _install_skill_from_url(
+        self,
+        url: str,
+        name: Optional[str],
+        extra_files: Optional[list[str]],
+        skills_dir: Path
+    ) -> str:
+        """从 URL 安装技能"""
+        import httpx
+        
+        try:
+            # 1. 下载 SKILL.md
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                skill_content = response.text
+            
+            # 2. 提取技能名称
+            extracted_name = self._extract_skill_name(skill_content)
+            skill_name = name or extracted_name
+            
+            if not skill_name:
+                # 从 URL 提取
+                from urllib.parse import urlparse
+                path = urlparse(url).path
+                skill_name = path.split('/')[-1].replace('.md', '').replace('skill', '').strip('-_')
+            
+            skill_name = self._normalize_skill_name(skill_name or "custom-skill")
+            
+            # 3. 创建技能目录结构
+            skill_dir = skills_dir / skill_name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 4. 保存 SKILL.md
+            (skill_dir / "SKILL.md").write_text(skill_content, encoding='utf-8')
+            
+            # 5. 创建规范目录结构
+            self._ensure_skill_structure(skill_dir)
+            
+            installed_files = ["SKILL.md"]
+            
+            # 6. 下载额外文件
+            if extra_files:
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    for file_url in extra_files:
+                        try:
+                            from urllib.parse import urlparse
+                            file_name = urlparse(file_url).path.split('/')[-1]
+                            if not file_name:
+                                continue
+                            
+                            response = await client.get(file_url)
+                            response.raise_for_status()
+                            
+                            # 根据文件类型放到对应目录
+                            if file_name.endswith('.md'):
+                                dest = skill_dir / "references" / file_name
+                            elif file_name.endswith(('.py', '.sh', '.js')):
+                                dest = skill_dir / "scripts" / file_name
+                            else:
+                                dest = skill_dir / file_name
+                            
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            dest.write_text(response.text, encoding='utf-8')
+                            installed_files.append(str(dest.relative_to(skill_dir)))
+                        except Exception as e:
+                            logger.warning(f"Failed to download {file_url}: {e}")
+            
+            # 7. 加载技能
+            try:
+                loaded = self.skill_loader.load_skill(skill_dir)
+                if loaded:
+                    self._skill_catalog_text = self.skill_catalog.generate_catalog()
+                    logger.info(f"Skill installed from URL: {skill_name}")
+            except Exception as e:
+                logger.error(f"Failed to load installed skill: {e}")
+            
+            return f"""✅ 技能安装成功！
+
+**技能名称**: {skill_name}
+**安装路径**: {skill_dir}
+
+**目录结构**:
+```
+{skill_name}/
+{self._format_tree(skill_dir)}
+```
+
+**安装文件**: {', '.join(installed_files)}
+
+技能已自动加载，可以使用:
+- `get_skill_info("{skill_name}")` 查看详细指令
+- `list_skills` 查看所有已安装技能"""
+            
+        except Exception as e:
+            logger.error(f"Failed to install skill from URL: {e}")
+            return f"❌ URL 安装失败: {str(e)}"
+    
+    def _extract_skill_name(self, content: str) -> Optional[str]:
+        """从 SKILL.md 内容提取技能名称"""
+        import re
+        import yaml
+        
+        match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+        if match:
+            try:
+                metadata = yaml.safe_load(match.group(1))
+                return metadata.get('name')
+            except:
+                pass
+        return None
+    
+    def _normalize_skill_name(self, name: str) -> str:
+        """标准化技能名称"""
+        import re
+        name = name.lower().replace('_', '-').replace(' ', '-')
+        name = re.sub(r'[^a-z0-9-]', '', name)
+        name = re.sub(r'-+', '-', name).strip('-')
+        return name or "custom-skill"
+    
+    def _find_skill_md(self, search_dir: Path) -> Optional[Path]:
+        """在目录中查找 SKILL.md"""
+        # 先检查当前目录
+        skill_md = search_dir / "SKILL.md"
+        if skill_md.exists():
+            return skill_md
+        
+        # 递归查找
+        for path in search_dir.rglob("SKILL.md"):
+            return path
+        
+        return None
+    
+    def _list_skill_candidates(self, base_dir: Path) -> list[str]:
+        """列出可能包含技能的目录"""
+        candidates = []
+        for path in base_dir.rglob("*.md"):
+            if path.name.lower() in ("skill.md", "readme.md"):
+                rel_path = path.parent.relative_to(base_dir)
+                if str(rel_path) != ".":
+                    candidates.append(str(rel_path))
+        return candidates
+    
+    def _ensure_skill_structure(self, skill_dir: Path) -> None:
+        """确保技能目录有规范结构"""
+        (skill_dir / "scripts").mkdir(exist_ok=True)
+        (skill_dir / "references").mkdir(exist_ok=True)
+        (skill_dir / "assets").mkdir(exist_ok=True)
+    
+    def _list_installed_files(self, skill_dir: Path) -> list[str]:
+        """列出已安装的文件"""
+        files = []
+        for path in skill_dir.rglob("*"):
+            if path.is_file():
+                files.append(str(path.relative_to(skill_dir)))
+        return files
+    
+    def _format_tree(self, directory: Path, prefix: str = "") -> str:
+        """格式化目录树"""
+        lines = []
+        items = sorted(directory.iterdir(), key=lambda x: (x.is_file(), x.name))
+        
+        for i, item in enumerate(items):
+            is_last = i == len(items) - 1
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{item.name}")
+            
+            if item.is_dir():
+                extension = "    " if is_last else "│   "
+                sub_tree = self._format_tree(item, prefix + extension)
+                if sub_tree:
+                    lines.append(sub_tree)
+        
+        return "\n".join(lines)
     
     async def _load_mcp_servers(self) -> None:
         """
@@ -599,6 +1038,7 @@ class Agent:
         - MCP: server + tool name + description 在系统提示中
         - Memory: 相关记忆按需注入
         - Tools: 从 BASE_TOOLS 动态生成
+        - User Profile: 首次引导或日常询问
         
         Args:
             base_prompt: 基础提示词 (身份信息)
@@ -619,6 +1059,13 @@ class Agent:
         # 动态生成工具列表
         tools_text = self._generate_tools_text()
         
+        # 用户档案收集提示 (首次引导或日常询问)
+        profile_prompt = ""
+        if self.profile_manager.is_first_use():
+            profile_prompt = self.profile_manager.get_onboarding_prompt()
+        else:
+            profile_prompt = self.profile_manager.get_daily_question_prompt()
+        
         return f"""{base_prompt}
 {skill_catalog}
 {mcp_catalog}
@@ -627,6 +1074,13 @@ class Agent:
 {tools_text}
 
 ## 重要提示
+
+### 深度思考模式 (Thinking Mode)
+
+**默认启用 thinking 模式**，这样可以保证回答质量。
+
+如果遇到非常简单的任务（如：简单问候、快速提醒），可以调用 `enable_thinking(enabled=false)` 临时关闭以加快响应。
+大多数情况下保持默认启用即可，不需要主动管理。
 
 ### 工具调用
 - 工具直接使用工具名调用，不需要任何前缀
@@ -639,22 +1093,46 @@ class Agent:
 **禁止只回复"好的，我会提醒你"这样的文字！那样任务不会被创建！**
 **只有调用了 schedule_task 工具，任务才会真正被调度执行！**
 
+**⚠️ 任务类型判断 (task_type) - 这是最重要的决策！**
+
+**默认使用 reminder！除非明确需要AI执行操作才用 task！**
+
+✅ **reminder** (90%的情况都是这个!):
+- 只需要到时间发一条消息提醒用户
+- 例子: "提醒我喝水"、"叫我起床"、"站立提醒"、"开会提醒"、"午睡提醒"
+- 特点: 用户说"提醒我xxx"、"叫我xxx"、"通知我xxx"
+
+❌ **task** (仅10%的特殊情况):
+- 需要AI在触发时执行查询、操作、截图等
+- 例子: "查天气告诉我"、"截图发给我"、"执行脚本"、"帮我发消息给别人"
+- 特点: 用户说"帮我做xxx"、"执行xxx"、"查询xxx"
+
+**创建任务后，必须明确告知用户**:
+- reminder: "好的，到时间我会提醒你：[提醒内容]" (只发一条消息)
+- task: "好的，到时间我会自动执行：[任务内容]" (AI会运行并汇报结果)
+
 调用 schedule_task 时的参数:
 
-1. **一次性提醒** (如 "5分钟后提醒我吃饭"):
-   - name: "吃饭提醒"
-   - description: "提醒用户吃饭"
+1. **简单提醒** (task_type="reminder"):
+   - name: "喝水提醒"
+   - description: "提醒用户喝水"
+   - task_type: "reminder"
    - trigger_type: "once"
-   - trigger_config: 包含 run_at，格式 "YYYY-MM-DD HH:MM"（根据当前时间计算）
-   - prompt: "提醒用户：该吃饭啦！"
+   - trigger_config: {{"run_at": "2026-02-01 10:00"}}
+   - reminder_message: "⏰ 该喝水啦！记得保持水分摄入哦~"
 
-2. **重复提醒** (如 "每3分钟提醒我站起来"):
-   - trigger_type: "interval"
-   - trigger_config: 包含 interval_minutes（间隔分钟数）
-
-3. **定时任务** (如 "每天早上9点提醒我"):
+2. **复杂任务** (task_type="task"):
+   - name: "每日天气查询"
+   - description: "查询今日天气并告知用户"
+   - task_type: "task"
    - trigger_type: "cron"
-   - trigger_config: 包含 cron 表达式（如 "0 9 * * *"）
+   - trigger_config: {{"cron": "0 8 * * *"}}
+   - prompt: "查询今天的天气，并以友好的方式告诉用户"
+
+**触发类型**:
+- once: 一次性，trigger_config 包含 run_at
+- interval: 间隔执行，trigger_config 包含 interval_minutes
+- cron: 定时执行，trigger_config 包含 cron 表达式
 
 **再次强调：收到提醒请求时，第一反应就是调用 schedule_task 工具！**
 
@@ -671,7 +1149,36 @@ class Agent:
 2. 用户明确表达偏好时
 3. 解决了一个难题时
 4. 犯错后找到正确方法时
-"""
+
+### 记忆使用原则 (重要!)
+**上下文优先**：当前对话内容永远优先于记忆中的信息。
+
+**不要让记忆主导对话**：
+- ❌ 错误：用户说"你好" → 回复"你好！关于之前 Moltbook 技能的事情，你想怎么处理？"
+- ✅ 正确：用户说"你好" → 回复"你好！有什么可以帮你的？"（记忆中的事情等用户主动提起或真正相关时再说）
+
+**记忆提及方式**：
+- 如果记忆与当前话题高度相关，可以**简短**提一句，但不要作为回复的主体
+- 不要让用户感觉你在"接着上次说"——每次对话都是新鲜的开始
+- 例如：处理完用户当前请求后，可以在结尾轻轻带一句"对了，之前xxx的事情需要我继续处理吗？"
+
+### 诚实原则 (极其重要!!!)
+**绝对禁止编造不存在的功能或进度！**
+
+❌ **严禁以下行为**：
+- 声称"正在运行"、"已完成"但实际没有创建任何文件/脚本
+- 在回复中贴一段代码假装在执行，但实际没有调用任何工具
+- 声称"每X秒监控"但没有创建对应的定时任务
+- 承诺"5分钟内完成"但根本没有开始执行
+
+✅ **正确做法**：
+- 如果需要创建脚本，必须调用 write_file 工具实际写入
+- 如果需要定时任务，必须调用 schedule_task 工具实际创建
+- 如果做不到，诚实告知"这个功能我目前无法实现，原因是..."
+- 如果需要时间开发，先实际开发完成，再告诉用户结果
+
+**用户信任比看起来厉害更重要！宁可说"我做不到"也不要骗人！**
+{profile_prompt}"""
     
     def _generate_tools_text(self) -> str:
         """
@@ -1022,11 +1529,35 @@ class Agent:
                         "content": content,
                     })
             
-            # 添加当前用户消息
-            messages.append({
-                "role": "user",
-                "content": message,
-            })
+            # 添加当前用户消息（支持多模态：文本 + 图片）
+            pending_images = session.get_metadata("pending_images") if session else None
+            
+            if pending_images:
+                # 多模态消息：文本 + 图片
+                content_parts = []
+                
+                # 添加文本部分
+                if message.strip():
+                    content_parts.append({
+                        "type": "text",
+                        "text": message,
+                    })
+                
+                # 添加图片部分
+                for img_data in pending_images:
+                    content_parts.append(img_data)
+                
+                messages.append({
+                    "role": "user",
+                    "content": content_parts,
+                })
+                logger.info(f"[Session:{session_id}] Multimodal message with {len(pending_images)} images")
+            else:
+                # 普通文本消息
+                messages.append({
+                    "role": "user",
+                    "content": message,
+                })
             
             # 压缩上下文（如果需要）
             messages = await self._compress_context(messages)
@@ -1346,6 +1877,15 @@ class Agent:
                 else:
                     return f"❌ 未找到参考文档: {skill_name}/{ref_name}"
             
+            elif tool_name == "install_skill":
+                source = tool_input["source"]
+                name = tool_input.get("name")
+                subdir = tool_input.get("subdir")
+                extra_files = tool_input.get("extra_files", [])
+                
+                result = await self._install_skill(source, name, subdir, extra_files)
+                return result
+            
             # === 自进化工具 ===
             elif tool_name == "generate_skill":
                 description = tool_input["description"]
@@ -1497,8 +2037,10 @@ class Agent:
                     return "❌ 定时任务调度器未启动"
                 
                 from ..scheduler import ScheduledTask, TriggerType
+                from ..scheduler.task import TaskType
                 
                 trigger_type = TriggerType(tool_input["trigger_type"])
+                task_type = TaskType(tool_input.get("task_type", "task"))
                 
                 # 获取当前 IM 会话信息（如果有）
                 channel_id = None
@@ -1516,7 +2058,9 @@ class Agent:
                     description=tool_input["description"],
                     trigger_type=trigger_type,
                     trigger_config=tool_input["trigger_config"],
-                    prompt=tool_input["prompt"],
+                    task_type=task_type,
+                    reminder_message=tool_input.get("reminder_message"),
+                    prompt=tool_input.get("prompt", ""),
                     user_id=user_id,
                     channel_id=channel_id,
                     chat_id=chat_id,
@@ -1525,19 +2069,23 @@ class Agent:
                 task_id = await self.task_scheduler.add_task(task)
                 next_run = task.next_run.strftime('%Y-%m-%d %H:%M:%S') if task.next_run else '待计算'
                 
+                # 任务类型显示
+                type_display = "📝 简单提醒" if task_type == TaskType.REMINDER else "🔧 复杂任务"
+                
                 # 控制台输出任务创建信息
                 print(f"\n📅 定时任务已创建:")
                 print(f"   ID: {task_id}")
                 print(f"   名称: {task.name}")
-                print(f"   类型: {task.trigger_type.value}")
+                print(f"   类型: {type_display}")
+                print(f"   触发: {task.trigger_type.value}")
                 print(f"   下次执行: {next_run}")
                 if channel_id and chat_id:
                     print(f"   通知渠道: {channel_id}/{chat_id}")
                 print()
                 
-                logger.info(f"Created scheduled task: {task_id} ({task.name}), next run: {next_run}")
+                logger.info(f"Created scheduled task: {task_id} ({task.name}), type={task_type.value}, next run: {next_run}")
                 
-                return f"✅ 定时任务已创建\n- ID: {task_id}\n- 名称: {task.name}\n- 下次执行: {next_run}"
+                return f"✅ 已创建{type_display}\n- ID: {task_id}\n- 名称: {task.name}\n- 下次执行: {next_run}"
             
             elif tool_name == "list_scheduled_tasks":
                 if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
@@ -1582,6 +2130,44 @@ class Agent:
                     return f"✅ 任务已触发执行，状态: {status}\n结果: {execution.result or execution.error or 'N/A'}"
                 else:
                     return f"❌ 任务 {task_id} 不存在"
+            
+            # === Thinking 模式控制 ===
+            elif tool_name == "enable_thinking":
+                enabled = tool_input["enabled"]
+                reason = tool_input.get("reason", "")
+                
+                self.brain.set_thinking_mode(enabled)
+                
+                if enabled:
+                    logger.info(f"Thinking mode enabled by LLM: {reason}")
+                    return f"✅ 已启用深度思考模式。原因: {reason}\n后续回复将使用更强的推理能力。"
+                else:
+                    logger.info(f"Thinking mode disabled by LLM: {reason}")
+                    return f"✅ 已关闭深度思考模式。原因: {reason}\n将使用快速响应模式。"
+            
+            # === 用户档案工具 ===
+            elif tool_name == "update_user_profile":
+                key = tool_input["key"]
+                value = tool_input["value"]
+                
+                available_keys = self.profile_manager.get_available_keys()
+                if key not in available_keys:
+                    return f"❌ 未知的档案项: {key}\n可用的键: {', '.join(available_keys)}"
+                
+                success = self.profile_manager.update_profile(key, value)
+                if success:
+                    return f"✅ 已更新用户档案: {key} = {value}"
+                else:
+                    return f"❌ 更新失败: {key}"
+            
+            elif tool_name == "skip_profile_question":
+                key = tool_input["key"]
+                self.profile_manager.skip_question(key)
+                return f"✅ 已跳过问题: {key}"
+            
+            elif tool_name == "get_user_profile":
+                summary = self.profile_manager.get_profile_summary()
+                return summary
             
             # === IM 通道工具 ===
             elif tool_name == "send_to_chat":

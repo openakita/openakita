@@ -66,6 +66,10 @@ class Brain:
     # 主端点恢复检查间隔（秒）
     RECOVERY_CHECK_INTERVAL = 60
     
+    # Thinking 模式由 LLM 自主决策，不使用关键词判断
+    # 默认启用 thinking（提高回答质量）
+    # LLM 可以通过 enable_thinking 工具主动关闭
+    
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -235,6 +239,9 @@ class Brain:
         self.api_key = ep.api_key
         self.base_url = ep.base_url
         self.model = ep.model
+        # 保存原始 thinking 模型名
+        self._thinking_model = ep.model
+        self._fast_model = settings.fast_model
         # client 属性保持 Anthropic 客户端兼容（如果当前端点是 OpenAI，则使用第一个 Anthropic 客户端）
         if ep.client_type == "anthropic" and ep.name in self._anthropic_clients:
             self.client = self._anthropic_clients[ep.name]
@@ -242,6 +249,28 @@ class Brain:
             self.client = list(self._anthropic_clients.values())[0]
         else:
             self.client = None
+    
+    def set_thinking_mode(self, enabled: bool) -> None:
+        """
+        设置 thinking 模式（由 LLM 主动调用）
+        
+        Args:
+            enabled: 是否启用 thinking 模式
+        """
+        self._thinking_enabled = enabled
+        logger.info(f"Thinking mode {'enabled' if enabled else 'disabled'} by LLM decision")
+    
+    def is_thinking_enabled(self) -> bool:
+        """检查 thinking 模式是否启用"""
+        # 检查配置强制设置
+        thinking_mode = settings.thinking_mode
+        if thinking_mode == "always":
+            return True
+        if thinking_mode == "never":
+            return False
+        
+        # auto 模式: 由 LLM 决定，默认启用
+        return getattr(self, '_thinking_enabled', True)
     
     def _get_healthy_endpoint(self) -> Optional[LLMEndpoint]:
         """获取健康的端点"""
@@ -324,7 +353,7 @@ class Brain:
             "healthy": ep.healthy,
         }
     
-    def messages_create(self, **kwargs) -> Message:
+    def messages_create(self, use_thinking: bool = None, **kwargs) -> Message:
         """
         同步调用 LLM API（带故障切换）
         
@@ -339,6 +368,7 @@ class Brain:
         4. 主端点恢复后才切回
         
         Args:
+            use_thinking: 是否使用 thinking 模式（None=检查 LLM 设置）
             **kwargs: 传递给 messages.create 的参数（Anthropic 格式）
         
         Returns:
@@ -349,6 +379,10 @@ class Brain:
         
         # 检查是否应该尝试恢复主端点
         self._maybe_recover_primary()
+        
+        # 检查是否使用 thinking（由 LLM 决定，默认不启用）
+        if use_thinking is None:
+            use_thinking = self.is_thinking_enabled()
         
         # 从当前端点开始尝试
         start_idx = self._current_endpoint_idx
@@ -362,10 +396,11 @@ class Brain:
             endpoint = self._endpoints[idx]
             
             try:
-                logger.info(f"Sending request to {endpoint.name} ({endpoint.model})")
+                thinking_status = "thinking" if use_thinking else "fast"
+                logger.info(f"Sending request to {endpoint.name} ({endpoint.model}) [{thinking_status}]")
                 
                 if endpoint.client_type == "openai":
-                    response = self._call_openai_endpoint(endpoint, kwargs)
+                    response = self._call_openai_endpoint(endpoint, kwargs, use_thinking=use_thinking)
                 else:
                     response = self._call_anthropic_endpoint(endpoint, kwargs)
                 
@@ -399,11 +434,16 @@ class Brain:
         request_kwargs["model"] = endpoint.model
         return client.messages.create(**request_kwargs)
     
-    def _call_openai_endpoint(self, endpoint: LLMEndpoint, kwargs: dict) -> Message:
+    def _call_openai_endpoint(self, endpoint: LLMEndpoint, kwargs: dict, use_thinking: bool = True) -> Message:
         """
         调用 OpenAI 格式的端点（如阿里 DashScope）
         
         将 Anthropic 格式转换为 OpenAI 格式，然后将响应转回 Anthropic Message 格式
+        
+        Args:
+            endpoint: 端点配置
+            kwargs: 请求参数
+            use_thinking: 是否启用 thinking 模式
         """
         client = self._openai_clients[endpoint.name]
         
@@ -447,15 +487,18 @@ class Brain:
                 "content": content
             })
         
-        # 调用 OpenAI API（启用 thinking 模式）
+        # 调用 OpenAI API
         max_tokens = kwargs.get("max_tokens", 4096)
+        
+        # 根据 use_thinking 参数决定是否启用 thinking
+        extra_body = {"enable_thinking": use_thinking} if use_thinking else {}
         
         response = client.chat.completions.create(
             model=endpoint.model,
             messages=openai_messages,
             max_tokens=max_tokens,
-            # Qwen3 支持 enable_thinking 参数
-            extra_body={"enable_thinking": True}
+            # Qwen3 支持 enable_thinking 参数，仅在需要时启用
+            extra_body=extra_body if extra_body else None
         )
         
         # 转换响应: OpenAI -> Anthropic Message 格式

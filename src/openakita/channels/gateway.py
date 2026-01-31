@@ -4,17 +4,21 @@
 统一消息入口/出口:
 - 消息路由
 - 会话管理集成
-- 媒体预处理
+- 媒体预处理（图片、语音）
 - Agent 调用
 """
 
 import asyncio
 import logging
+import base64
+import httpx
+from pathlib import Path
 from typing import Optional, Callable, Awaitable, Any
 
-from .types import UnifiedMessage, OutgoingMessage, MessageContent
+from .types import UnifiedMessage, OutgoingMessage, MessageContent, MediaFile
 from .base import ChannelAdapter
 from ..sessions import SessionManager, Session
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -172,14 +176,17 @@ class MessageGateway:
             for hook in self._pre_process_hooks:
                 message = await hook(message)
             
-            # 3. 获取或创建会话
+            # 3. 媒体预处理（下载图片、语音转文字）
+            await self._preprocess_media(message)
+            
+            # 4. 获取或创建会话
             session = self.session_manager.get_session(
                 channel=message.channel,
                 chat_id=message.chat_id,
                 user_id=message.user_id,
             )
             
-            # 4. 记录消息到会话
+            # 5. 记录消息到会话
             session.add_message(
                 role="user",
                 content=message.plain_text,
@@ -187,20 +194,20 @@ class MessageGateway:
                 channel_message_id=message.channel_message_id,
             )
             
-            # 5. 调用 Agent 处理（期间持续发送 typing 状态）
+            # 6. 调用 Agent 处理（期间持续发送 typing 状态）
             response_text = await self._call_agent_with_typing(session, message)
             
-            # 6. 后处理钩子
+            # 7. 后处理钩子
             for hook in self._post_process_hooks:
                 response_text = await hook(message, response_text)
             
-            # 7. 记录响应到会话
+            # 8. 记录响应到会话
             session.add_message(
                 role="assistant",
                 content=response_text,
             )
             
-            # 8. 发送响应
+            # 9. 发送响应
             await self._send_response(message, response_text)
             
         except Exception as e:
@@ -208,6 +215,91 @@ class MessageGateway:
             # 发送错误提示
             await self._send_error(message, str(e))
     
+    async def _preprocess_media(self, message: UnifiedMessage) -> None:
+        """
+        预处理媒体文件（下载图片、语音转文字）
+        """
+        adapter = self._adapters.get(message.channel)
+        if not adapter:
+            return
+        
+        # 处理语音消息 - 下载并转文字
+        for voice in message.content.voices:
+            if voice.transcription:
+                continue  # 已有转写结果
+            
+            try:
+                # 下载语音文件
+                if not voice.local_path:
+                    local_path = await adapter.download_media(voice)
+                    voice.local_path = str(local_path)
+                
+                # 语音转文字
+                transcription = await self._transcribe_voice(voice.local_path)
+                if transcription:
+                    voice.transcription = transcription
+                    logger.info(f"Voice transcribed: {transcription[:50]}...")
+                else:
+                    voice.transcription = "[语音转文字失败]"
+                    
+            except Exception as e:
+                logger.error(f"Failed to process voice: {e}")
+                voice.transcription = f"[语音处理失败: {e}]"
+        
+        # 处理图片消息 - 下载并准备多模态输入
+        for img in message.content.images:
+            try:
+                # 下载图片文件
+                if not img.local_path:
+                    local_path = await adapter.download_media(img)
+                    img.local_path = str(local_path)
+                
+                # 生成图片描述（可选：用 LLM 描述图片）
+                # 这里暂时只标记已下载，实际多模态处理在 _call_agent 中
+                logger.info(f"Image downloaded: {img.local_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to process image: {e}")
+                img.description = f"[图片处理失败: {e}]"
+    
+    async def _transcribe_voice(self, audio_path: str) -> Optional[str]:
+        """
+        语音转文字（使用 OpenAI Whisper API）
+        """
+        try:
+            # 检查是否配置了 OpenAI API
+            openai_key = settings.openai_api_key
+            if not openai_key:
+                logger.warning("OpenAI API key not configured, voice transcription disabled")
+                return None
+            
+            # 读取音频文件
+            audio_path = Path(audio_path)
+            if not audio_path.exists():
+                logger.error(f"Audio file not found: {audio_path}")
+                return None
+            
+            # 调用 Whisper API
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                with open(audio_path, "rb") as f:
+                    response = await client.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {openai_key}"},
+                        files={"file": (audio_path.name, f, "audio/ogg")},
+                        data={"model": "whisper-1", "language": "zh"},
+                    )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return result.get("text", "")
+                else:
+                    logger.error(f"Whisper API error: {response.status_code} - {response.text}")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"Voice transcription failed: {e}")
+            return None
+
     async def _send_typing(self, message: UnifiedMessage) -> None:
         """发送正在输入状态"""
         adapter = self._adapters.get(message.channel)
@@ -247,17 +339,47 @@ class MessageGateway:
     
     async def _call_agent(self, session: Session, message: UnifiedMessage) -> str:
         """
-        调用 Agent 处理消息
+        调用 Agent 处理消息（支持多模态）
         """
         if not self.agent_handler:
             return "Agent handler not configured"
         
         try:
-            # 获取纯文本输入
+            # 构建输入（文本 + 图片）
             input_text = message.plain_text
+            
+            # 检查是否有图片需要多模态处理
+            images_data = []
+            for img in message.content.images:
+                if img.local_path and Path(img.local_path).exists():
+                    try:
+                        with open(img.local_path, "rb") as f:
+                            image_data = base64.b64encode(f.read()).decode("utf-8")
+                            images_data.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": img.mime_type or "image/jpeg",
+                                    "data": image_data,
+                                }
+                            })
+                    except Exception as e:
+                        logger.error(f"Failed to read image: {e}")
+            
+            # 如果有图片，构建多模态输入
+            if images_data:
+                # 存储图片数据到 session，供 Agent 使用
+                session.set_metadata("pending_images", images_data)
+                if not input_text.strip():
+                    input_text = "[用户发送了图片]"
+                logger.info(f"Processing multimodal message with {len(images_data)} images")
             
             # 调用 Agent
             response = await self.agent_handler(session, input_text)
+            
+            # 清除图片数据
+            session.set_metadata("pending_images", None)
+            
             return response
             
         except Exception as e:

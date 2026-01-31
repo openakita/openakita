@@ -27,6 +27,24 @@ class Settings(BaseSettings):
     max_iterations: int = Field(default=100, description="Ralph 循环最大迭代次数")
     auto_confirm: bool = Field(default=False, description="是否自动确认危险操作")
     
+    # Thinking 模式配置
+    thinking_mode: str = Field(
+        default="auto",
+        description="Thinking 模式: auto(自动判断), always(始终启用), never(从不启用)"
+    )
+    thinking_keywords: list = Field(
+        default_factory=lambda: [
+            "分析", "推理", "思考", "评估", "比较", "规划", "设计",
+            "架构", "优化", "debug", "调试", "复杂", "困难",
+            "analyze", "reason", "think", "evaluate", "compare", "plan", "design"
+        ],
+        description="触发 thinking 模式的关键词"
+    )
+    fast_model: str = Field(
+        default="claude-sonnet-4-20250514",
+        description="快速模型（不使用 thinking）"
+    )
+    
     # 路径配置
     project_root: Path = Field(
         default_factory=lambda: Path.cwd(),
@@ -40,6 +58,9 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str = Field(default="", description="GitHub Token")
     
+    # OpenAI (用于语音转文字 Whisper API)
+    openai_api_key: str = Field(default="", description="OpenAI API Key (用于 Whisper 语音转文字)")
+    
     # === 调度器配置 ===
     scheduler_enabled: bool = Field(default=True, description="是否启用定时任务调度器")
     scheduler_timezone: str = Field(default="Asia/Shanghai", description="调度器时区")
@@ -50,6 +71,8 @@ class Settings(BaseSettings):
     telegram_enabled: bool = Field(default=False, description="是否启用 Telegram")
     telegram_bot_token: str = Field(default="", description="Telegram Bot Token")
     telegram_webhook_url: str = Field(default="", description="Telegram Webhook URL")
+    telegram_pairing_code: str = Field(default="", description="Telegram 配对码（留空则自动生成）")
+    telegram_require_pairing: bool = Field(default=True, description="是否需要配对验证")
     
     # 飞书
     feishu_enabled: bool = Field(default=False, description="是否启用飞书")

@@ -133,6 +133,8 @@ async def start_im_channels(agent_or_master):
                 bot_token=settings.telegram_bot_token,
                 webhook_url=settings.telegram_webhook_url or None,
                 media_dir=settings.project_root / "data" / "media" / "telegram",
+                pairing_code=settings.telegram_pairing_code or None,
+                require_pairing=settings.telegram_require_pairing,
             )
             await _message_gateway.register_adapter(telegram)
             adapters_started.append("telegram")

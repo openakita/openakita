@@ -21,6 +21,12 @@ class TriggerType(Enum):
     CRON = "cron"           # Cron 表达式
 
 
+class TaskType(Enum):
+    """任务类型"""
+    REMINDER = "reminder"   # 简单提醒（到时间直接发送消息，不需要 LLM 处理）
+    TASK = "task"           # 复杂任务（需要 LLM 执行，会发送开始/结束通知）
+
+
 class TaskStatus(Enum):
     """任务状态"""
     PENDING = "pending"       # 等待首次执行
@@ -92,6 +98,10 @@ class ScheduledTask:
     定时任务
     
     表示一个可调度的任务
+    
+    任务类型 (task_type):
+    - REMINDER: 简单提醒，到时间直接发送 reminder_message
+    - TASK: 复杂任务，需要 LLM 执行 prompt，会发送开始/结束通知
     """
     id: str
     name: str
@@ -101,8 +111,12 @@ class ScheduledTask:
     trigger_type: TriggerType
     trigger_config: dict           # 触发器配置
     
+    # 任务类型配置
+    task_type: TaskType = TaskType.TASK  # 任务类型: reminder/task
+    reminder_message: Optional[str] = None  # 简单提醒的消息内容（仅 REMINDER 类型使用）
+    
     # 执行内容
-    prompt: str                    # 发送给 Agent 的 prompt
+    prompt: str = ""               # 发送给 Agent 的 prompt（仅 TASK 类型使用）
     script_path: Optional[str] = None  # 预置脚本路径
     
     # 通知配置
@@ -135,6 +149,8 @@ class ScheduledTask:
         trigger_type: TriggerType,
         trigger_config: dict,
         prompt: str,
+        task_type: TaskType = TaskType.TASK,
+        reminder_message: Optional[str] = None,
         user_id: Optional[str] = None,
         **kwargs,
     ) -> "ScheduledTask":
@@ -145,8 +161,39 @@ class ScheduledTask:
             description=description,
             trigger_type=trigger_type,
             trigger_config=trigger_config,
+            task_type=task_type,
+            reminder_message=reminder_message,
             prompt=prompt,
             user_id=user_id,
+            **kwargs,
+        )
+    
+    @classmethod
+    def create_reminder(
+        cls,
+        name: str,
+        description: str,
+        run_at: datetime,
+        message: str,
+        **kwargs,
+    ) -> "ScheduledTask":
+        """
+        创建简单提醒任务
+        
+        Args:
+            name: 提醒名称
+            description: 提醒描述
+            run_at: 提醒时间
+            message: 要发送的提醒消息
+        """
+        return cls.create(
+            name=name,
+            description=description,
+            trigger_type=TriggerType.ONCE,
+            trigger_config={"run_at": run_at.isoformat()},
+            prompt="",  # 简单提醒不需要 prompt
+            task_type=TaskType.REMINDER,
+            reminder_message=message,
             **kwargs,
         )
     
@@ -267,6 +314,11 @@ class ScheduledTask:
         """是否一次性任务"""
         return self.trigger_type == TriggerType.ONCE
     
+    @property
+    def is_reminder(self) -> bool:
+        """是否是简单提醒任务"""
+        return self.task_type == TaskType.REMINDER
+    
     def to_dict(self) -> dict:
         """序列化"""
         return {
@@ -275,6 +327,8 @@ class ScheduledTask:
             "description": self.description,
             "trigger_type": self.trigger_type.value,
             "trigger_config": self.trigger_config,
+            "task_type": self.task_type.value,
+            "reminder_message": self.reminder_message,
             "prompt": self.prompt,
             "script_path": self.script_path,
             "channel_id": self.channel_id,
@@ -300,7 +354,9 @@ class ScheduledTask:
             description=data["description"],
             trigger_type=TriggerType(data["trigger_type"]),
             trigger_config=data["trigger_config"],
-            prompt=data["prompt"],
+            task_type=TaskType(data.get("task_type", "task")),
+            reminder_message=data.get("reminder_message"),
+            prompt=data.get("prompt", ""),
             script_path=data.get("script_path"),
             channel_id=data.get("channel_id"),
             chat_id=data.get("chat_id"),

@@ -185,6 +185,16 @@ class Session:
         """关闭会话"""
         self.state = SessionState.CLOSED
     
+    # ==================== 元数据管理 ====================
+    
+    def set_metadata(self, key: str, value: Any) -> None:
+        """设置元数据"""
+        self.metadata[key] = value
+    
+    def get_metadata(self, key: str, default: Any = None) -> Any:
+        """获取元数据"""
+        return self.metadata.get(key, default)
+    
     # ==================== 任务管理 ====================
     
     def set_task(self, task_id: str, description: str) -> None:
