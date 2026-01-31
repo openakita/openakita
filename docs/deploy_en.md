@@ -507,7 +507,7 @@ pyenv local 3.11.8
 ### Q: pip install failed?
 
 ```bash
-# Use mirror (China)
+# Use mirror for faster download
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Or configure permanent mirror

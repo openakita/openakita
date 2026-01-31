@@ -75,7 +75,7 @@ OpenAkita 不只是一个工具 — 它是一个记住你、理解你、与你�
 ### 前置要求
 
 - Python 3.11 或更高版本
-- LLM API 密钥（Anthropic、OpenAI 兼容接口、或国产模型）
+- LLM API 密钥（Anthropic、OpenAI 兼容接口、或其他模型）
 
 ### 推荐模型
 
@@ -116,7 +116,7 @@ cp .env.example .env
 # 必需
 ANTHROPIC_API_KEY=你的API密钥
 
-# 可选：自定义 API 端点（国内用户推荐使用代理）
+# 可选：自定义 API 端点
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 
 # 可选：模型选择

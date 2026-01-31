@@ -536,7 +536,7 @@ pyenv local 3.11.8
 ### Q: pip 安装失败？
 
 ```bash
-# 使用国内镜像
+# 使用镜像源加速
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 或配置永久镜像
