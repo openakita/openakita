@@ -304,7 +304,7 @@ class MemoryConsolidator:
     
     def cleanup_old_history(self, days: int = 30) -> int:
         """
-        清理旧的对话历史文件
+        清理旧的对话历史文件（按天数）
         
         保留摘要和记忆，删除原始对话
         """
@@ -319,3 +319,86 @@ class MemoryConsolidator:
                 logger.info(f"Deleted old history file: {file.name}")
         
         return deleted
+    
+    # ==================== 容量限制清理 ====================
+    
+    # 配置常量
+    MAX_HISTORY_DAYS = 30       # 最多保留 30 天
+    MAX_HISTORY_FILES = 1000    # 最多保留 1000 个文件
+    MAX_HISTORY_SIZE_MB = 500   # 最多占用 500MB
+    
+    def cleanup_history(self) -> dict:
+        """
+        清理历史对话，防止磁盘爆炸
+        
+        策略（按优先级）:
+        1. 删除超过 MAX_HISTORY_DAYS 天的文件
+        2. 如果文件数超过 MAX_HISTORY_FILES，删除最旧的
+        3. 如果总大小超过 MAX_HISTORY_SIZE_MB，删除最旧的
+        
+        Returns:
+            清理统计 {"by_age": n, "by_count": n, "by_size": n}
+        """
+        deleted = {"by_age": 0, "by_count": 0, "by_size": 0}
+        
+        # 1. 按天数清理
+        deleted["by_age"] = self.cleanup_old_history(days=self.MAX_HISTORY_DAYS)
+        
+        # 获取所有历史文件，按修改时间排序（最旧的在前）
+        files = sorted(
+            list(self.history_dir.glob("*.jsonl")),
+            key=lambda f: f.stat().st_mtime
+        )
+        
+        # 2. 按文件数清理
+        if len(files) > self.MAX_HISTORY_FILES:
+            to_delete = files[:len(files) - self.MAX_HISTORY_FILES]
+            for f in to_delete:
+                try:
+                    f.unlink()
+                    deleted["by_count"] += 1
+                    logger.debug(f"Deleted history file (by count): {f.name}")
+                except Exception as e:
+                    logger.error(f"Failed to delete {f.name}: {e}")
+            
+            # 更新文件列表
+            files = files[len(to_delete):]
+        
+        # 3. 按大小清理
+        max_size = self.MAX_HISTORY_SIZE_MB * 1024 * 1024
+        total_size = sum(f.stat().st_size for f in files)
+        
+        while total_size > max_size and files:
+            f = files.pop(0)
+            try:
+                file_size = f.stat().st_size
+                f.unlink()
+                total_size -= file_size
+                deleted["by_size"] += 1
+                logger.debug(f"Deleted history file (by size): {f.name}")
+            except Exception as e:
+                logger.error(f"Failed to delete {f.name}: {e}")
+        
+        total_deleted = sum(deleted.values())
+        if total_deleted > 0:
+            logger.info(f"History cleanup completed: {deleted}")
+        
+        return deleted
+    
+    def get_history_stats(self) -> dict:
+        """
+        获取历史对话统计信息
+        
+        Returns:
+            统计信息字典
+        """
+        files = list(self.history_dir.glob("*.jsonl"))
+        total_size = sum(f.stat().st_size for f in files)
+        
+        return {
+            "file_count": len(files),
+            "total_size_mb": round(total_size / 1024 / 1024, 2),
+            "max_files": self.MAX_HISTORY_FILES,
+            "max_size_mb": self.MAX_HISTORY_SIZE_MB,
+            "max_days": self.MAX_HISTORY_DAYS,
+        }

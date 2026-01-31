@@ -3,14 +3,13 @@
 
 功能:
 1. 协调实时提取和批量整理
-2. 管理 MEMORY.md 文件
-3. 提供记忆注入策略
+2. 管理 MEMORY.md 精华摘要
+3. 提供记忆注入策略（向量搜索 + 精华摘要）
 4. 自动触发记忆更新
 
 注入策略:
-- 会话开始: 注入最近的记忆摘要
-- 任务执行: 注入相关的记忆
-- 会话结束: 保存新记忆
+- 每次对话: 加载 MEMORY.md 精华 + 向量搜索相关记忆
+- 会话结束: 保存新记忆到 memories.json 和 ChromaDB
 """
 
 import json
@@ -24,6 +23,7 @@ import re
 from .types import Memory, MemoryType, MemoryPriority, ConversationTurn, SessionSummary
 from .extractor import MemoryExtractor
 from .consolidator import MemoryConsolidator
+from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,16 @@ class MemoryManager:
         data_dir: Path,
         memory_md_path: Path,
         brain=None,
+        embedding_model: str = None,
+        embedding_device: str = "cpu",
     ):
         """
         Args:
             data_dir: 数据目录
             memory_md_path: MEMORY.md 文件路径
             brain: LLM 大脑实例
+            embedding_model: embedding 模型名称（可选）
+            embedding_device: 设备 (cpu 或 cuda)
         """
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +56,13 @@ class MemoryManager:
         # 子组件
         self.extractor = MemoryExtractor(brain)
         self.consolidator = MemoryConsolidator(data_dir, brain, self.extractor)
+        
+        # 向量存储（延迟初始化）
+        self.vector_store = VectorStore(
+            data_dir=self.data_dir,
+            model_name=embedding_model,
+            device=embedding_device,
+        )
         
         # 记忆存储
         self.memories_file = self.data_dir / "memories.json"
@@ -141,20 +152,89 @@ class MemoryManager:
     
     # ==================== 记忆操作 ====================
     
+    # 向量相似度阈值（余弦距离，越小越相似）
+    DUPLICATE_DISTANCE_THRESHOLD = 0.25
+    
     def add_memory(self, memory: Memory) -> str:
-        """添加记忆"""
-        # 去重检查
+        """
+        添加记忆
+        
+        同时存入:
+        1. memories.json（完整数据）
+        2. ChromaDB（向量索引）
+        
+        去重策略:
+        1. 字符串前缀匹配（快速）
+        2. 向量相似度检测（语义）
+        """
+        # 1. 字符串去重检查（快速）
         existing = list(self._memories.values())
         unique = self.extractor.deduplicate([memory], existing)
         
-        if unique:
-            memory = unique[0]
-            self._memories[memory.id] = memory
-            self._save_memories()
-            logger.debug(f"Added memory: {memory.id} - {memory.content[:50]}")
-            return memory.id
+        if not unique:
+            logger.debug(f"Memory duplicate (string match): {memory.content[:50]}")
+            return ""
         
-        return ""
+        memory = unique[0]
+        
+        # 2. 向量相似度检测（语义去重）
+        if self.vector_store.enabled and len(self._memories) > 0:
+            similar = self.vector_store.search(memory.content, limit=3)
+            for mid, distance in similar:
+                if distance < self.DUPLICATE_DISTANCE_THRESHOLD:
+                    existing_mem = self._memories.get(mid)
+                    if existing_mem:
+                        logger.info(f"Memory duplicate (semantic, dist={distance:.3f}): "
+                                   f"'{memory.content[:30]}...' similar to '{existing_mem.content[:30]}...'")
+                        return ""  # 语义重复，不存入
+        
+        # 3. 存入 memories.json
+        self._memories[memory.id] = memory
+        self._save_memories()
+        
+        # 4. 存入向量库
+        self.vector_store.add_memory(
+            memory_id=memory.id,
+            content=memory.content,
+            memory_type=memory.type.value,
+            priority=memory.priority.value,
+            importance=memory.importance_score,
+            tags=memory.tags,
+        )
+        
+        logger.debug(f"Added memory: {memory.id} - {memory.content[:50]}")
+        return memory.id
+    
+    async def check_duplicate_with_llm(self, new_content: str, existing_content: str) -> bool:
+        """
+        使用 LLM 判断两条记忆是否语义重复
+        
+        Args:
+            new_content: 新记忆内容
+            existing_content: 已有记忆内容
+        
+        Returns:
+            是否重复
+        """
+        if not self.brain:
+            return False
+        
+        prompt = f"""判断这两条记忆是否表达相同或非常相似的意思：
+
+记忆1: {existing_content}
+记忆2: {new_content}
+
+如果意思基本相同（即使表述不同），回复: DUPLICATE
+如果意思明显不同，回复: DIFFERENT
+
+只回复 DUPLICATE 或 DIFFERENT，不要其他内容。"""
+        
+        try:
+            response = await self.brain.think(prompt, max_tokens=20)
+            return "DUPLICATE" in response.upper()
+        except Exception as e:
+            logger.error(f"LLM duplicate check failed: {e}")
+            return False
     
     def get_memory(self, memory_id: str) -> Optional[Memory]:
         """获取单条记忆"""
@@ -197,10 +277,22 @@ class MemoryManager:
         return results[:limit]
     
     def delete_memory(self, memory_id: str) -> bool:
-        """删除记忆"""
+        """
+        删除记忆
+        
+        同时从:
+        1. memories.json
+        2. ChromaDB 向量库
+        """
         if memory_id in self._memories:
+            # 1. 从 memories.json 删除
             del self._memories[memory_id]
             self._save_memories()
+            
+            # 2. 从向量库删除
+            self.vector_store.delete_memory(memory_id)
+            
+            logger.debug(f"Deleted memory: {memory_id}")
             return True
         return False
     
@@ -209,134 +301,82 @@ class MemoryManager:
     def get_injection_context(
         self,
         task_description: str = "",
-        max_memories: int = 15,
+        max_related: int = 5,
     ) -> str:
         """
         获取要注入系统提示的记忆上下文
         
-        策略:
-        1. 永久记忆 (规则、重要事实)
-        2. 与任务相关的记忆
-        3. 最近的记忆
+        新策略（先查后答）:
+        1. 加载 MEMORY.md 精华（必定包含）
+        2. 向量搜索任务相关记忆（可选）
+        
+        Args:
+            task_description: 任务描述（用于向量搜索）
+            max_related: 最大相关记忆数
+        
+        Returns:
+            记忆上下文文本
         """
-        selected = []
+        lines = []
         
-        # 1. 永久记忆 (规则)
-        permanent = [m for m in self._memories.values() 
-                     if m.priority == MemoryPriority.PERMANENT]
-        selected.extend(permanent[:5])
+        # 1. 加载 MEMORY.md 精华（必定包含）
+        if self.memory_md_path.exists():
+            try:
+                core_memory = self.memory_md_path.read_text(encoding="utf-8")
+                if core_memory.strip():
+                    lines.append(core_memory)
+            except Exception as e:
+                logger.warning(f"Failed to read MEMORY.md: {e}")
         
-        # 2. 与任务相关 (基于关键词匹配)
-        if task_description:
-            keywords = task_description.lower().split()
-            related = []
-            for memory in self._memories.values():
-                if memory in selected:
-                    continue
-                content_lower = memory.content.lower()
-                if any(kw in content_lower for kw in keywords if len(kw) > 2):
-                    related.append(memory)
-            
-            related.sort(key=lambda m: m.importance_score, reverse=True)
-            selected.extend(related[:5])
-        
-        # 3. 最近的高重要性记忆
-        recent = sorted(
-            [m for m in self._memories.values() if m not in selected],
-            key=lambda m: (m.importance_score, m.updated_at),
-            reverse=True
-        )
-        selected.extend(recent[:max_memories - len(selected)])
-        
-        # 生成上下文文本
-        if not selected:
-            return ""
-        
-        lines = ["## 相关记忆"]
-        
-        # 按类型分组
-        by_type = {}
-        for memory in selected:
-            by_type.setdefault(memory.type, []).append(memory)
-        
-        type_names = {
-            MemoryType.RULE: "规则约束",
-            MemoryType.SKILL: "成功模式",
-            MemoryType.ERROR: "错误教训",
-            MemoryType.PREFERENCE: "用户偏好",
-            MemoryType.FACT: "事实信息",
-            MemoryType.CONTEXT: "上下文",
-        }
-        
-        for mem_type, memories in by_type.items():
-            lines.append(f"\n### {type_names.get(mem_type, mem_type.value)}")
-            for memory in memories[:5]:
-                lines.append(memory.to_markdown())
+        # 2. 向量搜索相关记忆（如果有任务描述）
+        if task_description and self.vector_store.enabled:
+            try:
+                related_ids = self.vector_store.search(
+                    query=task_description,
+                    limit=max_related,
+                    min_importance=0.5,
+                )
+                
+                if related_ids:
+                    # 获取完整记忆对象
+                    related_memories = []
+                    for mid, distance in related_ids:
+                        memory = self._memories.get(mid)
+                        if memory:
+                            related_memories.append(memory)
+                    
+                    if related_memories:
+                        lines.append("\n## 相关记忆（语义匹配）")
+                        for m in related_memories:
+                            lines.append(f"- [{m.type.value}] {m.content}")
+                
+            except Exception as e:
+                logger.warning(f"Vector search failed: {e}")
+                # 降级到关键词搜索
+                related = self._keyword_search(task_description, max_related)
+                if related:
+                    lines.append("\n## 相关记忆")
+                    for m in related:
+                        lines.append(f"- [{m.type.value}] {m.content}")
         
         return "\n".join(lines)
     
-    # ==================== MEMORY.md 同步 ====================
-    
-    def sync_to_memory_md(self) -> None:
+    def _keyword_search(self, query: str, limit: int = 5) -> list[Memory]:
         """
-        同步记忆到 MEMORY.md
-        
-        只更新 "Learned Experiences" 部分
+        关键词搜索（向量搜索的降级方案）
         """
-        try:
-            content = self.memory_md_path.read_text(encoding="utf-8") if self.memory_md_path.exists() else ""
-            
-            # 生成 Learned Experiences 部分
-            experience_section = self._generate_experience_section()
-            
-            # 替换或追加
-            pattern = r'(## Learned Experiences\s*)(.*?)(?=## |\Z)'
-            
-            if re.search(pattern, content, re.DOTALL):
-                new_content = re.sub(
-                    pattern,
-                    f"## Learned Experiences\n\n{experience_section}\n\n",
-                    content,
-                    flags=re.DOTALL
-                )
-            else:
-                new_content = content + f"\n## Learned Experiences\n\n{experience_section}\n"
-            
-            self.memory_md_path.write_text(new_content, encoding="utf-8")
-            logger.info("Synced memories to MEMORY.md")
-            
-        except Exception as e:
-            logger.error(f"Failed to sync to MEMORY.md: {e}")
-    
-    def _generate_experience_section(self) -> str:
-        """生成 Learned Experiences 部分"""
-        lines = []
+        keywords = [kw for kw in query.lower().split() if len(kw) > 2]
+        if not keywords:
+            return []
         
-        # 成功模式
-        skills = self.search_memories(memory_type=MemoryType.SKILL, limit=10)
-        if skills:
-            lines.append("### Successful Patterns\n")
-            for m in skills:
-                lines.append(f"- {m.content}")
-            lines.append("")
+        results = []
+        for memory in self._memories.values():
+            content_lower = memory.content.lower()
+            if any(kw in content_lower for kw in keywords):
+                results.append(memory)
         
-        # 错误教训
-        errors = self.search_memories(memory_type=MemoryType.ERROR, limit=10)
-        if errors:
-            lines.append("### Failed Attempts & Solutions\n")
-            for m in errors:
-                lines.append(f"- {m.content}")
-            lines.append("")
-        
-        # 用户偏好
-        prefs = self.search_memories(memory_type=MemoryType.PREFERENCE, limit=5)
-        if prefs:
-            lines.append("### User Preferences\n")
-            for m in prefs:
-                lines.append(f"- {m.content}")
-            lines.append("")
-        
-        return "\n".join(lines) if lines else "[暂无]"
+        results.sort(key=lambda m: m.importance_score, reverse=True)
+        return results[:limit]
     
     # ==================== 批量整理 ====================
     
@@ -344,37 +384,19 @@ class MemoryManager:
         """
         每日批量整理
         
-        适合在空闲时段 (如凌晨) 执行
+        适合在空闲时段 (如凌晨) 由定时任务调用
+        使用 DailyConsolidator 进行完整的归纳流程
         """
-        logger.info("Starting daily consolidation...")
+        from .daily_consolidator import DailyConsolidator
         
-        # 整理所有未处理的会话
-        summaries, memories = await self.consolidator.consolidate_all_unprocessed()
+        daily_consolidator = DailyConsolidator(
+            data_dir=self.data_dir,
+            memory_md_path=self.memory_md_path,
+            memory_manager=self,
+            brain=self.brain,
+        )
         
-        # 添加新记忆
-        added = 0
-        for memory in memories:
-            if self.add_memory(memory):
-                added += 1
-        
-        # 同步到 MEMORY.md
-        self.sync_to_memory_md()
-        
-        # 清理过期记忆
-        cleaned = self._cleanup_expired_memories()
-        
-        # 清理旧历史文件
-        deleted_files = self.consolidator.cleanup_old_history(days=30)
-        
-        result = {
-            "sessions_processed": len(summaries),
-            "memories_added": added,
-            "memories_cleaned": cleaned,
-            "history_files_deleted": deleted_files,
-        }
-        
-        logger.info(f"Daily consolidation complete: {result}")
-        return result
+        return await daily_consolidator.consolidate_daily()
     
     def _cleanup_expired_memories(self) -> int:
         """清理过期记忆"""

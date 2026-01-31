@@ -961,6 +961,9 @@ class Agent:
         try:
             logger.info(f"[Session:{session_id}] User: {message[:100]}...")
             
+            # 记录用户消息到 conversation_history（用于凌晨归纳）
+            self.memory_manager.record_turn("user", message)
+            
             # 构建 API 消息格式（从 session_messages 转换）
             messages = []
             for msg in session_messages:
@@ -983,6 +986,9 @@ class Agent:
             
             # 调用 Brain 处理（使用 session 的上下文）
             response_text = await self._chat_with_tools_and_context(messages)
+            
+            # 记录 Agent 响应到 conversation_history（用于凌晨归纳）
+            self.memory_manager.record_turn("assistant", response_text)
             
             logger.info(f"[Session:{session_id}] Agent: {response_text[:100]}...")
             

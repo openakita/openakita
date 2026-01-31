@@ -185,6 +185,61 @@ class Session:
         """关闭会话"""
         self.state = SessionState.CLOSED
     
+    # ==================== 任务管理 ====================
+    
+    def set_task(self, task_id: str, description: str) -> None:
+        """
+        设置当前任务
+        
+        Args:
+            task_id: 任务 ID
+            description: 任务描述
+        """
+        self.context.current_task = task_id
+        self.context.set_variable("task_description", description)
+        self.context.set_variable("task_status", "in_progress")
+        self.context.set_variable("task_started_at", datetime.now().isoformat())
+        self.touch()
+        logger.debug(f"Session {self.id}: set task {task_id}")
+    
+    def complete_task(self, success: bool = True, result: str = "") -> None:
+        """
+        完成当前任务
+        
+        Args:
+            success: 是否成功
+            result: 结果描述
+        """
+        self.context.set_variable("task_status", "completed" if success else "failed")
+        self.context.set_variable("task_result", result)
+        self.context.set_variable("task_completed_at", datetime.now().isoformat())
+        
+        task_id = self.context.current_task
+        self.context.current_task = None
+        
+        self.touch()
+        logger.debug(f"Session {self.id}: completed task {task_id} ({'success' if success else 'failed'})")
+    
+    def get_task_status(self) -> dict:
+        """
+        获取当前任务状态
+        
+        Returns:
+            任务状态字典
+        """
+        return {
+            "task_id": self.context.current_task,
+            "description": self.context.get_variable("task_description"),
+            "status": self.context.get_variable("task_status"),
+            "started_at": self.context.get_variable("task_started_at"),
+            "completed_at": self.context.get_variable("task_completed_at"),
+            "result": self.context.get_variable("task_result"),
+        }
+    
+    def has_active_task(self) -> bool:
+        """是否有正在进行的任务"""
+        return self.context.current_task is not None
+    
     @property
     def session_key(self) -> str:
         """会话唯一标识"""

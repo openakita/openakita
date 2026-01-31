@@ -85,9 +85,50 @@ python-dotenv>=1.0.0
 # 工具
 tenacity>=8.2.3
 
+# 记忆系统 - 向量搜索
+sentence-transformers>=2.2.0  # 本地 embedding 模型
+chromadb>=0.4.0               # 向量数据库
+
 # IM 通道 (可选)
 python-telegram-bot>=21.0  # Telegram
 ```
+
+### 向量搜索配置
+
+记忆系统使用向量搜索实现语义匹配，需要额外配置：
+
+#### 首次启动
+
+首次启动时会自动下载 embedding 模型（约 100MB），需要网络连接。
+
+模型缓存位置：
+- Windows: `C:\Users\<用户>\.cache\huggingface\`
+- Linux/Mac: `~/.cache/huggingface/`
+
+#### 预下载模型（可选）
+
+如果需要在离线环境部署，可以提前下载模型：
+
+```bash
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('shibing624/text2vec-base-chinese')"
+```
+
+#### GPU 加速（可选）
+
+如果有 NVIDIA GPU，可以安装 CUDA 版本的 PyTorch 以加速向量计算：
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu118
+```
+
+在 `.env` 中设置：
+```
+EMBEDDING_DEVICE=cuda
+```
+
+#### 数据目录
+
+向量索引存储在 `data/memory/chromadb/`，请确保该目录有写入权限。
 
 ### Python 标准库依赖 (内置)
 
