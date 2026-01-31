@@ -5,7 +5,7 @@
 <h1 align="center">OpenAkita</h1>
 
 <p align="center">
-  <strong>像秋田犬一样忠诚的 AI 助手</strong>
+  <strong>忠诚可靠的 AI 伙伴</strong>
 </p>
 
 <p align="center">
@@ -39,16 +39,23 @@
 
 ## 什么是 OpenAkita？
 
-OpenAkita 是一个基于 [Anthropic Claude](https://www.anthropic.com/claude) 的**自进化 AI 智能体**，采用 **Ralph Wiggum 模式**的核心哲学：**任务未完成，绝不放弃**。当遇到障碍时，它不会简单地失败——而是主动搜索解决方案、从 GitHub 安装新能力，或者自己生成代码来解决问题。
+OpenAkita 是一个**自进化 AI 助手** — 你在数字世界中忠诚可靠的伙伴。
+
+就像它名字来源的秋田犬一样，OpenAkita 具备这些品质：
+- 🤝 **忠诚伙伴** — 始终陪伴在你身边，随时准备帮助你
+- 🧠 **与你共同成长** — 记住你的偏好，变得越来越懂你
+- 💪 **可靠搭档** — 承诺完成任务，不轻言放弃
+- 🛡️ **值得信赖** — 保护你的数据安全，尊重你的隐私
+
+OpenAkita 不只是一个工具 — 它是一个记住你、理解你、与你并肩面对每个挑战的伙伴。
 
 ### 为什么选择 OpenAkita？
 
 - **🔄 自我进化**：自动从 GitHub 搜索技能或生成代码获取新能力
-- **💪 永不放弃**：实现 Ralph Wiggum 模式，持续执行直到任务完成
+- **💪 永不放弃**：持续执行直到任务完成
 - **🛠️ 工具执行**：原生支持 Shell 命令、文件操作和 Web 请求
 - **🔌 MCP 集成**：通过 Model Context Protocol 连接浏览器、数据库等外部服务
-- **💬 多平台部署**：支持 CLI、Telegram 机器人，或集成钉钉、飞书、企业微信
-- **🧪 自动测试**：300+ 测试用例，自动检测失败并自我修复
+- **💬 多平台部署**：支持 CLI、Telegram、钉钉、飞书、企业微信
 
 ## 特性
 
@@ -369,7 +376,7 @@ OpenAkita 站在巨人的肩膀上：
 ---
 
 <p align="center">
-  用 ❤️ 打造，来自 OpenAkita 团队
+  <strong>OpenAkita — 忠诚可靠的 AI 伙伴</strong>
 </p>
 
 <p align="center">
