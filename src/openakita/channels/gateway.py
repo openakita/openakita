@@ -434,6 +434,7 @@ class MessageGateway:
                 text=text,
                 reply_to=original.channel_message_id if i == 0 else None,
                 thread_id=original.thread_id,
+                parse_mode="markdown",  # 启用 Markdown 格式
             )
             
             # 重试最多 3 次

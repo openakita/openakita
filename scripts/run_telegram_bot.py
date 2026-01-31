@@ -8,6 +8,7 @@ Telegram Bot 服务
 import asyncio
 import logging
 import sys
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -66,6 +67,80 @@ async def init_components():
 def get_session(channel: str, chat_id: str, user_id: str) -> Session:
     """获取或创建会话"""
     return session_manager.get_session(channel, chat_id, user_id)
+
+
+def convert_markdown_for_telegram(text: str) -> str:
+    """
+    将标准 Markdown 转换为 Telegram 兼容格式
+    
+    Telegram Markdown 模式支持：
+    - *bold* 或 **bold** → 粗体
+    - _italic_ → 斜体
+    - `code` → 代码
+    - ```code block``` → 代码块
+    - [link](url) → 链接
+    
+    不支持（需要转换或移除）：
+    - 表格 (| xxx | xxx |) → 转为纯文本列表
+    - 标题 (# xxx) → 移除 # 符号
+    - 水平线 (---) → 转为分隔符
+    """
+    if not text:
+        return text
+    
+    # 1. 移除标题符号（# → 保留文字）
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    
+    # 2. 将表格转换为简单格式
+    lines = text.split('\n')
+    new_lines = []
+    in_table = False
+    table_rows = []
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # 检测表格行
+        if re.match(r'^\|.*\|$', stripped):
+            # 跳过分隔行 (|---|---|)
+            if re.match(r'^\|[-:\s|]+\|$', stripped):
+                continue
+            
+            # 提取单元格内容
+            cells = [c.strip() for c in stripped.strip('|').split('|')]
+            
+            if not in_table:
+                in_table = True
+                # 第一行是表头，用粗体
+                header = ' | '.join(f"*{c}*" for c in cells if c)
+                table_rows.append(header)
+            else:
+                # 数据行
+                row = ' | '.join(cells)
+                table_rows.append(row)
+        else:
+            # 非表格行
+            if in_table:
+                # 表格结束，添加表格内容
+                new_lines.extend(table_rows)
+                table_rows = []
+                in_table = False
+            new_lines.append(line)
+    
+    # 处理文件末尾的表格
+    if table_rows:
+        new_lines.extend(table_rows)
+    
+    text = '\n'.join(new_lines)
+    
+    # 3. 将水平线转换为分隔符
+    text = re.sub(r'^---+$', '─' * 20, text, flags=re.MULTILINE)
+    
+    # 4. 转义 Telegram Markdown 特殊字符（在非格式化区域）
+    # 注意：不要转义已经是 Markdown 格式的部分
+    # Telegram Markdown 模式对特殊字符比较宽容，通常不需要转义
+    
+    return text
 
 
 async def handle_start(update: Update, context):
@@ -138,13 +213,39 @@ async def handle_message(update: Update, context):
         # 记录助手回复到会话
         session.add_message("assistant", response)
         
+        # 转换 Markdown 为 Telegram 兼容格式
+        telegram_text = convert_markdown_for_telegram(response)
+        
         # 发送回复（处理长消息）
-        if len(response) > 4000:
-            parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
+        async def safe_send(text_to_send: str):
+            """安全发送消息，Markdown 解析失败时回退到纯文本"""
+            try:
+                await message.reply_text(text_to_send, parse_mode="Markdown")
+            except Exception as e:
+                if "Can't parse entities" in str(e) or "can't parse" in str(e).lower():
+                    logger.warning(f"Markdown 解析失败，使用纯文本: {e}")
+                    await message.reply_text(response)  # 使用原始文本，无格式
+                else:
+                    raise
+        
+        if len(telegram_text) > 4000:
+            # 长消息分段发送
+            parts = []
+            current_part = ""
+            for line in telegram_text.split('\n'):
+                if len(current_part) + len(line) + 1 > 4000:
+                    if current_part:
+                        parts.append(current_part)
+                    current_part = line
+                else:
+                    current_part = current_part + '\n' + line if current_part else line
+            if current_part:
+                parts.append(current_part)
+            
             for part in parts:
-                await message.reply_text(part)
+                await safe_send(part)
         else:
-            await message.reply_text(response)
+            await safe_send(telegram_text)
         
         logger.info(f"回复发送成功 (会话: {session.id})")
         

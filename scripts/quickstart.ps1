@@ -95,7 +95,7 @@ openakita init
 Write-Host ""
 Write-Color "=== Installation Complete ===" -Color Green
 Write-Host "To start OpenAkita, run: " -NoNewline
-Write-Color "openakita chat" -Color Cyan
+Write-Color "openakita" -Color Cyan
 Write-Host "Or with Telegram: " -NoNewline
-Write-Color "openakita --telegram" -Color Cyan
+Write-Color "openakita serve" -Color Cyan
 Write-Host ""

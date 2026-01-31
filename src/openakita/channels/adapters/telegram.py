@@ -633,45 +633,70 @@ class TelegramAdapter(ChannelAdapter):
         """
         将标准 Markdown 转换为 Telegram 兼容格式
         
-        Telegram 的 Markdown 模式比较宽松，支持：
-        - *bold* 或 **bold**
-        - _italic_
-        - `code`
-        - ```code block```
-        - [link](url)
+        Telegram 的 Markdown 模式支持：
+        - *bold* 或 **bold** → 粗体
+        - _italic_ → 斜体
+        - `code` → 代码
+        - ```code block``` → 代码块
+        - [link](url) → 链接
         
-        不支持：
-        - 表格（| 格式）
-        - 标题（# 格式）
-        
-        策略：保留基本格式，移除不支持的格式
+        不支持（需要转换或移除）：
+        - 表格（| 格式）→ 转为简单列表
+        - 标题（# 格式）→ 移除 # 符号
+        - 水平线 (---) → 转为分隔符
         """
         import re
         
-        # 移除标题符号（Telegram 不支持）
+        if not text:
+            return text
+        
+        # 1. 移除标题符号（保留文字）
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
         
-        # 将表格转换为简单文本格式
-        # 检测表格行 (| xxx | xxx |)
-        if re.search(r'^\|.*\|.*\|$', text, re.MULTILINE):
-            lines = text.split('\n')
-            new_lines = []
-            in_table = False
-            for line in lines:
-                if re.match(r'^\|.*\|$', line.strip()):
-                    # 这是表格行
-                    if re.match(r'^\|[-:\s|]+\|$', line.strip()):
-                        # 这是分隔行，跳过
-                        continue
-                    # 提取单元格内容
-                    cells = [c.strip() for c in line.strip('|').split('|')]
-                    if not in_table:
-                        in_table = True
-                    new_lines.append(' | '.join(cells))
+        # 2. 将表格转换为简单格式
+        lines = text.split('\n')
+        new_lines = []
+        in_table = False
+        table_rows = []
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # 检测表格行
+            if re.match(r'^\|.*\|$', stripped):
+                # 跳过分隔行 (|---|---|)
+                if re.match(r'^\|[-:\s|]+\|$', stripped):
+                    continue
+                
+                # 提取单元格内容
+                cells = [c.strip() for c in stripped.strip('|').split('|')]
+                
+                if not in_table:
+                    in_table = True
+                    # 第一行是表头，用粗体
+                    header = ' | '.join(f"*{c}*" for c in cells if c)
+                    table_rows.append(header)
                 else:
+                    # 数据行
+                    row = ' | '.join(cells)
+                    table_rows.append(row)
+            else:
+                # 非表格行
+                if in_table:
+                    # 表格结束，添加表格内容
+                    new_lines.extend(table_rows)
+                    table_rows = []
                     in_table = False
-                    new_lines.append(line)
-            text = '\n'.join(new_lines)
+                new_lines.append(line)
+        
+        # 处理文件末尾的表格
+        if table_rows:
+            new_lines.extend(table_rows)
+        
+        text = '\n'.join(new_lines)
+        
+        # 3. 将水平线转换为分隔符
+        text = re.sub(r'^---+$', '─' * 20, text, flags=re.MULTILINE)
         
         return text
     

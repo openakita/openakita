@@ -655,12 +655,12 @@ OpenAkita has been configured successfully.
 
 **Start the CLI:**
 ```bash
-openakita chat
+openakita
 ```
 
-**Or run with Telegram:**
+**Or run as service (Telegram/IM):**
 ```bash
-openakita --telegram
+openakita serve
 ```
 
 ## Configuration Files
@@ -672,7 +672,7 @@ openakita --telegram
 ## Next Steps
 
 1. Customize `identity/SOUL.md` to personalize your agent
-2. Run `openakita chat` to start chatting
+2. Run `openakita` to start chatting
 3. Check `openakita --help` for all commands
 
 ## Documentation

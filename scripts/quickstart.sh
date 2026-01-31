@@ -175,5 +175,5 @@ else
 fi
 
 echo -e "\n${GREEN}Setup complete!${NC}"
-echo -e "To start OpenAkita, run: ${CYAN}source ~/.venv/bin/activate && openakita chat${NC}"
-echo -e "Or with Telegram: ${CYAN}source ~/.venv/bin/activate && openakita --telegram${NC}\n"
+echo -e "To start OpenAkita, run: ${CYAN}source ~/.venv/bin/activate && openakita${NC}"
+echo -e "Or run as service (Telegram/IM): ${CYAN}source ~/.venv/bin/activate && openakita serve${NC}\n"
