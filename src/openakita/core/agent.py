@@ -48,6 +48,26 @@ MIN_RECENT_TURNS = 4  # 至少保留最近 4 轮对话
 SUMMARY_TARGET_TOKENS = 500  # 摘要目标 token 数
 
 
+import re
+
+def strip_thinking_tags(text: str) -> str:
+    """
+    移除响应中的 <thinking>...</thinking> 标签内容
+    
+    某些模型（如 Claude extended thinking）会在响应中包含思考过程，
+    这些内容不应该展示给最终用户。
+    """
+    if not text:
+        return text
+    
+    # 移除 <thinking>...</thinking> 标签及其内容
+    # 使用 DOTALL 标志让 . 匹配换行符
+    pattern = r'<thinking>.*?</thinking>\s*'
+    cleaned = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    return cleaned.strip()
+
+
 class Agent:
     """
     OpenAkita 主类
@@ -1078,9 +1098,9 @@ class Agent:
                         "input": block.input,
                     })
             
-            # 如果没有工具调用，返回文本响应
+            # 如果没有工具调用，返回文本响应（过滤 thinking 标签）
             if not tool_calls:
-                return text_content or "我理解了您的请求。"
+                return strip_thinking_tags(text_content) or "我理解了您的请求。"
             
             # 有工具调用，添加助手消息
             assistant_content = []
@@ -1177,7 +1197,7 @@ class Agent:
             
             # 如果没有工具调用，直接返回文本
             if not tool_calls:
-                return text_content
+                return strip_thinking_tags(text_content)
             
             # 有工具调用，需要执行
             logger.info(f"Chat iteration {iteration + 1}, {len(tool_calls)} tool calls")
@@ -1214,8 +1234,8 @@ class Agent:
             if response.stop_reason == "end_turn":
                 break
         
-        # 返回最后一次的文本响应
-        return text_content or "操作完成"
+        # 返回最后一次的文本响应（过滤 thinking 标签）
+        return strip_thinking_tags(text_content) or "操作完成"
     
     async def execute_task_from_message(self, message: str) -> TaskResult:
         """从消息创建并执行任务"""

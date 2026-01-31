@@ -76,6 +76,15 @@ class Settings(BaseSettings):
     session_max_history: int = Field(default=50, description="会话最大历史消息数")
     session_storage_path: str = Field(default="data/sessions", description="会话存储路径")
     
+    # === 多 Agent 协同配置 ===
+    orchestration_enabled: bool = Field(default=False, description="是否启用多 Agent 协同")
+    orchestration_bus_address: str = Field(default="tcp://127.0.0.1:5555", description="ZMQ 总线地址")
+    orchestration_pub_address: str = Field(default="tcp://127.0.0.1:5556", description="ZMQ 广播地址")
+    orchestration_min_workers: int = Field(default=1, description="最小 Worker 数量")
+    orchestration_max_workers: int = Field(default=5, description="最大 Worker 数量")
+    orchestration_heartbeat_interval: int = Field(default=5, description="Worker 心跳间隔（秒）")
+    orchestration_health_check_interval: int = Field(default=10, description="健康检查间隔（秒）")
+    
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

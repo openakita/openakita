@@ -3,12 +3,13 @@ OpenAkita CLI 入口
 
 使用 Typer 和 Rich 提供交互式命令行界面
 支持同时运行 CLI 和 IM 通道（Telegram、飞书等）
+支持多 Agent 协同模式（通过 ORCHESTRATION_ENABLED 配置）
 """
 
 import asyncio
 import logging
 import sys
-from typing import Optional
+from typing import Optional, Union
 
 import typer
 from typer import Context
@@ -43,20 +44,54 @@ console = Console()
 
 # 全局组件
 _agent: Optional[Agent] = None
+_master_agent = None  # MasterAgent（多 Agent 协同模式）
 _message_gateway = None
 _session_manager = None
 
 
 def get_agent() -> Agent:
-    """获取或创建 Agent 实例"""
+    """获取或创建 Agent 实例（单 Agent 模式）"""
     global _agent
     if _agent is None:
         _agent = Agent()
     return _agent
 
 
-async def start_im_channels(agent: Agent):
-    """启动配置的 IM 通道"""
+def get_master_agent():
+    """获取或创建 MasterAgent 实例（多 Agent 协同模式）"""
+    global _master_agent
+    if _master_agent is None:
+        from .orchestration import MasterAgent
+        from .orchestration.bus import BusConfig
+        
+        bus_config = BusConfig(
+            router_address=settings.orchestration_bus_address,
+            pub_address=settings.orchestration_pub_address,
+        )
+        
+        _master_agent = MasterAgent(
+            bus_config=bus_config,
+            min_workers=settings.orchestration_min_workers,
+            max_workers=settings.orchestration_max_workers,
+            heartbeat_interval=settings.orchestration_heartbeat_interval,
+            health_check_interval=settings.orchestration_health_check_interval,
+            data_dir=settings.project_root / "data",
+        )
+    return _master_agent
+
+
+def is_orchestration_enabled() -> bool:
+    """检查是否启用多 Agent 协同模式"""
+    return settings.orchestration_enabled
+
+
+async def start_im_channels(agent_or_master):
+    """
+    启动配置的 IM 通道
+    
+    Args:
+        agent_or_master: Agent 实例或 MasterAgent 实例
+    """
     global _message_gateway, _session_manager
     
     # 检查是否有任何通道启用
@@ -161,35 +196,51 @@ async def start_im_channels(agent: Agent):
         except Exception as e:
             logger.error(f"Failed to start QQ adapter: {e}")
     
-    # 设置 Agent 处理函数（现在可以引用 _message_gateway）
-    async def agent_handler(session, message: str) -> str:
-        """
-        处理来自 IM 通道的消息
+    # 设置 Agent 处理函数
+    # 根据是否启用协同模式选择不同的处理方式
+    if is_orchestration_enabled():
+        # 多 Agent 协同模式：通过 MasterAgent 路由
+        master = agent_or_master
         
-        使用 Session 的对话历史，传递 session 和 gateway 给 Agent
-        以便 Agent 可以发送媒体文件回 IM
-        """
-        try:
-            # 获取 Session 的对话历史
-            session_messages = session.context.get_messages()
-            
-            # 使用 Session 上下文调用 Agent
-            response = await agent.chat_with_session(
-                message=message,
-                session_messages=session_messages,
-                session_id=session.id,
-                session=session,
-                gateway=_message_gateway,
-            )
-            return response
-        except Exception as e:
-            logger.error(f"Agent handler error: {e}", exc_info=True)
-            return f"❌ 处理出错: {str(e)[:200]}"
+        async def agent_handler(session, message: str) -> str:
+            """通过 MasterAgent 处理消息"""
+            try:
+                session_messages = session.context.get_messages()
+                response = await master.handle_request(
+                    session_id=session.id,
+                    message=message,
+                    session_messages=session_messages,
+                    session=session,
+                    gateway=_message_gateway,
+                )
+                return response
+            except Exception as e:
+                logger.error(f"MasterAgent handler error: {e}", exc_info=True)
+                return f"❌ 处理出错: {str(e)[:200]}"
+    else:
+        # 单 Agent 模式：直接调用 Agent
+        agent = agent_or_master
+        
+        async def agent_handler(session, message: str) -> str:
+            """直接通过 Agent 处理消息"""
+            try:
+                session_messages = session.context.get_messages()
+                response = await agent.chat_with_session(
+                    message=message,
+                    session_messages=session_messages,
+                    session_id=session.id,
+                    session=session,
+                    gateway=_message_gateway,
+                )
+                return response
+            except Exception as e:
+                logger.error(f"Agent handler error: {e}", exc_info=True)
+                return f"❌ 处理出错: {str(e)[:200]}"
+        
+        # 设置 Agent 的 scheduler gateway
+        agent.set_scheduler_gateway(_message_gateway)
     
     _message_gateway.agent_handler = agent_handler
-    
-    # 设置 Agent 的 scheduler gateway，让定时任务可以发送通知
-    agent.set_scheduler_gateway(_message_gateway)
     
     # 启动网关
     if adapters_started:
@@ -250,6 +301,7 @@ def print_help():
         ("/memory", "显示记忆状态"),
         ("/skills", "列出已安装技能"),
         ("/channels", "显示 IM 通道状态"),
+        ("/agents", "显示 Agent 协同状态 (协同模式)"),
         ("/clear", "清空对话历史"),
         ("/exit, /quit", "退出程序"),
     ]
@@ -258,6 +310,77 @@ def print_help():
         table.add_row(cmd, desc)
     
     console.print(table)
+
+
+async def show_orchestration_status(master):
+    """显示多 Agent 协同状态"""
+    stats = master.get_stats()
+    
+    # 基本信息
+    table = Table(title="MasterAgent 状态")
+    table.add_column("属性", style="cyan")
+    table.add_column("值", style="green")
+    
+    table.add_row("模式", "多 Agent 协同")
+    table.add_row("总任务数", str(stats["tasks_total"]))
+    table.add_row("本地处理", str(stats["tasks_local"]))
+    table.add_row("分发处理", str(stats["tasks_distributed"]))
+    table.add_row("成功", str(stats["tasks_success"]))
+    table.add_row("失败", str(stats["tasks_failed"]))
+    table.add_row("待处理任务", str(stats["pending_tasks"]))
+    
+    console.print(table)
+    console.print()
+    
+    # Agent 列表
+    show_agents(master)
+
+
+def show_agents(master):
+    """显示 Agent 列表"""
+    dashboard = master.get_dashboard_data()
+    summary = dashboard["summary"]
+    agents = dashboard["agents"]
+    
+    # 摘要
+    console.print(f"[bold]Agent 摘要:[/bold] "
+                  f"总计 {summary['total_agents']} | "
+                  f"空闲 [green]{summary['idle']}[/green] | "
+                  f"繁忙 [yellow]{summary['busy']}[/yellow] | "
+                  f"故障 [red]{summary['dead']}[/red]")
+    console.print()
+    
+    # Agent 列表
+    if agents:
+        table = Table(title="活跃 Agent")
+        table.add_column("ID", style="cyan")
+        table.add_column("类型", style="blue")
+        table.add_column("状态", style="green")
+        table.add_column("当前任务", style="white")
+        table.add_column("完成/失败", style="yellow")
+        table.add_column("心跳", style="dim")
+        
+        for agent_info in agents:
+            status = agent_info["status"]
+            status_style = {
+                "idle": "[green]空闲[/green]",
+                "busy": "[yellow]繁忙[/yellow]",
+                "dead": "[red]故障[/red]",
+                "stopping": "[dim]停止中[/dim]",
+            }.get(status, status)
+            
+            table.add_row(
+                agent_info["agent_id"],
+                agent_info["type"],
+                status_style,
+                (agent_info["current_task"] or "-")[:30],
+                f"{agent_info['tasks_completed']}/{agent_info['tasks_failed']}",
+                agent_info["last_heartbeat"],
+            )
+        
+        console.print(table)
+    else:
+        console.print("[yellow]没有活跃的 Agent[/yellow]")
 
 
 def show_channels():
@@ -296,18 +419,39 @@ async def run_interactive():
     """运行交互式 CLI（同时启动 IM 通道）"""
     print_welcome()
     
-    agent = get_agent()
-    
-    # 初始化 Agent
-    with console.status("[bold green]正在初始化 Agent...", spinner="dots"):
-        await agent.initialize()
-    
-    console.print("[green]✓[/green] Agent 已准备就绪")
+    # 根据配置选择单 Agent 或多 Agent 协同模式
+    if is_orchestration_enabled():
+        console.print("[cyan]ℹ[/cyan] 多 Agent 协同模式已启用")
+        master = get_master_agent()
+        
+        # 启动 MasterAgent
+        with console.status("[bold green]正在启动 MasterAgent...", spinner="dots"):
+            await master.start()
+        
+        worker_count = len([
+            a for a in master.registry.list_all()
+            if a.agent_type == "worker"
+        ])
+        console.print(f"[green]✓[/green] MasterAgent 已启动 (Workers: {worker_count})")
+        
+        agent_or_master = master
+        agent_name = "OpenAkita (Master)"
+    else:
+        agent = get_agent()
+        
+        # 初始化 Agent
+        with console.status("[bold green]正在初始化 Agent...", spinner="dots"):
+            await agent.initialize()
+        
+        console.print("[green]✓[/green] Agent 已准备就绪")
+        
+        agent_or_master = agent
+        agent_name = agent.name
     
     # 启动 IM 通道
     im_channels = []
     with console.status("[bold green]正在启动 IM 通道...", spinner="dots"):
-        im_channels = await start_im_channels(agent)
+        im_channels = await start_im_channels(agent_or_master)
     
     if im_channels:
         console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
@@ -338,11 +482,17 @@ async def run_interactive():
                         continue
                     
                     elif cmd == "/status":
-                        await show_status(agent)
+                        if is_orchestration_enabled():
+                            await show_orchestration_status(agent_or_master)
+                        else:
+                            await show_status(agent_or_master)
                         continue
                     
                     elif cmd == "/selfcheck":
-                        await run_selfcheck(agent)
+                        if not is_orchestration_enabled():
+                            await run_selfcheck(agent_or_master)
+                        else:
+                            console.print("[yellow]协同模式下自检功能开发中[/yellow]")
                         continue
                     
                     elif cmd == "/memory":
@@ -357,9 +507,17 @@ async def run_interactive():
                         show_channels()
                         continue
                     
+                    elif cmd == "/agents":
+                        if is_orchestration_enabled():
+                            show_agents(agent_or_master)
+                        else:
+                            console.print("[yellow]单 Agent 模式，无 Worker 列表[/yellow]")
+                        continue
+                    
                     elif cmd == "/clear":
-                        agent._conversation_history.clear()
-                        agent._context.messages.clear()
+                        if not is_orchestration_enabled():
+                            agent_or_master._conversation_history.clear()
+                            agent_or_master._context.messages.clear()
                         console.print("[green]对话历史已清空[/green]")
                         continue
                     
@@ -370,13 +528,21 @@ async def run_interactive():
                 
                 # 正常对话
                 with console.status("[bold green]思考中...", spinner="dots"):
-                    response = await agent.chat(user_input)
+                    if is_orchestration_enabled():
+                        # 多 Agent 协同模式
+                        response = await agent_or_master.handle_request(
+                            session_id="cli",
+                            message=user_input,
+                        )
+                    else:
+                        # 单 Agent 模式
+                        response = await agent_or_master.chat(user_input)
                 
                 # 显示响应
                 console.print()
                 console.print(Panel(
                     Markdown(response),
-                    title=f"[bold green]{agent.name}[/bold green]",
+                    title=f"[bold green]{agent_name}[/bold green]",
                     border_style="green",
                 ))
                 console.print()
@@ -387,9 +553,11 @@ async def run_interactive():
                 logger.error(f"Error: {e}", exc_info=True)
                 console.print(f"[red]错误: {e}[/red]")
     finally:
-        # 停止 IM 通道
-        with console.status("[bold yellow]正在停止 IM 通道...", spinner="dots"):
+        # 停止服务
+        with console.status("[bold yellow]正在停止服务...", spinner="dots"):
             await stop_im_channels()
+            if is_orchestration_enabled():
+                await agent_or_master.stop()
         console.print("[green]✓[/green] 服务已停止")
 
 
@@ -542,26 +710,45 @@ def serve():
     启动服务模式 (无 CLI，只运行 IM 通道)
     
     用于后台运行，只处理 IM 消息。
+    支持单 Agent 和多 Agent 协同模式。
     """
     async def _serve():
+        mode_text = "多 Agent 协同模式" if is_orchestration_enabled() else "单 Agent 模式"
         console.print(Panel(
-            "[bold]OpenAkita 服务模式[/bold]\n\n"
+            f"[bold]OpenAkita 服务模式[/bold]\n\n"
+            f"模式: {mode_text}\n"
             "只运行 IM 通道，不启动 CLI 交互。\n"
             "按 Ctrl+C 停止服务。",
             title="Serve Mode",
             border_style="blue",
         ))
         
-        agent = get_agent()
-        
-        # 初始化 Agent
-        console.print("[bold green]正在初始化 Agent...[/bold green]")
-        await agent.initialize()
-        console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
+        # 根据配置选择模式
+        if is_orchestration_enabled():
+            master = get_master_agent()
+            
+            console.print("[bold green]正在启动 MasterAgent...[/bold green]")
+            await master.start()
+            
+            worker_count = len([
+                a for a in master.registry.list_all()
+                if a.agent_type == "worker"
+            ])
+            console.print(f"[green]✓[/green] MasterAgent 已启动 (Workers: {worker_count})")
+            
+            agent_or_master = master
+        else:
+            agent = get_agent()
+            
+            console.print("[bold green]正在初始化 Agent...[/bold green]")
+            await agent.initialize()
+            console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
+            
+            agent_or_master = agent
         
         # 启动 IM 通道
         console.print("[bold green]正在启动 IM 通道...[/bold green]")
-        im_channels = await start_im_channels(agent)
+        im_channels = await start_im_channels(agent_or_master)
         
         if not im_channels:
             console.print("[red]✗[/red] 没有启用任何 IM 通道！")
@@ -581,6 +768,8 @@ def serve():
         finally:
             console.print("\n[yellow]正在停止服务...[/yellow]")
             await stop_im_channels()
+            if is_orchestration_enabled():
+                await agent_or_master.stop()
             console.print("[green]✓[/green] 服务已停止")
     
     try:

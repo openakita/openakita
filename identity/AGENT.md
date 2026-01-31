@@ -65,6 +65,50 @@ openakita selfcheck
 
 # 查看状态
 openakita status
+
+# 服务模式（只运行 IM 通道）
+openakita serve
+```
+
+## Multi-Agent Orchestration Mode
+
+当 `ORCHESTRATION_ENABLED=true` 时，系统进入多 Agent 协同模式：
+
+```
+                    MasterAgent
+                   /     |     \
+              Worker1  Worker2  Worker3
+```
+
+### MasterAgent 职责
+
+1. **任务路由** - 决定任务由自己处理还是分发给 Worker
+2. **简单任务直接处理** - 短消息、简单查询直接处理，减少通信开销
+3. **复杂任务分发** - 需要长时间处理的任务分发给空闲 Worker
+4. **监督管理** - 监控 Worker 健康状态，自动重启故障 Worker
+
+### 任务路由决策
+
+```
+消息长度 < 30字 且 无会话历史 → 本地处理
+没有空闲 Worker 且 消息简单 → 本地处理
+有空闲 Worker 且 任务复杂 → 分发给 Worker
+```
+
+### Worker 特点
+
+- **无状态** - 不保存会话历史，每次请求携带完整上下文
+- **共享记忆** - 所有 Worker 使用相同的记忆存储
+- **心跳机制** - 定期向 MasterAgent 报告状态
+
+### 协同模式命令
+
+```bash
+# 查看所有 Agent 状态
+/agents
+
+# 查看协同统计
+/status
 ```
 
 ## Validation (Backpressure)
