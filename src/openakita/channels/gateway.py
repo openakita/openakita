@@ -194,11 +194,7 @@ class MessageGateway:
                 channel_message_id=message.channel_message_id,
             )
             
-            # 6. 对于复杂任务，先发送"收到"确认
-            if self._is_complex_message(message.plain_text):
-                await self._send_ack(message)
-            
-            # 7. 调用 Agent 处理（期间持续发送 typing 状态）
+            # 6. 调用 Agent 处理（Agent 会自己决定是否需要先回复确认）
             response_text = await self._call_agent_with_typing(session, message)
             
             # 7. 后处理钩子
@@ -248,61 +244,6 @@ class MessageGateway:
                     logger.info(f"Image downloaded: {img.local_path}")
             except Exception as e:
                 logger.error(f"Failed to download image: {e}")
-    
-    def _is_complex_message(self, text: str) -> bool:
-        """
-        判断消息是否是复杂任务（需要发送确认消息）
-        
-        简单消息（问候、短问题）不需要确认
-        复杂任务（实现功能、创建、分析等）需要先确认
-        """
-        if not text:
-            return False
-        
-        text = text.strip()
-        
-        # 简单消息特征
-        simple_patterns = [
-            len(text) < 10,  # 太短的消息
-            text in ['你好', 'hi', 'hello', '在吗', '?', '？'],
-            text.startswith('谢'),
-            text.startswith('好的'),
-        ]
-        
-        if any(simple_patterns):
-            return False
-        
-        # 复杂任务关键词
-        complex_keywords = [
-            '实现', '创建', '开发', '写', '做', '帮我', '分析', '查询',
-            '安装', '配置', '部署', '测试', '修复', '优化', '设计',
-        ]
-        
-        return any(kw in text for kw in complex_keywords)
-    
-    async def _send_ack(self, message: UnifiedMessage) -> None:
-        """
-        发送收到确认消息
-        """
-        adapter = self._adapters.get(message.channel)
-        if not adapter:
-            return
-        
-        try:
-            from .types import UnifiedMessage, MessageContent
-            
-            ack_message = UnifiedMessage(
-                id=f"ack_{message.id}",
-                channel=message.channel,
-                chat_id=message.chat_id,
-                user_id="system",
-                content=MessageContent(text="收到，正在处理..."),
-                timestamp=message.timestamp,
-            )
-            await adapter.send_message(ack_message)
-            logger.info(f"Sent ack for message {message.id}")
-        except Exception as e:
-            logger.warning(f"Failed to send ack: {e}")
 
     async def _send_typing(self, message: UnifiedMessage) -> None:
         """发送正在输入状态"""
