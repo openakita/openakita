@@ -217,88 +217,33 @@ class MessageGateway:
     
     async def _preprocess_media(self, message: UnifiedMessage) -> None:
         """
-        预处理媒体文件（下载图片、语音转文字）
+        预处理媒体文件（下载语音、图片到本地）
+        
+        注意：语音转文字由 Agent 自主实现，这里只负责下载
         """
         adapter = self._adapters.get(message.channel)
         if not adapter:
             return
         
-        # 处理语音消息 - 下载并转文字
+        # 处理语音消息 - 下载到本地
         for voice in message.content.voices:
-            if voice.transcription:
-                continue  # 已有转写结果
-            
             try:
-                # 下载语音文件
                 if not voice.local_path:
                     local_path = await adapter.download_media(voice)
                     voice.local_path = str(local_path)
-                
-                # 语音转文字
-                transcription = await self._transcribe_voice(voice.local_path)
-                if transcription:
-                    voice.transcription = transcription
-                    logger.info(f"Voice transcribed: {transcription[:50]}...")
-                else:
-                    voice.transcription = "[语音转文字失败]"
-                    
+                    logger.info(f"Voice downloaded: {voice.local_path}")
             except Exception as e:
-                logger.error(f"Failed to process voice: {e}")
-                voice.transcription = f"[语音处理失败: {e}]"
+                logger.error(f"Failed to download voice: {e}")
         
-        # 处理图片消息 - 下载并准备多模态输入
+        # 处理图片消息 - 下载到本地
         for img in message.content.images:
             try:
-                # 下载图片文件
                 if not img.local_path:
                     local_path = await adapter.download_media(img)
                     img.local_path = str(local_path)
-                
-                # 生成图片描述（可选：用 LLM 描述图片）
-                # 这里暂时只标记已下载，实际多模态处理在 _call_agent 中
-                logger.info(f"Image downloaded: {img.local_path}")
-                
+                    logger.info(f"Image downloaded: {img.local_path}")
             except Exception as e:
-                logger.error(f"Failed to process image: {e}")
-                img.description = f"[图片处理失败: {e}]"
-    
-    async def _transcribe_voice(self, audio_path: str) -> Optional[str]:
-        """
-        语音转文字（使用 OpenAI Whisper API）
-        """
-        try:
-            # 检查是否配置了 OpenAI API
-            openai_key = settings.openai_api_key
-            if not openai_key:
-                logger.warning("OpenAI API key not configured, voice transcription disabled")
-                return None
-            
-            # 读取音频文件
-            audio_path = Path(audio_path)
-            if not audio_path.exists():
-                logger.error(f"Audio file not found: {audio_path}")
-                return None
-            
-            # 调用 Whisper API
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                with open(audio_path, "rb") as f:
-                    response = await client.post(
-                        "https://api.openai.com/v1/audio/transcriptions",
-                        headers={"Authorization": f"Bearer {openai_key}"},
-                        files={"file": (audio_path.name, f, "audio/ogg")},
-                        data={"model": "whisper-1", "language": "zh"},
-                    )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get("text", "")
-                else:
-                    logger.error(f"Whisper API error: {response.status_code} - {response.text}")
-                    return None
-                    
-        except Exception as e:
-            logger.error(f"Voice transcription failed: {e}")
-            return None
+                logger.error(f"Failed to download image: {e}")
 
     async def _send_typing(self, message: UnifiedMessage) -> None:
         """发送正在输入状态"""

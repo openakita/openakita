@@ -58,8 +58,6 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str = Field(default="", description="GitHub Token")
     
-    # OpenAI (用于语音转文字 Whisper API)
-    openai_api_key: str = Field(default="", description="OpenAI API Key (用于 Whisper 语音转文字)")
     
     # === 调度器配置 ===
     scheduler_enabled: bool = Field(default=True, description="是否启用定时任务调度器")
