@@ -1778,7 +1778,7 @@ class Agent:
         Returns:
             最终响应文本
         """
-        max_iterations = 15  # 最多 15 轮工具调用
+        max_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
         
         # 复制消息避免修改原始列表
         working_messages = list(messages)
@@ -1885,7 +1885,7 @@ class Agent:
         # 检查并压缩上下文（如果接近限制）
         messages = await self._compress_context(messages)
         
-        max_iterations = 15  # 最多 15 轮工具调用
+        max_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
         
         for iteration in range(max_iterations):
             # 每次迭代前检查上下文大小（工具调用可能产生大量输出）
@@ -2458,7 +2458,7 @@ class Agent:
 永不放弃，直到任务完成！"""
 
         messages = [{"role": "user", "content": task.description}]
-        max_tool_iterations = 30
+        max_tool_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
         iteration = 0
         final_response = ""
         
