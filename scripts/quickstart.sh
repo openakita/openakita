@@ -174,6 +174,51 @@ else
     openakita init
 fi
 
-echo -e "\n${GREEN}Setup complete!${NC}"
-echo -e "To start OpenAkita, run: ${CYAN}source ~/.venv/bin/activate && openakita${NC}"
-echo -e "Or run as service (Telegram/IM): ${CYAN}source ~/.venv/bin/activate && openakita serve${NC}\n"
+# Create global command wrapper
+echo -e "${YELLOW}Setting up global command...${NC}"
+WRAPPER_SCRIPT="/usr/local/bin/openakita"
+VENV_PATH="$HOME/.venv"
+
+# Create wrapper script
+cat > /tmp/openakita-wrapper << EOF
+#!/bin/bash
+# OpenAkita global command wrapper
+# Auto-activates virtual environment and runs openakita
+
+VENV_PATH="$VENV_PATH"
+
+if [ -f "\$VENV_PATH/bin/activate" ]; then
+    source "\$VENV_PATH/bin/activate"
+    exec openakita "\$@"
+else
+    echo "Error: Virtual environment not found at \$VENV_PATH"
+    echo "Please run the installation script first."
+    exit 1
+fi
+EOF
+
+# Install wrapper (try sudo, fall back to user bin)
+if sudo mv /tmp/openakita-wrapper "$WRAPPER_SCRIPT" 2>/dev/null && sudo chmod +x "$WRAPPER_SCRIPT"; then
+    echo -e "${GREEN}✓ Global command installed: ${CYAN}openakita${NC}"
+else
+    # Fallback: add to user's ~/.local/bin
+    mkdir -p ~/.local/bin
+    mv /tmp/openakita-wrapper ~/.local/bin/openakita
+    chmod +x ~/.local/bin/openakita
+    
+    # Add to PATH if not already
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+        echo -e "${YELLOW}Note: Added ~/.local/bin to PATH in ~/.bashrc${NC}"
+        echo -e "${YELLOW}Run 'source ~/.bashrc' or restart terminal to use global command${NC}"
+    fi
+    echo -e "${GREEN}✓ Global command installed: ${CYAN}~/.local/bin/openakita${NC}"
+fi
+
+echo -e "\n${GREEN}=== Setup Complete! ===${NC}"
+echo -e ""
+echo -e "You can now use OpenAkita from anywhere:"
+echo -e "  ${CYAN}openakita${NC}        - Interactive chat mode"
+echo -e "  ${CYAN}openakita serve${NC}  - Run as service (Telegram/IM)"
+echo -e "  ${CYAN}openakita --help${NC} - Show all commands"
+echo -e ""
