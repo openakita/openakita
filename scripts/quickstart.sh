@@ -156,10 +156,21 @@ echo -e "${GREEN}✓ PyTorch (CPU) installed${NC}"
 pip install openakita
 echo -e "${GREEN}✓ OpenAkita installed${NC}\n"
 
-# Run setup wizard
-echo -e "${CYAN}Starting setup wizard...${NC}\n"
-openakita init
+# Install Playwright browsers (for web tools)
+echo -e "${YELLOW}Installing Playwright browsers...${NC}"
+playwright install chromium > /dev/null 2>&1 || true
+echo -e "${GREEN}✓ Playwright ready${NC}\n"
 
-echo -e "\n${GREEN}=== Installation Complete ===${NC}"
-echo -e "To start OpenAkita, run: ${CYAN}openakita chat${NC}"
-echo -e "Or with Telegram: ${CYAN}openakita --telegram${NC}\n"
+echo -e "${GREEN}=== Installation Complete ===${NC}\n"
+echo -e "Next steps:"
+echo -e "  1. Activate the virtual environment:"
+echo -e "     ${CYAN}source ~/.venv/bin/activate${NC}"
+echo -e ""
+echo -e "  2. Run the setup wizard:"
+echo -e "     ${CYAN}openakita init${NC}"
+echo -e ""
+echo -e "  3. Start chatting:"
+echo -e "     ${CYAN}openakita chat${NC}"
+echo -e ""
+echo -e "  Or run with Telegram:"
+echo -e "     ${CYAN}openakita --telegram${NC}\n"
