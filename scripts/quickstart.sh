@@ -162,15 +162,18 @@ playwright install chromium > /dev/null 2>&1 || true
 echo -e "${GREEN}✓ Playwright ready${NC}\n"
 
 echo -e "${GREEN}=== Installation Complete ===${NC}\n"
-echo -e "Next steps:"
-echo -e "  1. Activate the virtual environment:"
-echo -e "     ${CYAN}source ~/.venv/bin/activate${NC}"
-echo -e ""
-echo -e "  2. Run the setup wizard:"
-echo -e "     ${CYAN}openakita init${NC}"
-echo -e ""
-echo -e "  3. Start chatting:"
-echo -e "     ${CYAN}openakita chat${NC}"
-echo -e ""
-echo -e "  Or run with Telegram:"
-echo -e "     ${CYAN}openakita --telegram${NC}\n"
+
+# Run setup wizard (redirect stdin from /dev/tty for pipe execution)
+echo -e "${CYAN}Starting setup wizard...${NC}\n"
+if [ -t 0 ]; then
+    # Running interactively
+    openakita init
+else
+    # Running via pipe (curl | bash), need to redirect stdin
+    exec < /dev/tty
+    openakita init
+fi
+
+echo -e "\n${GREEN}Setup complete!${NC}"
+echo -e "To start OpenAkita, run: ${CYAN}source ~/.venv/bin/activate && openakita chat${NC}"
+echo -e "Or with Telegram: ${CYAN}source ~/.venv/bin/activate && openakita --telegram${NC}\n"
