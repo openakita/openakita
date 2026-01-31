@@ -62,6 +62,10 @@ coverage.xml
 data/*
 !data/.gitkeep
 
+# Identity files (local only, auto-generated)
+identity/MEMORY.md
+identity/USER.md
+
 # Downloaded skills (keep structure)
 skills/*
 !skills/.gitkeep

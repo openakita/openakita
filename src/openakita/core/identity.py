@@ -52,13 +52,23 @@ class Identity:
         logger.info("Identity loaded: SOUL.md, AGENT.md, USER.md, MEMORY.md")
     
     def _load_file(self, path: Path, name: str) -> str:
-        """加载单个文件"""
+        """加载单个文件，如果不存在则尝试从模板创建"""
         try:
             if path.exists():
                 return path.read_text(encoding="utf-8")
-            else:
-                logger.warning(f"{name} not found at {path}")
-                return ""
+            
+            # 尝试从 .example 模板创建
+            example_path = path.parent / f"{path.name}.example"
+            if example_path.exists():
+                content = example_path.read_text(encoding="utf-8")
+                # 确保父目录存在
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                logger.info(f"Created {name} from template")
+                return content
+            
+            logger.warning(f"{name} not found at {path}")
+            return ""
         except Exception as e:
             logger.error(f"Failed to load {name}: {e}")
             return ""

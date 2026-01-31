@@ -53,6 +53,9 @@ class MemoryManager:
         self.memory_md_path = Path(memory_md_path)
         self.brain = brain
         
+        # 确保 MEMORY.md 存在
+        self._ensure_memory_md_exists()
+        
         # 子组件
         self.extractor = MemoryExtractor(brain)
         self.consolidator = MemoryConsolidator(data_dir, brain, self.extractor)
@@ -74,6 +77,36 @@ class MemoryManager:
         
         # 加载记忆
         self._load_memories()
+    
+    def _ensure_memory_md_exists(self) -> None:
+        """确保 MEMORY.md 存在，不存在则创建默认内容"""
+        if self.memory_md_path.exists():
+            return
+        
+        # 确保父目录存在
+        self.memory_md_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 创建默认 MEMORY.md
+        default_content = """# Core Memory
+
+> Agent 核心记忆，每次对话都会加载。每日凌晨自动刷新。
+> 最后更新: {timestamp}
+
+## 用户偏好
+
+[待学习]
+
+## 重要规则
+
+[待添加]
+
+## 关键事实
+
+[待记录]
+""".format(timestamp=datetime.now().strftime('%Y-%m-%d %H:%M'))
+        
+        self.memory_md_path.write_text(default_content, encoding="utf-8")
+        logger.info(f"Created default MEMORY.md at {self.memory_md_path}")
     
     def _load_memories(self) -> None:
         """加载所有记忆"""
