@@ -126,7 +126,7 @@ openakita selfcheck
 | [📖 快速开始](docs/getting-started.md) | 安装和入门指南 |
 | [🏗️ 架构设计](docs/architecture.md) | 系统设计和组件说明 |
 | [🔧 配置说明](docs/configuration.md) | 所有配置选项详解 |
-| [🚀 部署指南](DEPLOY.md) | 生产环境部署指南 |
+| [🚀 部署指南](docs/deploy.md) | 生产环境部署指南 |
 | [🔌 MCP 集成](docs/mcp-integration.md) | 连接外部服务 |
 | [📱 IM 通道](docs/im-channels.md) | Telegram、钉钉、飞书配置 |
 | [🎯 技能系统](docs/skills.md) | 创建和使用技能 |
@@ -175,10 +175,10 @@ OpenAkita 使用独特的基于文档的身份和记忆系统：
 
 | 文档 | 用途 |
 |------|------|
-| `SOUL.md` | 核心哲学和价值观 - Agent 的"灵魂" |
-| `AGENT.md` | 行为规范和工作流程 |
-| `USER.md` | 用户档案、偏好和上下文 |
-| `MEMORY.md` | 工作记忆、任务进度、经验教训 |
+| `identity/SOUL.md` | 核心哲学和价值观 - Agent 的"灵魂" |
+| `identity/AGENT.md` | 行为规范和工作流程 |
+| `identity/USER.md` | 用户档案、偏好和上下文 |
+| `identity/MEMORY.md` | 工作记忆、任务进度、经验教训 |
 
 ### Ralph Wiggum 模式
 
@@ -235,10 +235,11 @@ Agent: 安装完成，开始分析文件...
 
 ```
 openakita/
-├── SOUL.md                 # Agent 核心哲学
-├── AGENT.md                # 行为规范
-├── USER.md                 # 用户档案
-├── MEMORY.md               # 工作记忆
+├── identity/               # Agent 身份配置
+│   ├── SOUL.md             # Agent 核心哲学
+│   ├── AGENT.md            # 行为规范
+│   ├── USER.md             # 用户档案
+│   └── MEMORY.md           # 工作记忆
 ├── src/openakita/
 │   ├── core/               # 核心模块
 │   │   ├── agent.py        # Agent 主类
@@ -297,7 +298,7 @@ TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=你的token
 
 # 运行
-python run_telegram_bot.py
+python scripts/run_telegram_bot.py
 ```
 
 ### Docker
@@ -315,7 +316,7 @@ sudo systemctl enable openakita
 sudo systemctl start openakita
 ```
 
-详细部署说明请参阅 [DEPLOY.md](DEPLOY.md)。
+详细部署说明请参阅 [docs/deploy.md](docs/deploy.md)。
 
 ## 贡献
 

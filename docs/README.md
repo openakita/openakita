@@ -23,7 +23,7 @@ Welcome to the OpenAkita documentation.
 
 | Resource | Location |
 |----------|----------|
-| [Deployment Guide](../DEPLOY.md) | Production deployment |
+| [Deployment Guide](deploy.md) | Production deployment |
 | [Contributing](../CONTRIBUTING.md) | How to contribute |
 | [Changelog](../CHANGELOG.md) | Version history |
 | [Security](../SECURITY.md) | Security policy |

@@ -126,7 +126,7 @@ openakita selfcheck
 | [📖 Quick Start](docs/getting-started.md) | Installation and first steps |
 | [🏗️ Architecture](docs/architecture.md) | System design and components |
 | [🔧 Configuration](docs/configuration.md) | All configuration options |
-| [🚀 Deployment](DEPLOY.md) | Production deployment guide |
+| [🚀 Deployment](docs/deploy.md) | Production deployment guide |
 | [🔌 MCP Integration](docs/mcp-integration.md) | Connect external services |
 | [📱 IM Channels](docs/im-channels.md) | Telegram, DingTalk, Feishu setup |
 | [🎯 Skills System](docs/skills.md) | Creating and using skills |
@@ -175,10 +175,10 @@ OpenAkita uses a unique document-based identity and memory system:
 
 | Document | Purpose |
 |----------|---------|
-| `SOUL.md` | Core philosophy and values - the agent's "soul" |
-| `AGENT.md` | Behavioral specifications and workflows |
-| `USER.md` | User profile, preferences, and context |
-| `MEMORY.md` | Working memory, task progress, lessons learned |
+| `identity/SOUL.md` | Core philosophy and values - the agent's "soul" |
+| `identity/AGENT.md` | Behavioral specifications and workflows |
+| `identity/USER.md` | User profile, preferences, and context |
+| `identity/MEMORY.md` | Working memory, task progress, lessons learned |
 
 ### Ralph Wiggum Mode
 
@@ -235,10 +235,11 @@ Agent: Installation complete, analyzing file...
 
 ```
 openakita/
-├── SOUL.md                 # Agent's core philosophy
-├── AGENT.md                # Behavioral specifications
-├── USER.md                 # User profile
-├── MEMORY.md               # Working memory
+├── identity/               # Agent identity documents
+│   ├── SOUL.md             # Agent's core philosophy
+│   ├── AGENT.md            # Behavioral specifications
+│   ├── USER.md             # User profile
+│   └── MEMORY.md           # Working memory
 ├── src/openakita/
 │   ├── core/               # Core modules
 │   │   ├── agent.py        # Main agent class
@@ -297,7 +298,7 @@ TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=your-token
 
 # Run
-python run_telegram_bot.py
+python scripts/run_telegram_bot.py
 ```
 
 ### Docker
@@ -315,7 +316,7 @@ sudo systemctl enable openakita
 sudo systemctl start openakita
 ```
 
-See [DEPLOY.md](DEPLOY.md) for detailed deployment instructions.
+See [docs/deploy.md](docs/deploy.md) for detailed deployment instructions.
 
 ## Contributing
 

@@ -208,12 +208,14 @@ pip install -e ".[dev]"
 
 ```
 openakita/
-├── requirements.txt     # 依赖列表 (pip 格式)
-├── pyproject.toml      # 项目配置 (标准格式)
-├── DEPENDENCIES.md     # 本文档
-├── DEPLOY.md           # 部署文档
-├── deploy.ps1          # Windows 一键部署脚本
-└── deploy.sh           # Linux/macOS 一键部署脚本
+├── requirements.txt        # 依赖列表 (pip 格式)
+├── pyproject.toml          # 项目配置 (标准格式)
+├── docs/
+│   ├── dependencies.md     # 本文档
+│   └── deploy.md           # 部署文档
+└── scripts/
+    ├── deploy.ps1          # Windows 一键部署脚本
+    └── deploy.sh           # Linux/macOS 一键部署脚本
 ```
 
 ---

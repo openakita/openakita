@@ -182,7 +182,7 @@ def main():
     # 路径配置
     data_dir = project_root / "data" / "memory"
     memories_file = data_dir / "memories.json"
-    memory_md_path = project_root / "MEMORY.md"
+    memory_md_path = project_root / "identity" / "MEMORY.md"
     
     print(f"\n📂 数据目录: {data_dir}")
     print(f"📂 记忆文件: {memories_file}")

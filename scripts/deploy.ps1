@@ -4,8 +4,8 @@
 .DESCRIPTION
     自动完成 Python 安装、环境配置、依赖安装等全部部署流程
 .NOTES
-    运行方式: .\deploy.ps1
-    或: powershell -ExecutionPolicy Bypass -File deploy.ps1
+    运行方式: .\scripts\deploy.ps1
+    或: powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1
 #>
 
 # 严格模式
@@ -400,7 +400,7 @@ function Show-Completion {
     Write-Host "     openakita" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  4. 启动 Telegram Bot (可选):" -ForegroundColor White
-    Write-Host "     python run_telegram_bot.py" -ForegroundColor Cyan
+    Write-Host "     python scripts/run_telegram_bot.py" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
 }

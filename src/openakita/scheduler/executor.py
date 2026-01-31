@@ -40,6 +40,23 @@ class TaskExecutor:
         self.gateway = gateway
         self.timeout_seconds = timeout_seconds
     
+    def _escape_telegram_chars(self, text: str) -> str:
+        """
+        转义 Telegram MarkdownV2 全部特殊字符
+        
+        官方文档规定必须转义的 18 个字符:
+        _ * [ ] ( ) ~ ` > # + - = | { } . !
+        
+        策略: 全部转义，确保消息能正常发送
+        """
+        # MarkdownV2 必须转义的全部字符
+        escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        
+        for char in escape_chars:
+            text = text.replace(char, '\\' + char)
+        
+        return text
+    
     async def execute(self, task: ScheduledTask) -> tuple[bool, str]:
         """
         执行任务
@@ -230,10 +247,13 @@ class TaskExecutor:
 {message[:1000]}{"..." if len(message) > 1000 else ""}
 """
             
+            # 转义 Telegram 特殊字符，避免 Markdown 解析错误
+            safe_notification = self._escape_telegram_chars(notification)
+            
             await self.gateway.send(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
-                text=notification,
+                text=safe_notification,
             )
             
             logger.info(f"Sent notification for task {task.id}")

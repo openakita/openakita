@@ -344,58 +344,17 @@ class TelegramAdapter(ChannelAdapter):
     
     def _escape_markdown_v2(self, text: str) -> str:
         """
-        转义 Telegram MarkdownV2 特殊字符
+        转义 Telegram MarkdownV2 全部特殊字符
         
-        保留常见 markdown 格式（粗体、斜体、代码），转义其他特殊字符
+        官方文档规定必须转义的 18 个字符:
+        _ * [ ] ( ) ~ ` > # + - = | { } . !
+        
+        策略: 全部转义，确保消息能正常发送
         """
-        import re
+        escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
         
-        # 先保护代码块和行内代码
-        code_blocks = []
-        def save_code_block(m):
-            code_blocks.append(m.group(0))
-            return f"\x00CODE{len(code_blocks)-1}\x00"
-        
-        # 保护 ```...``` 代码块
-        text = re.sub(r'```[\s\S]*?```', save_code_block, text)
-        # 保护 `...` 行内代码
-        text = re.sub(r'`[^`]+`', save_code_block, text)
-        
-        # 保护粗体 **text** 和 __text__
-        bold_patterns = []
-        def save_bold(m):
-            bold_patterns.append(m.group(0))
-            return f"\x00BOLD{len(bold_patterns)-1}\x00"
-        text = re.sub(r'\*\*[^*]+\*\*', save_bold, text)
-        text = re.sub(r'__[^_]+__', save_bold, text)
-        
-        # 保护斜体 *text* 和 _text_（单个）
-        italic_patterns = []
-        def save_italic(m):
-            italic_patterns.append(m.group(0))
-            return f"\x00ITALIC{len(italic_patterns)-1}\x00"
-        text = re.sub(r'(?<!\*)\*(?!\*)([^*]+)(?<!\*)\*(?!\*)', save_italic, text)
-        text = re.sub(r'(?<!_)_(?!_)([^_]+)(?<!_)_(?!_)', save_italic, text)
-        
-        # 转义其他特殊字符
-        escape_chars = r'[\[\]()~>#+=|{}.!-]'
-        text = re.sub(escape_chars, lambda m: '\\' + m.group(0), text)
-        
-        # 恢复斜体（转换为 MarkdownV2 格式）
-        for i, pattern in enumerate(italic_patterns):
-            inner = pattern[1:-1]  # 去掉 * 或 _
-            inner = re.sub(escape_chars, lambda m: '\\' + m.group(0), inner)
-            text = text.replace(f"\x00ITALIC{i}\x00", f"_{inner}_")
-        
-        # 恢复粗体
-        for i, pattern in enumerate(bold_patterns):
-            inner = pattern[2:-2]  # 去掉 ** 或 __
-            inner = re.sub(escape_chars, lambda m: '\\' + m.group(0), inner)
-            text = text.replace(f"\x00BOLD{i}\x00", f"*{inner}*")
-        
-        # 恢复代码块
-        for i, code in enumerate(code_blocks):
-            text = text.replace(f"\x00CODE{i}\x00", code)
+        for char in escape_chars:
+            text = text.replace(char, '\\' + char)
         
         return text
     

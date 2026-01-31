@@ -83,24 +83,29 @@ class Settings(BaseSettings):
     }
     
     @property
+    def identity_path(self) -> Path:
+        """身份配置目录路径"""
+        return self.project_root / "identity"
+    
+    @property
     def soul_path(self) -> Path:
         """SOUL.md 路径"""
-        return self.project_root / "SOUL.md"
+        return self.identity_path / "SOUL.md"
     
     @property
     def agent_path(self) -> Path:
         """AGENT.md 路径"""
-        return self.project_root / "AGENT.md"
+        return self.identity_path / "AGENT.md"
     
     @property
     def user_path(self) -> Path:
         """USER.md 路径"""
-        return self.project_root / "USER.md"
+        return self.identity_path / "USER.md"
     
     @property
     def memory_path(self) -> Path:
         """MEMORY.md 路径"""
-        return self.project_root / "MEMORY.md"
+        return self.identity_path / "MEMORY.md"
     
     @property
     def skills_path(self) -> Path:

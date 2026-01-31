@@ -3,8 +3,8 @@
 # OpenAkita 一键部署脚本 (Linux/macOS)
 #
 # 使用方式:
-#   chmod +x deploy.sh
-#   ./deploy.sh
+#   chmod +x scripts/deploy.sh
+#   ./scripts/deploy.sh
 #
 # 支持系统:
 #   - Ubuntu 20.04/22.04/24.04
@@ -419,7 +419,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$(pwd)
 Environment=\"PATH=$(pwd)/venv/bin\"
-ExecStart=$(pwd)/venv/bin/python run_telegram_bot.py
+ExecStart=$(pwd)/venv/bin/python scripts/run_telegram_bot.py
 Restart=always
 RestartSec=10
 
@@ -456,7 +456,7 @@ show_completion() {
     echo -e "     ${CYAN}openakita${NC}"
     echo ""
     echo -e "  4. 启动 Telegram Bot (可选):"
-    echo -e "     ${CYAN}python run_telegram_bot.py${NC}"
+    echo -e "     ${CYAN}python scripts/run_telegram_bot.py${NC}"
     echo ""
     echo -e "${GREEN}========================================${NC}"
 }

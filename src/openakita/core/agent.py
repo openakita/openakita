@@ -610,6 +610,33 @@ class Agent:
 
 ### 工具调用
 - 工具直接使用工具名调用，不需要任何前缀
+- **提醒/定时任务必须使用 schedule_task 工具**，不要只是回复"好的"
+- 当用户说"X分钟后提醒我"时，立即调用 schedule_task 创建任务
+
+### 定时任务/提醒 (极其重要!!!)
+
+**当用户请求设置提醒、定时任务时，你必须立即调用 schedule_task 工具！**
+**禁止只回复"好的，我会提醒你"这样的文字！那样任务不会被创建！**
+**只有调用了 schedule_task 工具，任务才会真正被调度执行！**
+
+调用 schedule_task 时的参数:
+
+1. **一次性提醒** (如 "5分钟后提醒我吃饭"):
+   - name: "吃饭提醒"
+   - description: "提醒用户吃饭"
+   - trigger_type: "once"
+   - trigger_config: 包含 run_at，格式 "YYYY-MM-DD HH:MM"（根据当前时间计算）
+   - prompt: "提醒用户：该吃饭啦！"
+
+2. **重复提醒** (如 "每3分钟提醒我站起来"):
+   - trigger_type: "interval"
+   - trigger_config: 包含 interval_minutes（间隔分钟数）
+
+3. **定时任务** (如 "每天早上9点提醒我"):
+   - trigger_type: "cron"
+   - trigger_config: 包含 cron 表达式（如 "0 9 * * *"）
+
+**再次强调：收到提醒请求时，第一反应就是调用 schedule_task 工具！**
 
 ### 记忆管理 (非常重要!)
 **主动使用记忆功能**，在以下情况必须调用 add_memory:
@@ -1478,6 +1505,18 @@ class Agent:
                 task_id = await self.task_scheduler.add_task(task)
                 next_run = task.next_run.strftime('%Y-%m-%d %H:%M:%S') if task.next_run else '待计算'
                 
+                # 控制台输出任务创建信息
+                print(f"\n📅 定时任务已创建:")
+                print(f"   ID: {task_id}")
+                print(f"   名称: {task.name}")
+                print(f"   类型: {task.trigger_type.value}")
+                print(f"   下次执行: {next_run}")
+                if channel_id and chat_id:
+                    print(f"   通知渠道: {channel_id}/{chat_id}")
+                print()
+                
+                logger.info(f"Created scheduled task: {task_id} ({task.name}), next run: {next_run}")
+                
                 return f"✅ 定时任务已创建\n- ID: {task_id}\n- 名称: {task.name}\n- 下次执行: {next_run}"
             
             elif tool_name == "list_scheduled_tasks":
@@ -1561,6 +1600,7 @@ class Agent:
                                 photo_path=str(file_path_obj),
                                 caption=caption or text,
                             )
+                            self._task_message_sent = True  # 标记已发送，避免重复通知
                             return f"✅ 图片已发送: {file_path}"
                         else:
                             # 发送文件
@@ -1569,11 +1609,13 @@ class Agent:
                                 file_path=str(file_path_obj),
                                 caption=caption or text,
                             )
+                            self._task_message_sent = True  # 标记已发送，避免重复通知
                             return f"✅ 文件已发送: {file_path}"
                     
                     # 只发送文本
                     elif text:
                         await gateway.send_to_session(session, text)
+                        self._task_message_sent = True  # 标记已发送，避免重复通知
                         return f"✅ 消息已发送"
                     
                     else:
@@ -1855,8 +1897,7 @@ class Agent:
             errors=errors or [],
         )
         
-        # 同步到 MEMORY.md
-        self.memory_manager.sync_to_memory_md()
+        # MEMORY.md 由 DailyConsolidator 在凌晨刷新，shutdown 时不同步
         
         self._running = False
         logger.info("Agent shutdown complete")

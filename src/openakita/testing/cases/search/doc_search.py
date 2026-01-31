@@ -27,7 +27,7 @@ DOC_SEARCH_TESTS = [
         input={
             "action": "search_doc",
             "query": "Ralph",
-            "file": "AGENT.md",
+            "file": "identity/AGENT.md",
         },
         expected="contains:Wiggum",
         tags=["doc", "agent"],
@@ -40,7 +40,7 @@ DOC_SEARCH_TESTS = [
         input={
             "action": "search_doc",
             "query": "诚实",
-            "file": "SOUL.md",
+            "file": "identity/SOUL.md",
         },
         expected="length>=10",
         tags=["doc", "soul"],

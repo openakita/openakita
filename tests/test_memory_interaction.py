@@ -33,7 +33,7 @@ class MemoryInteractionTester:
     
     def __init__(self):
         self.data_dir = Path("data/memory")
-        self.memory_md = Path("MEMORY.md")
+        self.memory_md = Path("identity/MEMORY.md")
         self.passed = 0
         self.failed = 0
         self.results = []

@@ -7,8 +7,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-# 确保项目在 path 中
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# 确保项目在 path 中 (脚本在 scripts/ 目录下)
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from openakita.tools.shell import ShellTool
 from openakita.tools.file import FileTool

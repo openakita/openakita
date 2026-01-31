@@ -259,7 +259,7 @@ data/scheduler/
 └── task_sessions/             # 定时任务专属 Session
     └── {task_id}.json
 
-MEMORY.md                      # 精华摘要（项目根目录）
+identity/MEMORY.md             # 精华摘要
 ```
 
 ## 九、容量限制

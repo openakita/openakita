@@ -31,7 +31,7 @@ OpenAkita supports multiple instant messaging platforms.
 
 3. **Run the bot**:
    ```bash
-   python run_telegram_bot.py
+   python scripts/run_telegram_bot.py
    ```
 
 ### Features
@@ -225,7 +225,7 @@ Bot: I'll create that for you...
 ```bash
 # Just Telegram
 TELEGRAM_ENABLED=true
-python run_telegram_bot.py
+python scripts/run_telegram_bot.py
 ```
 
 ### Multiple Platforms
@@ -294,7 +294,7 @@ DINGTALK_RATE_LIMIT=20
 
 1. Check token is correct
 2. Verify network can reach `api.telegram.org`
-3. Check logs: `LOG_LEVEL=DEBUG python run_telegram_bot.py`
+3. Check logs: `LOG_LEVEL=DEBUG python scripts/run_telegram_bot.py`
 
 ### Webhook not receiving
 

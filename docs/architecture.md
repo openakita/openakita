@@ -64,10 +64,10 @@ OpenAkita uses a document-based identity system:
 
 | Document | Purpose | Update Frequency |
 |----------|---------|------------------|
-| `SOUL.md` | Core values and philosophy | Rarely |
-| `AGENT.md` | Behavioral specifications | Occasionally |
-| `USER.md` | User preferences and context | Per-user |
-| `MEMORY.md` | Working memory and progress | Per-task |
+| `identity/SOUL.md` | Core values and philosophy | Rarely |
+| `identity/AGENT.md` | Behavioral specifications | Occasionally |
+| `identity/USER.md` | User preferences and context | Per-user |
+| `identity/MEMORY.md` | Working memory and progress | Per-task |
 
 ### 2. Brain Module (`core/brain.py`)
 

@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-# 添加项目路径
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# 添加项目路径 (脚本在 scripts/ 目录下)
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from telegram import Bot, Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters
@@ -21,8 +21,11 @@ from openakita.config import settings
 from openakita.channels.types import UnifiedMessage, MessageContent, MediaFile
 from openakita.sessions import SessionManager, Session
 
-# 配置
-BOT_TOKEN = "TELEGRAM_TOKEN_REMOVED"
+# 配置 - 从环境变量或 settings 读取
+import os
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or settings.telegram_bot_token
+if not BOT_TOKEN:
+    raise ValueError("请设置 TELEGRAM_BOT_TOKEN 环境变量或在 .env 中配置")
 
 # 日志
 logging.basicConfig(

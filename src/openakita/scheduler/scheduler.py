@@ -11,7 +11,7 @@ import json
 import asyncio
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Callable, Awaitable, Any
 
 from .task import ScheduledTask, TriggerType, TaskStatus, TaskExecution
@@ -40,7 +40,8 @@ class TaskScheduler:
         executor: Optional[TaskExecutorFunc] = None,
         timezone: str = "Asia/Shanghai",
         max_concurrent: int = 5,
-        check_interval_seconds: int = 10,
+        check_interval_seconds: int = 2,  # 优化：从 10 秒改为 2 秒，提高提醒精度
+        advance_seconds: int = 20,  # 提前执行秒数，补偿 Agent 初始化和 LLM 调用延迟
     ):
         """
         Args:
@@ -57,6 +58,7 @@ class TaskScheduler:
         self.timezone = timezone
         self.max_concurrent = max_concurrent
         self.check_interval = check_interval_seconds
+        self.advance_seconds = advance_seconds  # 提前执行秒数
         
         # 任务存储 {task_id: ScheduledTask}
         self._tasks: dict[str, ScheduledTask] = {}
@@ -244,9 +246,12 @@ class TaskScheduler:
                     if task_id in self._running_tasks:
                         continue  # 正在执行
                     
-                    if task.next_run and now >= task.next_run:
-                        # 异步执行任务
-                        asyncio.create_task(self._run_task(task))
+                    # 提前 advance_seconds 秒执行，补偿 Agent 初始化和 LLM 调用延迟
+                    if task.next_run:
+                        trigger_time = task.next_run - timedelta(seconds=self.advance_seconds)
+                        if now >= trigger_time:
+                            # 异步执行任务
+                            asyncio.create_task(self._run_task(task))
                 
                 await asyncio.sleep(self.check_interval)
                 

@@ -175,27 +175,27 @@ argparse         # 命令行解析
 **Windows (PowerShell):**
 ```powershell
 # 下载并运行部署脚本
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/your-repo/openakita/main/deploy.ps1" -OutFile "deploy.ps1"
-.\deploy.ps1
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/your-repo/openakita/main/scripts/deploy.ps1" -OutFile "scripts/deploy.ps1"
+.\scripts\deploy.ps1
 ```
 
 或者使用本地脚本：
 ```powershell
-.\deploy.ps1
+.\scripts\deploy.ps1
 ```
 
 **Linux/macOS (Bash):**
 ```bash
 # 下载并运行部署脚本
-curl -O https://raw.githubusercontent.com/your-repo/openakita/main/deploy.sh
-chmod +x deploy.sh
-./deploy.sh
+curl -O https://raw.githubusercontent.com/your-repo/openakita/main/scripts/deploy.sh
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh
 ```
 
 或者使用本地脚本：
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh
 ```
 
 ---
@@ -431,10 +431,10 @@ python -m openakita
 
 ```bash
 # 使用专用脚本
-python run_telegram_bot.py
+python scripts/run_telegram_bot.py
 
 # 或后台运行
-nohup python run_telegram_bot.py > telegram.log 2>&1 &
+nohup python scripts/run_telegram_bot.py > telegram.log 2>&1 &
 ```
 
 ### 使用 systemd (Linux 推荐)
@@ -451,7 +451,7 @@ Type=simple
 User=your-user
 WorkingDirectory=/path/to/openakita
 Environment="PATH=/path/to/openakita/venv/bin"
-ExecStart=/path/to/openakita/venv/bin/python run_telegram_bot.py
+ExecStart=/path/to/openakita/venv/bin/python scripts/run_telegram_bot.py
 Restart=always
 RestartSec=10
 

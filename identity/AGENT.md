@@ -120,10 +120,11 @@ openakita selfcheck --fix
 
 ```
 openakita/
-├── AGENT.md          # 本文件 - 行为规范
-├── SOUL.md           # 灵魂 - 核心哲学
-├── USER.md           # 用户档案 - 偏好习惯
-├── MEMORY.md         # 记忆 - 进度和经验
+├── identity/         # Agent 身份配置
+│   ├── AGENT.md      # 本文件 - 行为规范
+│   ├── SOUL.md       # 灵魂 - 核心哲学
+│   ├── USER.md       # 用户档案 - 偏好习惯
+│   └── MEMORY.md     # 记忆 - 进度和经验
 ├── src/openakita/
 │   ├── core/         # 核心模块
 │   ├── skills/       # 技能系统
@@ -131,6 +132,8 @@ openakita/
 │   ├── storage/      # 持久化
 │   ├── evolution/    # 自我进化
 │   └── testing/      # 测试系统
+├── scripts/          # 脚本目录
+├── docs/             # 文档目录
 └── specs/            # 需求规格
 ```
 

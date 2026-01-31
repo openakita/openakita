@@ -61,12 +61,12 @@ class RalphLoop:
 
 ### Identity (`core/identity.py`)
 
-加载和管理 AGENT.md 和 SOUL.md。
+加载和管理 identity/AGENT.md 和 identity/SOUL.md。
 
 ```python
 class Identity:
-    soul: str      # SOUL.md 内容
-    agent: str     # AGENT.md 内容
+    soul: str      # identity/SOUL.md 内容
+    agent: str     # identity/AGENT.md 内容
     
     def get_system_prompt(self) -> str
     def get_behavior_rules(self) -> list[str]
@@ -77,5 +77,5 @@ class Identity:
 - [ ] Agent 可以接收用户消息并返回响应
 - [ ] Agent 可以执行多步骤任务
 - [ ] Agent 在任务失败时会自动重试
-- [ ] Agent 会更新 MEMORY.md 记录进度
+- [ ] Agent 会更新 identity/MEMORY.md 记录进度
 - [ ] Agent 可以运行自检
