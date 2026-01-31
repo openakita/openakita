@@ -391,6 +391,12 @@ class BrowserMCP:
         
         response = await self._page.goto(url, wait_until="domcontentloaded")
         
+        # 等待页面网络空闲（最多 5 秒）
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=5000)
+        except:
+            pass  # 超时也继续
+        
         return {
             "success": True,
             "result": {
@@ -433,6 +439,23 @@ class BrowserMCP:
     
     async def _screenshot(self, full_page: bool, path: Optional[str]) -> dict:
         """截图"""
+        # 检查是否在空白页
+        current_url = self._page.url
+        if current_url == "about:blank":
+            return {
+                "success": False,
+                "error": "当前页面是空白页 (about:blank)，请先使用 browser_navigate 打开一个网页"
+            }
+        
+        # 等待页面稳定（等待网络空闲或最多 3 秒）
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=3000)
+        except:
+            pass  # 超时也继续截图
+        
+        # 额外等待一点时间让页面渲染完成
+        await asyncio.sleep(0.5)
+        
         screenshot_bytes = await self._page.screenshot(full_page=full_page)
         
         if path:
