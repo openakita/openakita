@@ -480,6 +480,8 @@ class MessageGateway:
         channel: str,
         chat_id: str,
         text: str,
+        record_to_session: bool = True,
+        user_id: str = "system",
         **kwargs,
     ) -> Optional[str]:
         """
@@ -489,6 +491,8 @@ class MessageGateway:
             channel: 目标通道
             chat_id: 目标聊天
             text: 消息文本
+            record_to_session: 是否记录到会话历史
+            user_id: 发送者标识
         
         Returns:
             消息 ID 或 None
@@ -499,7 +503,23 @@ class MessageGateway:
             return None
         
         try:
-            return await adapter.send_text(chat_id, text, **kwargs)
+            result = await adapter.send_text(chat_id, text, **kwargs)
+            
+            # 记录到 session 历史
+            if record_to_session and self._session_manager:
+                try:
+                    self._session_manager.add_message(
+                        channel=channel,
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        role="system",  # 系统发送的消息
+                        content=text[:500] if len(text) > 500 else text,  # 截断过长内容
+                        source="gateway.send"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to record message to session: {e}")
+            
+            return result
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
             return None
@@ -508,17 +528,32 @@ class MessageGateway:
         self,
         session: Session,
         text: str,
+        role: str = "assistant",
         **kwargs,
     ) -> Optional[str]:
         """
         发送消息到会话
         """
-        return await self.send(
+        result = await self.send(
             channel=session.channel,
             chat_id=session.chat_id,
             text=text,
+            record_to_session=False,  # 下面手动记录
             **kwargs,
         )
+        
+        # 记录到 session 历史（用指定的 role）
+        if self._session_manager:
+            try:
+                session.add_message(
+                    role=role,
+                    content=text[:500] if len(text) > 500 else text,
+                    source="send_to_session"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record message to session: {e}")
+        
+        return result
     
     async def broadcast(
         self,

@@ -513,6 +513,27 @@ class Agent:
                 "properties": {}
             }
         },
+        {
+            "name": "get_chat_history",
+            "description": "获取当前聊天的历史消息记录。"
+                           "包括用户发送的消息、你之前的回复、以及系统任务（如定时任务）发送的通知。"
+                           "当用户说'看看之前的消息'、'刚才发的什么'时使用此工具。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "获取最近多少条消息，默认 20",
+                        "default": 20
+                    },
+                    "include_system": {
+                        "type": "boolean",
+                        "description": "是否包含系统消息（如任务通知），默认 true",
+                        "default": True
+                    }
+                }
+            }
+        },
         # === Thinking 模式控制 ===
         {
             "name": "enable_thinking",
@@ -2553,6 +2574,67 @@ class Agent:
                         return f"✅ 最近的图片文件: {latest}"
                 
                 return "❌ 没有找到用户发送的图片文件。请让用户先发送一张图片。"
+            
+            elif tool_name == "get_chat_history":
+                # 检查是否在 IM 会话中
+                if not Agent._current_im_session:
+                    return "❌ 此工具仅在 IM 会话中可用"
+                
+                session = Agent._current_im_session
+                limit = tool_input.get("limit", 20)
+                include_system = tool_input.get("include_system", True)
+                
+                # 从 session manager 获取聊天历史
+                from ..sessions import session_manager
+                
+                history = session_manager.get_history(
+                    channel=session.channel,
+                    chat_id=session.chat_id,
+                    user_id=session.user_id,
+                    limit=limit
+                )
+                
+                if not history:
+                    return "📭 暂无聊天记录"
+                
+                # 格式化输出
+                result_lines = [f"📜 最近 {len(history)} 条消息：\n"]
+                for i, msg in enumerate(history, 1):
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    timestamp = msg.get("timestamp", "")
+                    
+                    # 跳过系统消息（如果不需要）
+                    if not include_system and role == "system":
+                        continue
+                    
+                    # 角色标识
+                    if role == "user":
+                        role_icon = "👤 用户"
+                    elif role == "assistant":
+                        role_icon = "🤖 助手"
+                    elif role == "system":
+                        role_icon = "⚙️ 系统"
+                    else:
+                        role_icon = f"📌 {role}"
+                    
+                    # 截断过长内容
+                    if len(content) > 200:
+                        content = content[:200] + "..."
+                    
+                    # 格式化时间
+                    time_str = ""
+                    if timestamp:
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(timestamp)
+                            time_str = f" ({dt.strftime('%H:%M')})"
+                        except:
+                            pass
+                    
+                    result_lines.append(f"{i}. {role_icon}{time_str}:\n   {content}\n")
+                
+                return "\n".join(result_lines)
             
             else:
                 return f"未知工具: {tool_name}"

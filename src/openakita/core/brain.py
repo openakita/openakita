@@ -681,21 +681,43 @@ class Brain:
                 logger.info(f"Sending request to {endpoint.name} ({endpoint.model})")
                 
                 # === 输出完整的 LLM 交互日志 ===
-                logger.info("=" * 60)
+                logger.info("=" * 80)
                 logger.info("[LLM REQUEST]")
+                
+                # 完整输出 System Prompt
                 if sys_prompt:
                     logger.info(f"[SYSTEM PROMPT] ({len(sys_prompt)} chars):")
-                    # 输出 system prompt 的前 500 字符
-                    logger.info(sys_prompt[:500] + ("..." if len(sys_prompt) > 500 else ""))
-                logger.info(f"[MESSAGES] ({len(messages)} messages):")
-                for i, msg in enumerate(messages[-3:]):  # 只显示最后 3 条消息
+                    logger.info("-" * 40)
+                    logger.info(sys_prompt)
+                    logger.info("-" * 40)
+                
+                # 完整输出所有 Messages
+                logger.info(f"[MESSAGES] ({len(messages)} total):")
+                for i, msg in enumerate(messages):
                     role = msg.get("role", "?")
-                    content_preview = str(msg.get("content", ""))[:200]
-                    logger.info(f"  [{i}] {role}: {content_preview}...")
+                    content = msg.get("content", "")
+                    # 处理多模态内容
+                    if isinstance(content, list):
+                        content_str = f"[多模态: {len(content)} parts]"
+                        for part in content:
+                            if isinstance(part, dict):
+                                if part.get("type") == "text":
+                                    content_str += f"\n    text: {part.get('text', '')}"
+                                elif part.get("type") == "image":
+                                    content_str += f"\n    image: [base64 data]"
+                                elif part.get("type") == "tool_result":
+                                    content_str += f"\n    tool_result: {str(part.get('content', ''))[:500]}"
+                    else:
+                        content_str = str(content)
+                    logger.info(f"  [{i}] {role}:")
+                    logger.info(f"      {content_str}")
+                
+                # 输出所有工具
                 if tool_list:
-                    tool_names = [t.get("name", "?") for t in tool_list[:10]]
-                    logger.info(f"[TOOLS] ({len(tool_list)} tools): {tool_names}...")
-                logger.info("=" * 60)
+                    tool_names = [t.get("name", "?") for t in tool_list]
+                    logger.info(f"[TOOLS] ({len(tool_list)} tools): {tool_names}")
+                
+                logger.info("=" * 80)
                 
                 response: Message = await asyncio.wait_for(
                     asyncio.to_thread(client.messages.create, **request_params),
@@ -719,17 +741,21 @@ class Brain:
                             "input": block.input,
                         })
                 
-                # === 输出 LLM 响应日志 ===
-                logger.info("=" * 60)
+                # === 输出 LLM 响应日志（完整）===
+                logger.info("=" * 80)
                 logger.info("[LLM RESPONSE]")
-                logger.info(f"[CONTENT] ({len(content)} chars): {content[:300]}...")
+                logger.info(f"[CONTENT] ({len(content)} chars):")
+                logger.info("-" * 40)
+                logger.info(content)
+                logger.info("-" * 40)
                 if tool_calls:
                     logger.info(f"[TOOL CALLS] ({len(tool_calls)}):")
                     for tc in tool_calls:
-                        logger.info(f"  - {tc['name']}: {str(tc['input'])[:100]}...")
+                        logger.info(f"  - {tc['name']}:")
+                        logger.info(f"      {tc['input']}")
                 logger.info(f"[STOP REASON] {response.stop_reason}")
                 logger.info(f"[USAGE] input={response.usage.input_tokens}, output={response.usage.output_tokens}")
-                logger.info("=" * 60)
+                logger.info("=" * 80)
                 
                 return Response(
                     content=content,
