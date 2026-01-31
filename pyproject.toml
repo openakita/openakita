@@ -60,6 +60,9 @@ dependencies = [
     
     # Multi-Agent Orchestration
     "pyzmq>=25.0.0",
+    
+    # IM Channels - Telegram
+    "python-telegram-bot>=21.0",
 ]
 
 [project.optional-dependencies]
