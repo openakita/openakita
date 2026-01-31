@@ -19,7 +19,7 @@ Please do not report security vulnerabilities through public GitHub issues.
 
 ### 2. Email Us Directly
 
-Send an email to **security@example.com** with the following information:
+Send an email to **zacon365@gmail.com** with the following information:
 
 - Type of issue (e.g., buffer overflow, API key exposure, command injection, etc.)
 - Full paths of source file(s) related to the issue
@@ -131,7 +131,7 @@ Security updates will be released as:
 
 ## Contact
 
-For security concerns, contact: **security@example.com**
+For security concerns, contact: **zacon365@gmail.com**
 
 For general questions, use [GitHub Discussions](https://github.com/openakita/openakita/discussions).
 

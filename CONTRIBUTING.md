@@ -15,7 +15,7 @@ First off, thank you for considering contributing to OpenAkita! It's people like
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [contact@example.com](mailto:contact@example.com).
+This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [zacon365@gmail.com](mailto:zacon365@gmail.com).
 
 ## Getting Started
 

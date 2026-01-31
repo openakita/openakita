@@ -33,7 +33,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of unacceptable behavior may be reported to the community leaders responsible for enforcement at **contact@example.com**.
+Instances of unacceptable behavior may be reported to the community leaders responsible for enforcement at **zacon365@gmail.com**.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

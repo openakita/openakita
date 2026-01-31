@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
-    { name = "OpenAkita", email = "contact@openakita.ai" }
+    { name = "OpenAkita", email = "zacon365@gmail.com" }
 ]
 keywords = ["ai", "agent", "claude", "autonomous", "self-evolving"]
 classifiers = [

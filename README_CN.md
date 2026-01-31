@@ -371,7 +371,7 @@ ruff check src/
 - 📖 [文档](docs/)
 - 🐛 [问题追踪](https://github.com/openakita/openakita/issues)
 - 💬 [讨论区](https://github.com/openakita/openakita/discussions)
-- 📧 [邮箱](mailto:contact@example.com)
+- 📧 [邮箱](mailto:zacon365@gmail.com)
 
 ## 致谢
 
