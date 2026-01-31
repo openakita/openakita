@@ -36,7 +36,7 @@
 
 ## What is OpenAkita?
 
-OpenAkita is a **self-evolving AI assistant**, named after the Japanese Akita dog — known for loyalty, intelligence, and reliability.
+OpenAkita is a **self-evolving AI assistant**, named after the Akita dog — known for loyalty, intelligence, and reliability.
 
 Just like an Akita dog:
 - 🐕 **Loyal Guardian** — Always by your side, never gives up
