@@ -48,6 +48,61 @@ CHARS_PER_TOKEN = 4  # 简单估算: 约 4 字符 = 1 token
 MIN_RECENT_TURNS = 4  # 至少保留最近 4 轮对话
 SUMMARY_TARGET_TOKENS = 500  # 摘要目标 token 数
 
+# Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
+PROMPT_COMPILER_SYSTEM = """【角色】
+你是 Prompt Compiler，不是解题模型。
+
+【输入】
+用户的原始请求。
+
+【目标】
+将请求转化为一个结构化、明确、可执行的任务定义。
+
+【输出结构】
+请用以下 YAML 格式输出：
+
+```yaml
+task_type: [任务类型: question/action/creation/analysis/reminder/other]
+goal: [一句话描述任务目标]
+inputs:
+  given: [已提供的信息列表]
+  missing: [缺失但可能需要的信息列表，如果没有则为空]
+constraints: [约束条件列表，如果没有则为空]
+output_requirements: [输出要求列表]
+risks_or_ambiguities: [风险或歧义点列表，如果没有则为空]
+```
+
+【规则】
+- 不要解决任务
+- 不要给建议
+- 不要输出最终答案
+- 只输出 YAML 格式的结构化任务定义
+- 保持简洁，每项不超过一句话
+
+【示例】
+用户: "帮我写一个Python脚本，读取CSV文件并统计每列的平均值"
+
+输出:
+```yaml
+task_type: creation
+goal: 创建一个读取CSV文件并计算各列平均值的Python脚本
+inputs:
+  given:
+    - 需要处理的文件格式是CSV
+    - 需要统计的是平均值
+    - 使用Python语言
+  missing:
+    - CSV文件的路径或示例
+    - 是否需要处理非数值列
+output_requirements:
+  - 可执行的Python脚本
+  - 能够读取CSV文件
+  - 输出每列的平均值
+constraints: []
+risks_or_ambiguities:
+  - 未指定如何处理包含非数值数据的列
+  - 未指定输出格式（打印到控制台还是保存到文件）
+```"""
 
 import re
 
@@ -1073,6 +1128,39 @@ class Agent:
 
 {tools_text}
 
+## 核心原则 (最高优先级!!!)
+
+### 你是一个可以自主进化的 AI 助手
+
+**这是你的核心身份定位，必须时刻牢记：**
+
+1. **遇到不会的问题，想办法解决，而不是直接丢回给用户**
+   - 不会？去网上找工具、找方案
+   - 找不到现成的？自己写代码实现
+   - 写好了就保存为技能，下次直接用
+
+2. **你可以给自己"加装"工具**
+   - 使用 `generate_skill` 创建新技能
+   - 使用 `install_skill` 安装外部技能
+   - 使用 `improve_skill` 改进现有技能
+   - 从网上搜索解决方案，然后实现它
+
+3. **Ralph Wiggum 模式 - 永不放弃**
+   - 第一次失败？换个方法再试
+   - 工具不够用？创建新工具
+   - 信息不完整？主动去查找
+   - 用户说"做不到"？证明你可以
+
+4. **自动进化，自动补充技能**
+   - 每次解决新问题，考虑是否值得保存为技能
+   - 发现自己缺少某个能力，主动补充
+   - 慢慢变得全能，而不是停留在原地
+
+**禁止说"我做不到"、"这超出了我的能力"！**
+**正确做法：分析问题 → 寻找方案 → 创建工具 → 解决问题 → 保存经验**
+
+---
+
 ## 重要提示
 
 ### 深度思考模式 (Thinking Mode)
@@ -1518,6 +1606,16 @@ class Agent:
             # 记录用户消息到 conversation_history（用于凌晨归纳）
             self.memory_manager.record_turn("user", message)
             
+            # === 两段式 Prompt 第一阶段：Prompt Compiler ===
+            # 对复杂请求进行结构化分析（独立上下文，不进入核心对话）
+            compiled_message = message
+            compiler_output = ""
+            
+            if self._should_compile_prompt(message):
+                compiled_message, compiler_output = await self._compile_prompt(message)
+                if compiler_output:
+                    logger.info(f"[Session:{session_id}] Prompt compiled")
+            
             # 构建 API 消息格式（从 session_messages 转换）
             messages = []
             for msg in session_messages:
@@ -1536,11 +1634,11 @@ class Agent:
                 # 多模态消息：文本 + 图片
                 content_parts = []
                 
-                # 添加文本部分
-                if message.strip():
+                # 添加文本部分（使用编译后的消息）
+                if compiled_message.strip():
                     content_parts.append({
                         "type": "text",
-                        "text": message,
+                        "text": compiled_message,
                     })
                 
                 # 添加图片部分
@@ -1553,16 +1651,16 @@ class Agent:
                 })
                 logger.info(f"[Session:{session_id}] Multimodal message with {len(pending_images)} images")
             else:
-                # 普通文本消息
+                # 普通文本消息（使用编译后的消息）
                 messages.append({
                     "role": "user",
-                    "content": message,
+                    "content": compiled_message,
                 })
             
             # 压缩上下文（如果需要）
             messages = await self._compress_context(messages)
             
-            # 调用 Brain 处理（使用 session 的上下文）
+            # === 两段式 Prompt 第二阶段：主模型处理 ===
             response_text = await self._chat_with_tools_and_context(messages)
             
             # 记录 Agent 响应到 conversation_history（用于凌晨归纳）
@@ -1575,6 +1673,89 @@ class Agent:
             # 清除 IM 会话信息
             Agent._current_im_session = None
             Agent._current_im_gateway = None
+    
+    async def _compile_prompt(self, user_message: str) -> tuple[str, str]:
+        """
+        两段式 Prompt 第一阶段：Prompt Compiler
+        
+        将用户的原始请求转化为结构化的任务定义。
+        使用独立上下文，不进入核心对话历史。
+        
+        Args:
+            user_message: 用户原始消息
+            
+        Returns:
+            (compiled_prompt, raw_compiler_output)
+            - compiled_prompt: 增强后的提示词（原始消息 + 结构化分析）
+            - raw_compiler_output: Prompt Compiler 的原始输出（用于日志）
+        """
+        try:
+            # 调用 Brain 进行 Prompt 编译（独立上下文）
+            response = await self.brain.client.messages.create(
+                model=settings.fast_model,  # 使用快速模型进行编译
+                max_tokens=1000,
+                system=PROMPT_COMPILER_SYSTEM,
+                messages=[{
+                    "role": "user",
+                    "content": user_message
+                }]
+            )
+            
+            compiler_output = ""
+            for block in response.content:
+                if block.type == "text":
+                    compiler_output += block.text
+            
+            compiler_output = compiler_output.strip()
+            
+            # 构建增强后的提示词
+            enhanced_prompt = f"""## 用户原始请求
+{user_message}
+
+## 任务分析（由 Prompt Compiler 生成）
+{compiler_output}
+
+---
+请根据以上任务分析来处理用户的请求。"""
+            
+            logger.info(f"Prompt compiled: {compiler_output[:100]}...")
+            return enhanced_prompt, compiler_output
+            
+        except Exception as e:
+            logger.warning(f"Prompt compilation failed: {e}, using original message")
+            # 编译失败时直接使用原始消息
+            return user_message, ""
+    
+    def _should_compile_prompt(self, message: str) -> bool:
+        """
+        判断是否需要进行 Prompt 编译
+        
+        简单的消息（问候、简单提醒等）不需要编译
+        复杂的任务请求才需要编译
+        """
+        # 简单消息的特征
+        simple_patterns = [
+            r'^(你好|hi|hello|嗨|hey)[\s\!]*$',
+            r'^(谢谢|感谢|thanks|thank you)[\s\!]*$',
+            r'^(好的|ok|好|嗯|哦)[\s\!]*$',
+            r'^(再见|拜拜|bye)[\s\!]*$',
+            r'^\d+分钟后(提醒|叫)我',  # 简单提醒
+            r'^(现在)?几点',  # 问时间
+        ]
+        
+        message_lower = message.lower().strip()
+        
+        # 检查是否匹配简单消息模式
+        for pattern in simple_patterns:
+            if re.match(pattern, message_lower, re.IGNORECASE):
+                return False
+        
+        # 消息太短（少于 10 个字符）不需要编译
+        if len(message.strip()) < 10:
+            return False
+        
+        # 其他情况都进行编译
+        return True
     
     async def _chat_with_tools_and_context(self, messages: list[dict], use_session_prompt: bool = True) -> str:
         """
