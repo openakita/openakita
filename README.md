@@ -122,11 +122,19 @@ Through **Multi-Agent architecture** for efficient parallelism:
 
 ### Recommended Models
 
+**Anthropic Claude (Default)**
 | Model | Best For | Notes |
 |-------|----------|-------|
 | `claude-sonnet-4-20250514` | Daily use | Balanced performance and cost |
 | `claude-opus-4-20250514` | Complex tasks | Most capable, higher cost |
 | `claude-opus-4-5-20251101-thinking` | Deep reasoning | Extended thinking for complex problems |
+
+**Other Compatible Models** (via OpenAI-compatible API)
+| Model | Provider | Notes |
+|-------|----------|-------|
+| `qwen3-max` | Alibaba | Strong Chinese language support |
+| `minimax-2.1` | MiniMax | Good for dialogue and creation |
+| `kimi-2.5` | Moonshot | Excellent long-context capability |
 
 ### Installation
 
