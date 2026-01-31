@@ -33,10 +33,15 @@ OpenAkita is a self-evolving AI agent built on three core principles:
 │  └──────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │                   Processing Layer                    │  │
-│  │  ┌────────┐  ┌────────────┐  ┌─────────────────────┐ │  │
-│  │  │ Brain  │  │  Session   │  │    Ralph Loop       │ │  │
-│  │  │(Claude)│  │  Manager   │  │  (Never Give Up)    │ │  │
-│  │  └────────┘  └────────────┘  └─────────────────────┘ │  │
+│  │  ┌────────────────┐  ┌────────────┐                  │  │
+│  │  │Prompt Compiler │  │  Session   │                  │  │
+│  │  │ (Stage 1)      │  │  Manager   │                  │  │
+│  │  └───────┬────────┘  └────────────┘                  │  │
+│  │          ↓                                            │  │
+│  │  ┌────────────────┐  ┌─────────────────────┐         │  │
+│  │  │ Brain (Claude) │  │    Ralph Loop       │         │  │
+│  │  │ (Stage 2)      │  │  (Never Give Up)    │         │  │
+│  │  └────────────────┘  └─────────────────────┘         │  │
 │  └──────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────┤
 │                       Tool Layer                            │
@@ -69,7 +74,36 @@ OpenAkita uses a document-based identity system:
 | `identity/USER.md` | User preferences and context | Per-user |
 | `identity/MEMORY.md` | Working memory and progress | Per-task |
 
-### 2. Brain Module (`core/brain.py`)
+### 2. Two-Stage Prompt Architecture
+
+OpenAkita uses a two-stage prompt architecture for better task understanding:
+
+**Stage 1: Prompt Compiler**
+- Translates user request into structured YAML task definition
+- Independent context (destroyed after use, not in main context)
+- Logged for debugging but not visible in conversation
+
+```yaml
+# Prompt Compiler Output Example
+task_goal: "Create voice transcription feature"
+inputs:
+  provided: "voice file path"
+  missing: []
+constraints:
+  - "Use local Whisper model"
+  - "Support Chinese language"
+output_requirements:
+  - "Transcribed text returned to user"
+risks:
+  - "Large audio files may be slow"
+```
+
+**Stage 2: Main Brain Processing**
+- Receives structured task definition from Stage 1
+- Full tool access and conversation context
+- Executes task with clear understanding
+
+### 3. Brain Module (`core/brain.py`)
 
 The Brain handles all LLM interactions:
 
@@ -84,6 +118,8 @@ Features:
 - Tool calling
 - Retry with exponential backoff
 - Token management
+- **Thinking mode** (enabled by default for complex reasoning)
+- **Full interaction logging** (system prompt, messages, tool calls)
 
 ### 3. Ralph Loop (`core/ralph.py`)
 
@@ -144,11 +180,28 @@ Adapters: Telegram, DingTalk, Feishu, WeCom, QQ
 ```
 1. User sends message via channel
 2. Channel adapter normalizes message
-3. Session manager retrieves/creates context
-4. Brain processes with tools available
-5. Ralph loop ensures completion
-6. Response sent back through channel
+3. Media preprocessing:
+   - Voice: Download → Whisper transcription → Text
+   - Image: Download → Base64 encode → Multimodal input
+4. Session manager retrieves/creates context
+5. Prompt Compiler (Stage 1) structures the request
+6. Brain (Stage 2) processes with tools available
+7. Ralph loop ensures completion
+8. Response recorded to session history
+9. Response sent back through channel
 ```
+
+### Chat History
+
+All messages are recorded to session:
+
+| Role | Source | Description |
+|------|--------|-------------|
+| `user` | Incoming message | User's text/voice/image |
+| `assistant` | Agent response | LLM's reply |
+| `system` | Scheduled tasks, notifications | System-generated messages |
+
+The `get_chat_history` tool allows LLM to query these records.
 
 ### Tool Execution
 

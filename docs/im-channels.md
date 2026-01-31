@@ -37,11 +37,43 @@ OpenAkita supports multiple instant messaging platforms.
 ### Features
 
 - Text messages
-- Voice messages (transcription)
-- Image understanding
+- **Voice messages** (automatic transcription via local Whisper)
+- **Image understanding** (multimodal input to LLM)
 - File handling
 - Inline keyboards
 - Group chat support
+- **Pairing security** (prevents unauthorized access)
+
+### Voice Message Processing
+
+Voice messages are automatically transcribed using local Whisper:
+
+```
+User: [sends voice message]
+System: Downloads → Whisper transcription → Text sent to LLM
+Agent: Responds based on transcribed text
+```
+
+Configuration:
+- Model: `base` (default, good balance of speed/quality)
+- Language: Chinese (default)
+- No API calls needed, fully offline
+
+### Pairing Security
+
+First-time users must pair with a security code:
+
+1. Bot generates a random pairing code
+2. Code is saved to `data/pairing/telegram_pairing_code.txt`
+3. User sends the code to the bot
+4. Paired users are saved to `data/pairing/telegram_pairs.json`
+
+```
+User: /start
+Bot: Please enter pairing code (check: data/pairing/telegram_pairing_code.txt)
+User: ABC123
+Bot: ✅ Pairing successful!
+```
 
 ### Commands
 
@@ -200,23 +232,47 @@ Bot: I'll create that for you...
 
 ### Incoming
 
-| Type | Support |
-|------|---------|
-| Text | All platforms |
-| Image | Telegram, Feishu |
-| Voice | Telegram |
-| File | Telegram, Feishu |
-| Location | Telegram |
+| Type | Support | Processing |
+|------|---------|------------|
+| Text | All platforms | Direct to LLM |
+| Image | Telegram, Feishu | Base64 encoded, multimodal input |
+| Voice | Telegram | Auto-transcribed via Whisper |
+| File | Telegram, Feishu | Downloaded to local storage |
+| Location | Telegram | Coordinates extracted |
 
 ### Outgoing
 
-| Type | Support |
-|------|---------|
-| Text | All platforms |
-| Markdown | All platforms |
-| Image | All platforms |
-| File | Telegram, Feishu |
-| Cards | DingTalk, Feishu |
+| Type | Support | Tool |
+|------|---------|------|
+| Text | All platforms | `send_to_chat` |
+| Markdown | All platforms | `send_to_chat` |
+| Image | All platforms | `send_to_chat` with `file_path` |
+| Voice | Telegram | `send_to_chat` with `voice_path` |
+| File | Telegram, Feishu | `send_to_chat` with `file_path` |
+| Cards | DingTalk, Feishu | Platform-specific |
+
+## LLM Tools for IM
+
+The Agent has access to these IM-specific tools:
+
+| Tool | Description |
+|------|-------------|
+| `send_to_chat` | Send text, image, voice, or file to user |
+| `get_chat_history` | Query recent chat messages (user, assistant, system) |
+| `get_voice_file` | Get local path of user's voice message |
+| `get_image_file` | Get local path of user's image |
+
+### Example: Chat History
+
+```
+User: Show me the last 5 messages
+Agent: [calls get_chat_history with limit=5]
+Agent: Here are the recent messages:
+       1. 👤 User (10:30): Hello
+       2. 🤖 Assistant (10:30): Hi! How can I help?
+       3. ⚙️ System (10:31): Task completed: Stock monitoring
+       ...
+```
 
 ## Deployment
 
