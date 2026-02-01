@@ -59,12 +59,17 @@ class Settings(BaseSettings):
     github_token: str = Field(default="", description="GitHub Token")
     
     # === 备用 LLM 端点配置 ===
-    # DashScope (阿里云)
+    # Kimi (月之暗面 Moonshot AI) - 备用端点 1
+    kimi_api_key: str = Field(default="", description="Kimi API Key")
+    kimi_base_url: str = Field(default="https://api.moonshot.cn/v1", description="Kimi API URL")
+    kimi_model: str = Field(default="kimi-k2-0711-preview", description="Kimi 模型")
+    
+    # DashScope (阿里云通义) - 备用端点 2
     dashscope_api_key: str = Field(default="", description="DashScope API Key")
     dashscope_base_url: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="DashScope API URL")
     dashscope_model: str = Field(default="qwen3-max", description="DashScope 模型")
     
-    # MiniMax
+    # MiniMax - 备用端点 3
     minimax_api_key: str = Field(default="", description="MiniMax API Key")
     minimax_base_url: str = Field(default="https://api.minimaxi.com/anthropic", description="MiniMax API URL")
     minimax_model: str = Field(default="MiniMax-M2.1", description="MiniMax 模型")

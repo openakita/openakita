@@ -96,26 +96,37 @@ class Brain:
                 priority=0,
             ))
         
-        # 第二备用端点（阿里 DashScope）- 从环境变量读取
-        if settings.dashscope_api_key:
+        # 第二备用端点（Kimi / 月之暗面）- 从环境变量读取
+        if settings.kimi_api_key:
             self._endpoints.append(LLMEndpoint(
-                name="backup-1 (Aliyun DashScope)",
-                api_key=settings.dashscope_api_key,
-                base_url=settings.dashscope_base_url,
-                model=settings.dashscope_model,
+                name="backup-1 (Kimi)",
+                api_key=settings.kimi_api_key,
+                base_url=settings.kimi_base_url,
+                model=settings.kimi_model,
                 client_type="openai",
                 priority=1,
             ))
         
-        # 第三备用端点（MiniMax）- 从环境变量读取
+        # 第三备用端点（阿里 DashScope）- 从环境变量读取
+        if settings.dashscope_api_key:
+            self._endpoints.append(LLMEndpoint(
+                name="backup-2 (Aliyun DashScope)",
+                api_key=settings.dashscope_api_key,
+                base_url=settings.dashscope_base_url,
+                model=settings.dashscope_model,
+                client_type="openai",
+                priority=2,
+            ))
+        
+        # 第四备用端点（MiniMax）- 从环境变量读取
         if settings.minimax_api_key:
             self._endpoints.append(LLMEndpoint(
-                name="backup-2 (MiniMax)",
+                name="backup-3 (MiniMax)",
                 api_key=settings.minimax_api_key,
                 base_url=settings.minimax_base_url,
                 model=settings.minimax_model,
                 client_type="anthropic",
-                priority=2,
+                priority=3,
             ))
         
         if not self._endpoints:
