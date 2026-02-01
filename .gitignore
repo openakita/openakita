@@ -61,6 +61,7 @@ coverage.xml
 # Data (keep structure)
 data/*
 !data/.gitkeep
+!data/*.example
 
 # Identity files (local only, auto-generated from .example templates)
 identity/*.md

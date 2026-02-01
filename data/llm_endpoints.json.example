@@ -1,0 +1,64 @@
+{
+  "endpoints": [
+    {
+      "name": "claude-primary",
+      "provider": "anthropic",
+      "api_type": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-opus-4-5-20251101-thinking",
+      "priority": 1,
+      "max_tokens": 8192,
+      "timeout": 60,
+      "capabilities": ["text", "tools"],
+      "note": "Anthropic 官方 API"
+    },
+    {
+      "name": "kimi",
+      "provider": "moonshot",
+      "api_type": "openai",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key_env": "KIMI_API_KEY",
+      "model": "kimi-k2.5",
+      "priority": 2,
+      "max_tokens": 8192,
+      "timeout": 120,
+      "capabilities": ["text", "vision", "video", "tools"],
+      "extra_params": {"thinking": {"type": "enabled"}},
+      "note": "月之暗面，全模态支持"
+    },
+    {
+      "name": "dashscope",
+      "provider": "dashscope",
+      "api_type": "openai",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "model": "qwen3-max",
+      "priority": 3,
+      "max_tokens": 8192,
+      "timeout": 60,
+      "capabilities": ["text", "tools"],
+      "extra_params": {"enable_thinking": true},
+      "note": "阿里云通义千问"
+    },
+    {
+      "name": "minimax",
+      "provider": "minimax",
+      "api_type": "anthropic",
+      "base_url": "https://api.minimaxi.com/anthropic",
+      "api_key_env": "MINIMAX_API_KEY",
+      "model": "MiniMax-M2.1",
+      "priority": 4,
+      "max_tokens": 8192,
+      "timeout": 60,
+      "capabilities": ["text", "tools"],
+      "note": "MiniMax 备用端点"
+    }
+  ],
+  "settings": {
+    "retry_count": 2,
+    "retry_delay_seconds": 2,
+    "health_check_interval": 60,
+    "fallback_on_error": true
+  }
+}
