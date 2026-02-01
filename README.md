@@ -100,16 +100,16 @@ Through **Multi-Agent architecture** for efficient parallelism:
 | **Scheduled Tasks** | Set reminders, periodic tasks |
 | **User Profile** | Learn your preferences, personalized service |
 
-### Self-Maintenance System
+### Self-Maintenance System (Sleep & Recovery)
 
-OpenAkita includes a comprehensive self-maintenance system that runs automatically:
+Just like humans need sleep to consolidate memories and repair the body, OpenAkita has its own "sleep cycle" — a self-maintenance system that runs during the quiet hours of the night:
 
-| Feature | Schedule | Description |
-|---------|----------|-------------|
-| **Daily Memory Consolidation** | 03:00 AM | Analyzes daily conversations, extracts key memories, refreshes MEMORY.md |
-| **Daily Self-Check** | 04:00 AM | Scans ERROR logs, attempts auto-fix for tool issues, generates reports |
-| **Task Retrospection** | After long tasks | Reviews task execution, identifies issues, records lessons learned |
-| **Loop Detection** | Real-time | Detects and stops repetitive tool calls (prevents infinite loops) |
+| Feature | Schedule | Human Analogy | Description |
+|---------|----------|---------------|-------------|
+| **Daily Memory Consolidation** | 03:00 AM | 🧠 REM Sleep | Like the brain consolidating short-term to long-term memory during sleep |
+| **Daily Self-Check** | 04:00 AM | 💪 Body Repair | Like the body repairing cells and clearing metabolic waste during deep sleep |
+| **Task Retrospection** | After long tasks | 💭 Dreaming | Like processing and making sense of the day's experiences |
+| **Loop Detection** | Real-time | ⚡ Reflexes | Immediate response to prevent harmful patterns |
 
 #### How It Works
 
