@@ -32,6 +32,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 减少第三方库的日志输出
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+
 # Typer 应用
 app = typer.Typer(
     name="openakita",

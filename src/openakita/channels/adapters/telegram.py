@@ -419,14 +419,19 @@ class TelegramAdapter(ChannelAdapter):
         try:
             message = update.message or update.edited_message
             if not message:
+                logger.debug("Received update without message")
                 return
             
             chat_id = str(message.chat.id)
+            user_id = message.from_user.id if message.from_user else "unknown"
+            text_preview = (message.text[:30] + "...") if message.text and len(message.text) > 30 else message.text
+            logger.debug(f"Received message from user {user_id} in chat {chat_id}: {text_preview}")
             
             # 配对验证
             if self.require_pairing:
                 # 检查是否已配对
                 if not self.pairing_manager.is_paired(chat_id):
+                    logger.debug(f"Chat {chat_id} is not paired, checking pairing status...")
                     # 检查是否在等待配对
                     if self.pairing_manager.is_pending_pairing(chat_id):
                         # 尝试验证配对码
@@ -814,7 +819,7 @@ class TelegramAdapter(ChannelAdapter):
         media.local_path = str(local_path)
         media.status = MediaStatus.READY
         
-        logger.info(f"Downloaded media: {media.filename}")
+        logger.debug(f"Downloaded media: {media.filename}")
         return local_path
     
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
@@ -901,7 +906,7 @@ class TelegramAdapter(ChannelAdapter):
                 caption=caption if caption else None,
             )
         
-        logger.info(f"Sent photo to {chat_id}: {photo_path}")
+        logger.debug(f"Sent photo to {chat_id}: {photo_path}")
         return str(sent.message_id)
     
     async def send_file(self, chat_id: str, file_path: str, caption: str = "") -> str:
@@ -920,7 +925,7 @@ class TelegramAdapter(ChannelAdapter):
                 caption=caption if caption else None,
             )
         
-        logger.info(f"Sent file to {chat_id}: {file_path}")
+        logger.debug(f"Sent file to {chat_id}: {file_path}")
         return str(sent.message_id)
     
     async def send_voice(self, chat_id: str, voice_path: str, caption: str = "") -> str:
@@ -935,7 +940,7 @@ class TelegramAdapter(ChannelAdapter):
                 caption=caption if caption else None,
             )
         
-        logger.info(f"Sent voice to {chat_id}: {voice_path}")
+        logger.debug(f"Sent voice to {chat_id}: {voice_path}")
         return str(sent.message_id)
     
     async def send_typing(self, chat_id: str) -> None:

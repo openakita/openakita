@@ -5,6 +5,7 @@
 """
 
 import logging
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -246,7 +247,7 @@ class SelfChecker:
         elif "file" in test.id:
             if isinstance(test.input, dict):
                 if test.input.get("action") == "write_read":
-                    test_file = "/tmp/openakita_test.txt"
+                    test_file = str(Path(tempfile.gettempdir()) / "openakita_test.txt")
                     await self.file_tool.write(test_file, test.input["content"])
                     return await self.file_tool.read(test_file)
         return None

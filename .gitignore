@@ -97,6 +97,13 @@ voice_*.py
 # Personal/private folders
 stock_monitor/
 
+# Local notes (not for GitHub)
+TODO_LOCAL.md
+*_LOCAL.md
+
+# Local docs directory (architecture analysis, not for GitHub)
+docs_local/
+
 # OS
 .DS_Store
 Thumbs.db

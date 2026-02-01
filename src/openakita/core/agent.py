@@ -125,6 +125,64 @@ def strip_thinking_tags(text: str) -> str:
     return cleaned.strip()
 
 
+def strip_tool_simulation_text(text: str) -> str:
+    """
+    移除 LLM 在文本中模拟工具调用的内容
+    
+    当使用不支持原生工具调用的备用模型时，LLM 可能会在文本中
+    "模拟"工具调用，输出类似:
+    - get_skill_info("moltbook")
+    - run_shell:0{"command": "..."}
+    - read_file("path/to/file")
+    
+    这些内容不应该展示给最终用户。
+    """
+    if not text:
+        return text
+    
+    # 模式1: 函数调用风格 function_name("arg") 或 function_name(arg)
+    pattern1 = r'^[a-z_]+\s*\([^)]*\)\s*$'
+    
+    # 模式2: 带序号的工具调用 tool_name:N{json} 或 tool_name:N(args)
+    pattern2 = r'^[a-z_]+:\d+[\{\(].*[\}\)]\s*$'
+    
+    # 模式3: JSON 风格工具调用 {"tool": "name", ...}
+    pattern3 = r'^\{["\']?(tool|function|name)["\']?\s*:'
+    
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        # 检查是否是模拟工具调用
+        is_tool_sim = (
+            re.match(pattern1, stripped, re.IGNORECASE) or
+            re.match(pattern2, stripped, re.IGNORECASE) or
+            re.match(pattern3, stripped, re.IGNORECASE)
+        )
+        if not is_tool_sim:
+            cleaned_lines.append(line)
+    
+    return '\n'.join(cleaned_lines).strip()
+
+
+def clean_llm_response(text: str) -> str:
+    """
+    清理 LLM 响应文本
+    
+    依次应用:
+    1. strip_thinking_tags - 移除思考标签
+    2. strip_tool_simulation_text - 移除模拟工具调用
+    """
+    if not text:
+        return text
+    
+    cleaned = strip_thinking_tags(text)
+    cleaned = strip_tool_simulation_text(cleaned)
+    
+    return cleaned.strip()
+
+
 class Agent:
     """
     OpenAkita 主类
@@ -315,20 +373,19 @@ class Agent:
         # === 浏览器工具 (browser-use MCP) ===
         {
             "name": "browser_open",
-            "description": "启动浏览器。在执行任何浏览器操作前，先调用此工具决定是否让用户看到浏览器窗口。"
-                           "如果任务需要用户观看操作过程、调试、或演示，设置 visible=True；"
-                           "如果只是后台自动化任务（如抓取数据），设置 visible=False。"
-                           "不确定时可以设置 ask_user=True 先询问用户偏好。",
+            "description": "启动浏览器。参数说明：visible=True 显示浏览器窗口(用户可见)，visible=False 后台运行(不可见)。默认不传参数时为后台模式。",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "visible": {
                         "type": "boolean", 
-                        "description": "是否显示浏览器窗口。True=用户可见(调试/演示), False=后台运行(自动化)"
+                        "description": "True=显示浏览器窗口(用户可见), False=后台运行(不可见)。默认False",
+                        "default": False
                     },
                     "ask_user": {
                         "type": "boolean",
-                        "description": "是否先询问用户偏好。设为 True 时会返回提示让你询问用户"
+                        "description": "是否先询问用户偏好",
+                        "default": False
                     }
                 }
             }
@@ -1095,7 +1152,7 @@ class Agent:
         # 注意: 不自动启动浏览器，由 browser_open 工具控制启动时机和模式
         try:
             from ..tools.browser_mcp import BrowserMCP
-            self.browser_mcp = BrowserMCP(headless=True)  # 默认后台模式
+            self.browser_mcp = BrowserMCP(headless=False)  # 默认可见模式
             # 不在这里 await self.browser_mcp.start()，让 LLM 通过 browser_open 控制
             
             # 注意: 浏览器工具已在 BASE_TOOLS 中定义，不需要注册到 MCP catalog
@@ -1167,7 +1224,22 @@ class Agent:
         else:
             profile_prompt = self.profile_manager.get_daily_question_prompt()
         
+        # 系统环境信息
+        import platform
+        import os
+        system_info = f"""## 运行环境
+
+- **操作系统**: {platform.system()} {platform.release()}
+- **当前工作目录**: {os.getcwd()}
+- **临时目录**: 
+  - Windows: 使用当前目录下的 `data/temp/` 或 `%TEMP%`
+  - Linux/macOS: 使用当前目录下的 `data/temp/` 或 `/tmp`
+- **建议**: 创建临时文件时优先使用 `data/temp/` 目录（相对于当前工作目录）
+"""
+        
         return f"""{base_prompt}
+
+{system_info}
 {skill_catalog}
 {mcp_catalog}
 {memory_context}
@@ -1176,34 +1248,61 @@ class Agent:
 
 ## 核心原则 (最高优先级!!!)
 
-### 你是一个可以自主进化的 AI 助手
+### 第一铁律：工具优先，绝不空谈
 
-**这是你的核心身份定位，必须时刻牢记：**
+**⚠️ 任何任务都必须通过工具或脚本完成，不能只是嘴上说说！**
 
-1. **遇到不会的问题，想办法解决，而不是直接丢回给用户**
-   - 不会？去网上找工具、找方案
-   - 找不到现成的？自己写代码实现
-   - 写好了就保存为技能，下次直接用
+| 场景 | ❌ 错误做法 | ✅ 正确做法 |
+|------|-----------|-----------|
+| 用户要提醒 | 回复"好的我会提醒你" | 调用 schedule_task |
+| 用户要查信息 | 凭记忆回答 | 调用 web_search |
+| 用户要操作文件 | 描述怎么操作 | 调用 write_file/read_file |
+| 用户要执行命令 | 告诉用户命令是什么 | 调用 run_shell |
+| 用户要处理数据 | 告诉用户写什么代码 | 写临时脚本并执行 |
 
-2. **你可以给自己"加装"工具**
-   - 使用 `generate_skill` 创建新技能
-   - 使用 `install_skill` 安装外部技能
-   - 使用 `improve_skill` 改进现有技能
-   - 从网上搜索解决方案，然后实现它
+**只回复文字 = 没有执行任务 = 失败！**
 
-3. **Ralph Wiggum 模式 - 永不放弃**
-   - 第一次失败？换个方法再试
-   - 工具不够用？创建新工具
-   - 信息不完整？主动去查找
-   - 用户说"做不到"？证明你可以
+### 第二铁律：没有工具就创造工具
 
-4. **自动进化，自动补充技能**
-   - 每次解决新问题，考虑是否值得保存为技能
-   - 发现自己缺少某个能力，主动补充
-   - 慢慢变得全能，而不是停留在原地
+**绝不说"我没有这个能力"！立即行动：**
 
-**禁止说"我做不到"、"这超出了我的能力"！**
-**正确做法：分析问题 → 寻找方案 → 创建工具 → 解决问题 → 保存经验**
+**方式一：临时脚本（一次性任务）**
+```
+# 根据运行环境信息中的当前工作目录和临时目录建议
+write_file("data/temp/task.py", "脚本内容")
+run_shell("python data/temp/task.py")
+```
+
+**方式二：搜索安装（有现成的）**
+```
+search_github → install_skill → 使用
+```
+
+**方式三：创建技能（需要复用）**
+```
+generate_skill → 保存 → 使用
+```
+
+**从"不会"到"会"只需要几分钟！**
+
+### 第三铁律：问题自己解决
+
+**遇到问题，默认自己解决，不要甩给用户：**
+
+- 报错了？自己读日志、分析、修复
+- 缺信息？自己用工具查找
+- 不确定？先尝试，失败了再换方法
+- **只有完全无法解决才询问用户**
+
+### 第四铁律：永不放弃
+
+- 第一次失败？换个方法再试
+- 第二次失败？再换一个
+- 工具不够用？创建新工具
+- 信息不完整？主动去查找
+
+**禁止说"我做不到"、"这超出了我的能力"、"请你自己..."！**
+**正确做法：分析问题 → 搜索方案 → 获取工具 → 执行任务 → 验证结果**
 
 ---
 
@@ -1358,7 +1457,7 @@ class Agent:
         """
         从 BASE_TOOLS 动态生成工具列表文本
         
-        按类别分组显示
+        按类别分组显示，包含重要参数说明
         """
         # 工具分类
         categories = {
@@ -1369,8 +1468,8 @@ class Agent:
             "Scheduled Tasks": ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "trigger_scheduled_task"],
         }
         
-        # 构建工具名到描述的映射
-        tool_map = {t["name"]: t["description"] for t in self._tools}
+        # 构建工具名到完整定义的映射
+        tool_map = {t["name"]: t for t in self._tools}
         
         lines = ["## Available Tools"]
         
@@ -1380,22 +1479,30 @@ class Agent:
             
             if existing_tools:
                 lines.append(f"\n### {category}")
-                for name, desc in existing_tools:
-                    # 截断过长的描述
-                    short_desc = desc[:80] + "..." if len(desc) > 80 else desc
-                    lines.append(f"- **{name}**: {short_desc}")
+                for name, tool_def in existing_tools:
+                    desc = tool_def.get("description", "")
+                    # 不再截断描述，完整显示
+                    lines.append(f"- **{name}**: {desc}")
+                    
+                    # 显示重要参数（可选）
+                    schema = tool_def.get("input_schema", {})
+                    props = schema.get("properties", {})
+                    required = schema.get("required", [])
+                    
+                    # 注意：工具的完整参数定义通过 tools=self._tools 传递给 LLM API
+                    # 这里只在 system prompt 中简要列出，避免过长
         
         # 添加未分类的工具
         categorized = set()
         for names in categories.values():
             categorized.update(names)
         
-        uncategorized = [(t["name"], t["description"]) for t in self._tools if t["name"] not in categorized]
+        uncategorized = [(t["name"], t) for t in self._tools if t["name"] not in categorized]
         if uncategorized:
             lines.append("\n### Other Tools")
-            for name, desc in uncategorized:
-                short_desc = desc[:80] + "..." if len(desc) > 80 else desc
-                lines.append(f"- **{name}**: {short_desc}")
+            for name, tool_def in uncategorized:
+                desc = tool_def.get("description", "")
+                lines.append(f"- **{name}**: {desc}")
         
         return "\n".join(lines)
     
@@ -1436,12 +1543,12 @@ class Agent:
     
     async def _compress_context(self, messages: list[dict], max_tokens: int = None) -> list[dict]:
         """
-        压缩对话上下文
+        压缩对话上下文（使用 LLM 压缩，不直接截断）
         
         策略:
-        1. 保留最近 MIN_RECENT_TURNS 轮对话
-        2. 将早期对话摘要成简短描述
-        3. 如果还是太长，逐步删除中间内容
+        1. 保留最近 MIN_RECENT_TURNS 轮对话完整
+        2. 将早期对话用 LLM 摘要成简短描述
+        3. 如果还是太长，递归压缩
         
         Args:
             messages: 消息列表
@@ -1462,20 +1569,21 @@ class Agent:
         if current_tokens <= available_tokens:
             return messages
         
-        logger.info(f"Context too large ({current_tokens} tokens), compressing...")
+        logger.info(f"Context too large ({current_tokens} tokens), compressing with LLM...")
         
         # 计算需要保留的最近对话数量 (user + assistant = 1 轮)
         recent_count = MIN_RECENT_TURNS * 2  # 4 轮 = 8 条消息
         
         if len(messages) <= recent_count:
-            # 消息本身就不多，尝试截断长消息
-            return self._truncate_long_messages(messages, available_tokens)
+            # 消息本身就不多，无法再压缩，原样返回并记录警告
+            logger.warning(f"Cannot compress further: only {len(messages)} messages, keeping all")
+            return messages
         
         # 分离早期消息和最近消息
         early_messages = messages[:-recent_count]
         recent_messages = messages[-recent_count:]
         
-        # 尝试摘要早期对话
+        # 使用 LLM 摘要早期对话
         summary = await self._summarize_messages(early_messages)
         
         # 构建压缩后的消息列表
@@ -1500,35 +1608,32 @@ class Agent:
             logger.info(f"Compressed context from {current_tokens} to {compressed_tokens} tokens")
             return compressed
         
-        # 还是太长，进一步截断
-        logger.warning(f"Context still too large ({compressed_tokens} tokens), truncating further...")
-        return self._truncate_long_messages(compressed, available_tokens)
+        # 还是太长，递归压缩（减少保留的最近消息数量）
+        logger.warning(f"Context still large ({compressed_tokens} tokens), compressing further...")
+        return await self._compress_long_messages(compressed, available_tokens)
     
     async def _summarize_messages(self, messages: list[dict]) -> str:
         """
         将消息列表摘要成简短描述
         
-        使用 LLM 生成摘要
+        使用 LLM 生成摘要，不截断原始内容
         """
         if not messages:
             return ""
         
-        # 构建对话文本
+        # 构建完整对话文本（不截断）
         conversation_text = ""
         for msg in messages:
             role = "用户" if msg["role"] == "user" else "助手"
             content = msg.get("content", "")
             if isinstance(content, str):
-                # 截断过长的内容
-                if len(content) > 500:
-                    content = content[:500] + "..."
                 conversation_text += f"{role}: {content}\n"
             elif isinstance(content, list):
-                # 复杂内容只保留文本部分
+                # 复杂内容保留完整文本部分
                 texts = []
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "text":
-                        texts.append(item.get("text", "")[:200])
+                        texts.append(item.get("text", ""))
                 if texts:
                     conversation_text += f"{role}: {' '.join(texts)}\n"
         
@@ -1557,41 +1662,48 @@ class Agent:
             
         except Exception as e:
             logger.warning(f"Failed to summarize messages: {e}")
-            # 回退: 简单截取
-            return f"[早期对话共 {len(messages)} 条消息，内容已省略]"
+            # 回退: 返回消息数量提示
+            return f"[早期对话共 {len(messages)} 条消息]"
     
-    def _truncate_long_messages(self, messages: list[dict], max_tokens: int) -> list[dict]:
+    async def _compress_long_messages(self, messages: list[dict], max_tokens: int) -> list[dict]:
         """
-        截断过长的消息内容
+        压缩过长的消息内容（使用 LLM 压缩，不直接截断）
         
-        策略: 保留消息结构，但截断过长的文本内容
+        策略: 保留最近消息完整，早期消息用 LLM 压缩
         """
-        truncated = []
-        remaining_tokens = max_tokens
+        current_tokens = self._estimate_messages_tokens(messages)
         
-        # 从后往前处理，优先保留最近的消息
-        for msg in reversed(messages):
-            content = msg.get("content", "")
-            msg_tokens = 0
-            
-            if isinstance(content, str):
-                msg_tokens = self._estimate_tokens(content)
-                if msg_tokens > remaining_tokens:
-                    # 需要截断
-                    max_chars = remaining_tokens * CHARS_PER_TOKEN
-                    content = content[:max_chars] + "\n[内容过长已截断...]"
-                    msg_tokens = remaining_tokens
-            
-            truncated.insert(0, {
-                "role": msg["role"],
-                "content": content
+        if current_tokens <= max_tokens:
+            return messages
+        
+        # 保留最近 4 条消息完整
+        recent_count = min(4, len(messages))
+        recent_messages = messages[-recent_count:] if recent_count > 0 else []
+        early_messages = messages[:-recent_count] if len(messages) > recent_count else []
+        
+        if not early_messages:
+            # 只有最近消息，无法再压缩，原样返回
+            logger.warning("Cannot compress further, only recent messages left")
+            return messages
+        
+        # 用 LLM 压缩早期消息
+        summary = await self._summarize_messages(early_messages)
+        
+        compressed = []
+        if summary:
+            compressed.append({
+                "role": "user",
+                "content": f"[之前的对话摘要]\n{summary}"
             })
-            remaining_tokens -= msg_tokens
-            
-            if remaining_tokens <= 0:
-                break
+            compressed.append({
+                "role": "assistant",
+                "content": "好的，我已了解之前的对话内容，请继续。"
+            })
         
-        return truncated
+        compressed.extend(recent_messages)
+        
+        logger.info(f"Compressed context from {current_tokens} to {self._estimate_messages_tokens(compressed)} tokens")
+        return compressed
     
     async def chat(self, message: str, session_id: Optional[str] = None) -> str:
         """
@@ -1608,7 +1720,7 @@ class Agent:
             await self.initialize()
         
         session_info = f"[{session_id}] " if session_id else ""
-        logger.info(f"{session_info}User: {message[:100]}...")
+        logger.info(f"{session_info}User: {message}")
         
         # 添加到对话历史
         self._conversation_history.append({
@@ -1652,7 +1764,7 @@ class Agent:
         # 记录到记忆系统
         self.memory_manager.record_turn("assistant", response_text)
         
-        logger.info(f"{session_info}Agent: {response_text[:100]}...")
+        logger.info(f"{session_info}Agent: {response_text}")
         
         return response_text
     
@@ -1688,7 +1800,7 @@ class Agent:
         Agent._current_im_gateway = gateway
         
         try:
-            logger.info(f"[Session:{session_id}] User: {message[:100]}...")
+            logger.info(f"[Session:{session_id}] User: {message}")
             
             # 记录用户消息到 conversation_history（用于凌晨归纳）
             self.memory_manager.record_turn("user", message)
@@ -1753,7 +1865,7 @@ class Agent:
             # 记录 Agent 响应到 conversation_history（用于凌晨归纳）
             self.memory_manager.record_turn("assistant", response_text)
             
-            logger.info(f"[Session:{session_id}] Agent: {response_text[:100]}...")
+            logger.info(f"[Session:{session_id}] Agent: {response_text}")
             
             return response_text
         finally:
@@ -1796,7 +1908,7 @@ class Agent:
 ---
 请根据以上任务分析来处理用户的请求。"""
             
-            logger.info(f"Prompt compiled: {compiler_output[:100]}...")
+            logger.info(f"Prompt compiled: {compiler_output}")
             return enhanced_prompt, compiler_output
             
         except Exception as e:
@@ -2018,7 +2130,7 @@ class Agent:
                     "tool_use_id": tool_call["id"],
                     "content": result,
                 })
-                logger.info(f"Tool {tool_call['name']} result: {result[:100]}...")
+                logger.info(f"Tool {tool_call['name']} result: {result}")
             
             messages.append({"role": "user", "content": tool_results})
             
@@ -2089,7 +2201,7 @@ class Agent:
                 for skill in skills:
                     auto = "自动" if not skill.disable_model_invocation else "手动"
                     output += f"**{skill.name}** [{auto}]\n"
-                    output += f"  {skill.description[:100]}{'...' if len(skill.description) > 100 else ''}\n\n"
+                    output += f"  {skill.description}\n\n"
                 return output
             
             elif tool_name == "get_skill_info":
@@ -2214,7 +2326,7 @@ class Agent:
                 
                 memory_id = self.memory_manager.add_memory(memory)
                 if memory_id:
-                    return f"✅ 已记住: [{mem_type_str}] {content[:100]}{'...' if len(content) > 100 else ''}\nID: {memory_id}"
+                    return f"✅ 已记住: [{mem_type_str}] {content}\nID: {memory_id}"
                 else:
                     return "⚠️ 记忆已存在或记录失败"
             
@@ -2622,10 +2734,6 @@ class Agent:
                     else:
                         role_icon = f"📌 {role}"
                     
-                    # 截断过长内容
-                    if len(content) > 200:
-                        content = content[:200] + "..."
-                    
                     # 格式化时间
                     time_str = ""
                     if timestamp:
@@ -2660,7 +2768,7 @@ class Agent:
         if not self._initialized:
             await self.initialize()
         
-        logger.info(f"Executing task: {task.description[:100]}...")
+        logger.info(f"Executing task: {task.description}")
         
         # 使用已构建的系统提示词 (包含技能清单)
         # 技能清单已在初始化时注入到 _context.system 中
@@ -2714,9 +2822,13 @@ class Agent:
                         "input": block.input,
                     })
             
-            # 如果有文本响应，保存
+            # 如果有文本响应，保存（过滤 thinking 标签和工具调用模拟文本）
             if text_content:
-                final_response = text_content
+                cleaned_text = clean_llm_response(text_content)
+                # 只有在没有工具调用时才保存文本作为最终响应
+                # 如果有工具调用，这个文本可能是 LLM 的思考过程
+                if not tool_calls and cleaned_text:
+                    final_response = cleaned_text
             
             # 如果没有工具调用，任务完成
             if not tool_calls:
@@ -2739,6 +2851,7 @@ class Agent:
             
             # 执行每个工具并收集结果
             tool_results = []
+            executed_tools = []  # 记录执行的工具，用于生成摘要
             for tool_call in tool_calls:
                 result = await self._execute_tool(tool_call["name"], tool_call["input"])
                 tool_results.append({
@@ -2746,13 +2859,39 @@ class Agent:
                     "tool_use_id": tool_call["id"],
                     "content": result,
                 })
-                logger.info(f"Tool {tool_call['name']} result: {result[:100]}...")
+                executed_tools.append({
+                    "name": tool_call["name"],
+                    "result_preview": result if result else ""
+                })
+                logger.info(f"Tool {tool_call['name']} result: {result}")
             
             messages.append({"role": "user", "content": tool_results})
             
-            # 检查是否应该停止
-            if response.stop_reason == "end_turn":
-                break
+            # 注意：不在工具执行后检查 stop_reason，让循环继续获取 LLM 的最终总结
+        
+        # 循环结束后，如果 final_response 为空，尝试让 LLM 生成一个总结
+        if not final_response or len(final_response.strip()) < 10:
+            logger.info("Task completed but no final response, requesting summary...")
+            try:
+                # 请求 LLM 生成任务完成总结
+                messages.append({
+                    "role": "user", 
+                    "content": "任务执行完毕。请简要总结一下执行结果和完成情况。"
+                })
+                summary_response = await asyncio.to_thread(
+                    self.brain.messages_create,
+                    model=self.brain.model,
+                    max_tokens=1000,
+                    system=system_prompt,
+                    messages=messages,
+                )
+                for block in summary_response.content:
+                    if block.type == "text":
+                        final_response = clean_llm_response(block.text)
+                        break
+            except Exception as e:
+                logger.warning(f"Failed to get summary: {e}")
+                final_response = "任务已执行完成。"
         
         task.mark_completed(final_response)
         
@@ -2868,7 +3007,7 @@ class Agent:
     
     def _on_error(self, error: str, task: Task) -> None:
         """Ralph 循环错误回调"""
-        logger.warning(f"Ralph error for task {task.id}: {error[:100]}")
+        logger.warning(f"Ralph error for task {task.id}: {error}")
     
     @property
     def is_initialized(self) -> bool:

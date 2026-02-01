@@ -162,17 +162,17 @@ class BrowserMCP:
         ),
     ]
     
-    def __init__(self, headless: bool = True):
+    def __init__(self, headless: bool = False):
         """
         Args:
-            headless: 是否无头模式 (默认 True)
+            headless: 是否无头模式 (默认 False，即可见模式)
         """
         self.headless = headless
         self._playwright = None
         self._browser = None
         self._page: Optional[Any] = None
         self._started = False
-        self._visible = False  # 当前是否可见模式
+        self._visible = True  # 当前是否可见模式（默认可见）
     
     async def start(self, visible: bool = None) -> bool:
         """
@@ -543,7 +543,7 @@ class BrowserMCP:
 _browser_mcp: Optional[BrowserMCP] = None
 
 
-def get_browser_mcp(headless: bool = True) -> BrowserMCP:
+def get_browser_mcp(headless: bool = False) -> BrowserMCP:
     """获取 BrowserMCP 单例"""
     global _browser_mcp
     if _browser_mcp is None:

@@ -12,9 +12,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive documentation suite
 - Contributing guidelines
 - Security policy
+- **Unified LLM Client Architecture** (`src/openakita/llm/`)
+  - `LLMClient`: Central client managing multi-endpoint, capability routing, failover
+  - `LLMProvider` base class with Anthropic and OpenAI implementations
+  - Unified internal types: `Message`, `Tool`, `LLMRequest`, `LLMResponse`, `ContentBlock`
+  - Anthropic-like format as internal standard, automatic conversion for OpenAI-compatible APIs
+- **LLM Endpoint Configuration** (`data/llm_endpoints.json`)
+  - Centralized endpoint config: name, provider, model, API key, capabilities, priority
+  - Supports multiple providers: Anthropic, OpenAI, DashScope, Kimi (Moonshot), MiniMax
+  - Capability-based routing: text, vision, video, tools
+  - Priority-based failover with automatic endpoint selection
+- **LLM Endpoint Cooldown Mechanism**
+  - Failed endpoints enter 3-minute cooldown period
+  - Automatically skipped during cooldown, uses fallback endpoints
+  - Auto-recovery after cooldown expires
+  - Applies to auth errors, rate limits, and unexpected errors
+- **Text-based Tool Call Parsing**
+  - Fallback for models not supporting native `tool_calls`
+  - Parses `<function_calls>` XML patterns from text responses
+  - Seamless degradation without code changes
+- **Multimodal Support**
+  - Image processing with automatic format detection and base64 encoding
+  - Video support via Kimi (Moonshot) with `video_url` type
+  - Capability-based routing: video tasks prioritize Kimi
 
 ### Changed
 - README restructured for open source
+- **Brain Refactored as Thin Wrapper**
+  - Removed direct Anthropic/OpenAI client instances
+  - All LLM calls now go through `LLMClient`
+  - `messages_create()` and `think()` delegate to `LLMClient.chat()`
+- **Message Converters** (`src/openakita/llm/converters/`)
+  - `messages.py`: Bidirectional conversion between internal and OpenAI formats
+  - `tools.py`: Tool definition conversion, text tool call parsing
+  - `multimodal.py`: Image/video content block conversion
+- **httpx AsyncClient Event Loop Fix**
+  - Tracks event loop ID when client is created
+  - Recreates client if event loop changes (fixes "Event loop is closed" error)
+  - Applied to both Anthropic and OpenAI providers
+- **Cross-platform Path Handling**
+  - System prompt suggests `data/temp/` instead of hardcoded `/tmp`
+  - Dynamic OS info injected into system prompt
+  - `tempfile.gettempdir()` used in self-check module
+- **Context Compression: LLM-based instead of truncation**
+  - `_compress_context()` now uses LLM to summarize early messages
+  - `_summarize_messages()` passes full content to LLM (no truncation)
+  - Recursive compression when context still too large
+  - Never directly truncates message content
+- **Full Logging Output (no truncation)**
+  - User messages logged completely
+  - Agent responses logged completely
+  - Tool execution results logged completely
+  - Task descriptions logged completely
+  - Prompt compiler output logged completely
+- **Tool Output: Full content display**
+  - `list_skills` shows full skill descriptions
+  - `add_memory` shows full memory content
+  - `get_chat_history` shows full message content
+  - `executed_tools.result_preview` shows full result
+- **Identity/Memory Module: No truncation**
+  - Current task content preserved fully
+  - Success patterns preserved fully
+- **LLM Failover Optimization**
+  - With fallback endpoints: switch immediately after one failure
+  - Single endpoint: retry multiple times (default 3)
+- **Thinking as Parameter, not Capability**
+  - `thinking` removed from endpoint capability filtering
+  - Now treated as transmission parameter only
+- **Kimi-specific Adaptations**
+  - `reasoning_content` field support in Message/LLMResponse types
+  - Automatic extraction and injection for Kimi multi-turn tool calls
+  - `thinking.type` set to `enabled` per official documentation
 
 ## [0.6.0] - 2026-01-31
 
