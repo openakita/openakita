@@ -46,6 +46,18 @@ from ..tools.catalog import ToolCatalog
 # 记忆系统
 from ..memory import MemoryManager
 
+# Windows Desktop Automation (Windows only)
+import sys
+_DESKTOP_AVAILABLE = False
+_desktop_tool_handler = None
+if sys.platform == "win32":
+    try:
+        from ..tools.desktop import DESKTOP_TOOLS, DesktopToolHandler
+        _DESKTOP_AVAILABLE = True
+        _desktop_tool_handler = DesktopToolHandler()
+    except ImportError:
+        pass
+
 logger = logging.getLogger(__name__)
 
 # 上下文管理常量
@@ -880,7 +892,11 @@ class Agent:
         self._builtin_mcp_count = 0
         
         # 系统工具目录（渐进式披露）
-        self.tool_catalog = ToolCatalog(self.BASE_TOOLS)
+        # Include desktop tools on Windows
+        _all_tools = list(self.BASE_TOOLS)
+        if _DESKTOP_AVAILABLE:
+            _all_tools.extend(DESKTOP_TOOLS)
+        self.tool_catalog = ToolCatalog(_all_tools)
         
         # 定时任务调度器
         self.task_scheduler = None  # 在 initialize() 中启动
@@ -897,6 +913,12 @@ class Agent:
         
         # 动态工具列表（基础工具 + 技能工具）
         self._tools = list(self.BASE_TOOLS)
+        
+        # Add desktop tools on Windows
+        if _DESKTOP_AVAILABLE:
+            self._tools.extend(DESKTOP_TOOLS)
+            logger.info(f"Desktop automation tools enabled ({len(DESKTOP_TOOLS)} tools)")
+        
         self._update_shell_tool_description()
         
         # 对话上下文
@@ -3621,6 +3643,51 @@ generate_skill → 保存 → 使用
                     result_lines.append(f"{i}. {role_icon}{time_str}:\n   {content}\n")
                 
                 return "\n".join(result_lines)
+            
+            # === Windows Desktop Automation Tools ===
+            elif tool_name.startswith("desktop_"):
+                if not _DESKTOP_AVAILABLE:
+                    return "Desktop tools only available on Windows. Install: pip install mss pyautogui pywinauto pyperclip psutil"
+                
+                if _desktop_tool_handler is None:
+                    return "Desktop tool handler not initialized"
+                
+                try:
+                    result = await _desktop_tool_handler.handle(tool_name, tool_input)
+                    
+                    if isinstance(result, dict):
+                        if result.get("success"):
+                            if result.get("image_base64"):
+                                output = f"Screenshot done ({result.get('width')}x{result.get('height')})"
+                                if result.get("analysis"):
+                                    output += f"\n\nAnalysis:\n{result['analysis'].get('answer', '')}"
+                                return output
+                            elif result.get("found") is not None:
+                                if result.get("found"):
+                                    elem = result.get("element", {})
+                                    return f"Found element: {elem.get('name', 'unknown')} @ {elem.get('center', 'unknown')}"
+                                else:
+                                    return f"Element not found: {result.get('message', '')}"
+                            elif result.get("windows"):
+                                windows = result["windows"]
+                                output = f"Found {len(windows)} windows:\n"
+                                for i, w in enumerate(windows[:10], 1):
+                                    output += f"  {i}. {w.get('title', 'unknown')}\n"
+                                if len(windows) > 10:
+                                    output += f"  ... and {len(windows) - 10} more\n"
+                                return output
+                            elif result.get("tree"):
+                                return f"Element tree:\n```\n{result.get('text', '')}\n```"
+                            else:
+                                return f"{result.get('message', 'Success')}"
+                        else:
+                            return f"Error: {result.get('error', 'Operation failed')}"
+                    else:
+                        return str(result)
+                        
+                except Exception as e:
+                    logger.error(f"Desktop tool error: {e}", exc_info=True)
+                    return f"Desktop tool error: {str(e)}"
             
             else:
                 return f"未知工具: {tool_name}"

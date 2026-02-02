@@ -47,6 +47,7 @@ The following system tools are available. Use `get_tool_info(tool_name)` to get 
         "Skills Management": ["list_skills", "get_skill_info", "run_skill_script", "get_skill_reference", "install_skill", "generate_skill", "improve_skill"],
         "Memory": ["add_memory", "search_memory", "get_memory_stats"],
         "Browser": ["browser_open", "browser_status", "browser_list_tabs", "browser_navigate", "browser_new_tab", "browser_switch_tab", "browser_click", "browser_type", "browser_get_content", "browser_screenshot"],
+        "Desktop (Windows)": ["desktop_screenshot", "desktop_find_element", "desktop_click", "desktop_type", "desktop_hotkey", "desktop_scroll", "desktop_window", "desktop_wait", "desktop_inspect"],
         "Scheduled Tasks": ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "trigger_scheduled_task"],
         "IM Channel": ["send_to_chat", "get_voice_file", "get_image_file", "get_chat_history"],
         "User Profile": ["update_user_profile", "skip_profile_question", "get_user_profile"],
