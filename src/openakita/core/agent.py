@@ -2808,8 +2808,25 @@ generate_skill → 保存 → 使用
                         "input": block.input,
                     })
             
-            # 如果没有工具调用，直接返回文本
+            # 如果没有工具调用，检查是否需要强制调用
             if not tool_calls:
+                # 截图强制检测：用户要求截图但 LLM 没调用工具
+                screenshot_keywords = ['截图', '截个图', '截一下图', '桌面截图', 'screenshot']
+                user_wants_screenshot = any(kw in message.lower() for kw in screenshot_keywords)
+                
+                if user_wants_screenshot and iteration == 0:
+                    # 强制要求调用截图工具
+                    logger.warning("[Screenshot Detection] User requested screenshot but LLM didn't call tool, forcing retry")
+                    messages.append({
+                        "role": "assistant",
+                        "content": text_content
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": "⚠️ 你必须调用 desktop_screenshot 工具来截图，不能只是说截图完成！请现在调用工具。"
+                    })
+                    continue  # 重新循环让 LLM 调用工具
+                
                 return strip_thinking_tags(text_content)
             
             # 循环检测
