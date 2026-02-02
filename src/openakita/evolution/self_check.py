@@ -592,33 +592,76 @@ ID: {result.test_id}
             timestamp=datetime.now(),
         )
         
-        try:
-            # 1. 本地匹配提取错误
-            log_analyzer = LogAnalyzer(settings.log_dir_path)
-            errors = log_analyzer.extract_errors_only()
-            
-            if not errors:
-                logger.info("No errors found in logs")
-                self._save_daily_report(report)
-                return report
-            
-            # 2. 分类并生成摘要
+        # === 阶段 1: 收集所有问题信息（日志 + 记忆 + 复盘） ===
+        
+        # 1.1 提取日志错误
+        log_analyzer = LogAnalyzer(settings.log_dir_path)
+        errors = log_analyzer.extract_errors_only()
+        error_summary = ""
+        patterns = {}
+        
+        if errors:
             patterns = log_analyzer.classify_errors(errors)
             report.total_errors = sum(p.count for p in patterns.values())
-            
             error_summary = log_analyzer.generate_error_summary(patterns)
-            logger.info(f"Generated error summary with {len(patterns)} patterns")
+            logger.info(f"Extracted {report.total_errors} errors from logs")
+        else:
+            logger.info("No errors found in logs")
+        
+        # 1.2 加载任务复盘汇总（在 LLM 分析之前）
+        retrospect_info = ""
+        try:
+            from ..core.task_monitor import get_retrospect_storage
+            retrospect_storage = get_retrospect_storage()
+            report.retrospect_summary = retrospect_storage.get_summary(today)
             
-            # 3. LLM 分析错误（如果有 brain）
+            if report.retrospect_summary.get("total_tasks", 0) > 0:
+                logger.info(
+                    f"Loaded retrospect summary: {report.retrospect_summary['total_tasks']} tasks"
+                )
+                # 构建复盘信息摘要
+                retrospect_info = self._build_retrospect_summary_for_llm(report.retrospect_summary)
+        except Exception as e:
+            logger.warning(f"Failed to load retrospect summary: {e}")
+        
+        # 1.3 从记忆系统提取错误教训（在 LLM 分析之前）
+        memory_info = ""
+        try:
+            report.memory_insights = await self._extract_memory_insights()
+            if report.memory_insights:
+                logger.info(
+                    f"Extracted memory insights: {report.memory_insights.get('total_errors', 0)} errors"
+                )
+                # 构建记忆信息摘要
+                memory_info = self._build_memory_summary_for_llm(report.memory_insights)
+        except Exception as e:
+            logger.warning(f"Failed to extract memory insights: {e}")
+        
+        # === 阶段 2: 综合分析（日志 + 记忆 + 复盘 一起提交给 LLM） ===
+        
+        # 构建完整的分析输入
+        full_analysis_input = self._build_full_analysis_input(
+            error_summary=error_summary,
+            retrospect_info=retrospect_info,
+            memory_info=memory_info,
+        )
+        
+        if not full_analysis_input.strip():
+            logger.info("No issues to analyze")
+            self._save_daily_report(report)
+            return report
+        
+        try:
+            # LLM 综合分析（如果有 brain）
             if self.brain:
-                analysis_results = await self._analyze_errors_with_llm(error_summary)
-                logger.info(f"LLM analyzed {len(analysis_results)} errors")
+                analysis_results = await self._analyze_errors_with_llm(full_analysis_input)
+                logger.info(f"LLM analyzed {len(analysis_results)} issues")
             else:
                 # 没有 brain，使用规则匹配（降级模式）
                 logger.warning("No brain available, using rule-based analysis")
                 analysis_results = self._analyze_errors_with_rules(patterns)
             
-            # 4. 根据分析结果处理错误
+            # === 阶段 3: 根据分析结果处理错误 ===
             for result in analysis_results:
                 error_type = result.get("error_type", "unknown")
                 can_fix = result.get("can_fix", False)
@@ -671,35 +714,137 @@ ID: {result.test_id}
         except Exception as e:
             logger.error(f"Daily check failed: {e}", exc_info=True)
         
-        # 5. 加载任务复盘汇总
-        try:
-            from ..core.task_monitor import get_retrospect_storage
-            retrospect_storage = get_retrospect_storage()
-            report.retrospect_summary = retrospect_storage.get_summary(today)
-            
-            if report.retrospect_summary.get("total_tasks", 0) > 0:
-                logger.info(
-                    f"Loaded retrospect summary: {report.retrospect_summary['total_tasks']} tasks, "
-                    f"avg_duration={report.retrospect_summary['avg_duration']:.1f}s"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to load retrospect summary: {e}")
-        
-        # 6. 从记忆系统提取优化建议
-        try:
-            report.memory_insights = await self._extract_memory_insights()
-            if report.memory_insights:
-                logger.info(
-                    f"Extracted memory insights: {report.memory_insights.get('total_errors', 0)} errors, "
-                    f"{report.memory_insights.get('total_rules', 0)} rules"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to extract memory insights: {e}")
-        
         # 保存报告
         self._save_daily_report(report)
         
         return report
+    
+    def _build_retrospect_summary_for_llm(self, retrospect_summary: dict) -> str:
+        """
+        构建复盘信息摘要（给 LLM 分析）
+        
+        Args:
+            retrospect_summary: 复盘汇总数据
+        
+        Returns:
+            Markdown 格式摘要
+        """
+        if not retrospect_summary or retrospect_summary.get("total_tasks", 0) == 0:
+            return ""
+        
+        lines = [
+            "## 任务复盘信息",
+            "",
+            f"- 今日复盘任务数: {retrospect_summary.get('total_tasks', 0)}",
+            f"- 总耗时: {retrospect_summary.get('total_duration', 0):.0f}秒",
+            f"- 平均耗时: {retrospect_summary.get('avg_duration', 0):.1f}秒",
+            f"- 模型切换次数: {retrospect_summary.get('model_switches', 0)}",
+            "",
+        ]
+        
+        # 常见问题
+        common_issues = retrospect_summary.get("common_issues", [])
+        if common_issues:
+            lines.append("### 复盘发现的常见问题")
+            for issue in common_issues[:5]:
+                lines.append(f"- [{issue.get('count', 0)}次] {issue.get('issue', '')}")
+            lines.append("")
+        
+        # 复盘详情（最多 3 个）
+        records = retrospect_summary.get("records", [])[:3]
+        if records:
+            lines.append("### 复盘详情（最近 3 个）")
+            for r in records:
+                desc = r.get('description', '')[:50]
+                result = r.get('retrospect_result', '')[:150]
+                lines.append(f"- **{desc}...**")
+                if result:
+                    lines.append(f"  - 分析: {result}...")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _build_memory_summary_for_llm(self, memory_insights: dict) -> str:
+        """
+        构建记忆信息摘要（给 LLM 分析）
+        
+        Args:
+            memory_insights: 记忆优化建议数据
+        
+        Returns:
+            Markdown 格式摘要
+        """
+        if not memory_insights:
+            return ""
+        
+        lines = ["## 记忆系统中的错误教训", ""]
+        
+        # 错误教训
+        error_list = memory_insights.get("error_list", [])
+        if error_list:
+            lines.append("### 历史错误教训（最近记录）")
+            for err in error_list[:10]:
+                source = err.get('source', 'unknown')
+                content = err.get('content', '')[:100]
+                lines.append(f"- [{source}] {content}")
+            lines.append("")
+        
+        # 规则约束
+        rule_list = memory_insights.get("rule_list", [])
+        if rule_list:
+            lines.append("### 系统规则约束")
+            for rule in rule_list[:5]:
+                content = rule.get('content', '')[:80]
+                lines.append(f"- {content}")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _build_full_analysis_input(
+        self,
+        error_summary: str,
+        retrospect_info: str,
+        memory_info: str,
+    ) -> str:
+        """
+        构建完整的分析输入（日志 + 复盘 + 记忆）
+        
+        Args:
+            error_summary: 日志错误摘要
+            retrospect_info: 复盘信息摘要
+            memory_info: 记忆信息摘要
+        
+        Returns:
+            完整的分析输入（Markdown 格式）
+        """
+        sections = []
+        
+        if error_summary:
+            sections.append(error_summary)
+        
+        if retrospect_info:
+            sections.append(retrospect_info)
+        
+        if memory_info:
+            sections.append(memory_info)
+        
+        if not sections:
+            return ""
+        
+        # 添加综合分析说明
+        header = """# 系统自检综合分析
+
+以下信息来源：
+1. **日志错误** - 今日 ERROR/CRITICAL 级别日志
+2. **任务复盘** - 长时间任务的执行分析
+3. **错误教训** - 记忆系统中记录的历史问题
+
+请综合分析这些信息，识别需要修复的问题。
+
+---
+
+"""
+        return header + "\n\n".join(sections)
     
     async def _extract_memory_insights(self) -> dict:
         """
@@ -832,7 +977,7 @@ ID: {result.test_id}
     
     async def _analyze_errors_with_llm(self, error_summary: str) -> list[dict]:
         """
-        使用 LLM 分析错误并决定修复策略
+        使用 LLM 分析错误并决定修复策略（支持分批处理）
         
         Args:
             error_summary: 错误摘要（Markdown 格式）
@@ -848,6 +993,67 @@ ID: {result.test_id}
             system_prompt = self.DEFAULT_SELFCHECK_PROMPT
             logger.warning("Using default selfcheck prompt")
         
+        # 检查摘要大小，如果太大则分批处理
+        MAX_CHARS_PER_BATCH = 8000  # 每批最大字符数（约 2000 tokens）
+        
+        if len(error_summary) <= MAX_CHARS_PER_BATCH:
+            # 摘要较小，直接处理
+            return await self._analyze_single_batch(error_summary, system_prompt)
+        
+        # 摘要太大，分批处理
+        logger.info(f"Error summary too large ({len(error_summary)} chars), splitting into batches")
+        
+        # 按 "### [" 分割成独立的错误块
+        import re
+        error_blocks = re.split(r'(?=### \[)', error_summary)
+        
+        # 保留头部信息
+        header = ""
+        if error_blocks and not error_blocks[0].startswith("### ["):
+            header = error_blocks[0]
+            error_blocks = error_blocks[1:]
+        
+        # 分批
+        batches = []
+        current_batch = header
+        
+        for block in error_blocks:
+            if len(current_batch) + len(block) > MAX_CHARS_PER_BATCH:
+                if current_batch.strip():
+                    batches.append(current_batch)
+                current_batch = header + block
+            else:
+                current_batch += block
+        
+        if current_batch.strip():
+            batches.append(current_batch)
+        
+        logger.info(f"Split into {len(batches)} batches for LLM analysis")
+        
+        # 分批调用 LLM
+        all_results = []
+        for i, batch in enumerate(batches):
+            logger.info(f"Analyzing batch {i+1}/{len(batches)} ({len(batch)} chars)")
+            try:
+                batch_results = await self._analyze_single_batch(batch, system_prompt)
+                all_results.extend(batch_results)
+            except Exception as e:
+                logger.error(f"Batch {i+1} analysis failed: {e}")
+                continue
+        
+        return all_results
+    
+    async def _analyze_single_batch(self, error_summary: str, system_prompt: str) -> list[dict]:
+        """
+        分析单个批次的错误
+        
+        Args:
+            error_summary: 错误摘要
+            system_prompt: 系统提示词
+        
+        Returns:
+            分析结果列表
+        """
         user_prompt = f"""请分析以下错误日志摘要，针对每个错误输出分析结果（JSON 数组格式）：
 
 {error_summary}
@@ -988,6 +1194,12 @@ ID: {result.test_id}
             from ..core.agent import Agent
             agent = Agent()
             await agent.initialize(start_scheduler=False)
+            
+            # 关键：清空历史上下文，使用干净状态
+            # 避免累积的会话历史导致上下文过大
+            agent._context.messages = []
+            agent._conversation_history = []
+            logger.info("SelfChecker: Agent context cleared for clean execution")
             
             # 构建修复 prompt
             fix_prompt = f"""你是系统自检修复助手。请根据以下分析执行修复任务：

@@ -19,6 +19,7 @@ typer>=0.12.0              # CLI 框架
 # === 异步和 HTTP ===
 httpx>=0.27.0              # 异步 HTTP 客户端
 aiofiles>=24.1.0           # 异步文件操作
+nest-asyncio>=1.5.0        # 嵌套事件循环支持（解决第三方库冲突）
 
 # === 数据库 ===
 aiosqlite>=0.20.0          # 异步 SQLite
@@ -68,7 +69,8 @@ psutil>=5.9.0                 # 进程信息（获取窗口进程名）
 # Telegram 机器人
 python-telegram-bot>=21.0  # Telegram Bot API
 
-# 飞书 (使用 httpx，无需额外依赖)
+# 飞书
+lark-oapi>=1.2.0           # 飞书官方 SDK (WebSocket 长连接)
 # 企业微信 (使用 httpx，无需额外依赖)
 # 钉钉 (使用 httpx，无需额外依赖)
 

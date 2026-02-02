@@ -2,15 +2,20 @@
 飞书适配器
 
 基于 lark-oapi 库实现:
-- 事件订阅
+- 事件订阅（支持长连接 WebSocket 和 Webhook 两种方式）
 - 卡片消息
 - 文本/图片/文件收发
+
+参考文档:
+- 机器人概述: https://open.feishu.cn/document/client-docs/bot-v3/bot-overview
+- Python SDK: https://github.com/larksuite/oapi-sdk-python
+- 事件订阅: https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/server-side-sdk/python--sdk/handle-events
 """
 
 import asyncio
-import hashlib
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Optional, Any
 from dataclasses import dataclass
@@ -50,8 +55,9 @@ class FeishuConfig:
     """飞书配置"""
     app_id: str
     app_secret: str
-    verification_token: Optional[str] = None
-    encrypt_key: Optional[str] = None
+    verification_token: Optional[str] = None  # 用于 Webhook 验证
+    encrypt_key: Optional[str] = None  # 用于消息加解密
+    log_level: str = "INFO"  # 日志级别: DEBUG, INFO, WARN, ERROR
 
 
 class FeishuAdapter(ChannelAdapter):
@@ -59,10 +65,14 @@ class FeishuAdapter(ChannelAdapter):
     飞书适配器
     
     支持:
-    - 事件订阅（消息接收）
+    - 事件订阅（长连接 WebSocket 或 Webhook）
     - 文本/富文本消息
     - 图片/文件
     - 卡片消息
+    
+    使用说明:
+    1. 长连接模式（推荐）: start() 会自动启动 WebSocket 连接
+    2. Webhook 模式: 使用 handle_event() 处理 HTTP 回调
     """
     
     channel_name = "feishu"
@@ -74,14 +84,16 @@ class FeishuAdapter(ChannelAdapter):
         verification_token: Optional[str] = None,
         encrypt_key: Optional[str] = None,
         media_dir: Optional[Path] = None,
+        log_level: str = "INFO",
     ):
         """
         Args:
-            app_id: 飞书应用 App ID
-            app_secret: 飞书应用 App Secret
-            verification_token: 事件订阅验证 Token
-            encrypt_key: 事件加密密钥
+            app_id: 飞书应用 App ID（在开发者后台获取）
+            app_secret: 飞书应用 App Secret（在开发者后台获取）
+            verification_token: 事件订阅验证 Token（Webhook 模式需要）
+            encrypt_key: 事件加密密钥（如果配置了加密则需要）
             media_dir: 媒体文件存储目录
+            log_level: 日志级别 (DEBUG, INFO, WARN, ERROR)
         """
         super().__init__()
         
@@ -90,68 +102,196 @@ class FeishuAdapter(ChannelAdapter):
             app_secret=app_secret,
             verification_token=verification_token,
             encrypt_key=encrypt_key,
+            log_level=log_level,
         )
         self.media_dir = Path(media_dir) if media_dir else Path("data/media/feishu")
         self.media_dir.mkdir(parents=True, exist_ok=True)
         
         self._client: Optional[Any] = None
-        self._access_token: Optional[str] = None
-        self._token_expires_at: float = 0
+        self._ws_client: Optional[Any] = None
+        self._event_dispatcher: Optional[Any] = None
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._ws_thread: Optional[threading.Thread] = None
     
     async def start(self) -> None:
-        """启动飞书客户端"""
+        """
+        启动飞书客户端并自动建立 WebSocket 长连接
+        
+        会自动启动 WebSocket 长连接（非阻塞模式），以便接收消息。
+        SDK 会自动管理 access_token，无需手动刷新。
+        """
         _import_lark()
         
         # 创建客户端
+        log_level = getattr(lark_oapi.LogLevel, self.config.log_level, lark_oapi.LogLevel.INFO)
+        
         self._client = lark_oapi.Client.builder() \
             .app_id(self.config.app_id) \
             .app_secret(self.config.app_secret) \
+            .log_level(log_level) \
             .build()
         
-        # 获取 access token
-        await self._refresh_token()
-        
         self._running = True
-        logger.info("Feishu adapter started")
+        # 记录主事件循环，用于从 WebSocket 线程投递协程
+        try:
+            self._main_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._main_loop = None
+        logger.info("Feishu adapter: client initialized")
+        
+        # 自动启动 WebSocket 长连接（非阻塞模式）
+        try:
+            self.start_websocket(blocking=False)
+            logger.info("Feishu adapter: WebSocket started in background")
+        except Exception as e:
+            logger.warning(f"Feishu adapter: WebSocket startup failed: {e}")
+            logger.warning("Feishu adapter: falling back to webhook-only mode")
+    
+    def start_websocket(self, blocking: bool = True) -> None:
+        """
+        启动 WebSocket 长连接接收事件（推荐方式）
+        
+        注意事项:
+        - 仅支持企业自建应用
+        - 每个应用最多建立 50 个连接
+        - 消息推送为集群模式，同一应用多个客户端只有随机一个会收到消息
+        
+        Args:
+            blocking: 是否阻塞主线程，默认为 True
+        """
+        _import_lark()
+        
+        if not self._event_dispatcher:
+            self._setup_event_dispatcher()
+        
+        logger.info("Starting Feishu WebSocket connection...")
+
+        # 关键点：
+        # lark_oapi.ws.client 在模块级保存了一个全局 loop 变量（导入时绑定）。
+        # 因此必须在 WebSocket 线程里，把该模块的 loop 指向该线程的新事件循环，
+        # 否则会错误地复用主线程/主 loop，导致 Python 3.13 报 task 进入/离开错误。
+
+        def _run_ws_in_thread() -> None:
+            import importlib
+            import lark_oapi.ws.client as ws_client_mod
+
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+
+            # 覆盖 SDK ws 模块的全局 loop
+            ws_client_mod.loop = new_loop
+            importlib.reload(ws_client_mod)
+            ws_client_mod.loop = new_loop
+
+            try:
+                WsClient = ws_client_mod.Client
+                ws_client = WsClient(
+                    self.config.app_id,
+                    self.config.app_secret,
+                    event_handler=self._event_dispatcher,
+                    log_level=getattr(lark_oapi.LogLevel, self.config.log_level, lark_oapi.LogLevel.INFO),
+                )
+                self._ws_client = ws_client
+                ws_client.start()  # 阻塞运行于该线程
+            except Exception as e:
+                logger.error(f"Feishu WebSocket error: {e}", exc_info=True)
+            finally:
+                try:
+                    new_loop.close()
+                except Exception:
+                    pass
+
+        if blocking:
+            _run_ws_in_thread()
+        else:
+            self._ws_thread = threading.Thread(
+                target=_run_ws_in_thread,
+                daemon=True,
+                name="FeishuWebSocket",
+            )
+            self._ws_thread.start()
+            logger.info("Feishu WebSocket client started in background thread")
+    
+    def _setup_event_dispatcher(self) -> None:
+        """设置事件分发器"""
+        _import_lark()
+        
+        # 创建事件分发器
+        # verification_token 和 encrypt_key 在长连接模式下必须为空字符串
+        self._event_dispatcher = lark_oapi.EventDispatcherHandler.builder(
+            verification_token="",  # 长连接模式不需要验证
+            encrypt_key="",  # 长连接模式不需要加密
+        ).register_p2_im_message_receive_v1(
+            self._on_message_receive
+        ).build()
+    
+    def _on_message_receive(self, data: Any) -> None:
+        """
+        处理接收到的消息事件 (im.message.receive_v1)
+        
+        注意：此方法在 WebSocket 线程中同步调用
+        """
+        try:
+            event = data.event
+            message = event.message
+            sender = event.sender
+            
+            logger.info(f"Feishu: received message from {sender.sender_id.open_id}")
+            
+            # 构建消息字典
+            msg_dict = {
+                "message_id": message.message_id,
+                "chat_id": message.chat_id,
+                "chat_type": message.chat_type,
+                "message_type": message.message_type,
+                "content": message.content,
+                "root_id": getattr(message, "root_id", None),
+            }
+            
+            sender_dict = {
+                "sender_id": {
+                    "user_id": getattr(sender.sender_id, "user_id", ""),
+                    "open_id": getattr(sender.sender_id, "open_id", ""),
+                },
+            }
+            
+            # 从 WebSocket 线程把协程安全投递到主事件循环
+            if self._main_loop and self._main_loop.is_running():
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._handle_message_async(msg_dict, sender_dict),
+                    self._main_loop,
+                )
+                # 避免静默失败
+                fut.add_done_callback(lambda f: f.exception())
+            else:
+                # 兜底：没有主 loop 时，直接在当前线程创建临时 loop 执行
+                asyncio.run(self._handle_message_async(msg_dict, sender_dict))
+                
+        except Exception as e:
+            logger.error(f"Error handling message event: {e}", exc_info=True)
+    
+    async def _handle_message_async(self, msg_dict: dict, sender_dict: dict) -> None:
+        """异步处理消息"""
+        try:
+            unified = await self._convert_message(msg_dict, sender_dict)
+            self._log_message(unified)
+            await self._emit_message(unified)
+        except Exception as e:
+            logger.error(f"Error in message handler: {e}", exc_info=True)
     
     async def stop(self) -> None:
         """停止飞书客户端"""
         self._running = False
+        if self._ws_client:
+            self._ws_client = None
         self._client = None
         logger.info("Feishu adapter stopped")
     
-    async def _refresh_token(self) -> str:
-        """刷新 access token"""
-        import time
-        
-        if self._access_token and time.time() < self._token_expires_at:
-            return self._access_token
-        
-        # 获取 tenant_access_token
-        request = lark_oapi.api.auth.v3.InternalTenantAccessTokenRequest.builder() \
-            .request_body(
-                lark_oapi.api.auth.v3.InternalTenantAccessTokenRequestBody.builder()
-                .app_id(self.config.app_id)
-                .app_secret(self.config.app_secret)
-                .build()
-            ) \
-            .build()
-        
-        response = self._client.auth.v3.tenant_access_token.internal(request)
-        
-        if not response.success():
-            raise RuntimeError(f"Failed to get access token: {response.msg}")
-        
-        self._access_token = response.data.tenant_access_token
-        self._token_expires_at = time.time() + response.data.expire - 60  # 提前 60 秒刷新
-        
-        return self._access_token
-    
     def handle_event(self, body: dict, headers: dict) -> dict:
         """
-        处理飞书事件回调
+        处理飞书事件回调（Webhook 模式）
         
-        用于 Webhook 模式，接收飞书推送的事件
+        用于 HTTP 服务器模式，接收飞书推送的事件
         
         Args:
             body: 请求体
@@ -176,24 +316,18 @@ class FeishuAdapter(ChannelAdapter):
         event = body.get("event", {})
         
         if event_type == "im.message.receive_v1":
-            # 收到消息
             asyncio.create_task(self._handle_message_event(event))
         
         return {"success": True}
     
     async def _handle_message_event(self, event: dict) -> None:
-        """处理消息事件"""
+        """处理消息事件（Webhook 模式）"""
         try:
             message = event.get("message", {})
             sender = event.get("sender", {})
             
-            # 转换为统一消息格式
             unified = await self._convert_message(message, sender)
-            
-            # 记录日志
             self._log_message(unified)
-            
-            # 触发回调
             await self._emit_message(unified)
             
         except Exception as e:
@@ -218,6 +352,7 @@ class FeishuAdapter(ChannelAdapter):
                     mime_type="image/png",
                     file_id=image_key,
                 )
+                media.extra["message_id"] = message.get("message_id", "")
                 content.images.append(media)
                 message_type = MessageType.IMAGE
         
@@ -229,9 +364,23 @@ class FeishuAdapter(ChannelAdapter):
                     mime_type="audio/opus",
                     file_id=file_key,
                 )
-                media.duration = msg_content.get("duration", 0) / 1000  # 毫秒转秒
+                media.duration = msg_content.get("duration", 0) / 1000
+                media.extra["message_id"] = message.get("message_id", "")
                 content.voices.append(media)
                 message_type = MessageType.VOICE
+        
+        elif msg_type == "media":
+            # 视频消息
+            file_key = msg_content.get("file_key")
+            if file_key:
+                media = MediaFile.create(
+                    filename=f"{file_key}.mp4",
+                    mime_type="video/mp4",
+                    file_id=file_key,
+                )
+                media.extra["message_id"] = message.get("message_id", "")
+                content.videos.append(media)
+                message_type = MessageType.VIDEO
         
         elif msg_type == "file":
             file_key = msg_content.get("file_key")
@@ -242,13 +391,31 @@ class FeishuAdapter(ChannelAdapter):
                     mime_type="application/octet-stream",
                     file_id=file_key,
                 )
+                media.extra["message_id"] = message.get("message_id", "")
                 content.files.append(media)
                 message_type = MessageType.FILE
+        
+        elif msg_type == "sticker":
+            # 表情包
+            file_key = msg_content.get("file_key")
+            if file_key:
+                media = MediaFile.create(
+                    filename=f"{file_key}.png",
+                    mime_type="image/png",
+                    file_id=file_key,
+                )
+                media.extra["message_id"] = message.get("message_id", "")
+                content.images.append(media)
+                message_type = MessageType.STICKER
         
         elif msg_type == "post":
             # 富文本
             content.text = self._parse_post_content(msg_content)
             message_type = MessageType.TEXT
+        
+        else:
+            # 未知类型
+            content.text = f"[不支持的消息类型: {msg_type}]"
         
         # 确定聊天类型
         chat_type = message.get("chat_type", "p2p")
@@ -296,16 +463,27 @@ class FeishuAdapter(ChannelAdapter):
         if not self._client:
             raise RuntimeError("Feishu client not started")
         
-        await self._refresh_token()
-        
         # 构建消息内容
         if message.content.text and not message.content.has_media:
-            # 纯文本消息
-            msg_type = "text"
-            content = json.dumps({"text": message.content.text})
+            text = message.content.text
+            # 检测是否包含 markdown 格式
+            if self._contains_markdown(text):
+                # 使用卡片消息支持 markdown 渲染
+                msg_type = "interactive"
+                card = {
+                    "config": {"wide_screen_mode": True},
+                    "elements": [
+                        {
+                            "tag": "markdown",
+                            "content": text,
+                        }
+                    ]
+                }
+                content = json.dumps(card)
+            else:
+                msg_type = "text"
+                content = json.dumps({"text": text})
         elif message.content.images:
-            # 图片消息
-            # 需要先上传图片获取 image_key
             image = message.content.images[0]
             if image.local_path:
                 image_key = await self._upload_image(image.local_path)
@@ -318,7 +496,7 @@ class FeishuAdapter(ChannelAdapter):
             msg_type = "text"
             content = json.dumps({"text": message.content.text or ""})
         
-        # 发送消息
+        # 发送消息（在线程池中执行同步调用）
         request = lark_oapi.api.im.v1.CreateMessageRequest.builder() \
             .receive_id_type("chat_id") \
             .request_body(
@@ -330,12 +508,37 @@ class FeishuAdapter(ChannelAdapter):
             ) \
             .build()
         
-        response = self._client.im.v1.message.create(request)
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._client.im.v1.message.create(request)
+        )
         
         if not response.success():
             raise RuntimeError(f"Failed to send message: {response.msg}")
         
         return response.data.message_id
+    
+    def _contains_markdown(self, text: str) -> bool:
+        """检测文本是否包含 markdown 格式"""
+        import re
+        # 常见 markdown 标记模式
+        patterns = [
+            r'\*\*[^*]+\*\*',      # **bold**
+            r'__[^_]+__',          # __bold__
+            r'(?<!\*)\*[^*]+\*(?!\*)',  # *italic* (非 **)
+            r'(?<!_)_[^_]+_(?!_)',      # _italic_ (非 __)
+            r'^#{1,6}\s',          # # heading
+            r'\[.+?\]\(.+?\)',     # [link](url)
+            r'`[^`]+`',            # `code`
+            r'```',                # code block
+            r'^[-*+]\s',           # - list item
+            r'^\d+\.\s',           # 1. ordered list
+            r'^>\s',               # > quote
+        ]
+        for pattern in patterns:
+            if re.search(pattern, text, re.MULTILINE):
+                return True
+        return False
     
     async def _upload_image(self, path: str) -> str:
         """上传图片"""
@@ -349,7 +552,10 @@ class FeishuAdapter(ChannelAdapter):
                 ) \
                 .build()
             
-            response = self._client.im.v1.image.create(request)
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._client.im.v1.image.create(request)
+            )
             
             if not response.success():
                 raise RuntimeError(f"Failed to upload image: {response.msg}")
@@ -367,23 +573,28 @@ class FeishuAdapter(ChannelAdapter):
         if not media.file_id:
             raise ValueError("Media has no file_id")
         
-        await self._refresh_token()
-        
         # 根据类型选择下载接口
         if media.is_image:
             request = lark_oapi.api.im.v1.GetImageRequest.builder() \
                 .image_key(media.file_id) \
                 .build()
             
-            response = self._client.im.v1.image.get(request)
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._client.im.v1.image.get(request)
+            )
         else:
+            message_id = media.extra.get("message_id", "")
             request = lark_oapi.api.im.v1.GetMessageResourceRequest.builder() \
-                .message_id("") \
+                .message_id(message_id) \
                 .file_key(media.file_id) \
                 .type("file") \
                 .build()
             
-            response = self._client.im.v1.message_resource.get(request)
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._client.im.v1.message_resource.get(request)
+            )
         
         if not response.success():
             raise RuntimeError(f"Failed to download media: {response.msg}")
@@ -411,18 +622,12 @@ class FeishuAdapter(ChannelAdapter):
             media.status = MediaStatus.READY
             return media
         
-        # 其他类型文件上传
-        # 飞书需要先发送消息才能上传文件
         return MediaFile.create(
             filename=path.name,
             mime_type=mime_type,
         )
     
-    async def send_card(
-        self,
-        chat_id: str,
-        card: dict,
-    ) -> str:
+    async def send_card(self, chat_id: str, card: dict) -> str:
         """
         发送卡片消息
         
@@ -436,8 +641,6 @@ class FeishuAdapter(ChannelAdapter):
         if not self._client:
             raise RuntimeError("Feishu client not started")
         
-        await self._refresh_token()
-        
         request = lark_oapi.api.im.v1.CreateMessageRequest.builder() \
             .receive_id_type("chat_id") \
             .request_body(
@@ -449,13 +652,196 @@ class FeishuAdapter(ChannelAdapter):
             ) \
             .build()
         
-        response = self._client.im.v1.message.create(request)
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._client.im.v1.message.create(request)
+        )
         
         if not response.success():
             raise RuntimeError(f"Failed to send card: {response.msg}")
         
         return response.data.message_id
     
+    async def reply_message(self, message_id: str, text: str, msg_type: str = "text") -> str:
+        """
+        回复消息
+        
+        Args:
+            message_id: 要回复的消息 ID
+            text: 回复内容
+            msg_type: 消息类型
+        
+        Returns:
+            新消息 ID
+        """
+        if not self._client:
+            raise RuntimeError("Feishu client not started")
+        
+        content = json.dumps({"text": text}) if msg_type == "text" else text
+        
+        request = lark_oapi.api.im.v1.ReplyMessageRequest.builder() \
+            .message_id(message_id) \
+            .request_body(
+                lark_oapi.api.im.v1.ReplyMessageRequestBody.builder()
+                .msg_type(msg_type)
+                .content(content)
+                .build()
+            ) \
+            .build()
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._client.im.v1.message.reply(request)
+        )
+        
+        if not response.success():
+            raise RuntimeError(f"Failed to reply message: {response.msg}")
+        
+        return response.data.message_id
+    
+    async def send_photo(self, chat_id: str, photo_path: str, caption: str = "") -> str:
+        """
+        发送图片
+        
+        Args:
+            chat_id: 聊天 ID
+            photo_path: 图片文件路径
+            caption: 图片说明文字
+        
+        Returns:
+            消息 ID
+        """
+        if not self._client:
+            raise RuntimeError("Feishu client not started")
+        
+        # 上传图片获取 image_key
+        image_key = await self._upload_image(photo_path)
+        
+        # 发送图片消息
+        request = lark_oapi.api.im.v1.CreateMessageRequest.builder() \
+            .receive_id_type("chat_id") \
+            .request_body(
+                lark_oapi.api.im.v1.CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("image")
+                .content(json.dumps({"image_key": image_key}))
+                .build()
+            ) \
+            .build()
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._client.im.v1.message.create(request)
+        )
+        
+        if not response.success():
+            raise RuntimeError(f"Failed to send photo: {response.msg}")
+        
+        message_id = response.data.message_id
+        
+        # 如果有说明文字，追加发送文本消息
+        if caption:
+            await self._send_text(chat_id, caption)
+        
+        logger.info(f"Sent photo to {chat_id}: {photo_path}")
+        return message_id
+    
+    async def send_file(self, chat_id: str, file_path: str, caption: str = "") -> str:
+        """
+        发送文件
+        
+        Args:
+            chat_id: 聊天 ID
+            file_path: 文件路径
+            caption: 文件说明文字
+        
+        Returns:
+            消息 ID
+        """
+        if not self._client:
+            raise RuntimeError("Feishu client not started")
+        
+        # 上传文件获取 file_key
+        file_key = await self._upload_file(file_path)
+        
+        # 发送文件消息
+        file_name = Path(file_path).name
+        request = lark_oapi.api.im.v1.CreateMessageRequest.builder() \
+            .receive_id_type("chat_id") \
+            .request_body(
+                lark_oapi.api.im.v1.CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("file")
+                .content(json.dumps({"file_key": file_key}))
+                .build()
+            ) \
+            .build()
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._client.im.v1.message.create(request)
+        )
+        
+        if not response.success():
+            raise RuntimeError(f"Failed to send file: {response.msg}")
+        
+        message_id = response.data.message_id
+        
+        # 如果有说明文字，追加发送文本消息
+        if caption:
+            await self._send_text(chat_id, caption)
+        
+        logger.info(f"Sent file to {chat_id}: {file_path}")
+        return message_id
+    
+    async def _send_text(self, chat_id: str, text: str) -> str:
+        """发送纯文本消息"""
+        request = lark_oapi.api.im.v1.CreateMessageRequest.builder() \
+            .receive_id_type("chat_id") \
+            .request_body(
+                lark_oapi.api.im.v1.CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("text")
+                .content(json.dumps({"text": text}))
+                .build()
+            ) \
+            .build()
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self._client.im.v1.message.create(request)
+        )
+        
+        if not response.success():
+            raise RuntimeError(f"Failed to send text: {response.msg}")
+        
+        return response.data.message_id
+    
+    async def _upload_file(self, path: str) -> str:
+        """上传文件到飞书"""
+        file_name = Path(path).name
+        
+        with open(path, "rb") as f:
+            request = lark_oapi.api.im.v1.CreateFileRequest.builder() \
+                .request_body(
+                    lark_oapi.api.im.v1.CreateFileRequestBody.builder()
+                    .file_type("stream")
+                    .file_name(file_name)
+                    .file(f)
+                    .build()
+                ) \
+                .build()
+            
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self._client.im.v1.file.create(request)
+            )
+            
+            if not response.success():
+                raise RuntimeError(f"Failed to upload file: {response.msg}")
+            
+            return response.data.file_key
+
     def build_simple_card(
         self,
         title: str,

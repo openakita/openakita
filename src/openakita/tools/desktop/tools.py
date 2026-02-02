@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 DESKTOP_TOOLS = [
     {
         "name": "desktop_screenshot",
-        # 清单披露（简短，完整显示在系统提示词中）
-        "description": "⚠️ 截取桌面截图 - 必须调用此工具，禁止不调用就说完成",
-        # 详细说明（传给 LLM API、get_tool_info 返回）
+        "description": "Capture Windows desktop screenshot with automatic file saving. When you need to: (1) Show user the desktop state, (2) Capture application windows, (3) Record operation results. IMPORTANT: Must actually call this tool - never say 'screenshot done' without calling. Returns file_path for send_to_chat. For browser-only screenshots, use browser_screenshot instead.",
         "detail": """截取 Windows 桌面屏幕截图并保存到文件。
 
 ⚠️ **重要警告**：
@@ -44,6 +42,10 @@ DESKTOP_TOOLS = [
 - 桌面应用操作
 - 查看整个桌面状态
 - 桌面和浏览器混合操作
+
+**可选功能**：
+- window_title: 只截取指定窗口
+- analyze: 用视觉模型分析截图内容
 
 **注意**：如果只涉及浏览器内的网页操作，请使用 browser_screenshot。""",
         "input_schema": {
@@ -72,13 +74,26 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_find_element",
-        "description": """查找桌面 UI 元素。优先使用 UIAutomation（快速准确），失败时用视觉识别（通用）。
-支持的查找格式：
+        "description": "Find desktop UI elements using UIAutomation (fast, accurate) or vision recognition (fallback). When you need to: (1) Locate buttons/menus/icons, (2) Get element positions before clicking, (3) Verify UI state. Supports: natural language ('save button'), name: prefix, id: prefix, type: prefix. For browser webpage elements, use browser_* tools instead.",
+        "detail": """查找桌面 UI 元素。优先使用 UIAutomation（快速准确），失败时用视觉识别（通用）。
+
+**支持的查找格式**：
 - 自然语言："保存按钮"、"红色图标"
 - 按名称："name:保存"
 - 按 ID："id:btn_save"
 - 按类型："type:Button"
-注意：如果操作的是浏览器内的网页元素，请使用 browser_* 工具。""",
+
+**查找方法**：
+- auto: 自动选择（推荐）
+- uia: 只用 UIAutomation
+- vision: 只用视觉识别
+
+**返回信息**：
+- 元素位置（x, y）
+- 元素大小
+- 元素属性
+
+**注意**：如果操作的是浏览器内的网页元素，请使用 browser_* 工具。""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -102,11 +117,23 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_click",
-        "description": """点击桌面上的 UI 元素或指定坐标。
-支持多种目标格式：
+        "description": "Click desktop elements or coordinates. When you need to: (1) Click buttons/icons in applications, (2) Select menu items, (3) Interact with desktop UI. Supports: element description ('save button'), name: prefix, coordinates ('100,200'). Left/right/middle button and double-click supported. For browser webpage elements, use browser_click instead.",
+        "detail": """点击桌面上的 UI 元素或指定坐标。
+
+**支持的目标格式**：
 - 元素描述："保存按钮"、"name:确定"
 - 坐标："100,200"
-注意：如果点击的是浏览器内的网页元素，请使用 browser_click 工具。""",
+
+**点击选项**：
+- button: left/right/middle
+- double: 是否双击
+
+**元素查找方法**：
+- auto: 自动选择（推荐）
+- uia: 只用 UIAutomation
+- vision: 只用视觉识别
+
+**注意**：如果点击的是浏览器内的网页元素，请使用 browser_click 工具。""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -137,8 +164,22 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_type",
-        "description": """在当前焦点位置输入文本。支持中文输入。
-注意：如果输入的是浏览器内的网页表单，请使用 browser_type 工具。""",
+        "description": "Type text at current cursor position in desktop applications. When you need to: (1) Enter text in application dialogs, (2) Fill input fields, (3) Type in text editors. Supports Chinese input. Use clear_first=true to replace existing text. For browser webpage forms, use browser_type instead.",
+        "detail": """在当前焦点位置输入文本。
+
+**功能特点**：
+- 支持中文输入
+- 支持先清空再输入
+
+**参数说明**：
+- text: 要输入的文本
+- clear_first: 是否先清空（Ctrl+A 后输入）
+
+**使用建议**：
+- 先点击目标输入框获得焦点
+- 再调用此工具输入
+
+**注意**：如果输入的是浏览器内的网页表单，请使用 browser_type 工具。""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -157,8 +198,23 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_hotkey",
-        "description": """执行键盘快捷键。
-常用快捷键：['ctrl', 'c'] 复制、['ctrl', 'v'] 粘贴、['ctrl', 's'] 保存、['alt', 'f4'] 关闭窗口。""",
+        "description": "Execute keyboard shortcuts. When you need to: (1) Copy/paste (Ctrl+C/V), (2) Save files (Ctrl+S), (3) Close windows (Alt+F4), (4) Undo/redo (Ctrl+Z/Y), (5) Select all (Ctrl+A). Common shortcuts: ['ctrl','c'], ['ctrl','v'], ['ctrl','s'], ['alt','f4'], ['ctrl','z'].",
+        "detail": """执行键盘快捷键。
+
+**常用快捷键**：
+- ['ctrl', 'c']: 复制
+- ['ctrl', 'v']: 粘贴
+- ['ctrl', 'x']: 剪切
+- ['ctrl', 's']: 保存
+- ['ctrl', 'z']: 撤销
+- ['ctrl', 'y']: 重做
+- ['ctrl', 'a']: 全选
+- ['alt', 'f4']: 关闭窗口
+- ['alt', 'tab']: 切换窗口
+- ['win', 'd']: 显示桌面
+
+**参数格式**：
+keys 是按键数组，如 ['ctrl', 'c']""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -173,7 +229,23 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_scroll",
-        "description": "滚动鼠标滚轮。",
+        "description": "Scroll mouse wheel in specified direction. When you need to: (1) Scroll page/document content, (2) Navigate long lists, (3) Zoom in/out (with Ctrl). Directions: up/down/left/right. Default amount is 3 scroll units.",
+        "detail": """滚动鼠标滚轮。
+
+**支持方向**：
+- up: 向上滚动
+- down: 向下滚动
+- left: 向左滚动
+- right: 向右滚动
+
+**参数说明**：
+- direction: 滚动方向
+- amount: 滚动格数（默认 3）
+
+**适用场景**：
+- 滚动页面/文档内容
+- 浏览长列表
+- 配合 Ctrl 键缩放""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -193,11 +265,25 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_window",
-        "description": """窗口管理操作。
+        "description": "Window management operations. When you need to: (1) List all open windows, (2) Switch to a specific window, (3) Minimize/maximize/restore windows, (4) Close windows. Actions: list, switch, minimize, maximize, restore, close. Use title parameter for targeting specific window (fuzzy match).",
+        "detail": """窗口管理操作。
+
+**支持的操作**：
 - list: 列出所有窗口
-- switch: 切换到指定窗口
-- minimize/maximize/restore: 最小化/最大化/恢复窗口
-- close: 关闭窗口""",
+- switch: 切换到指定窗口（激活并置顶）
+- minimize: 最小化窗口
+- maximize: 最大化窗口
+- restore: 恢复窗口
+- close: 关闭窗口
+
+**参数说明**：
+- action: 操作类型（必填）
+- title: 窗口标题（模糊匹配），list 操作不需要
+
+**返回信息**（list 操作）：
+- 窗口标题
+- 窗口句柄
+- 窗口位置和大小""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -216,7 +302,26 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_wait",
-        "description": "等待某个 UI 元素或窗口出现。",
+        "description": "Wait for UI element or window to appear. When you need to: (1) Wait for dialog to open, (2) Wait for loading to complete, (3) Synchronize with application state before next action. Target types: element (UI element), window (window title). Default timeout is 10 seconds.",
+        "detail": """等待某个 UI 元素或窗口出现。
+
+**适用场景**：
+- 等待对话框打开
+- 等待加载完成
+- 在下一步操作前同步应用状态
+
+**目标类型**：
+- element: 等待 UI 元素
+- window: 等待窗口
+
+**参数说明**：
+- target: 元素描述或窗口标题
+- target_type: 目标类型（默认 element）
+- timeout: 超时时间（默认 10 秒）
+
+**返回结果**：
+- 成功: 元素/窗口信息
+- 超时: 错误信息""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -241,7 +346,24 @@ DESKTOP_TOOLS = [
     },
     {
         "name": "desktop_inspect",
-        "description": "检查窗口的 UI 元素树结构（用于调试和了解界面结构）。",
+        "description": "Inspect window UI element tree structure for debugging and understanding interface layout. When you need to: (1) Debug UI automation issues, (2) Understand application structure, (3) Find correct element identifiers for clicking/typing. Returns element names, types, and IDs at specified depth.",
+        "detail": """检查窗口的 UI 元素树结构（用于调试和了解界面结构）。
+
+**适用场景**：
+- 调试 UI 自动化问题
+- 了解应用程序界面结构
+- 查找正确的元素标识符
+
+**参数说明**：
+- window_title: 窗口标题（不填则检查当前活动窗口）
+- depth: 元素树遍历深度（默认 2）
+
+**返回信息**：
+- 元素名称
+- 元素类型
+- 元素 ID
+- 元素位置
+- 子元素列表""",
         "input_schema": {
             "type": "object",
             "properties": {

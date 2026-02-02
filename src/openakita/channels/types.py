@@ -69,6 +69,12 @@ class MediaFile:
     width: Optional[int] = None        # 宽度（图片/视频）
     height: Optional[int] = None       # 高度（图片/视频）
     thumbnail_url: Optional[str] = None  # 缩略图 URL
+    extra: dict = None  # 平台特定的额外数据
+    
+    def __post_init__(self):
+        """初始化后处理"""
+        if self.extra is None:
+            self.extra = {}
     
     @classmethod
     def create(
