@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     telegram_webhook_url: str = Field(default="", description="Telegram Webhook URL")
     telegram_pairing_code: str = Field(default="", description="Telegram 配对码（留空则自动生成）")
     telegram_require_pairing: bool = Field(default=True, description="是否需要配对验证")
+    telegram_proxy: str = Field(default="", description="Telegram 代理地址 (如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)")
     
     # 飞书
     feishu_enabled: bool = Field(default=False, description="是否启用飞书")

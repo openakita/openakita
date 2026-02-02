@@ -6,11 +6,13 @@ Telegram 适配器
 - 文本/图片/语音/文件收发
 - Markdown 格式支持
 - 配对验证（防止未授权访问）
+- 自动代理检测（支持配置、环境变量、Windows 系统代理）
 """
 
 import asyncio
 import json
 import logging
+import os
 import secrets
 from pathlib import Path
 from datetime import datetime
@@ -53,6 +55,32 @@ def _import_telegram():
                 "python-telegram-bot not installed. "
                 "Run: pip install python-telegram-bot"
             )
+
+
+def _get_proxy(config_proxy: Optional[str] = None) -> Optional[str]:
+    """
+    获取代理设置（仅从配置文件或环境变量）
+    
+    Args:
+        config_proxy: 配置文件中指定的代理地址
+    
+    Returns:
+        代理 URL 或 None
+    """
+    # 1. 优先使用配置文件中的代理
+    if config_proxy:
+        logger.info(f"[Telegram] Using proxy from config: {config_proxy}")
+        return config_proxy
+    
+    # 2. 检查环境变量（仅当用户明确设置时才使用）
+    for env_var in ['TELEGRAM_PROXY', 'ALL_PROXY', 'HTTPS_PROXY', 'HTTP_PROXY']:
+        proxy = os.environ.get(env_var)
+        if proxy:
+            logger.info(f"[Telegram] Using proxy from environment variable {env_var}: {proxy}")
+            return proxy
+    
+    # 不自动读取系统代理，支持 TUN 透传模式
+    return None
 
 
 class TelegramPairingManager:
@@ -230,6 +258,7 @@ class TelegramAdapter(ChannelAdapter):
         media_dir: Optional[Path] = None,
         pairing_code: Optional[str] = None,
         require_pairing: bool = True,
+        proxy: Optional[str] = None,
     ):
         """
         Args:
@@ -238,6 +267,7 @@ class TelegramAdapter(ChannelAdapter):
             media_dir: 媒体文件存储目录
             pairing_code: 配对码（可选，不提供则自动生成）
             require_pairing: 是否需要配对验证（默认 True）
+            proxy: 代理地址（可选，不提供则自动检测）
         """
         super().__init__()
         
@@ -245,6 +275,9 @@ class TelegramAdapter(ChannelAdapter):
         self.webhook_url = webhook_url
         self.media_dir = Path(media_dir) if media_dir else Path("data/media/telegram")
         self.media_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 代理设置（仅从配置或环境变量获取，不自动检测系统代理）
+        self.proxy = _get_proxy(proxy)
         
         self._app: Optional[Any] = None
         self._bot: Optional[Any] = None
@@ -264,23 +297,33 @@ class TelegramAdapter(ChannelAdapter):
         from telegram.request import HTTPXRequest
         
         # 配置更长的超时时间（默认 5 秒太短）
-        request = HTTPXRequest(
-            connection_pool_size=8,
-            connect_timeout=30.0,
-            read_timeout=30.0,
-            write_timeout=30.0,
-            pool_timeout=30.0,
-        )
+        # 如果检测到代理，自动使用
+        request_kwargs = {
+            "connection_pool_size": 8,
+            "connect_timeout": 30.0,
+            "read_timeout": 30.0,
+            "write_timeout": 30.0,
+            "pool_timeout": 30.0,
+        }
+        
+        get_updates_kwargs = {
+            "connection_pool_size": 4,
+            "read_timeout": 60.0,  # getUpdates 用更长的超时
+        }
+        
+        if self.proxy:
+            request_kwargs["proxy"] = self.proxy
+            get_updates_kwargs["proxy"] = self.proxy
+            logger.info(f"[Telegram] HTTPXRequest configured with proxy: {self.proxy}")
+        
+        request = HTTPXRequest(**request_kwargs)
         
         # 创建 Application
         self._app = (
             Application.builder()
             .token(self.bot_token)
             .request(request)
-            .get_updates_request(HTTPXRequest(
-                connection_pool_size=4,
-                read_timeout=60.0,  # getUpdates 用更长的超时
-            ))
+            .get_updates_request(HTTPXRequest(**get_updates_kwargs))
             .build()
         )
         self._bot = self._app.bot

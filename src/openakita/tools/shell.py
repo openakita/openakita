@@ -1,10 +1,13 @@
 """
 Shell 工具 - 执行系统命令
+增强版：支持 Windows PowerShell 命令自动转换
 """
 
 import asyncio
 import logging
 import os
+import platform
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional
@@ -32,15 +35,56 @@ class CommandResult:
 class ShellTool:
     """Shell 工具 - 执行系统命令"""
     
+    # PowerShell 命令模式（需要特殊处理）
+    POWERSHELL_PATTERNS = [
+        r'Get-EventLog',
+        r'Get-ScheduledTask',
+        r'ConvertFrom-Csv',
+        r'ConvertTo-Csv',
+        r'Select-Object',
+        r'Where-Object',
+        r'ForEach-Object',
+        r'Import-Module',
+        r'Get-Process',
+        r'Get-Service',
+        r'Get-ChildItem',
+        r'Set-ExecutionPolicy',
+    ]
+    
     def __init__(
         self,
         default_cwd: Optional[str] = None,
-        timeout: int = 60,  # 默认 60 秒，简单命令足够
+        timeout: int = 60,
         shell: bool = True,
     ):
         self.default_cwd = default_cwd or os.getcwd()
         self.timeout = timeout
         self.shell = shell
+        self._is_windows = platform.system() == "Windows"
+    
+    def _needs_powershell(self, command: str) -> bool:
+        """检查命令是否需要 PowerShell 执行"""
+        if not self._is_windows:
+            return False
+        
+        # 检查是否包含 PowerShell 特有命令
+        for pattern in self.POWERSHELL_PATTERNS:
+            if re.search(pattern, command, re.IGNORECASE):
+                return True
+        return False
+    
+    def _wrap_for_powershell(self, command: str) -> str:
+        """将命令包装为 PowerShell 命令"""
+        # 如果命令已经是 PowerShell 语法，直接返回
+        if command.strip().startswith('powershell'):
+            return command
+        
+        # 移除已有的 -Command 包装
+        command = re.sub(r'^powershell\s+-Command\s+', '', command, flags=re.IGNORECASE)
+        command = re.sub(r'^pwsh\s+-Command\s+', '', command, flags=re.IGNORECASE)
+        
+        # 使用 PowerShell 执行
+        return f'powershell -NoProfile -Command "{command}"'
     
     async def run(
         self,
@@ -68,6 +112,11 @@ class ShellTool:
         cmd_env = os.environ.copy()
         if env:
             cmd_env.update(env)
+        
+        # Windows PowerShell 命令处理
+        if self._is_windows and self._needs_powershell(command):
+            command = self._wrap_for_powershell(command)
+            logger.info(f"Windows PowerShell wrapped: {command[:80]}...")
         
         logger.info(f"Executing: {command[:100]}...")
         logger.debug(f"CWD: {work_dir}")
@@ -118,17 +167,12 @@ class ShellTool:
         command: str,
         cwd: Optional[str] = None,
     ) -> AsyncIterator[str]:
-        """
-        交互式执行命令，实时输出
-        
-        Args:
-            command: 要执行的命令
-            cwd: 工作目录
-        
-        Yields:
-            输出行
-        """
+        """交互式执行命令，实时输出"""
         work_dir = cwd or self.default_cwd
+        
+        # Windows PowerShell 命令处理
+        if self._is_windows and self._needs_powershell(command):
+            command = self._wrap_for_powershell(command)
         
         logger.info(f"Executing interactively: {command[:100]}...")
         
@@ -147,7 +191,6 @@ class ShellTool:
     
     async def check_command_exists(self, command: str) -> bool:
         """检查命令是否存在"""
-        # Windows 和 Unix 的检查方式不同
         if os.name == "nt":
             check_cmd = f"where {command}"
         else:
@@ -171,3 +214,20 @@ class ShellTool:
         if path:
             cmd += f" {path}"
         return await self.run(cmd)
+    
+    async def run_powershell(self, command: str) -> CommandResult:
+        """
+        专门执行 PowerShell 命令（跨平台）
+        
+        Args:
+            command: PowerShell 命令
+        
+        Returns:
+            CommandResult
+        """
+        if self._is_windows:
+            # Windows 上直接使用 powershell
+            return await self.run(f'powershell -NoProfile -Command "{command}"')
+        else:
+            # Linux/Mac 上使用 pwsh
+            return await self.run(f'pwsh -NoProfile -Command "{command}"')

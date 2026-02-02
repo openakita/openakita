@@ -40,6 +40,9 @@ from ..skills import SkillRegistry, SkillLoader, SkillEntry, SkillCatalog
 from ..tools.mcp import MCPClient, mcp_client
 from ..tools.mcp_catalog import MCPCatalog
 
+# 系统工具目录（渐进式披露）
+from ..tools.catalog import ToolCatalog
+
 # 记忆系统
 from ..memory import MemoryManager
 
@@ -514,6 +517,10 @@ class Agent:
             }
         },
         # === 定时任务工具 ===
+        # 【重要概念区分】
+        # - 取消/删除任务 (cancel_scheduled_task) = 永久移除，任务不再执行
+        # - 关闭提醒 (update notify=false) = 任务继续执行，但不发通知消息
+        # - 暂停任务 (update enabled=false) = 任务暂停执行，可以恢复
         {
             "name": "schedule_task",
             "description": "创建定时任务或提醒。"
@@ -555,6 +562,16 @@ class Agent:
                     "prompt": {
                         "type": "string",
                         "description": "执行时发送给 Agent 的提示（仅 task 类型需要，AI 会执行此指令）"
+                    },
+                    "notify_on_start": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "任务开始时发通知？默认true。'不要提醒'时设false"
+                    },
+                    "notify_on_complete": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "任务完成时发通知？默认true。'不要提醒'时设false"
                     }
                 },
                 "required": ["name", "description", "task_type", "trigger_type", "trigger_config"]
@@ -562,7 +579,7 @@ class Agent:
         },
         {
             "name": "list_scheduled_tasks",
-            "description": "列出所有定时任务",
+            "description": "列出所有定时任务，返回任务ID、名称、类型、状态、下次执行时间",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -572,11 +589,33 @@ class Agent:
         },
         {
             "name": "cancel_scheduled_task",
-            "description": "取消定时任务",
+            "description": "【永久删除】定时任务。"
+                           "\n⚠️ 用户说'取消/删除任务' → 用此工具"
+                           "\n⚠️ 用户说'关闭提醒' → 用 update_scheduled_task 设 notify=false"
+                           "\n⚠️ 用户说'暂停任务' → 用 update_scheduled_task 设 enabled=false",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "string", "description": "任务 ID"}
+                },
+                "required": ["task_id"]
+            }
+        },
+        {
+            "name": "update_scheduled_task",
+            "description": "修改定时任务设置【不删除任务】。"
+                           "\n可修改: notify_on_start, notify_on_complete, enabled"
+                           "\n\n常见用法:"
+                           "\n- '关闭提醒' → notify_on_start=false, notify_on_complete=false"
+                           "\n- '暂停任务' → enabled=false"
+                           "\n- '恢复任务' → enabled=true",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "要修改的任务ID（先用list获取）"},
+                    "notify_on_start": {"type": "boolean", "description": "开始时发通知？不传=不修改"},
+                    "notify_on_complete": {"type": "boolean", "description": "完成时发通知？不传=不修改"},
+                    "enabled": {"type": "boolean", "description": "启用(true)/暂停(false)任务？不传=不修改"}
                 },
                 "required": ["task_id"]
             }
@@ -749,6 +788,51 @@ class Agent:
                 }
             }
         },
+        # === 工具信息查询（渐进式披露 Level 2）===
+        {
+            "name": "get_tool_info",
+            "description": "获取系统工具的详细参数定义。在调用不熟悉的工具前，先用此工具了解其完整用法、参数说明和示例。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "tool_name": {"type": "string", "description": "工具名称"}
+                },
+                "required": ["tool_name"]
+            }
+        },
+        # === MCP 工具 ===
+        {
+            "name": "call_mcp_tool",
+            "description": "调用 MCP 服务器的工具。查看系统提示中的 'MCP Servers' 部分了解可用的服务器和工具。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "server": {"type": "string", "description": "MCP 服务器标识符"},
+                    "tool_name": {"type": "string", "description": "工具名称"},
+                    "arguments": {"type": "object", "description": "工具参数", "default": {}}
+                },
+                "required": ["server", "tool_name"]
+            }
+        },
+        {
+            "name": "list_mcp_servers",
+            "description": "列出所有配置的 MCP 服务器及其连接状态。",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "get_mcp_instructions",
+            "description": "获取 MCP 服务器的详细使用说明（INSTRUCTIONS.md）。用于了解服务器的完整使用方法。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "server": {"type": "string", "description": "服务器标识符"}
+                },
+                "required": ["server"]
+            }
+        },
     ]
     
     # 当前 IM 会话信息（由 chat_with_session 设置）
@@ -794,6 +878,9 @@ class Agent:
         self.mcp_catalog = MCPCatalog()
         self.browser_mcp = None  # 在 _start_builtin_mcp_servers 中启动
         self._builtin_mcp_count = 0
+        
+        # 系统工具目录（渐进式披露）
+        self.tool_catalog = ToolCatalog(self.BASE_TOOLS)
         
         # 定时任务调度器
         self.task_scheduler = None  # 在 initialize() 中启动
@@ -1435,6 +1522,57 @@ class Agent:
 **⚠️ 会话历史中的"成功打开浏览器"等记录只是历史，不代表当前状态！每次执行任务必须通过工具调用获取实时状态。**
 """
         
+        # 工具使用指南
+        tools_guide = """
+## 工具体系说明
+
+你有三类工具可以使用，**它们都是工具，都可以调用**：
+
+### 1. 系统工具（渐进式披露）
+
+系统内置的核心工具，采用渐进式披露：
+
+| 步骤 | 操作 | 说明 |
+|-----|-----|-----|
+| 1 | 查看上方 "Available System Tools" 清单 | 了解有哪些工具可用 |
+| 2 | `get_tool_info(tool_name)` | 获取工具的完整参数定义 |
+| 3 | 直接调用工具 | 如 `read_file(path="...")` |
+
+**工具类别**：文件系统、浏览器、记忆、定时任务、用户档案等
+
+### 2. Skills 技能（渐进式披露）
+
+可扩展的能力模块，采用渐进式披露：
+
+| 步骤 | 操作 | 说明 |
+|-----|-----|-----|
+| 1 | 查看上方 "Available Skills" 清单 | 了解有哪些技能可用 |
+| 2 | `get_skill_info(skill_name)` | 获取技能的详细使用说明 |
+| 3 | `run_skill_script(skill_name, script_name)` | 执行技能提供的脚本 |
+
+**特点**：可通过 `install_skill` 安装新技能，或通过 `generate_skill` 自动生成
+
+### 3. MCP 外部服务（全量暴露）
+
+MCP (Model Context Protocol) 连接外部服务，**工具定义已全量展示**：
+
+| 步骤 | 操作 | 说明 |
+|-----|-----|-----|
+| 1 | 查看上方 "MCP Servers" 清单 | 包含完整的工具定义和参数 |
+| 2 | `call_mcp_tool(server, tool_name, arguments)` | 直接调用 |
+
+**特点**：连接数据库、API 等外部服务
+
+### 工具选择原则
+
+1. **系统工具**：文件操作、命令执行、浏览器、记忆等基础能力
+2. **Skills**：复杂任务、特定领域能力、可复用的工作流
+3. **MCP**：外部服务集成（数据库、第三方 API）
+4. **找不到工具？用 `generate_skill` 创造一个！**
+
+**记住：这三类都是工具，都可以调用，不要说"我没有这个能力"！**
+"""
+        
         return f"""{base_prompt}
 
 {system_info}
@@ -1443,6 +1581,8 @@ class Agent:
 {memory_context}
 
 {tools_text}
+
+{tools_guide}
 
 ## 核心原则 (最高优先级!!!)
 
@@ -3018,6 +3158,55 @@ generate_skill → 保存 → 使用
                 
                 return output
             
+            # === 工具信息查询（渐进式披露 Level 2）===
+            elif tool_name == "get_tool_info":
+                tool_name_to_query = tool_input["tool_name"]
+                return self.tool_catalog.get_tool_info_formatted(tool_name_to_query)
+            
+            # === MCP 工具 ===
+            elif tool_name == "call_mcp_tool":
+                server = tool_input["server"]
+                mcp_tool_name = tool_input["tool_name"]
+                arguments = tool_input.get("arguments", {})
+                
+                # 检查服务器是否已连接
+                if server not in self.mcp_client.list_connected():
+                    # 尝试连接
+                    connected = await self.mcp_client.connect(server)
+                    if not connected:
+                        return f"❌ 无法连接到 MCP 服务器: {server}"
+                
+                result = await self.mcp_client.call_tool(server, mcp_tool_name, arguments)
+                
+                if result.success:
+                    return f"✅ MCP 工具调用成功:\n{result.data}"
+                else:
+                    return f"❌ MCP 工具调用失败: {result.error}"
+            
+            elif tool_name == "list_mcp_servers":
+                servers = self.mcp_catalog.list_servers()
+                connected = self.mcp_client.list_connected()
+                
+                if not servers:
+                    return "当前没有配置 MCP 服务器\n\n提示: MCP 服务器配置放在 mcps/ 目录下"
+                
+                output = f"已配置 {len(servers)} 个 MCP 服务器:\n\n"
+                for server_id in servers:
+                    status = "🟢 已连接" if server_id in connected else "⚪ 未连接"
+                    output += f"- **{server_id}** {status}\n"
+                
+                output += "\n使用 `call_mcp_tool(server, tool_name, arguments)` 调用工具"
+                return output
+            
+            elif tool_name == "get_mcp_instructions":
+                server = tool_input["server"]
+                instructions = self.mcp_catalog.get_server_instructions(server)
+                
+                if instructions:
+                    return f"# MCP 服务器 {server} 使用说明\n\n{instructions}"
+                else:
+                    return f"❌ 未找到服务器 {server} 的使用说明，或服务器不存在"
+            
             # === 浏览器工具 (browser-use MCP) ===
             elif tool_name.startswith("browser_") or "browser_" in tool_name:
                 if not hasattr(self, 'browser_mcp') or not self.browser_mcp:
@@ -3073,6 +3262,8 @@ generate_skill → 保存 → 使用
                     channel_id=channel_id,
                     chat_id=chat_id,
                 )
+                task.metadata["notify_on_start"] = tool_input.get("notify_on_start", True)
+                task.metadata["notify_on_complete"] = tool_input.get("notify_on_complete", True)
                 
                 task_id = await self.task_scheduler.add_task(task)
                 next_run = task.next_run.strftime('%Y-%m-%d %H:%M:%S') if task.next_run else '待计算'
@@ -3125,6 +3316,32 @@ generate_skill → 保存 → 使用
                     return f"✅ 任务 {task_id} 已取消"
                 else:
                     return f"❌ 任务 {task_id} 不存在"
+            
+            elif tool_name == "update_scheduled_task":
+                if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
+                    return "❌ 定时任务调度器未启动"
+                task_id = tool_input["task_id"]
+                task = self.task_scheduler.get_task(task_id)
+                if not task:
+                    return f"❌ 任务 {task_id} 不存在"
+                changes = []
+                if "notify_on_start" in tool_input:
+                    task.metadata["notify_on_start"] = tool_input["notify_on_start"]
+                    changes.append("开始通知: " + ("开" if tool_input["notify_on_start"] else "关"))
+                if "notify_on_complete" in tool_input:
+                    task.metadata["notify_on_complete"] = tool_input["notify_on_complete"]
+                    changes.append("完成通知: " + ("开" if tool_input["notify_on_complete"] else "关"))
+                if "enabled" in tool_input:
+                    if tool_input["enabled"]:
+                        task.enable()
+                        changes.append("已启用")
+                    else:
+                        task.disable()
+                        changes.append("已暂停")
+                self.task_scheduler._save_tasks()
+                if changes:
+                    return f"✅ 任务 {task.name} 已更新: " + ", ".join(changes)
+                return "⚠️ 没有指定要修改的设置"
             
             elif tool_name == "trigger_scheduled_task":
                 if not hasattr(self, 'task_scheduler') or not self.task_scheduler:

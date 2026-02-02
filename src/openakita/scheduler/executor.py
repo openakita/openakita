@@ -97,13 +97,10 @@ class TaskExecutor:
             message_sent = False
             
             if task.channel_id and task.chat_id and self.gateway:
-                # 转义 Telegram 特殊字符
-                safe_message = self._escape_telegram_chars(message)
-                
                 await self.gateway.send(
                     channel=task.channel_id,
                     chat_id=task.chat_id,
-                    text=safe_message,
+                    text=message,
                 )
                 message_sent = True
                 logger.info(f"TaskExecutor: reminder {task.id} message sent")
@@ -264,14 +261,18 @@ class TaskExecutor:
         if not task.channel_id or not task.chat_id or not self.gateway:
             return
         
+        # 检查是否启用开始通知
+        if not task.metadata.get('notify_on_start', True):
+            logger.debug(f'Task {task.id} has start notification disabled')
+            return
+        
         try:
             notification = f"🚀 开始执行任务: {task.name}\n\n请稍候，我正在处理中..."
-            safe_notification = self._escape_telegram_chars(notification)
             
             await self.gateway.send(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
-                text=safe_notification,
+                text=notification,
             )
             logger.info(f"Sent start notification for task {task.id}")
             
@@ -289,6 +290,11 @@ class TaskExecutor:
             logger.debug(f"Task {task.id} has no notification channel configured")
             return
         
+        # 检查是否启用完成通知
+        if not task.metadata.get('notify_on_complete', True):
+            logger.debug(f'Task {task.id} has completion notification disabled')
+            return
+        
         try:
             status = "✅ 任务完成" if success else "❌ 任务失败"
             notification = f"""{status}: {task.name}
@@ -297,13 +303,11 @@ class TaskExecutor:
 {message[:1000]}{"..." if len(message) > 1000 else ""}
 """
             
-            # 转义 Telegram 特殊字符
-            safe_notification = self._escape_telegram_chars(notification)
-            
+            # 不转义特殊字符，让 Telegram adapter 处理格式
             await self.gateway.send(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
-                text=safe_notification,
+                text=notification,
             )
             
             logger.info(f"Sent end notification for task {task.id}")

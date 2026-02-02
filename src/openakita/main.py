@@ -143,6 +143,7 @@ async def start_im_channels(agent_or_master):
                 media_dir=settings.project_root / "data" / "media" / "telegram",
                 pairing_code=settings.telegram_pairing_code or None,
                 require_pairing=settings.telegram_require_pairing,
+                proxy=settings.telegram_proxy or None,
             )
             await _message_gateway.register_adapter(telegram)
             adapters_started.append("telegram")
