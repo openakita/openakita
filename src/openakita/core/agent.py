@@ -49,6 +49,19 @@ from ..memory import MemoryManager
 # 系统工具定义（从 tools/definitions 导入）
 from ..tools.definitions import BASE_TOOLS
 
+# Handler Registry（模块化工具执行）
+from ..tools.handlers import SystemHandlerRegistry
+from ..tools.handlers.filesystem import create_handler as create_filesystem_handler
+from ..tools.handlers.memory import create_handler as create_memory_handler
+from ..tools.handlers.browser import create_handler as create_browser_handler
+from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
+from ..tools.handlers.mcp import create_handler as create_mcp_handler
+from ..tools.handlers.profile import create_handler as create_profile_handler
+from ..tools.handlers.system import create_handler as create_system_handler
+from ..tools.handlers.im_channel import create_handler as create_im_channel_handler
+from ..tools.handlers.skills import create_handler as create_skills_handler
+from ..tools.handlers.desktop import create_handler as create_desktop_handler
+
 # Windows Desktop Automation (Windows only)
 import sys
 _DESKTOP_AVAILABLE = False
@@ -328,6 +341,10 @@ class Agent:
         self._initialized = False
         self._running = False
         
+        # Handler Registry（模块化工具执行）
+        self.handler_registry = SystemHandlerRegistry()
+        self._init_handlers()
+        
         logger.info(f"Agent '{self.name}' created")
     
     async def initialize(self, start_scheduler: bool = True) -> None:
@@ -368,6 +385,91 @@ class Agent:
             f"{self.skill_registry.count} skills, "
             f"{self.mcp_catalog.server_count} MCP servers"
         )
+    
+    def _init_handlers(self) -> None:
+        """
+        初始化系统工具处理器
+        
+        将各个模块的处理器注册到 handler_registry
+        """
+        # 文件系统
+        self.handler_registry.register(
+            "filesystem",
+            create_filesystem_handler(self),
+            ["run_shell", "write_file", "read_file", "list_directory"]
+        )
+        
+        # 记忆系统
+        self.handler_registry.register(
+            "memory",
+            create_memory_handler(self),
+            ["add_memory", "search_memory", "get_memory_stats"]
+        )
+        
+        # 浏览器
+        self.handler_registry.register(
+            "browser",
+            create_browser_handler(self),
+            ["browser_open", "browser_status", "browser_list_tabs", "browser_navigate",
+             "browser_new_tab", "browser_switch_tab", "browser_click", "browser_type",
+             "browser_get_content", "browser_screenshot"]
+        )
+        
+        # 定时任务
+        self.handler_registry.register(
+            "scheduled",
+            create_scheduled_handler(self),
+            ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"]
+        )
+        
+        # MCP
+        self.handler_registry.register(
+            "mcp",
+            create_mcp_handler(self),
+            ["list_mcp_servers", "get_mcp_instructions", "call_mcp_tool"]
+        )
+        
+        # 用户档案
+        self.handler_registry.register(
+            "profile",
+            create_profile_handler(self),
+            ["get_user_profile", "update_user_profile"]
+        )
+        
+        # 系统工具
+        self.handler_registry.register(
+            "system",
+            create_system_handler(self),
+            ["get_tool_info", "get_chat_history", "get_session_logs",
+             "enable_thinking", "get_voice_file", "get_image_file", "send_to_chat"]
+        )
+        
+        # IM 渠道
+        self.handler_registry.register(
+            "im_channel",
+            create_im_channel_handler(self),
+            ["send_im_image", "send_im_file"]
+        )
+        
+        # 技能管理
+        self.handler_registry.register(
+            "skills",
+            create_skills_handler(self),
+            ["list_skills", "get_skill_info", "run_skill_script", "get_skill_reference",
+             "install_skill", "load_skill", "reload_skill"]
+        )
+        
+        # 桌面工具（仅 Windows）
+        if sys.platform == "win32":
+            self.handler_registry.register(
+                "desktop",
+                create_desktop_handler(self),
+                ["desktop_screenshot", "desktop_find_element", "desktop_click",
+                 "desktop_type", "desktop_hotkey", "desktop_scroll",
+                 "desktop_window", "desktop_wait", "desktop_inspect"]
+            )
+        
+        logger.info(f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools")
     
     async def _load_installed_skills(self) -> None:
         """
@@ -967,7 +1069,11 @@ class Agent:
 | 2 | `get_skill_info(skill_name)` | 获取技能的详细使用说明 |
 | 3 | `run_skill_script(skill_name, script_name)` | 执行技能提供的脚本 |
 
-**特点**：可通过 `install_skill` 安装新技能，或通过 `generate_skill` 自动生成
+**特点**：
+- `install_skill` - 从 URL/Git 安装新技能
+- `load_skill` - 加载新创建的技能（用于 skill-creator 创建后）
+- `reload_skill` - 重新加载已修改的技能
+- 缺少工具时，使用 `skill-creator` 技能创建新技能
 
 ### 3. MCP 外部服务（全量暴露）
 
@@ -985,7 +1091,7 @@ MCP (Model Context Protocol) 连接外部服务，**工具定义已全量展示*
 1. **系统工具**：文件操作、命令执行、浏览器、记忆等基础能力
 2. **Skills**：复杂任务、特定领域能力、可复用的工作流
 3. **MCP**：外部服务集成（数据库、第三方 API）
-4. **找不到工具？用 `generate_skill` 创造一个！**
+4. **找不到工具？使用 `skill-creator` 技能创建一个！**
 
 **记住：这三类都是工具，都可以调用，不要说"我没有这个能力"！**
 """
@@ -1036,7 +1142,12 @@ search_github → install_skill → 使用
 
 **方式三：创建技能（需要复用）**
 ```
-generate_skill → 保存 → 使用
+使用 skill-creator 技能 → 创建 SKILL.md → 保存到 skills/<name>/ → 调用 load_skill 加载 → 使用
+```
+
+**方式四：修改已有技能**
+```
+修改 skills/<name>/SKILL.md → 调用 reload_skill 重新加载 → 修改立即生效
 ```
 
 **从"不会"到"会"只需要几分钟！**
@@ -1226,7 +1337,7 @@ generate_skill → 保存 → 使用
         # 工具分类
         categories = {
             "File System": ["run_shell", "write_file", "read_file", "list_directory"],
-            "Skills Management": ["list_skills", "get_skill_info", "run_skill_script", "get_skill_reference", "generate_skill", "improve_skill"],
+            "Skills Management": ["list_skills", "get_skill_info", "run_skill_script", "get_skill_reference", "install_skill", "load_skill", "reload_skill"],
             "Memory Management": ["add_memory", "search_memory", "get_memory_stats"],
             "Browser Automation": ["browser_open", "browser_status", "browser_list_tabs", "browser_navigate", "browser_new_tab", "browser_switch_tab", "browser_click", "browser_type", "browser_get_content", "browser_screenshot"],
             "Scheduled Tasks": ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "trigger_scheduled_task"],
@@ -2304,6 +2415,8 @@ generate_skill → 保存 → 使用
         """
         执行工具调用
         
+        优先使用 handler_registry 执行，不支持的工具使用旧的 if-elif 兜底
+        
         Args:
             tool_name: 工具名称
             tool_input: 工具输入参数
@@ -2314,780 +2427,12 @@ generate_skill → 保存 → 使用
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
         
         try:
-            # === 基础文件系统工具 ===
-            if tool_name == "run_shell":
-                command = tool_input["command"]
-                # 使用 LLM 指定的超时时间，默认 60 秒
-                timeout = tool_input.get("timeout", 60)
-                # 限制范围：最小 10 秒，最大 600 秒
-                timeout = max(10, min(timeout, 600))
-                
-                result = await self.shell_tool.run(
-                    command,
-                    cwd=tool_input.get("cwd"),
-                    timeout=timeout,
-                )
-                
-                # 记录命令输出到会话日志缓存（供 AI 回顾）
-                from ..logging import get_session_log_buffer
-                log_buffer = get_session_log_buffer()
-                
-                command_preview = tool_input["command"][:100]
-                if len(tool_input["command"]) > 100:
-                    command_preview += "..."
-                
-                # 记录命令和输出
-                output_preview = result.stdout[:500] if result.stdout else ""
-                if len(result.stdout or "") > 500:
-                    output_preview += f"\n... (共 {len(result.stdout)} 字符)"
-                
-                if result.success:
-                    log_buffer.add_log(
-                        level="INFO",
-                        module="shell",
-                        message=f"$ {command_preview}\n[exit: 0]\n{output_preview}",
-                    )
-                    return f"命令执行成功 (exit code: 0):\n{result.stdout}"
-                else:
-                    # 记录失败的命令
-                    error_output = result.stderr[:500] if result.stderr else ""
-                    log_buffer.add_log(
-                        level="ERROR",
-                        module="shell",
-                        message=f"$ {command_preview}\n[exit: {result.returncode}]\nstdout: {output_preview}\nstderr: {error_output}",
-                    )
-                    
-                    # 返回完整信息帮助AI理解错误
-                    output_parts = [f"命令执行失败 (exit code: {result.returncode})"]
-                    if result.stdout:
-                        output_parts.append(f"[stdout]:\n{result.stdout}")
-                    if result.stderr:
-                        output_parts.append(f"[stderr]:\n{result.stderr}")
-                    if not result.stdout and not result.stderr:
-                        output_parts.append("(无输出，可能命令不存在或语法错误)")
-                    # 提示 AI 查看日志或尝试其他方法
-                    output_parts.append("\n提示: 如果不确定原因，可以调用 get_session_logs 查看详细日志，或尝试其他命令。")
-                    return "\n".join(output_parts)
+            # 优先使用 handler_registry 执行
+            if self.handler_registry.has_tool(tool_name):
+                return await self.handler_registry.execute_by_tool(tool_name, tool_input)
             
-            elif tool_name == "write_file":
-                await self.file_tool.write(
-                    tool_input["path"],
-                    tool_input["content"]
-                )
-                return f"文件已写入: {tool_input['path']}"
-            
-            elif tool_name == "read_file":
-                content = await self.file_tool.read(tool_input["path"])
-                return f"文件内容:\n{content}"
-            
-            elif tool_name == "list_directory":
-                files = await self.file_tool.list_dir(tool_input["path"])
-                return f"目录内容:\n" + "\n".join(files)
-            
-            # === Skills 工具 (SKILL.md 规范) ===
-            elif tool_name == "list_skills":
-                skills = self.skill_registry.list_all()
-                if not skills:
-                    return "当前没有已安装的技能\n\n提示: 技能应放在 skills/ 目录下，每个技能是一个包含 SKILL.md 的文件夹"
-                
-                output = f"已安装 {len(skills)} 个技能 (遵循 Agent Skills 规范):\n\n"
-                for skill in skills:
-                    auto = "自动" if not skill.disable_model_invocation else "手动"
-                    output += f"**{skill.name}** [{auto}]\n"
-                    output += f"  {skill.description}\n\n"
-                return output
-            
-            elif tool_name == "get_skill_info":
-                skill_name = tool_input["skill_name"]
-                skill = self.skill_registry.get(skill_name)
-                
-                if not skill:
-                    return f"❌ 未找到技能: {skill_name}"
-                
-                # 获取完整的 body (Level 2)
-                body = skill.get_body()
-                
-                output = f"# 技能: {skill.name}\n\n"
-                output += f"**描述**: {skill.description}\n"
-                if skill.license:
-                    output += f"**许可证**: {skill.license}\n"
-                if skill.compatibility:
-                    output += f"**兼容性**: {skill.compatibility}\n"
-                output += f"\n---\n\n"
-                output += body or "(无详细指令)"
-                
-                return output
-            
-            elif tool_name == "run_skill_script":
-                skill_name = tool_input["skill_name"]
-                script_name = tool_input["script_name"]
-                args = tool_input.get("args", [])
-                
-                success, output = self.skill_loader.run_script(
-                    skill_name, script_name, args
-                )
-                
-                if success:
-                    return f"✅ 脚本执行成功:\n{output}"
-                else:
-                    return f"❌ 脚本执行失败:\n{output}"
-            
-            elif tool_name == "get_skill_reference":
-                skill_name = tool_input["skill_name"]
-                ref_name = tool_input.get("ref_name", "REFERENCE.md")
-                
-                content = self.skill_loader.get_reference(skill_name, ref_name)
-                
-                if content:
-                    return f"# 参考文档: {ref_name}\n\n{content}"
-                else:
-                    return f"❌ 未找到参考文档: {skill_name}/{ref_name}"
-            
-            elif tool_name == "install_skill":
-                source = tool_input["source"]
-                name = tool_input.get("name")
-                subdir = tool_input.get("subdir")
-                extra_files = tool_input.get("extra_files", [])
-                
-                result = await self._install_skill(source, name, subdir, extra_files)
-                return result
-            
-            # === 自进化工具 ===
-            elif tool_name == "generate_skill":
-                description = tool_input["description"]
-                name = tool_input.get("name")
-                
-                result = await self.skill_generator.generate(description, name)
-                
-                if result.success:
-                    return f"""✅ 技能生成成功！
-
-**名称**: {result.skill_name}
-**目录**: {result.skill_dir}
-**测试**: {'通过' if result.test_passed else '未通过'}
-
-技能已自动加载，可以使用以下工具:
-- `get_skill_info` 查看详细信息
-- `run_skill_script` 运行脚本 (scripts/main.py)"""
-                else:
-                    return f"❌ 技能生成失败: {result.error or '未知错误'}"
-            
-            elif tool_name == "improve_skill":
-                skill_name = tool_input["skill_name"]
-                feedback = tool_input["feedback"]
-                
-                result = await self.skill_generator.improve(skill_name, feedback)
-                
-                if result.success:
-                    return f"✅ 技能已改进: {skill_name}\n测试: {'通过' if result.test_passed else '未通过'}"
-                else:
-                    return f"❌ 技能改进失败: {result.error or '未知错误'}"
-            
-            # === 记忆工具 ===
-            elif tool_name == "add_memory":
-                from ..memory.types import Memory, MemoryType, MemoryPriority
-                
-                content = tool_input["content"]
-                mem_type_str = tool_input["type"]
-                importance = tool_input.get("importance", 0.5)
-                
-                # 类型映射
-                type_map = {
-                    "fact": MemoryType.FACT,
-                    "preference": MemoryType.PREFERENCE,
-                    "skill": MemoryType.SKILL,
-                    "error": MemoryType.ERROR,
-                    "rule": MemoryType.RULE,
-                }
-                mem_type = type_map.get(mem_type_str, MemoryType.FACT)
-                
-                # 根据重要性确定优先级
-                if importance >= 0.8:
-                    priority = MemoryPriority.PERMANENT
-                elif importance >= 0.6:
-                    priority = MemoryPriority.LONG_TERM
-                else:
-                    priority = MemoryPriority.SHORT_TERM
-                
-                memory = Memory(
-                    type=mem_type,
-                    priority=priority,
-                    content=content,
-                    source="manual",
-                    importance_score=importance,
-                )
-                
-                memory_id = self.memory_manager.add_memory(memory)
-                if memory_id:
-                    return f"✅ 已记住: [{mem_type_str}] {content}\nID: {memory_id}"
-                else:
-                    return "✅ 记忆已存在（语义相似），无需重复记录。请继续执行其他任务或结束。"
-            
-            elif tool_name == "search_memory":
-                from ..memory.types import MemoryType
-                
-                query = tool_input["query"]
-                type_filter = tool_input.get("type")
-                
-                mem_type = None
-                if type_filter:
-                    type_map = {
-                        "fact": MemoryType.FACT,
-                        "preference": MemoryType.PREFERENCE,
-                        "skill": MemoryType.SKILL,
-                        "error": MemoryType.ERROR,
-                        "rule": MemoryType.RULE,
-                    }
-                    mem_type = type_map.get(type_filter)
-                
-                memories = self.memory_manager.search_memories(
-                    query=query,
-                    memory_type=mem_type,
-                    limit=10
-                )
-                
-                if not memories:
-                    return f"未找到与 '{query}' 相关的记忆"
-                
-                output = f"找到 {len(memories)} 条相关记忆:\n\n"
-                for m in memories:
-                    output += f"- [{m.type.value}] {m.content}\n"
-                    output += f"  (重要性: {m.importance_score:.1f}, 访问次数: {m.access_count})\n\n"
-                
-                return output
-            
-            elif tool_name == "get_memory_stats":
-                stats = self.memory_manager.get_stats()
-                
-                output = f"""记忆系统统计:
-
-- 总记忆数: {stats['total']}
-- 今日会话: {stats['sessions_today']}
-- 待处理会话: {stats['unprocessed_sessions']}
-
-按类型:
-"""
-                for type_name, count in stats.get('by_type', {}).items():
-                    output += f"  - {type_name}: {count}\n"
-                
-                output += "\n按优先级:\n"
-                for priority, count in stats.get('by_priority', {}).items():
-                    output += f"  - {priority}: {count}\n"
-                
-                return output
-            
-            # === 工具信息查询（渐进式披露 Level 2）===
-            elif tool_name == "get_tool_info":
-                tool_name_to_query = tool_input["tool_name"]
-                return self.tool_catalog.get_tool_info_formatted(tool_name_to_query)
-            
-            # === MCP 工具 ===
-            elif tool_name == "call_mcp_tool":
-                server = tool_input["server"]
-                mcp_tool_name = tool_input["tool_name"]
-                arguments = tool_input.get("arguments", {})
-                
-                # 检查服务器是否已连接
-                if server not in self.mcp_client.list_connected():
-                    # 尝试连接
-                    connected = await self.mcp_client.connect(server)
-                    if not connected:
-                        return f"❌ 无法连接到 MCP 服务器: {server}"
-                
-                result = await self.mcp_client.call_tool(server, mcp_tool_name, arguments)
-                
-                if result.success:
-                    return f"✅ MCP 工具调用成功:\n{result.data}"
-                else:
-                    return f"❌ MCP 工具调用失败: {result.error}"
-            
-            elif tool_name == "list_mcp_servers":
-                servers = self.mcp_catalog.list_servers()
-                connected = self.mcp_client.list_connected()
-                
-                if not servers:
-                    return "当前没有配置 MCP 服务器\n\n提示: MCP 服务器配置放在 mcps/ 目录下"
-                
-                output = f"已配置 {len(servers)} 个 MCP 服务器:\n\n"
-                for server_id in servers:
-                    status = "🟢 已连接" if server_id in connected else "⚪ 未连接"
-                    output += f"- **{server_id}** {status}\n"
-                
-                output += "\n使用 `call_mcp_tool(server, tool_name, arguments)` 调用工具"
-                return output
-            
-            elif tool_name == "get_mcp_instructions":
-                server = tool_input["server"]
-                instructions = self.mcp_catalog.get_server_instructions(server)
-                
-                if instructions:
-                    return f"# MCP 服务器 {server} 使用说明\n\n{instructions}"
-                else:
-                    return f"❌ 未找到服务器 {server} 的使用说明，或服务器不存在"
-            
-            # === 浏览器工具 (browser-use MCP) ===
-            elif tool_name.startswith("browser_") or "browser_" in tool_name:
-                if not hasattr(self, 'browser_mcp') or not self.browser_mcp:
-                    return "❌ 浏览器 MCP 未启动。请确保已安装 playwright: pip install playwright && playwright install chromium"
-                
-                # 提取实际工具名 (处理 mcp__browser-use__browser_navigate 格式)
-                actual_tool_name = tool_name
-                if "browser_" in tool_name and not tool_name.startswith("browser_"):
-                    # 提取 browser_xxx 部分
-                    import re
-                    match = re.search(r'(browser_\w+)', tool_name)
-                    if match:
-                        actual_tool_name = match.group(1)
-                
-                result = await self.browser_mcp.call_tool(actual_tool_name, tool_input)
-                
-                if result.get("success"):
-                    return f"✅ {result.get('result', 'OK')}"
-                else:
-                    return f"❌ {result.get('error', '未知错误')}"
-            
-            # === 定时任务工具 ===
-            elif tool_name == "schedule_task":
-                if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
-                    return "❌ 定时任务调度器未启动"
-                
-                from ..scheduler import ScheduledTask, TriggerType
-                from ..scheduler.task import TaskType
-                
-                trigger_type = TriggerType(tool_input["trigger_type"])
-                task_type = TaskType(tool_input.get("task_type", "task"))
-                
-                # 获取当前 IM 会话信息（如果有）
-                channel_id = None
-                chat_id = None
-                user_id = None
-                
-                if Agent._current_im_session:
-                    session = Agent._current_im_session
-                    channel_id = session.channel
-                    chat_id = session.chat_id
-                    user_id = session.user_id
-                
-                task = ScheduledTask.create(
-                    name=tool_input["name"],
-                    description=tool_input["description"],
-                    trigger_type=trigger_type,
-                    trigger_config=tool_input["trigger_config"],
-                    task_type=task_type,
-                    reminder_message=tool_input.get("reminder_message"),
-                    prompt=tool_input.get("prompt", ""),
-                    user_id=user_id,
-                    channel_id=channel_id,
-                    chat_id=chat_id,
-                )
-                task.metadata["notify_on_start"] = tool_input.get("notify_on_start", True)
-                task.metadata["notify_on_complete"] = tool_input.get("notify_on_complete", True)
-                
-                task_id = await self.task_scheduler.add_task(task)
-                next_run = task.next_run.strftime('%Y-%m-%d %H:%M:%S') if task.next_run else '待计算'
-                
-                # 任务类型显示
-                type_display = "📝 简单提醒" if task_type == TaskType.REMINDER else "🔧 复杂任务"
-                
-                # 控制台输出任务创建信息
-                print(f"\n📅 定时任务已创建:")
-                print(f"   ID: {task_id}")
-                print(f"   名称: {task.name}")
-                print(f"   类型: {type_display}")
-                print(f"   触发: {task.trigger_type.value}")
-                print(f"   下次执行: {next_run}")
-                if channel_id and chat_id:
-                    print(f"   通知渠道: {channel_id}/{chat_id}")
-                print()
-                
-                logger.info(f"Created scheduled task: {task_id} ({task.name}), type={task_type.value}, next run: {next_run}")
-                
-                return f"✅ 已创建{type_display}\n- ID: {task_id}\n- 名称: {task.name}\n- 下次执行: {next_run}"
-            
-            elif tool_name == "list_scheduled_tasks":
-                if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
-                    return "❌ 定时任务调度器未启动"
-                
-                enabled_only = tool_input.get("enabled_only", False)
-                tasks = self.task_scheduler.list_tasks(enabled_only=enabled_only)
-                
-                if not tasks:
-                    return "当前没有定时任务"
-                
-                output = f"共 {len(tasks)} 个定时任务:\n\n"
-                for t in tasks:
-                    status = "✓" if t.enabled else "✗"
-                    next_run = t.next_run.strftime('%m-%d %H:%M') if t.next_run else 'N/A'
-                    output += f"[{status}] {t.name} ({t.id})\n"
-                    output += f"    类型: {t.trigger_type.value}, 下次: {next_run}\n"
-                
-                return output
-            
-            elif tool_name == "cancel_scheduled_task":
-                if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
-                    return "❌ 定时任务调度器未启动"
-                
-                task_id = tool_input["task_id"]
-                success = await self.task_scheduler.remove_task(task_id)
-                
-                if success:
-                    return f"✅ 任务 {task_id} 已取消"
-                else:
-                    return f"❌ 任务 {task_id} 不存在"
-            
-            elif tool_name == "update_scheduled_task":
-                if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
-                    return "❌ 定时任务调度器未启动"
-                task_id = tool_input["task_id"]
-                task = self.task_scheduler.get_task(task_id)
-                if not task:
-                    return f"❌ 任务 {task_id} 不存在"
-                changes = []
-                if "notify_on_start" in tool_input:
-                    task.metadata["notify_on_start"] = tool_input["notify_on_start"]
-                    changes.append("开始通知: " + ("开" if tool_input["notify_on_start"] else "关"))
-                if "notify_on_complete" in tool_input:
-                    task.metadata["notify_on_complete"] = tool_input["notify_on_complete"]
-                    changes.append("完成通知: " + ("开" if tool_input["notify_on_complete"] else "关"))
-                if "enabled" in tool_input:
-                    if tool_input["enabled"]:
-                        task.enable()
-                        changes.append("已启用")
-                    else:
-                        task.disable()
-                        changes.append("已暂停")
-                self.task_scheduler._save_tasks()
-                if changes:
-                    return f"✅ 任务 {task.name} 已更新: " + ", ".join(changes)
-                return "⚠️ 没有指定要修改的设置"
-            
-            elif tool_name == "trigger_scheduled_task":
-                if not hasattr(self, 'task_scheduler') or not self.task_scheduler:
-                    return "❌ 定时任务调度器未启动"
-                
-                task_id = tool_input["task_id"]
-                execution = await self.task_scheduler.trigger_now(task_id)
-                
-                if execution:
-                    status = "成功" if execution.status == "success" else "失败"
-                    return f"✅ 任务已触发执行，状态: {status}\n结果: {execution.result or execution.error or 'N/A'}"
-                else:
-                    return f"❌ 任务 {task_id} 不存在"
-            
-            # === Thinking 模式控制 ===
-            elif tool_name == "enable_thinking":
-                enabled = tool_input["enabled"]
-                reason = tool_input.get("reason", "")
-                
-                self.brain.set_thinking_mode(enabled)
-                
-                if enabled:
-                    logger.info(f"Thinking mode enabled by LLM: {reason}")
-                    return f"✅ 已启用深度思考模式。原因: {reason}\n后续回复将使用更强的推理能力。"
-                else:
-                    logger.info(f"Thinking mode disabled by LLM: {reason}")
-                    return f"✅ 已关闭深度思考模式。原因: {reason}\n将使用快速响应模式。"
-            
-            # === 用户档案工具 ===
-            elif tool_name == "update_user_profile":
-                key = tool_input["key"]
-                value = tool_input["value"]
-                
-                available_keys = self.profile_manager.get_available_keys()
-                if key not in available_keys:
-                    return f"❌ 未知的档案项: {key}\n可用的键: {', '.join(available_keys)}"
-                
-                success = self.profile_manager.update_profile(key, value)
-                if success:
-                    return f"✅ 已更新用户档案: {key} = {value}"
-                else:
-                    return f"❌ 更新失败: {key}"
-            
-            elif tool_name == "skip_profile_question":
-                key = tool_input["key"]
-                self.profile_manager.skip_question(key)
-                return f"✅ 已跳过问题: {key}"
-            
-            elif tool_name == "get_user_profile":
-                summary = self.profile_manager.get_profile_summary()
-                return summary
-            
-            # === 日志查询工具 ===
-            elif tool_name == "get_session_logs":
-                from ..logging import get_session_log_buffer
-                
-                count = tool_input.get("count", 20)
-                level_filter = tool_input.get("level")
-                
-                # 限制最大条数
-                count = min(max(1, count), 200)
-                
-                buffer = get_session_log_buffer()
-                logs_text = buffer.get_logs_formatted(
-                    count=count,
-                    level_filter=level_filter,
-                )
-                
-                stats = buffer.get_stats()
-                session_id = stats.get("current_session", "_global")
-                total_logs = stats.get("sessions", {}).get(session_id, 0)
-                
-                return f"📋 会话日志（最近 {count} 条，共 {total_logs} 条）:\n\n{logs_text}"
-            
-            # === IM 通道工具 ===
-            elif tool_name == "send_to_chat":
-                # 检查是否在 IM 会话中
-                if not Agent._current_im_session or not Agent._current_im_gateway:
-                    return "❌ 此工具仅在 IM 会话中可用（当前不是 IM 会话）"
-                
-                session = Agent._current_im_session
-                gateway = Agent._current_im_gateway
-                
-                text = tool_input.get("text", "")
-                file_path = tool_input.get("file_path", "")
-                voice_path = tool_input.get("voice_path", "")
-                caption = tool_input.get("caption", "")
-                
-                try:
-                    from pathlib import Path
-                    
-                    # 获取适配器
-                    adapter = gateway.get_adapter(session.channel)
-                    if not adapter:
-                        return f"❌ 找不到适配器: {session.channel}"
-                    
-                    # 发送语音
-                    if voice_path:
-                        voice_path_obj = Path(voice_path)
-                        if not voice_path_obj.exists():
-                            return f"❌ 语音文件不存在: {voice_path}"
-                        
-                        if hasattr(adapter, 'send_voice'):
-                            await adapter.send_voice(
-                                chat_id=session.chat_id,
-                                voice_path=str(voice_path_obj),
-                                caption=caption or text,
-                            )
-                            self._task_message_sent = True
-                            return f"✅ 语音已发送: {voice_path}"
-                        else:
-                            # 适配器不支持语音，改为发送文件
-                            await adapter.send_file(
-                                chat_id=session.chat_id,
-                                file_path=str(voice_path_obj),
-                                caption=caption or text,
-                            )
-                            self._task_message_sent = True
-                            return f"✅ 语音文件已发送（作为文件）: {voice_path}"
-                    
-                    # 发送文件/图片
-                    if file_path:
-                        file_path_obj = Path(file_path)
-                        if not file_path_obj.exists():
-                            return f"❌ 文件不存在: {file_path}"
-                        
-                        # 根据文件类型发送
-                        suffix = file_path_obj.suffix.lower()
-                        
-                        if suffix in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
-                            # 发送图片
-                            await adapter.send_photo(
-                                chat_id=session.chat_id,
-                                photo_path=str(file_path_obj),
-                                caption=caption or text,
-                            )
-                            self._task_message_sent = True
-                            return f"✅ 图片已发送: {file_path}"
-                        else:
-                            # 发送文件
-                            await adapter.send_file(
-                                chat_id=session.chat_id,
-                                file_path=str(file_path_obj),
-                                caption=caption or text,
-                            )
-                            self._task_message_sent = True
-                            return f"✅ 文件已发送: {file_path}"
-                    
-                    # 只发送文本
-                    elif text:
-                        await gateway.send_to_session(session, text)
-                        self._task_message_sent = True
-                        return f"✅ 消息已发送"
-                    
-                    else:
-                        return "❌ 请提供要发送的内容（text, file_path 或 voice_path）"
-                        
-                except Exception as e:
-                    logger.error(f"send_to_chat error: {e}", exc_info=True)
-                    return f"❌ 发送失败: {str(e)}"
-            
-            elif tool_name == "get_voice_file":
-                # 检查是否在 IM 会话中
-                if not Agent._current_im_session:
-                    return "❌ 此工具仅在 IM 会话中可用"
-                
-                session = Agent._current_im_session
-                
-                # 从 session metadata 获取语音文件信息
-                pending_voices = session.get_metadata("pending_voices")
-                if pending_voices and len(pending_voices) > 0:
-                    voice_paths = [v.get("local_path", "") for v in pending_voices if v.get("local_path")]
-                    if voice_paths:
-                        return f"✅ 用户发送的语音文件路径:\n" + "\n".join(voice_paths)
-                
-                # 尝试从最近的消息中查找语音
-                # 检查 session 的 messages
-                for msg in reversed(session.messages[-10:]):
-                    content = msg.get("content", "")
-                    if isinstance(content, str) and "[语音:" in content:
-                        # 尝试找到对应的本地文件
-                        # 语音文件通常保存在 data/telegram/media/ 目录
-                        media_dir = Path("data/telegram/media")
-                        if media_dir.exists():
-                            voice_files = list(media_dir.glob("*.ogg")) + list(media_dir.glob("*.oga")) + list(media_dir.glob("*.opus"))
-                            if voice_files:
-                                # 返回最新的语音文件
-                                latest = max(voice_files, key=lambda f: f.stat().st_mtime)
-                                return f"✅ 最近的语音文件: {latest}"
-                
-                return "❌ 没有找到用户发送的语音文件。请让用户先发送一条语音消息。"
-            
-            elif tool_name == "get_image_file":
-                # 检查是否在 IM 会话中
-                if not Agent._current_im_session:
-                    return "❌ 此工具仅在 IM 会话中可用"
-                
-                session = Agent._current_im_session
-                
-                # 从 session metadata 获取图片文件信息
-                pending_images = session.get_metadata("pending_images")
-                if pending_images and len(pending_images) > 0:
-                    # pending_images 是 multimodal 格式，找 local_path
-                    image_paths = []
-                    for img in pending_images:
-                        if isinstance(img, dict):
-                            # 尝试从元数据中获取路径
-                            local_path = img.get("local_path", "")
-                            if local_path:
-                                image_paths.append(local_path)
-                    if image_paths:
-                        return f"✅ 用户发送的图片文件路径:\n" + "\n".join(image_paths)
-                
-                # 尝试从 media 目录查找
-                media_dir = Path("data/telegram/media")
-                if media_dir.exists():
-                    image_files = list(media_dir.glob("*.jpg")) + list(media_dir.glob("*.png")) + list(media_dir.glob("*.webp"))
-                    if image_files:
-                        latest = max(image_files, key=lambda f: f.stat().st_mtime)
-                        return f"✅ 最近的图片文件: {latest}"
-                
-                return "❌ 没有找到用户发送的图片文件。请让用户先发送一张图片。"
-            
-            elif tool_name == "get_chat_history":
-                # 检查是否在 IM 会话中
-                if not Agent._current_im_session:
-                    return "❌ 此工具仅在 IM 会话中可用"
-                
-                session = Agent._current_im_session
-                limit = tool_input.get("limit", 20)
-                include_system = tool_input.get("include_system", True)
-                
-                # 从 session manager 获取聊天历史
-                from ..sessions import session_manager
-                
-                history = session_manager.get_history(
-                    channel=session.channel,
-                    chat_id=session.chat_id,
-                    user_id=session.user_id,
-                    limit=limit
-                )
-                
-                if not history:
-                    return "📭 暂无聊天记录"
-                
-                # 格式化输出
-                result_lines = [f"📜 最近 {len(history)} 条消息：\n"]
-                for i, msg in enumerate(history, 1):
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    timestamp = msg.get("timestamp", "")
-                    
-                    # 跳过系统消息（如果不需要）
-                    if not include_system and role == "system":
-                        continue
-                    
-                    # 角色标识
-                    if role == "user":
-                        role_icon = "👤 用户"
-                    elif role == "assistant":
-                        role_icon = "🤖 助手"
-                    elif role == "system":
-                        role_icon = "⚙️ 系统"
-                    else:
-                        role_icon = f"📌 {role}"
-                    
-                    # 格式化时间
-                    time_str = ""
-                    if timestamp:
-                        try:
-                            from datetime import datetime
-                            dt = datetime.fromisoformat(timestamp)
-                            time_str = f" ({dt.strftime('%H:%M')})"
-                        except:
-                            pass
-                    
-                    result_lines.append(f"{i}. {role_icon}{time_str}:\n   {content}\n")
-                
-                return "\n".join(result_lines)
-            
-            # === Windows Desktop Automation Tools ===
-            elif tool_name.startswith("desktop_"):
-                if not _DESKTOP_AVAILABLE:
-                    return "Desktop tools only available on Windows. Install: pip install mss pyautogui pywinauto pyperclip psutil"
-                
-                if _desktop_tool_handler is None:
-                    return "Desktop tool handler not initialized"
-                
-                try:
-                    result = await _desktop_tool_handler.handle(tool_name, tool_input)
-                    
-                    if isinstance(result, dict):
-                        if result.get("success"):
-                            if result.get("file_path"):
-                                # 截图已保存到文件，返回完整路径供 send_to_chat 使用
-                                output = f"Screenshot saved: {result.get('file_path')} ({result.get('width')}x{result.get('height')})"
-                                if result.get("analysis"):
-                                    output += f"\n\nAnalysis:\n{result['analysis'].get('answer', '')}"
-                                return output
-                            elif result.get("found") is not None:
-                                if result.get("found"):
-                                    elem = result.get("element", {})
-                                    return f"Found element: {elem.get('name', 'unknown')} @ {elem.get('center', 'unknown')}"
-                                else:
-                                    return f"Element not found: {result.get('message', '')}"
-                            elif result.get("windows"):
-                                windows = result["windows"]
-                                output = f"Found {len(windows)} windows:\n"
-                                for i, w in enumerate(windows[:10], 1):
-                                    output += f"  {i}. {w.get('title', 'unknown')}\n"
-                                if len(windows) > 10:
-                                    output += f"  ... and {len(windows) - 10} more\n"
-                                return output
-                            elif result.get("tree"):
-                                return f"Element tree:\n```\n{result.get('text', '')}\n```"
-                            else:
-                                return f"{result.get('message', 'Success')}"
-                        else:
-                            return f"Error: {result.get('error', 'Operation failed')}"
-                    else:
-                        return str(result)
-                        
-                except Exception as e:
-                    logger.error(f"Desktop tool error: {e}", exc_info=True)
-                    return f"Desktop tool error: {str(e)}"
-            
-            else:
-                return f"未知工具: {tool_name}"
+            # 未注册的工具
+            return f"❌ 未知工具: {tool_name}。请检查工具名称是否正确。"
                 
         except Exception as e:
             logger.error(f"Tool execution error: {e}", exc_info=True)
@@ -3139,7 +2484,7 @@ generate_skill → 保存 → 使用
 1. **Check skill catalog above** - 技能清单已在上方，根据描述判断是否有匹配的技能
 2. **If skill matches**: Use `get_skill_info(skill_name)` to load full instructions
 3. **Run script**: Use `run_skill_script(skill_name, script_name, args)`
-4. **If no skill matches**: Use `generate_skill(description)` to create one
+4. **If no skill matches**: Use `skill-creator` skill to create one, then `load_skill` to load it
 
 永不放弃，直到任务完成！"""
 
