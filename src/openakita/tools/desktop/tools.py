@@ -26,12 +26,17 @@ logger = logging.getLogger(__name__)
 DESKTOP_TOOLS = [
     {
         "name": "desktop_screenshot",
-        "description": """截取 Windows 桌面屏幕截图。
+        "description": """截取 Windows 桌面屏幕截图并保存到文件。
+返回保存的文件路径，可直接用于 send_to_chat 发送给用户。
 注意：如果任务只涉及浏览器内的网页操作，请使用 browser_* 工具而不是此工具。
 此工具适用于：操作桌面应用程序、需要查看整个桌面状态、与桌面和浏览器混合操作的场景。""",
         "input_schema": {
             "type": "object",
             "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "保存路径（可选），不填则自动生成 desktop_screenshot_YYYYMMDD_HHMMSS.png"
+                },
                 "window_title": {
                     "type": "string",
                     "description": "可选，只截取指定窗口（模糊匹配标题）"
@@ -298,19 +303,38 @@ class DesktopToolHandler:
     
     async def _handle_screenshot(self, params: Dict) -> Dict:
         """处理截图请求"""
+        import os
+        from datetime import datetime
+        
+        path = params.get("path")
         window_title = params.get("window_title")
         analyze = params.get("analyze", False)
         analyze_query = params.get("analyze_query")
         
         # 截图
         img = self.controller.screenshot(window_title=window_title)
-        b64 = self.controller.capture.to_base64(img)
+        
+        # 生成保存路径
+        if not path:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"desktop_screenshot_{timestamp}.png"
+            # 保存到用户桌面
+            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+            if os.path.exists(desktop_path):
+                path = os.path.join(desktop_path, filename)
+            else:
+                # 如果桌面不存在，保存到当前目录
+                path = filename
+        
+        # 保存截图
+        self.controller.capture.save(img, path)
+        abs_path = os.path.abspath(path)
         
         result = {
             "success": True,
+            "file_path": abs_path,
             "width": img.width,
             "height": img.height,
-            "image_base64": b64,
         }
         
         # 可选分析

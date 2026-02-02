@@ -3657,8 +3657,9 @@ generate_skill → 保存 → 使用
                     
                     if isinstance(result, dict):
                         if result.get("success"):
-                            if result.get("image_base64"):
-                                output = f"Screenshot done ({result.get('width')}x{result.get('height')})"
+                            if result.get("file_path"):
+                                # 截图已保存到文件，返回完整路径供 send_to_chat 使用
+                                output = f"Screenshot saved: {result.get('file_path')} ({result.get('width')}x{result.get('height')})"
                                 if result.get("analysis"):
                                     output += f"\n\nAnalysis:\n{result['analysis'].get('answer', '')}"
                                 return output
