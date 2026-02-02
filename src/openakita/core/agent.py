@@ -1998,6 +1998,10 @@ search_github → install_skill → 使用
         # 获取当前模型
         current_model = self.brain.model
         
+        # 追问计数器：当 LLM 没有调用工具时，最多追问几次
+        no_tool_call_count = 0
+        max_no_tool_retries = 2  # 最多追问 2 次
+        
         for iteration in range(max_iterations):
             # 任务监控：开始迭代
             if task_monitor:
@@ -2104,8 +2108,29 @@ search_github → install_skill → 使用
             if task_monitor:
                 task_monitor.end_iteration(text_content[:200] if text_content else "")
             
-            # 如果没有工具调用，返回文本响应（过滤 thinking 标签）
+            # 如果没有工具调用，检查是否需要强制要求调用工具
             if not tool_calls:
+                no_tool_call_count += 1
+                
+                # 如果还有追问次数，强制要求调用工具
+                if no_tool_call_count <= max_no_tool_retries:
+                    logger.warning(f"[ForceToolCall] LLM returned text without tool calls (attempt {no_tool_call_count}/{max_no_tool_retries})")
+                    
+                    # 将 LLM 的响应加入历史
+                    if text_content:
+                        working_messages.append({
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": text_content}],
+                        })
+                    
+                    # 追加强制要求调用工具的消息
+                    working_messages.append({
+                        "role": "user",
+                        "content": "[系统] 你必须使用工具来执行操作，不能只回复文字。请立即调用相应的工具完成任务。",
+                    })
+                    continue  # 继续循环，让 LLM 调用工具
+                
+                # 追问次数用尽，接受响应
                 return strip_thinking_tags(text_content) or "我理解了您的请求。"
             
             # 有工具调用，添加助手消息
@@ -2501,6 +2526,10 @@ search_github → install_skill → 使用
         recent_tool_calls: list[str] = []  # 记录最近的工具调用
         max_repeated_calls = 3  # 连续相同调用超过此次数则强制结束
         
+        # 追问计数器：当 LLM 没有调用工具时，最多追问几次
+        no_tool_call_count = 0
+        max_no_tool_retries = 2  # 最多追问 2 次
+        
         while iteration < max_tool_iterations:
             iteration += 1
             logger.info(f"Task iteration {iteration}")
@@ -2615,8 +2644,29 @@ search_github → install_skill → 使用
                 if not tool_calls and cleaned_text:
                     final_response = cleaned_text
             
-            # 如果没有工具调用，任务完成
+            # 如果没有工具调用，检查是否需要强制要求调用工具
             if not tool_calls:
+                no_tool_call_count += 1
+                
+                # 如果还有追问次数，强制要求调用工具
+                if no_tool_call_count <= max_no_tool_retries:
+                    logger.warning(f"[ForceToolCall] Task LLM returned text without tool calls (attempt {no_tool_call_count}/{max_no_tool_retries})")
+                    
+                    # 将 LLM 的响应加入历史
+                    if text_content:
+                        messages.append({
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": text_content}],
+                        })
+                    
+                    # 追加强制要求调用工具的消息
+                    messages.append({
+                        "role": "user",
+                        "content": "[系统] 你必须使用工具来执行操作，不能只回复文字。请立即调用相应的工具完成任务。",
+                    })
+                    continue  # 继续循环，让 LLM 调用工具
+                
+                # 追问次数用尽，任务完成
                 break
             
             # 循环检测：记录工具调用签名

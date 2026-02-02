@@ -30,6 +30,11 @@ SKILL_DIRECTORIES = [
     "~/.codex/skills",
 ]
 
+# 系统技能目录（优先加载）
+SYSTEM_SKILL_DIRECTORIES = [
+    "skills",  # 系统技能也放在 skills/ 目录下，通过 system: true 标记区分
+]
+
 
 class SkillLoader:
     """
@@ -308,3 +313,93 @@ class SkillLoader:
     def loaded_skills(self) -> list[ParsedSkill]:
         """所有已加载的技能"""
         return list(self._loaded_skills.values())
+    
+    @property
+    def system_skills(self) -> list[ParsedSkill]:
+        """所有系统技能"""
+        return [s for s in self._loaded_skills.values() if s.metadata.system]
+    
+    @property
+    def external_skills(self) -> list[ParsedSkill]:
+        """所有外部技能"""
+        return [s for s in self._loaded_skills.values() if not s.metadata.system]
+    
+    def get_skill_by_tool_name(self, tool_name: str) -> Optional[ParsedSkill]:
+        """
+        根据工具名获取技能
+        
+        Args:
+            tool_name: 原工具名称（如 'browser_navigate'）
+        
+        Returns:
+            ParsedSkill 或 None
+        """
+        for skill in self._loaded_skills.values():
+            if skill.metadata.tool_name == tool_name:
+                return skill
+        return None
+    
+    def get_skills_by_handler(self, handler: str) -> list[ParsedSkill]:
+        """
+        根据处理器名获取所有相关技能
+        
+        Args:
+            handler: 处理器名称（如 'browser'）
+        
+        Returns:
+            技能列表
+        """
+        return [
+            s for s in self._loaded_skills.values()
+            if s.metadata.handler == handler
+        ]
+    
+    def get_tool_definitions(self) -> list[dict]:
+        """
+        获取所有系统技能的工具定义
+        
+        用于传递给 LLM API 的 tools 参数
+        
+        Returns:
+            工具定义列表
+        """
+        from ..tools.definitions import BASE_TOOLS
+        
+        definitions = []
+        
+        # 从系统技能生成工具定义
+        for skill in self.system_skills:
+            # 查找对应的原始工具定义
+            original_def = None
+            for tool in BASE_TOOLS:
+                if tool.get("name") == skill.metadata.tool_name:
+                    original_def = tool
+                    break
+            
+            if original_def:
+                # 使用原始定义但更新描述（如果 SKILL.md 中有更详细的）
+                tool_def = original_def.copy()
+                # 可以在这里用 SKILL.md 中的描述覆盖
+                definitions.append(tool_def)
+            else:
+                # 没有原始定义，从 SKILL.md 生成
+                definitions.append({
+                    "name": skill.metadata.tool_name,
+                    "description": skill.metadata.description,
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                })
+        
+        return definitions
+    
+    def is_system_skill(self, name: str) -> bool:
+        """检查是否为系统技能"""
+        skill = self._loaded_skills.get(name)
+        return skill.metadata.system if skill else False
+    
+    def get_handler_name(self, name: str) -> Optional[str]:
+        """获取技能的处理器名称"""
+        skill = self._loaded_skills.get(name)
+        return skill.metadata.handler if skill else None

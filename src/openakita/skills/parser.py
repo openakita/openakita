@@ -31,6 +31,12 @@ class SkillMetadata:
     - metadata: 额外元数据
     - allowed_tools: 预授权工具列表
     - disable_model_invocation: 是否禁用自动调用
+    
+    系统技能字段 (system: true):
+    - system: 是否为系统技能（内置，不可卸载）
+    - handler: 处理器模块名（如 'browser', 'filesystem'）
+    - tool_name: 原工具名称（用于兼容，如 'browser_navigate'）
+    - category: 工具分类（如 'Browser', 'File System'）
     """
     name: str
     description: str
@@ -39,6 +45,12 @@ class SkillMetadata:
     metadata: dict[str, str] = field(default_factory=dict)
     allowed_tools: list[str] = field(default_factory=list)
     disable_model_invocation: bool = False
+    
+    # 系统技能专用字段
+    system: bool = False  # 是否为系统技能
+    handler: Optional[str] = None  # 处理器模块名
+    tool_name: Optional[str] = None  # 原工具名称（用于兼容）
+    category: Optional[str] = None  # 工具分类
     
     def __post_init__(self):
         """验证字段"""
@@ -209,6 +221,16 @@ class SkillParser:
         if isinstance(allowed_tools, str):
             allowed_tools = allowed_tools.split() if allowed_tools else []
         
+        # 系统技能字段
+        system = data.get('system', False)
+        handler = data.get('handler')
+        tool_name = data.get('tool-name') or data.get('tool_name')  # 支持两种格式
+        category = data.get('category')
+        
+        # 如果是系统技能但没有指定 tool_name，从 name 生成
+        if system and not tool_name:
+            tool_name = name.replace('-', '_')
+        
         return SkillMetadata(
             name=name,
             description=description.strip(),
@@ -217,6 +239,10 @@ class SkillParser:
             metadata=data.get('metadata', {}),
             allowed_tools=allowed_tools,
             disable_model_invocation=data.get('disable-model-invocation', False),
+            system=system,
+            handler=handler,
+            tool_name=tool_name,
+            category=category,
         )
     
     def parse_directory(self, skill_dir: Path) -> ParsedSkill:

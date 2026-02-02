@@ -7,8 +7,10 @@ Skills 工具定义
 - run_skill_script: 运行技能脚本
 - get_skill_reference: 获取技能参考文档
 - install_skill: 安装新技能
-- generate_skill: 自动生成技能
-- improve_skill: 改进已有技能
+- load_skill: 加载新创建的技能
+- reload_skill: 重新加载已修改的技能
+
+注意: generate_skill 和 improve_skill 功能已移至外部技能 skill-creator
 """
 
 SKILLS_TOOLS = [
@@ -127,49 +129,52 @@ SKILLS_TOOLS = [
         }
     },
     {
-        "name": "generate_skill",
-        "description": "Auto-generate new skill following SKILL.md specification when existing skills don't meet requirements. When you need to: (1) Create custom skill, (2) Automate new capability, (3) Extend agent abilities.",
-        "detail": """自动生成新技能（遵循 SKILL.md 规范）。
+        "name": "load_skill",
+        "description": "Load a newly created skill from skills/ directory. Use after creating a skill with skill-creator to make it immediately available.",
+        "detail": """加载新创建的技能到系统中。
 
 **适用场景**：
-- 现有技能无法满足需求时
-- 需要创建自定义技能
-- 扩展 Agent 能力
+- 使用 skill-creator 创建技能后
+- 手动在 skills/ 目录创建技能后
+- 需要立即使用新技能时
 
-**生成内容**：
-- SKILL.md 文件
-- 必要的脚本文件
-- 目录结构""",
+**使用流程**：
+1. 使用 skill-creator 创建 SKILL.md
+2. 保存到 skills/<skill-name>/SKILL.md
+3. 调用 load_skill 加载
+4. 技能立即可用
+
+**注意**：技能目录必须包含有效的 SKILL.md 文件""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "description": {"type": "string", "description": "技能功能的详细描述"},
-                "name": {"type": "string", "description": "技能名称（可选，使用小写字母和连字符）"}
+                "skill_name": {"type": "string", "description": "技能名称（即 skills/ 下的目录名）"}
             },
-            "required": ["description"]
+            "required": ["skill_name"]
         }
     },
     {
-        "name": "improve_skill",
-        "description": "Improve existing skill based on feedback or issues. When you need to: (1) Fix skill bugs, (2) Add new features, (3) Optimize performance.",
-        "detail": """根据反馈改进已有技能。
+        "name": "reload_skill",
+        "description": "Reload an existing skill to apply changes. Use after modifying a skill's SKILL.md or scripts.",
+        "detail": """重新加载已存在的技能以应用修改。
 
 **适用场景**：
-- 修复技能 bug
-- 添加新功能
-- 优化性能
+- 修改了技能的 SKILL.md 后
+- 更新了技能的脚本后
+- 需要刷新技能配置时
 
-**改进方式**：
-- 分析反馈内容
-- 修改 SKILL.md 或脚本
-- 更新技能版本""",
+**工作原理**：
+1. 卸载原有技能
+2. 重新解析 SKILL.md
+3. 重新注册到系统
+
+**注意**：只能重新加载已加载过的技能""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "skill_name": {"type": "string", "description": "要改进的技能名称"},
-                "feedback": {"type": "string", "description": "改进建议或问题描述"}
+                "skill_name": {"type": "string", "description": "技能名称"}
             },
-            "required": ["skill_name", "feedback"]
+            "required": ["skill_name"]
         }
     },
 ]

@@ -25,6 +25,12 @@ class SkillEntry:
     - Level 1: 元数据 (name, description) - 总是可用
     - Level 2: body (完整指令) - 激活时加载
     - Level 3: scripts/references/assets - 按需加载
+    
+    系统技能额外字段:
+    - system: 是否为系统技能
+    - handler: 处理器模块名
+    - tool_name: 原工具名称
+    - category: 工具分类
     """
     name: str
     description: str
@@ -33,6 +39,12 @@ class SkillEntry:
     metadata: dict[str, str] = field(default_factory=dict)
     allowed_tools: list[str] = field(default_factory=list)
     disable_model_invocation: bool = False
+    
+    # 系统技能专用字段
+    system: bool = False
+    handler: Optional[str] = None
+    tool_name: Optional[str] = None
+    category: Optional[str] = None
     
     # 技能路径 (用于延迟加载)
     skill_path: Optional[str] = None
@@ -52,6 +64,10 @@ class SkillEntry:
             metadata=meta.metadata,
             allowed_tools=meta.allowed_tools,
             disable_model_invocation=meta.disable_model_invocation,
+            system=meta.system,
+            handler=meta.handler,
+            tool_name=meta.tool_name,
+            category=meta.category,
             skill_path=str(skill.path),
             _parsed_skill=skill,
         )
@@ -67,24 +83,47 @@ class SkillEntry:
         转换为 LLM 工具调用 schema
         
         用于将技能作为工具提供给 LLM
+        系统技能使用原 tool_name，外部技能使用 skill_ 前缀
         """
-        return {
-            "name": f"skill_{self.name.replace('-', '_')}",
-            "description": f"[Skill] {self.description}",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "要执行的操作",
+        if self.system and self.tool_name:
+            # 系统技能：使用原工具名
+            return {
+                "name": self.tool_name,
+                "description": self.description,
+                "input_schema": self._get_input_schema(),
+            }
+        else:
+            # 外部技能：使用 skill_ 前缀
+            return {
+                "name": f"skill_{self.name.replace('-', '_')}",
+                "description": f"[Skill] {self.description}",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "description": "要执行的操作",
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": "操作参数",
+                        },
                     },
-                    "params": {
-                        "type": "object",
-                        "description": "操作参数",
-                    },
+                    "required": ["action"],
                 },
-                "required": ["action"],
-            },
+            }
+    
+    def _get_input_schema(self) -> dict:
+        """
+        获取系统技能的 input_schema
+        
+        从 SKILL.md 的 body 中解析参数定义，或使用默认 schema
+        """
+        # 默认返回空 object schema
+        # 实际参数定义应该在 SKILL.md 的 body 中或单独的元数据中
+        return {
+            "type": "object",
+            "properties": {},
         }
 
 
@@ -234,10 +273,55 @@ class SkillRegistry:
         """
         return [skill.to_tool_schema() for skill in self._skills.values()]
     
+    def list_system_skills(self) -> list[SkillEntry]:
+        """列出所有系统技能"""
+        return [s for s in self._skills.values() if s.system]
+    
+    def list_external_skills(self) -> list[SkillEntry]:
+        """列出所有外部技能（非系统技能）"""
+        return [s for s in self._skills.values() if not s.system]
+    
+    def get_by_tool_name(self, tool_name: str) -> Optional[SkillEntry]:
+        """
+        根据原工具名称查找技能
+        
+        Args:
+            tool_name: 原工具名称（如 'browser_navigate'）
+        
+        Returns:
+            SkillEntry 或 None
+        """
+        for skill in self._skills.values():
+            if skill.tool_name == tool_name:
+                return skill
+        return None
+    
+    def get_by_handler(self, handler: str) -> list[SkillEntry]:
+        """
+        根据处理器名称获取所有相关技能
+        
+        Args:
+            handler: 处理器名称（如 'browser'）
+        
+        Returns:
+            技能列表
+        """
+        return [s for s in self._skills.values() if s.handler == handler]
+    
     @property
     def count(self) -> int:
         """技能数量"""
         return len(self._skills)
+    
+    @property
+    def system_count(self) -> int:
+        """系统技能数量"""
+        return len(self.list_system_skills())
+    
+    @property
+    def external_count(self) -> int:
+        """外部技能数量"""
+        return len(self.list_external_skills())
     
     def __contains__(self, name: str) -> bool:
         return self.has(name)

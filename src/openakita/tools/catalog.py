@@ -3,15 +3,26 @@
 
 遵循渐进式披露原则（与 Agent Skills 规范对齐）:
 - Level 1: 工具清单 (name + description) - 在系统提示中提供
-- Level 2: 详细说明 (detail + input_schema) - 通过 get_tool_info 获取 / 传给 LLM API
+- Level 2: 详细说明 (detail + examples + triggers + prerequisites) - 通过 get_tool_info 获取 / 传给 LLM API
 - Level 3: 直接执行工具
 
-工具定义格式：
+工具定义格式（遵循 tool-definition-spec.md）：
 {
+    # 必填字段
     "name": "tool_name",
-    "description": "清单披露的简短描述（完整显示在系统提示词清单中）",
-    "detail": "详细使用说明（传给 LLM API、get_tool_info 返回）",
-    "input_schema": {...}
+    "description": "清单披露的简短描述（Level 1）",
+    "input_schema": {...},
+    
+    # 推荐字段
+    "detail": "详细使用说明（Level 2）",
+    "triggers": ["触发条件1", "触发条件2"],
+    "prerequisites": ["前置条件1", "前置条件2"],
+    "examples": [{"scenario": "...", "params": {...}, "expected": "..."}],
+    
+    # 可选字段
+    "category": "工具分类",
+    "warnings": ["重要警告"],
+    "related_tools": [{"name": "...", "relation": "..."}],
 }
 
 如果没有 detail 字段，则 fallback 到 description。
@@ -190,6 +201,8 @@ The following system tools are available. Use `get_tool_info(tool_name)` to get 
         """
         获取工具的格式化完整信息（Level 2 详细说明）
         
+        支持新规范字段：triggers, prerequisites, examples, warnings, related_tools
+        
         Args:
             tool_name: 工具名称
         
@@ -201,9 +214,42 @@ The following system tools are available. Use `get_tool_info(tool_name)` to get 
             return f"❌ Tool not found: {tool_name}"
         
         output = f"# Tool: {tool['name']}\n\n"
-        # 优先使用 detail 字段（详细说明），否则 fallback 到 description
+        
+        # 分类
+        category = tool.get('category')
+        if category:
+            output += f"**Category**: {category}\n\n"
+        
+        # 详细说明（优先使用 detail，否则 fallback 到 description）
         detail = tool.get('detail') or tool.get('description', 'No description')
         output += f"{detail}\n\n"
+        
+        # 警告信息
+        warnings = tool.get("warnings", [])
+        if warnings:
+            output += "## ⚠️ Warnings\n\n"
+            for warning in warnings:
+                output += f"- {warning}\n"
+            output += "\n"
+        
+        # 触发条件
+        triggers = tool.get("triggers", [])
+        if triggers:
+            output += "## When to Use\n\n"
+            for trigger in triggers:
+                output += f"- {trigger}\n"
+            output += "\n"
+        
+        # 前置条件
+        prerequisites = tool.get("prerequisites", [])
+        if prerequisites:
+            output += "## Prerequisites\n\n"
+            for prereq in prerequisites:
+                if isinstance(prereq, dict):
+                    output += f"- {prereq.get('condition', prereq)}\n"
+                else:
+                    output += f"- {prereq}\n"
+            output += "\n"
         
         # 参数说明
         schema = tool.get("input_schema", {})
@@ -217,15 +263,51 @@ The following system tools are available. Use `get_tool_info(tool_name)` to get 
                 param_type = param_def.get("type", "any")
                 param_desc = param_def.get("description", "")
                 default = param_def.get("default")
+                enum_vals = param_def.get("enum")
                 
                 output += f"- `{param_name}` ({param_type}){req_mark}: {param_desc}"
                 if default is not None:
                     output += f" (default: {default})"
+                if enum_vals:
+                    output += f" [options: {', '.join(str(v) for v in enum_vals)}]"
                 output += "\n"
+            output += "\n"
         else:
-            output += "## Parameters\n\nNo parameters required.\n"
+            output += "## Parameters\n\nNo parameters required.\n\n"
+        
+        # 使用示例
+        examples = tool.get("examples", [])
+        if examples:
+            output += "## Examples\n\n"
+            for i, example in enumerate(examples, 1):
+                scenario = example.get("scenario", f"Example {i}")
+                params = example.get("params", {})
+                expected = example.get("expected", "")
+                
+                output += f"**{scenario}**\n"
+                output += f"```json\n{self._format_params(params)}\n```\n"
+                if expected:
+                    output += f"→ {expected}\n"
+                output += "\n"
+        
+        # 相关工具
+        related_tools = tool.get("related_tools", [])
+        if related_tools:
+            output += "## Related Tools\n\n"
+            for related in related_tools:
+                name = related.get("name", "")
+                relation = related.get("relation", "")
+                output += f"- `{name}`: {relation}\n"
+            output += "\n"
         
         return output
+    
+    def _format_params(self, params: dict) -> str:
+        """格式化参数为 JSON 字符串"""
+        import json
+        if not params:
+            return "{}"
+        return json.dumps(params, ensure_ascii=False, indent=2)
     
     def list_tools(self) -> list[str]:
         """列出所有工具名称"""
