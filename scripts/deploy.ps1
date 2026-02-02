@@ -410,6 +410,7 @@ TELEGRAM_BOT_TOKEN=your-bot-token
 
 function Initialize-LLMEndpoints {
     $llmConfig = Join-Path (Get-Location) "data\llm_endpoints.json"
+    $llmExample = Join-Path (Get-Location) "data\llm_endpoints.json.example"
     
     if (Test-Path $llmConfig) {
         Write-Info "LLM 端点配置已存在: $llmConfig"
@@ -424,32 +425,42 @@ function Initialize-LLMEndpoints {
         New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
     }
     
-    $llmConfigContent = @"
+    # 如果 example 文件存在，则复制它
+    if (Test-Path $llmExample) {
+        Copy-Item $llmExample $llmConfig
+        Write-Success "LLM 端点配置已创建: $llmConfig (从 example 复制)"
+    } else {
+        # 生成默认配置
+        $llmConfigContent = @"
 {
-  "version": "1.0",
-  "description": "LLM 端点配置 - 支持多端点、故障切换、能力路由",
   "endpoints": [
     {
-      "name": "anthropic",
+      "name": "claude-primary",
       "provider": "anthropic",
-      "model": "claude-opus-4-5-20251101",
-      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_type": "anthropic",
       "base_url": "https://api.anthropic.com",
-      "capabilities": ["text", "vision", "tools"],
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-opus-4-5-20251101-thinking",
       "priority": 1,
-      "extra_params": {}
+      "max_tokens": 8192,
+      "timeout": 60,
+      "capabilities": ["text", "tools"],
+      "note": "Anthropic 官方 API"
     }
   ],
   "settings": {
     "retry_count": 2,
     "retry_delay_seconds": 2,
-    "timeout_seconds": 120
+    "health_check_interval": 60,
+    "fallback_on_error": true
   }
 }
 "@
-    Set-Content -Path $llmConfig -Value $llmConfigContent -Encoding UTF8
-    Write-Success "LLM 端点配置已创建: $llmConfig"
-    Write-Info "提示: 运行 'openakita llm-config' 进行交互式配置"
+        Set-Content -Path $llmConfig -Value $llmConfigContent -Encoding UTF8
+        Write-Success "LLM 端点配置已创建: $llmConfig"
+    }
+    Write-Info "提示: 编辑 data\llm_endpoints.json 添加你的 API Key"
+    Write-Info "提示: 可添加多个端点实现自动故障切换"
 }
 
 function Initialize-DataDirs {
@@ -588,10 +599,10 @@ function Main {
     # 步骤 7: 初始化配置
     Initialize-Config
     
-    # 步骤 7: 初始化数据目录
+    # 步骤 8: 初始化数据目录
     Initialize-DataDirs
     
-    # 步骤 8: 验证安装
+    # 步骤 9: 验证安装
     Test-Installation -PythonPath $venvPython
     
     # 完成

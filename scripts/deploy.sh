@@ -419,6 +419,7 @@ EOF
 
 init_llm_endpoints() {
     local llm_config="data/llm_endpoints.json"
+    local llm_example="data/llm_endpoints.json.example"
     
     if [ -f "$llm_config" ]; then
         print_info "LLM 端点配置已存在: $llm_config"
@@ -428,31 +429,41 @@ init_llm_endpoints() {
     print_info "创建 LLM 端点配置..."
     mkdir -p data
     
-    cat > "$llm_config" << 'EOF'
+    # 如果 example 文件存在，则复制它
+    if [ -f "$llm_example" ]; then
+        cp "$llm_example" "$llm_config"
+        print_success "LLM 端点配置已创建: $llm_config (从 example 复制)"
+    else
+        # 生成默认配置
+        cat > "$llm_config" << 'EOF'
 {
-  "version": "1.0",
-  "description": "LLM 端点配置 - 支持多端点、故障切换、能力路由",
   "endpoints": [
     {
-      "name": "anthropic",
+      "name": "claude-primary",
       "provider": "anthropic",
-      "model": "claude-opus-4-5-20251101",
-      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_type": "anthropic",
       "base_url": "https://api.anthropic.com",
-      "capabilities": ["text", "vision", "tools"],
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-opus-4-5-20251101-thinking",
       "priority": 1,
-      "extra_params": {}
+      "max_tokens": 8192,
+      "timeout": 60,
+      "capabilities": ["text", "tools"],
+      "note": "Anthropic 官方 API"
     }
   ],
   "settings": {
     "retry_count": 2,
     "retry_delay_seconds": 2,
-    "timeout_seconds": 120
+    "health_check_interval": 60,
+    "fallback_on_error": true
   }
 }
 EOF
-    print_success "LLM 端点配置已创建: $llm_config"
-    print_info "提示: 运行 'openakita llm-config' 进行交互式配置"
+        print_success "LLM 端点配置已创建: $llm_config"
+    fi
+    print_info "提示: 编辑 data/llm_endpoints.json 添加你的 API Key"
+    print_info "提示: 可添加多个端点实现自动故障切换"
 }
 
 # 初始化数据目录
@@ -626,13 +637,13 @@ main() {
     # 步骤 7: 初始化配置
     init_config
     
-    # 步骤 7: 初始化数据目录
+    # 步骤 8: 初始化数据目录
     init_data_dirs
     
-    # 步骤 8: 验证安装
+    # 步骤 9: 验证安装
     verify_installation
     
-    # 步骤 9: 创建 systemd 服务 (可选)
+    # 步骤 10: 创建 systemd 服务 (可选)
     create_systemd_service
     
     # 完成
