@@ -203,11 +203,16 @@ def _build_runtime_section() -> str:
     
     tool_status_text = "\n".join(tool_status) if tool_status else "- 工具状态: 正常"
     
+    from ..config import settings
+    identity_path = settings.identity_path
+    
     return f"""## 运行环境
 
 - **当前时间**: {current_time}
 - **操作系统**: {platform.system()} {platform.release()}
 - **当前工作目录**: {os.getcwd()}
+- **Identity 目录**: {identity_path}
+  - SOUL.md, AGENT.md, USER.md, MEMORY.md 均在此目录
 - **临时目录**: data/temp/
 
 ## 工具可用性（建议 32）
