@@ -25,6 +25,7 @@ class BrowserHandler:
     """
     
     TOOLS = [
+        "browser_task",  # 【推荐优先使用】智能浏览器任务，放在最前面以表示优先级
         "browser_open",
         "browser_status",
         "browser_navigate",

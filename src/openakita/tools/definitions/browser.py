@@ -2,6 +2,7 @@
 Browser 工具定义
 
 包含浏览器自动化相关的工具（遵循 tool-definition-spec.md 规范）：
+- browser_task: 【推荐优先使用】智能浏览器任务
 - browser_open: 启动浏览器
 - browser_status: 获取浏览器状态
 - browser_navigate: 导航到 URL
@@ -19,6 +20,89 @@ from .base import ToolBuilder, build_detail
 # ==================== 工具定义 ====================
 
 BROWSER_TOOLS = [
+    # ---------- browser_task ---------- 【推荐优先使用】
+    {
+        "name": "browser_task",
+        "category": "Browser",
+        "description": "【推荐优先使用】Intelligent browser task - describe what you want to accomplish and browser-use Agent will automatically plan and execute all steps. Best for: (1) Multi-step operations like search + filter + sort, (2) Complex web interactions, (3) Tasks where you're unsure of exact steps. For simple single operations, you can use specific tools like browser_navigate/click/type.",
+        "detail": build_detail(
+            summary="智能浏览器任务 - 描述你想完成的任务，browser-use Agent 会自动规划和执行所有步骤。",
+            scenarios=[
+                "多步骤操作（如：搜索商品 → 筛选价格 → 按销量排序）",
+                "复杂网页交互（如：登录 → 填表 → 提交）",
+                "不确定具体步骤的任务",
+                "需要智能判断和处理的场景",
+            ],
+            params_desc={
+                "task": "要完成的任务描述，越详细越好。例如：'打开淘宝搜索机械键盘，筛选价格200-500元，按销量排序'",
+                "max_steps": "最大执行步骤数，默认15步。复杂任务可以增加。",
+            },
+            workflow_steps=[
+                "描述你想完成的任务",
+                "browser-use Agent 自动分析任务",
+                "自动规划执行步骤",
+                "逐步执行并处理异常",
+                "返回执行结果",
+            ],
+            notes=[
+                "✅ 推荐用于多步骤、复杂的浏览器任务",
+                "自动继承系统 LLM 配置，无需额外设置 API Key",
+                "通过 CDP 复用已启动的浏览器",
+                "任务描述要清晰具体，避免歧义",
+                "复杂任务可能需要增加 max_steps",
+            ],
+        ),
+        "triggers": [
+            "When user asks to do something complex on a website",
+            "When task involves multiple steps (search, filter, sort, etc.)",
+            "When exact steps are unclear",
+            "When task description is high-level like '帮我在淘宝上找...'",
+        ],
+        "prerequisites": [],
+        "warnings": [
+            "Task description should be clear and specific",
+            "Complex tasks may need higher max_steps",
+        ],
+        "examples": [
+            {
+                "scenario": "淘宝搜索筛选排序",
+                "params": {"task": "打开淘宝搜索机械键盘，筛选价格200-500元，按销量排序，截图发给我"},
+                "expected": "Agent automatically: opens Taobao → searches → filters price → sorts by sales → screenshots",
+            },
+            {
+                "scenario": "GitHub 查找项目",
+                "params": {"task": "在 GitHub 找 star 数最多的 Python 项目"},
+                "expected": "Agent automatically: opens GitHub → navigates to search → sorts by stars → filters Python",
+            },
+            {
+                "scenario": "新闻搜索",
+                "params": {"task": "打开百度搜索今天的科技新闻，截图给我"},
+                "expected": "Agent automatically: opens Baidu → searches → takes screenshot",
+            },
+        ],
+        "related_tools": [
+            {"name": "browser_navigate", "relation": "alternative for simple URL opening"},
+            {"name": "browser_click", "relation": "alternative for single click"},
+            {"name": "browser_type", "relation": "alternative for single text input"},
+            {"name": "browser_screenshot", "relation": "can be used after task for manual screenshot"},
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "要完成的任务描述，例如：'打开淘宝搜索机械键盘，筛选价格200-500元，按销量排序'",
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "最大执行步骤数，默认15。复杂任务可以增加。",
+                    "default": 15,
+                },
+            },
+            "required": ["task"],
+        },
+    },
+    
     # ---------- browser_status ----------
     {
         "name": "browser_status",
@@ -134,7 +218,7 @@ BROWSER_TOOLS = [
     {
         "name": "browser_navigate",
         "category": "Browser",
-        "description": "Navigate browser to specified URL to open a webpage. When you need to: (1) Open a webpage, (2) Start web interaction. PREREQUISITE: Must call before browser_click/type operations. Auto-starts browser if not running.",
+        "description": "Navigate browser to specified URL to open a webpage. For simple URL opening only. For multi-step tasks (search + filter + sort), use browser_task instead. PREREQUISITE: Must call before browser_click/type operations. Auto-starts browser if not running.",
         "detail": build_detail(
             summary="导航到指定 URL。",
             scenarios=[
@@ -178,6 +262,7 @@ BROWSER_TOOLS = [
             },
         ],
         "related_tools": [
+            {"name": "browser_task", "relation": "recommended for multi-step tasks"},
             {"name": "browser_status", "relation": "check before for reliability"},
             {"name": "browser_click", "relation": "commonly used after"},
             {"name": "browser_type", "relation": "commonly used after"},
@@ -196,7 +281,7 @@ BROWSER_TOOLS = [
     {
         "name": "browser_click",
         "category": "Browser",
-        "description": "Click page elements by CSS selector or text content. When you need to: (1) Click buttons/links, (2) Select options, (3) Trigger actions. PREREQUISITE: Must use browser_navigate to open target page first.",
+        "description": "Click page elements by CSS selector or text content. For single click only. For multi-step tasks (search + filter + sort), use browser_task instead. PREREQUISITE: Must use browser_navigate to open target page first.",
         "detail": build_detail(
             summary="点击页面上的元素。",
             scenarios=[
@@ -236,6 +321,7 @@ BROWSER_TOOLS = [
             },
         ],
         "related_tools": [
+            {"name": "browser_task", "relation": "recommended for multi-step tasks"},
             {"name": "browser_navigate", "relation": "must call before clicking"},
             {"name": "browser_type", "relation": "commonly used together for forms"},
             {"name": "desktop_click", "relation": "alternative for desktop apps"},
@@ -253,7 +339,7 @@ BROWSER_TOOLS = [
     {
         "name": "browser_type",
         "category": "Browser",
-        "description": "Type text into input fields on webpage. When you need to: (1) Fill forms, (2) Enter search queries, (3) Input data. PREREQUISITE: Must use browser_navigate to open target page first. Click field first if needed for focus.",
+        "description": "Type text into input fields on webpage. For single text input only. For multi-step tasks (search + filter + sort), use browser_task instead. PREREQUISITE: Must use browser_navigate to open target page first. Click field first if needed for focus.",
         "detail": build_detail(
             summary="在输入框中输入文本。",
             scenarios=[
@@ -293,6 +379,7 @@ BROWSER_TOOLS = [
             },
         ],
         "related_tools": [
+            {"name": "browser_task", "relation": "recommended for multi-step tasks"},
             {"name": "browser_navigate", "relation": "must call before typing"},
             {"name": "browser_click", "relation": "may need to click field first"},
             {"name": "desktop_type", "relation": "alternative for desktop apps"},

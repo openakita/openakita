@@ -410,7 +410,7 @@ class Agent:
         self.handler_registry.register(
             "browser",
             create_browser_handler(self),
-            ["browser_open", "browser_status", "browser_list_tabs", "browser_navigate",
+            ["browser_task", "browser_open", "browser_status", "browser_list_tabs", "browser_navigate",
              "browser_new_tab", "browser_switch_tab", "browser_click", "browser_type",
              "browser_get_content", "browser_screenshot"]
         )
