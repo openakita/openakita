@@ -1952,6 +1952,23 @@ search_github → install_skill → 使用
         return True
     
 
+
+    def _get_last_user_request(self, messages: list[dict]) -> str:
+        """获取最后一条用户请求（当前任务的原始请求）"""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str) and not content.startswith("[系统]"):
+                    return content[:500]  # 截取前500字符
+                elif isinstance(content, list):
+                    # 多模态消息，提取文本部分
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            if not text.startswith("[系统]"):
+                                return text[:500]
+        return ""
+
     async def _verify_task_completion(
         self,
         user_request: str,
@@ -2178,7 +2195,7 @@ search_github → install_skill → 使用
                         # === 任务完成度复核 ===
                         # 让 LLM 判断任务是否真正完成用户意图
                         is_completed = await self._verify_task_completion(
-                            user_request=messages[0].get("content", "") if messages else "",
+                            user_request=self._get_last_user_request(messages),
                             assistant_response=cleaned_text,
                             executed_tools=executed_tool_names if 'executed_tool_names' in dir() else [],
                         )
