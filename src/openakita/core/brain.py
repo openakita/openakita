@@ -7,6 +7,10 @@ Brain 是 LLMClient 的薄包装，提供向后兼容的接口。
 
 import logging
 import asyncio
+import json
+import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 from dataclasses import dataclass, field
 
@@ -167,6 +171,9 @@ class Brain:
         llm_tools = self._convert_tools_to_llm(kwargs.get("tools", []))
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         
+        # 调试输出：保存完整请求到文件
+        self._dump_llm_request(system, llm_messages, llm_tools, caller="messages_create")
+        
         # 调用 LLMClient
         try:
             response = asyncio.get_event_loop().run_until_complete(
@@ -203,15 +210,21 @@ class Brain:
         支持 MiniMax M2.1 的 Interleaved Thinking：
         - 解析并保留 thinking 块
         - 确保多轮工具调用时思维链的连续性
+        
+        支持 Kimi reasoning_content：
+        - 从消息字典中提取 reasoning_content
+        - 传递给 Message 对象以支持模型切换
         """
         result = []
         
         for msg in messages:
             role = msg.get("role", "user") if isinstance(msg, dict) else msg["role"]
             content = msg.get("content", "") if isinstance(msg, dict) else msg["content"]
+            # 提取 reasoning_content（用于 Kimi 等支持思考的模型）
+            reasoning_content = msg.get("reasoning_content") if isinstance(msg, dict) else None
             
             if isinstance(content, str):
-                result.append(Message(role=role, content=content))
+                result.append(Message(role=role, content=content, reasoning_content=reasoning_content))
             elif isinstance(content, list):
                 # 复杂内容（多模态、工具调用等）
                 blocks = []
@@ -272,11 +285,11 @@ class Brain:
                         blocks.append(TextBlock(text=part))
                 
                 if blocks:
-                    result.append(Message(role=role, content=blocks))
+                    result.append(Message(role=role, content=blocks, reasoning_content=reasoning_content))
                 else:
-                    result.append(Message(role=role, content=""))
+                    result.append(Message(role=role, content="", reasoning_content=reasoning_content))
             else:
-                result.append(Message(role=role, content=str(content)))
+                result.append(Message(role=role, content=str(content), reasoning_content=reasoning_content))
         
         return result
     
@@ -407,6 +420,9 @@ class Brain:
         # 日志
         logger.info(f"[LLM REQUEST] messages={len(llm_messages)}, tools={len(tool_list) if tool_list else 0}")
         
+        # 调试输出：保存完整请求到文件
+        self._dump_llm_request(sys_prompt, llm_messages, llm_tools, caller="_chat_with_llm_client")
+        
         # 调用 LLMClient
         response = await self._llm_client.chat(
             messages=llm_messages,
@@ -443,6 +459,170 @@ class Brain:
     # ========================================================================
     # 辅助方法
     # ========================================================================
+    
+    def _dump_llm_request(
+        self, 
+        system: str, 
+        messages: list, 
+        tools: list,
+        caller: str = "unknown"
+    ) -> None:
+        """
+        保存 LLM 请求到调试文件
+        
+        用于诊断上下文问题，将完整的 system prompt 和 messages 保存到文件
+        
+        Args:
+            system: 系统提示词
+            messages: 消息列表（可能是 Message 对象或字典）
+            tools: 工具列表
+            caller: 调用方标识
+        """
+        try:
+            debug_dir = Path("data/llm_debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            request_id = uuid.uuid4().hex[:8]
+            debug_file = debug_dir / f"llm_request_{timestamp}_{request_id}.json"
+            
+            # 转换 messages 为可序列化格式
+            serializable_messages = []
+            for msg in messages:
+                if hasattr(msg, 'to_dict'):
+                    serializable_messages.append(msg.to_dict())
+                elif hasattr(msg, '__dict__'):
+                    serializable_messages.append(self._serialize_message(msg))
+                elif isinstance(msg, dict):
+                    serializable_messages.append(msg)
+                else:
+                    serializable_messages.append(str(msg))
+            
+            # 提取工具名称
+            tool_names = []
+            for t in (tools or []):
+                if hasattr(t, 'name'):
+                    tool_names.append(t.name)
+                elif isinstance(t, dict):
+                    tool_names.append(t.get('name', str(t)))
+                else:
+                    tool_names.append(str(t))
+            
+            # 估算 token 数量（中文约 1.5 字符/token，英文约 4 字符/token，取平均 2 字符/token）
+            system_length = len(system) if system else 0
+            estimated_system_tokens = int(system_length / 2)
+            
+            # 估算 messages 的 token
+            messages_text = json.dumps(serializable_messages, ensure_ascii=False)
+            estimated_messages_tokens = int(len(messages_text) / 2)
+            
+            total_estimated_tokens = estimated_system_tokens + estimated_messages_tokens
+            
+            debug_data = {
+                "timestamp": datetime.now().isoformat(),
+                "caller": caller,
+                "system_prompt": system,
+                "system_prompt_length": system_length,
+                "system_prompt_estimated_tokens": estimated_system_tokens,
+                "messages": serializable_messages,
+                "messages_count": len(messages),
+                "messages_estimated_tokens": estimated_messages_tokens,
+                "total_estimated_tokens": total_estimated_tokens,
+                "tools": tool_names,
+                "tools_count": len(tools) if tools else 0,
+            }
+            
+            with open(debug_file, "w", encoding="utf-8") as f:
+                json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
+            
+            # 记录日志并在 token 数量过大时发出警告
+            if total_estimated_tokens > 50000:
+                logger.warning(f"[LLM DEBUG] ⚠️ Very large context! Estimated {total_estimated_tokens} tokens (system: {estimated_system_tokens}, messages: {estimated_messages_tokens})")
+            elif total_estimated_tokens > 30000:
+                logger.warning(f"[LLM DEBUG] Large context: {total_estimated_tokens} tokens (system: {estimated_system_tokens}, messages: {estimated_messages_tokens})")
+            else:
+                logger.info(f"[LLM DEBUG] Request saved: {total_estimated_tokens} tokens (system: {estimated_system_tokens}, messages: {estimated_messages_tokens})")
+            
+            # 清理超过 3 天的旧调试文件
+            self._cleanup_old_debug_files(debug_dir, max_age_days=3)
+            
+        except Exception as e:
+            logger.warning(f"[LLM DEBUG] Failed to save debug file: {e}")
+    
+    def _cleanup_old_debug_files(self, debug_dir: Path, max_age_days: int = 3) -> None:
+        """
+        清理超过指定天数的旧调试文件
+        
+        Args:
+            debug_dir: 调试文件目录
+            max_age_days: 最大保留天数，默认 3 天
+        """
+        try:
+            import os
+            from datetime import timedelta
+            
+            cutoff_time = datetime.now() - timedelta(days=max_age_days)
+            deleted_count = 0
+            
+            for file in debug_dir.glob("llm_request_*.json"):
+                try:
+                    # 获取文件修改时间
+                    mtime = datetime.fromtimestamp(os.path.getmtime(file))
+                    if mtime < cutoff_time:
+                        file.unlink()
+                        deleted_count += 1
+                except Exception:
+                    pass  # 忽略单个文件删除失败
+            
+            if deleted_count > 0:
+                logger.debug(f"[LLM DEBUG] Cleaned up {deleted_count} old debug files (older than {max_age_days} days)")
+                
+        except Exception as e:
+            logger.warning(f"[LLM DEBUG] Failed to cleanup old files: {e}")
+    
+    def _serialize_message(self, msg) -> dict:
+        """将 Message 对象序列化为字典"""
+        result = {"role": getattr(msg, 'role', 'unknown')}
+        
+        content = getattr(msg, 'content', None)
+        if isinstance(content, str):
+            result["content"] = content
+        elif isinstance(content, list):
+            result["content"] = []
+            for block in content:
+                if hasattr(block, '__dict__'):
+                    block_dict = {"type": getattr(block, 'type', 'unknown')}
+                    # 处理常见的 block 属性
+                    if hasattr(block, 'text'):
+                        block_dict["text"] = block.text
+                    if hasattr(block, 'id'):
+                        block_dict["id"] = block.id
+                    if hasattr(block, 'name'):
+                        block_dict["name"] = block.name
+                    if hasattr(block, 'input'):
+                        block_dict["input"] = block.input
+                    if hasattr(block, 'content'):
+                        # tool_result 的 content
+                        block_dict["content"] = block.content[:500] + "..." if len(str(block.content)) > 500 else block.content
+                    if hasattr(block, 'thinking'):
+                        block_dict["thinking"] = block.thinking[:200] + "..." if len(str(block.thinking)) > 200 else block.thinking
+                    result["content"].append(block_dict)
+                elif isinstance(block, dict):
+                    # 字典格式的 block，处理大内容
+                    block_copy = dict(block)
+                    if 'content' in block_copy and len(str(block_copy['content'])) > 500:
+                        block_copy['content'] = str(block_copy['content'])[:500] + "...[truncated]"
+                    result["content"].append(block_copy)
+                else:
+                    result["content"].append(str(block))
+        else:
+            result["content"] = str(content) if content else None
+        
+        # 添加 reasoning_content（如果有）
+        if hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+            result["reasoning_content"] = msg.reasoning_content[:200] + "..." if len(str(msg.reasoning_content)) > 200 else msg.reasoning_content
+        
+        return result
     
     async def health_check(self) -> dict[str, bool]:
         """检查所有端点健康状态"""
