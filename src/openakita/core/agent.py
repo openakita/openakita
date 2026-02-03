@@ -431,7 +431,7 @@ class Agent:
         self.handler_registry.register(
             "scheduled",
             create_scheduled_handler(self),
-            ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"]
+            ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "update_scheduled_task", "trigger_scheduled_task"]
         )
         
         # MCP
@@ -445,7 +445,7 @@ class Agent:
         self.handler_registry.register(
             "profile",
             create_profile_handler(self),
-            ["get_user_profile", "update_user_profile"]
+            ["get_user_profile", "update_user_profile", "skip_profile_question"]
         )
         
         # 系统工具
