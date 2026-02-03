@@ -1339,7 +1339,7 @@ search_github → install_skill → 使用
             "File System": ["run_shell", "write_file", "read_file", "list_directory"],
             "Skills Management": ["list_skills", "get_skill_info", "run_skill_script", "get_skill_reference", "install_skill", "load_skill", "reload_skill"],
             "Memory Management": ["add_memory", "search_memory", "get_memory_stats"],
-            "Browser Automation": ["browser_open", "browser_status", "browser_list_tabs", "browser_navigate", "browser_new_tab", "browser_switch_tab", "browser_click", "browser_type", "browser_get_content", "browser_screenshot"],
+            "Browser Automation": ["browser_task", "browser_open", "browser_status", "browser_list_tabs", "browser_navigate", "browser_new_tab", "browser_switch_tab", "browser_click", "browser_type", "browser_get_content", "browser_screenshot"],
             "Scheduled Tasks": ["schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "trigger_scheduled_task"],
         }
         
