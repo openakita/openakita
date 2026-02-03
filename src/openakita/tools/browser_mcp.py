@@ -697,10 +697,32 @@ class BrowserMCP:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
                 
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Browser tool error: {e}")
-            return {"success": False, "error": str(e)}
+            
+            # 检测是否是浏览器已关闭的错误
+            if "closed" in error_str.lower() or "target" in error_str.lower():
+                logger.warning("[Browser] Browser/page closed detected in call_tool, resetting state")
+                await self._reset_state()
+                return {
+                    "success": False,
+                    "error": f"浏览器连接已断开（可能被用户关闭）。\n"
+                             f"【重要】状态已重置，请直接调用 browser_open 重新启动浏览器，无需先调用 browser_close。"
+                }
+            
+            return {"success": False, "error": error_str}
     
     # ==================== 工具实现 ====================
+    
+    async def _reset_state(self) -> None:
+        """重置浏览器状态（不关闭资源，只清除引用）"""
+        self._started = False
+        self._browser = None
+        self._context = None
+        self._page = None
+        self._using_user_chrome = False
+        self._cdp_url = None
+        logger.info("[Browser] State reset")
     
     async def _open_browser(self, visible: bool, ask_user: bool) -> dict:
         """
@@ -726,10 +748,13 @@ class BrowserMCP:
         # 如果已启动且模式相同，检查浏览器是否真的还在运行
         if self._started and self._visible == visible:
             # 验证浏览器是否真的还活着
-            if self._browser and self._context and self._page:
+            # 注意：persistent context 模式下 _browser 是 None，但 _context 有值
+            if self._context and self._page:
                 try:
                     # 尝试访问页面属性来验证连接是否有效
                     _ = self._page.url
+                    # 额外验证：尝试获取页面标题
+                    _ = await self._page.title()
                     return {
                         "success": True,
                         "result": {
@@ -738,20 +763,14 @@ class BrowserMCP:
                             "message": f"浏览器已在{'可见' if self._visible else '后台'}模式运行"
                         }
                     }
-                except Exception:
+                except Exception as e:
                     # 浏览器已断开，重置状态
-                    logger.warning("[Browser] Browser connection lost, resetting state")
-                    self._started = False
-                    self._browser = None
-                    self._context = None
-                    self._page = None
+                    logger.warning(f"[Browser] Browser connection lost: {e}, resetting state")
+                    await self._reset_state()
             else:
                 # 状态不完整，重置
                 logger.warning("[Browser] Incomplete browser state, resetting")
-                self._started = False
-                self._browser = None
-                self._context = None
-                self._page = None
+                await self._reset_state()
         
         # 启动浏览器
         success = await self.start(visible=visible)
@@ -804,10 +823,22 @@ class BrowserMCP:
                 }
             }
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Navigation failed: {e}")
+            
+            # 检测是否是浏览器已关闭的错误
+            if "closed" in error_str.lower() or "target" in error_str.lower():
+                logger.warning("[Browser] Browser/page closed, resetting state")
+                await self._reset_state()
+                return {
+                    "success": False,
+                    "error": f"浏览器已关闭（可能被用户关闭或崩溃）。\n"
+                             f"【重要】请先调用 browser_close 清理状态，然后重新调用 browser_open 启动浏览器。"
+                }
+            
             return {
                 "success": False,
-                "error": f"页面加载失败: {str(e)}\n"
+                "error": f"页面加载失败: {error_str}\n"
                          f"建议: 1) 检查 URL 是否正确 2) 该网站可能无法访问"
             }
     
@@ -897,7 +928,7 @@ class BrowserMCP:
                         except:
                             continue
                     
-                    # 最后尝试：强制点击元素位置后输入（适用于被透明层遮挡的情况）
+                    # 尝试：强制点击元素位置后输入（适用于被透明层遮挡的情况）
                     if attempt == max_retries - 2:
                         try:
                             logger.info(f"[BrowserType] Trying force click then type...")
@@ -915,6 +946,27 @@ class BrowserMCP:
                         except Exception as force_error:
                             logger.warning(f"Force type also failed: {force_error}")
                     
+                    # 最后尝试：使用 JavaScript 直接设置值（终极方案）
+                    if attempt == max_retries - 1:
+                        try:
+                            logger.info(f"[BrowserType] Trying JavaScript injection...")
+                            js_result = await self._page.evaluate(f'''(selector, text, clear) => {{
+                                const el = document.querySelector(selector);
+                                if (!el) return {{ success: false, error: 'Element not found' }};
+                                if (clear) el.value = '';
+                                el.value = text;
+                                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                return {{ success: true }};
+                            }}''', selector, text, clear)
+                            if js_result.get('success'):
+                                return {
+                                    "success": True,
+                                    "result": f"Typed into {selector} (JavaScript mode): {text}"
+                                }
+                        except Exception as js_error:
+                            logger.warning(f"JavaScript type also failed: {js_error}")
+                    
                     # 等待后重试
                     await asyncio.sleep(1)
         
@@ -928,6 +980,48 @@ class BrowserMCP:
     
     async def _handle_page_overlays(self):
         """处理常见的页面遮挡元素（弹窗、广告、登录提示等）"""
+        current_url = self._page.url
+        
+        # 百度特殊处理：使用 JavaScript 移除遮罩层
+        if 'baidu.com' in current_url:
+            try:
+                await self._page.evaluate('''() => {
+                    // 移除百度首页的各种遮罩层
+                    const overlaySelectors = [
+                        '.s-skin-container',  // 皮肤容器
+                        '.s-isindex-wrap .c-tips-container',  // 提示容器
+                        '.s-top-login-btn',  // 登录按钮
+                        '#s-top-loginbtn',
+                        '.soutu-env-nom498-index',  // 搜图容器
+                        '#s_tab',  // 可能遮挡的 tab
+                        '.s-p-top',  // 顶部区域
+                    ];
+                    overlaySelectors.forEach(sel => {
+                        document.querySelectorAll(sel).forEach(el => {
+                            el.style.display = 'none';
+                        });
+                    });
+                    
+                    // 确保搜索框可见
+                    const searchInput = document.querySelector('#kw') || document.querySelector('input[name="wd"]');
+                    if (searchInput) {
+                        searchInput.style.visibility = 'visible';
+                        searchInput.style.display = 'block';
+                        searchInput.style.opacity = '1';
+                        // 确保父元素也可见
+                        let parent = searchInput.parentElement;
+                        while (parent && parent !== document.body) {
+                            parent.style.visibility = 'visible';
+                            parent.style.display = parent.style.display === 'none' ? 'block' : parent.style.display;
+                            parent.style.opacity = '1';
+                            parent = parent.parentElement;
+                        }
+                    }
+                }''')
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                logger.debug(f"[BrowserOverlay] Baidu overlay removal failed: {e}")
+        
         # 常见的关闭按钮选择器
         close_selectors = [
             # 通用关闭按钮
@@ -1076,7 +1170,8 @@ class BrowserMCP:
     
     async def _get_status(self) -> dict:
         """获取浏览器状态"""
-        if not self._started or not self._browser:
+        # 注意：persistent context 模式下 _browser 是 None，但 _context 有值
+        if not self._started or not self._context:
             return {
                 "success": True,
                 "result": {
@@ -1086,8 +1181,8 @@ class BrowserMCP:
             }
         
         try:
-            # 获取所有页面
-            all_pages = self._context.pages if self._context else []
+            # 验证 context 是否真的还活着
+            all_pages = self._context.pages
             
             # 当前页面信息
             current_url = self._page.url if self._page else None
@@ -1107,7 +1202,19 @@ class BrowserMCP:
                 }
             }
         except Exception as e:
+            # 浏览器连接已断开，重置状态
             logger.error(f"Failed to get browser status: {e}")
+            error_str = str(e)
+            if "closed" in error_str.lower() or "target" in error_str.lower():
+                logger.warning("[Browser] Connection lost, resetting state")
+                await self._reset_state()
+                return {
+                    "success": True,
+                    "result": {
+                        "is_open": False,
+                        "message": "浏览器连接已断开（可能被用户关闭）。使用 browser_open 重新启动。"
+                    }
+                }
             return {
                 "success": True,
                 "result": {
@@ -1119,7 +1226,8 @@ class BrowserMCP:
     
     async def _list_tabs(self) -> dict:
         """列出所有标签页"""
-        if not self._started or not self._browser:
+        # 注意：persistent context 模式下 _browser 是 None，但 _context 有值
+        if not self._started or not self._context:
             return {
                 "success": False,
                 "error": "浏览器未启动"
@@ -1164,7 +1272,8 @@ class BrowserMCP:
     
     async def _switch_tab(self, index: int) -> dict:
         """切换到指定标签页"""
-        if not self._started or not self._browser:
+        # 注意：persistent context 模式下 _browser 是 None，但 _context 有值
+        if not self._started or not self._context:
             return {
                 "success": False,
                 "error": "浏览器未启动"
@@ -1204,7 +1313,8 @@ class BrowserMCP:
     
     async def _new_tab(self, url: str) -> dict:
         """在新标签页打开 URL"""
-        if not self._started or not self._browser:
+        # 注意：persistent context 模式下 _browser 是 None，但 _context 有值
+        if not self._started or not self._context:
             success = await self.start()
             if not success:
                 return {
@@ -1249,10 +1359,21 @@ class BrowserMCP:
                 }
             }
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Failed to open new tab: {e}")
+            
+            # 检测是否是浏览器已关闭的错误
+            if "closed" in error_str.lower() or "target" in error_str.lower():
+                logger.warning("[Browser] Browser/page closed, resetting state")
+                await self._reset_state()
+                return {
+                    "success": False,
+                    "error": f"浏览器已关闭。请先调用 browser_close 然后重新调用 browser_open 启动浏览器。"
+                }
+            
             return {
                 "success": False,
-                "error": f"打开新标签页失败: {str(e)}"
+                "error": f"打开新标签页失败: {error_str}"
             }
     
     async def _browser_task(self, task: str, max_steps: int = 15) -> dict:

@@ -89,11 +89,10 @@ class AnthropicProvider(LLMProvider):
             
             if proxy:
                 client_kwargs["proxy"] = proxy
-                logger.info(f"[Anthropic] Using proxy: {proxy}")
+                logger.debug(f"[Anthropic] Using proxy: {proxy}")
             
             if transport:
                 client_kwargs["transport"] = transport
-                logger.info("[Anthropic] Using IPv4-only transport")
             
             self._client = httpx.AsyncClient(**client_kwargs)
             self._client_loop_id = current_loop_id

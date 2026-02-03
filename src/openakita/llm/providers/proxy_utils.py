@@ -12,6 +12,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# 缓存：避免重复打印日志
+_ipv4_logged = False
+_transport_cache: Optional[httpx.AsyncHTTPTransport] = None
+
 
 def get_proxy_config() -> Optional[str]:
     """获取代理配置
@@ -81,8 +85,13 @@ def get_httpx_transport() -> Optional[httpx.AsyncHTTPTransport]:
     Returns:
         httpx.AsyncHTTPTransport 或 None
     """
+    global _ipv4_logged
+    
     if is_ipv4_only():
-        logger.info("[Network] IPv4-only mode enabled (FORCE_IPV4=true)")
+        # 只在第一次打印日志
+        if not _ipv4_logged:
+            logger.info("[Network] IPv4-only mode enabled (FORCE_IPV4=true)")
+            _ipv4_logged = True
         # local_address="0.0.0.0" 强制使用 IPv4
         return httpx.AsyncHTTPTransport(local_address="0.0.0.0")
     return None
