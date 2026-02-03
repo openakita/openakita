@@ -1990,8 +1990,10 @@ search_github → install_skill → 使用
         
         # 选择 System Prompt
         if use_session_prompt:
-            # 使用 Session 专用的 System Prompt，不包含全局 Active Task
-            system_prompt = self.identity.get_session_system_prompt()
+            # 使用 Session 专用的 System Prompt，但仍需包含完整的工具信息
+            # 否则 LLM 不知道有哪些工具可用（MCP、Skill、Tools）
+            base_prompt = self.identity.get_session_system_prompt()
+            system_prompt = self._build_system_prompt(base_prompt, task_description="")
         else:
             system_prompt = self._context.system
         
@@ -2001,6 +2003,7 @@ search_github → install_skill → 使用
         # 追问计数器：当 LLM 没有调用工具时，最多追问几次
         no_tool_call_count = 0
         max_no_tool_retries = 2  # 最多追问 2 次
+        tools_executed_in_task = False  # 本轮任务是否已执行过工具
         
         for iteration in range(max_iterations):
             # 任务监控：开始迭代
@@ -2110,6 +2113,11 @@ search_github → install_skill → 使用
             
             # 如果没有工具调用，检查是否需要强制要求调用工具
             if not tool_calls:
+                # 如果本轮任务已经执行过工具，允许 LLM 用文本确认结果
+                if tools_executed_in_task:
+                    logger.info("[ForceToolCall] Skipped - tools already executed in this task, allowing text confirmation")
+                    return strip_thinking_tags(text_content) or "任务已完成。"
+                
                 no_tool_call_count += 1
                 
                 # 如果还有追问次数，强制要求调用工具
@@ -2200,6 +2208,7 @@ search_github → install_skill → 使用
                         "tool_use_id": tc["id"],
                         "content": str(result) if result else "操作已完成",
                     })
+                    tools_executed_in_task = True  # 标记本轮已执行工具
                     # 任务监控：结束工具调用（成功）
                     if task_monitor:
                         task_monitor.end_tool_call(str(result) if result else "", success=True)
