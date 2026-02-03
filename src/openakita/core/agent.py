@@ -1764,6 +1764,9 @@ search_github → install_skill → 使用
         self._task_cancelled = False
         self._cancel_reason = ""
         
+        # 保存当前会话 ID（供 Plan 模式检查和任务完成判断使用）
+        self._current_session_id = session_id
+        
         # 保存当前 IM 会话信息（供 send_to_chat 工具使用）
         Agent._current_im_session = session
         Agent._current_im_gateway = gateway
