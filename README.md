@@ -563,7 +563,7 @@ Join our community for help, discussions, and updates!
 <table>
   <tr>
     <td align="center">
-      <img src="docs/assets/wecaht_group.jpg" width="200" alt="WeChat Group QR Code" /><br/>
+      <img src="docs/assets/wechat_group.jpg" width="200" alt="WeChat Group QR Code" /><br/>
       <b>WeChat Group</b><br/>
       <sub>Scan to join (Chinese)</sub>
     </td>
