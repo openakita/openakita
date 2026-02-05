@@ -109,3 +109,63 @@ docs_local/
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary scripts and files
+temp_*.py
+temp_*.json
+nul
+hello.txt
+time.txt
+todo.txt
+test_file.txt
+indentity_compiler.txt
+
+# Report generation scripts (temporary)
+*_report*.py
+create_report*.py
+fix_report.py
+
+# Image classification scripts (temporary)
+classify_*.py
+vision_*.py
+smart_classify.py
+analyze_*.py
+check_*.py
+verify_*.py
+
+# Chrome history scripts (temporary)
+read_chrome_history.py
+find_*_sites.py
+list_*.py
+
+# Reorganization scripts (temporary)
+reorganize_*.py
+execute_reorganization.py
+final_cleanup.py
+show_directory_tree.py
+get_time.py
+generate_vision_tasks.py
+
+# Temporary documents
+Microsoft_BitNet_*.docx
+OPENAKITA_PROJECT_STATUS.txt
+openakita_project_summary.md
+CLASSIFICATION_SYSTEM.md
+classification_report.json
+skills_list.md
+
+# Screenshots directory (temporary)
+screenshots/
+
+# Temporary script outputs
+vision_*.json
+*_results.json
+
+# Debug/fix scripts (temporary)
+scripts/run_feishu_bot.py
+scripts/fix_*.py
+scripts/debug_*.py
+scripts/add_log_injection.py
+scripts/apply_agent_changes.py
+scripts/refactor_agent_tools.py
+scripts/update_version.py
