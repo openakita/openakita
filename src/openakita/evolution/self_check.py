@@ -679,11 +679,18 @@ ID: {result.test_id}
                 analysis_results = self._analyze_errors_with_rules(patterns)
 
             # === 阶段 3: 根据分析结果处理错误 ===
+            # 只允许“直接修复”的错误类型：
+            # - tool: 内置工具
+            # - skill: skills 目录技能
+            # - mcp: MCP 相关（mcps/ 目录、连接/调用）
+            # - channel: IM 通道适配器（属于工具层的一部分）
+            allowed_fix_types = {"tool", "skill", "mcp", "channel"}
             for result in analysis_results:
                 error_type = result.get("error_type", "unknown")
                 can_fix = result.get("can_fix", False)
 
-                if error_type == "core" or not can_fix:
+                # 核心系统或非允许类型：只记录到报告，不自动修复
+                if error_type == "core" or error_type not in allowed_fix_types or not can_fix:
                     # 核心组件错误或不可修复，记录到报告
                     report.core_errors += 1
                     report.core_error_patterns.append(
@@ -1145,8 +1152,9 @@ ID: {result.test_id}
             if not is_core:
                 message_lower = message.lower()
                 if "permission" in message_lower or "access denied" in message_lower:
-                    fix_instruction = "使用 shell 工具修复目录权限：Linux 下执行 chmod -R 755 data/，Windows 下执行 icacls data /grant Users:F /T"
-                    can_fix = True
+                    # 避免涉及操作系统层面的权限调整（尤其是 Windows）
+                    fix_instruction = None
+                    can_fix = False
                 elif "not found" in message_lower or "no such file" in message_lower:
                     fix_instruction = "使用 file 工具创建缺失的目录：确保 data/、data/cache/、data/sessions/、logs/ 目录存在"
                     can_fix = True
@@ -1154,8 +1162,9 @@ ID: {result.test_id}
                     fix_instruction = "使用 shell 工具清理缓存目录：删除 data/cache/ 下的所有文件，然后重新创建目录"
                     can_fix = True
                 elif "timeout" in message_lower:
-                    fix_instruction = "检查是否有僵尸进程，使用 shell 工具查看并清理可能卡住的进程"
-                    can_fix = True
+                    # 进程清理通常涉及系统层面操作，报告给用户即可
+                    fix_instruction = None
+                    can_fix = False
                 elif "connection" in message_lower:
                     # 连接错误通常需要人工检查
                     fix_instruction = None
@@ -1219,6 +1228,43 @@ ID: {result.test_id}
 
                 agent = Agent()
                 await agent.initialize(start_scheduler=False)
+                # === 自检自动修复护栏 ===
+                # 目标：只允许 LLM “直接修复”工具层 / skills / MCP / channels
+                # Akita 核心系统代码（core/llm/memory/scheduler/storage/orchestration 等）一律不允许自动修改。
+                #
+                # 具体执行在 FilesystemHandler 中做硬拦截；这里仅注入策略。
+                from ..config import settings as _settings
+                from pathlib import Path as _Path
+
+                project_root = _Path(_settings.project_root).resolve()
+                agent._selfcheck_fix_policy = {
+                    "enabled": True,
+                    # 允许读取范围（用于排查）
+                    "read_roots": [str(project_root)],
+                    # 允许写入范围（用于“直接修复”）
+                    "write_roots": [
+                        str((project_root / "skills").resolve()),
+                        str((project_root / "mcps").resolve()),
+                        str((project_root / "src" / "openakita" / "tools").resolve()),
+                        str((project_root / "src" / "openakita" / "channels").resolve()),
+                    ],
+                    # 禁止的 shell 关键词（尽量避免 OS/Windows 层操作）
+                    "deny_shell_patterns": [
+                        r"\bpowershell\b",
+                        r"\bpwsh\b",
+                        r"\bicacls\b",
+                        r"\breg(\.exe)?\b",
+                        r"\bnetsh\b",
+                        r"\bschtasks\b",
+                        r"\bsc\b",
+                        r"\btaskkill\b",
+                        r"\bshutdown\b",
+                        r"\brestart\b",
+                        r"\bGet-ScheduledTask\b",
+                        r"\bGet-Service\b",
+                        r"\bGet-Process\b",
+                    ],
+                }
 
                 # 关键：清空历史上下文，使用干净状态
                 agent._context.messages = []
@@ -1239,10 +1285,11 @@ ID: {result.test_id}
 {fix_instruction}
 
 ## 要求
-1. 使用可用工具（shell、file 等）完成修复
-2. 修复后验证结果是否正确
-3. 如果修复失败，说明原因
-4. 完成后简要报告修复结果
+1. 你需要 **直接修复** 工具层问题（内置工具/skills/MCP/channels 等），可以使用工具（shell、file、skills、call_mcp_tool 等）
+2. **禁止** 修改 Akita 核心系统代码（`src/openakita/core/`、`src/openakita/llm/`、`src/openakita/memory/`、`src/openakita/scheduler/`、`src/openakita/storage/`、`src/openakita/orchestration/` 等）
+3. **禁止** 进行 Windows/系统层面优化与命令操作（注册表、计划任务、权限修复、服务/进程管理等）；如果需要这些操作，请写入“需人工处理”的结论
+4. 修复后验证结果是否正确（能用轻量验证就做，如 list_skills、list_mcp_servers、读取文件等）
+5. 完成后简要报告修复结果（做了什么、改了哪些文件、验证结果）
 
 请开始执行修复。"""
 

@@ -1263,11 +1263,18 @@ class Agent:
             await self.task_scheduler.add_task(memory_task)
             logger.info("Registered system task: daily_memory (03:00)")
         else:
-            # 确保已存在的系统任务也设置为不可删除
+            # 兼容迁移：历史版本可能漏存 action，导致不会走 _execute_system_task
             existing_task = self.task_scheduler.get_task("system_daily_memory")
-            if existing_task and existing_task.deletable:
-                existing_task.deletable = False
-                self.task_scheduler._save_tasks()
+            if existing_task:
+                changed = False
+                if existing_task.deletable:
+                    existing_task.deletable = False
+                    changed = True
+                if not getattr(existing_task, "action", None):
+                    existing_task.action = "system:daily_memory"
+                    changed = True
+                if changed:
+                    self.task_scheduler._save_tasks()
 
         # 任务 2: 每日系统自检（凌晨 4:00）
         if "system_daily_selfcheck" not in existing_ids:
@@ -1286,11 +1293,18 @@ class Agent:
             await self.task_scheduler.add_task(selfcheck_task)
             logger.info("Registered system task: daily_selfcheck (04:00)")
         else:
-            # 确保已存在的系统任务也设置为不可删除
+            # 兼容迁移：历史版本可能漏存 action，导致不会走 _execute_system_task
             existing_task = self.task_scheduler.get_task("system_daily_selfcheck")
-            if existing_task and existing_task.deletable:
-                existing_task.deletable = False
-                self.task_scheduler._save_tasks()
+            if existing_task:
+                changed = False
+                if existing_task.deletable:
+                    existing_task.deletable = False
+                    changed = True
+                if not getattr(existing_task, "action", None):
+                    existing_task.action = "system:daily_selfcheck"
+                    changed = True
+                if changed:
+                    self.task_scheduler._save_tasks()
 
     def _build_system_prompt(
         self, base_prompt: str, task_description: str = "", use_compiled: bool = False

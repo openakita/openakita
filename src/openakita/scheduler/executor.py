@@ -508,6 +508,7 @@ class TaskExecutor:
             from ..core.brain import Brain
             from ..evolution import SelfChecker
             from ..logging import LogCleaner
+            from datetime import datetime, timedelta
 
             # 1. 清理旧日志
             log_cleaner = LogCleaner(
@@ -521,6 +522,63 @@ class TaskExecutor:
             checker = SelfChecker(brain=brain)
             report = await checker.run_daily_check()
 
+            # 2.1 生成 Markdown 报告文本（用于 IM 推送）
+            report_md = None
+            try:
+                report_md = report.to_markdown() if hasattr(report, "to_markdown") else str(report)
+            except Exception as e:
+                logger.warning(f"Failed to render report markdown: {e}")
+                report_md = None
+
+            # 2.2 推送报告到“活跃 IM 会话”
+            pushed = 0
+            if report_md and self.gateway and getattr(self.gateway, "session_manager", None):
+                try:
+                    now = datetime.now()
+                    active_since = now - timedelta(hours=24)
+
+                    sessions = self.gateway.session_manager.list_sessions()
+                    for session in sessions:
+                        # 仅推送到最近活跃且未关闭的会话
+                        if getattr(session, "state", None) and str(session.state.value) == "closed":
+                            continue
+                        if getattr(session, "last_active", None) and session.last_active < active_since:
+                            continue
+
+                        adapter = self.gateway.get_adapter(session.channel)
+                        if not adapter or not adapter.is_running:
+                            continue
+
+                        # 统一分段发送（兼容 Telegram 4096 限制）
+                        max_len = 3500  # 保守值，留余量
+                        chunks = []
+                        text = report_md
+                        while text:
+                            if len(text) <= max_len:
+                                chunks.append(text)
+                                break
+                            # 优先按换行切分
+                            cut = text.rfind("\n", 0, max_len)
+                            if cut < 1000:
+                                cut = max_len
+                            chunks.append(text[:cut].rstrip())
+                            text = text[cut:].lstrip()
+
+                        # 标题 + 正文
+                        header = f"## ✅ 每日系统自检报告（{getattr(report, 'date', '') or now.strftime('%Y-%m-%d')}）"
+                        await self.gateway.send_to_session(session, header, role="system")
+                        for i, part in enumerate(chunks):
+                            prefix = "" if i == 0 else "（续）\n"
+                            await self.gateway.send_to_session(session, prefix + part, role="system")
+                        pushed += 1
+
+                    if pushed > 0:
+                        # 标记已提交（避免重复早上推送）
+                        with contextlib.suppress(Exception):
+                            checker.mark_report_as_reported(getattr(report, "date", None))
+                except Exception as e:
+                    logger.error(f"Failed to push daily selfcheck report: {e}", exc_info=True)
+
             # 3. 格式化结果
             summary = (
                 f"系统自检完成:\n"
@@ -530,7 +588,8 @@ class TaskExecutor:
                 f"- 尝试修复: {report.fix_attempted}\n"
                 f"- 修复成功: {report.fix_success}\n"
                 f"- 修复失败: {report.fix_failed}\n"
-                f"- 日志清理: 删除 {cleanup_result.get('by_age', 0) + cleanup_result.get('by_size', 0)} 个旧文件"
+                f"- 日志清理: 删除 {cleanup_result.get('by_age', 0) + cleanup_result.get('by_size', 0)} 个旧文件\n"
+                f"- 报告推送: {pushed} 个活跃会话"
             )
 
             logger.info(

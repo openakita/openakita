@@ -9,6 +9,8 @@
 """
 
 import logging
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -41,6 +43,34 @@ class FilesystemHandler:
         """
         self.agent = agent
 
+    def _get_fix_policy(self) -> dict | None:
+        """
+        获取自检自动修复策略（可选）
+
+        当 SelfChecker 创建的修复 Agent 注入 _selfcheck_fix_policy 时启用。
+        """
+        policy = getattr(self.agent, "_selfcheck_fix_policy", None)
+        if isinstance(policy, dict) and policy.get("enabled"):
+            return policy
+        return None
+
+    def _resolve_to_abs(self, raw: str) -> Path:
+        p = Path(raw)
+        if p.is_absolute():
+            return p.resolve()
+        # FileTool 以 cwd 为 base_path；这里保持一致
+        return (Path.cwd() / p).resolve()
+
+    def _is_under_any_root(self, target: Path, roots: list[str]) -> bool:
+        for r in roots or []:
+            try:
+                root = Path(r).resolve()
+                if target == root or target.is_relative_to(root):
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """
         处理工具调用
@@ -68,6 +98,22 @@ class FilesystemHandler:
         command = params["command"]
         timeout = params.get("timeout", 60)
         timeout = max(10, min(timeout, 600))
+
+        policy = self._get_fix_policy()
+        if policy:
+            deny_patterns = policy.get("deny_shell_patterns") or []
+            for pat in deny_patterns:
+                try:
+                    if re.search(pat, command, flags=re.IGNORECASE):
+                        msg = (
+                            "❌ 自检自动修复护栏：禁止执行可能涉及系统/Windows 层面的命令。"
+                            f"\n命令: {command}"
+                        )
+                        logger.warning(msg)
+                        return msg
+                except re.error:
+                    # 忽略无效 regex
+                    continue
 
         result = await self.agent.shell_tool.run(
             command,
@@ -129,16 +175,43 @@ class FilesystemHandler:
 
     async def _write_file(self, params: dict) -> str:
         """写入文件"""
+        policy = self._get_fix_policy()
+        if policy:
+            target = self._resolve_to_abs(params["path"])
+            write_roots = policy.get("write_roots") or []
+            if not self._is_under_any_root(target, write_roots):
+                msg = (
+                    "❌ 自检自动修复护栏：禁止写入该路径（仅允许修复 tools/skills/mcps/channels 相关目录）。"
+                    f"\n目标: {target}"
+                )
+                logger.warning(msg)
+                return msg
         await self.agent.file_tool.write(params["path"], params["content"])
         return f"文件已写入: {params['path']}"
 
     async def _read_file(self, params: dict) -> str:
         """读取文件"""
+        policy = self._get_fix_policy()
+        if policy:
+            target = self._resolve_to_abs(params["path"])
+            read_roots = policy.get("read_roots") or []
+            if not self._is_under_any_root(target, read_roots):
+                msg = f"❌ 自检自动修复护栏：禁止读取该路径。\n目标: {target}"
+                logger.warning(msg)
+                return msg
         content = await self.agent.file_tool.read(params["path"])
         return f"文件内容:\n{content}"
 
     async def _list_directory(self, params: dict) -> str:
         """列出目录"""
+        policy = self._get_fix_policy()
+        if policy:
+            target = self._resolve_to_abs(params["path"])
+            read_roots = policy.get("read_roots") or []
+            if not self._is_under_any_root(target, read_roots):
+                msg = f"❌ 自检自动修复护栏：禁止列出该目录。\n目标: {target}"
+                logger.warning(msg)
+                return msg
         files = await self.agent.file_tool.list_dir(params["path"])
         return "目录内容:\n" + "\n".join(files)
 
