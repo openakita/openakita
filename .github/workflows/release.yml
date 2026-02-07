@@ -1,15 +1,20 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
 
 jobs:
-  release:
+  python_release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+
+    outputs:
+      release_id: ${{ steps.gh_release.outputs.id }}
     
     steps:
       - uses: actions/checkout@v4
@@ -18,24 +23,100 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
       
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build
       
       - name: Build package
         run: python -m build
       
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Python artifacts to GitHub Release
+        id: gh_release
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: dist/*
           generate_release_notes: true
       
-      - name: Publish to PyPI
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+      - name: Publish to PyPI (Trusted Publishing / OIDC)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && secrets.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Publish to PyPI (API token)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && secrets.PYPI_API_TOKEN != '' }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+        run: |
+          python -m pip install --upgrade pip
+          pip install twine
+          twine upload dist/*
+
+  setup_center_release:
+    needs: python_release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/setup-center/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/setup-center/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: apps/setup-center
+        run: npm ci
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/setup-center
+          releaseId: ${{ needs.python_release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: false
+          args: ${{ matrix.args }}

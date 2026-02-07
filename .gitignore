@@ -59,6 +59,27 @@ htmlcov/
 .coverage.*
 coverage.xml
 
+# Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend build outputs
+dist/
+.vite/
+
+# Rust / Tauri
+target/
+
+# Apps (keep sources, ignore build outputs)
+apps/**/node_modules/
+apps/**/dist/
+apps/**/.vite/
+apps/**/src-tauri/target/
+apps/**/tsconfig.tsbuildinfo
+
 # Data (keep structure)
 data/*
 !data/.gitkeep
