@@ -151,4 +151,8 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           fail_on_unmatched_files: true
           files: |
-            apps/setup-center/src-tauri/target/release/bundle/**/*
+            apps/setup-center/src-tauri/target/release/bundle/**/*.msi
+            apps/setup-center/src-tauri/target/release/bundle/**/*.dmg
+            apps/setup-center/src-tauri/target/release/bundle/**/*.AppImage
+            apps/setup-center/src-tauri/target/release/bundle/**/*.deb
+            apps/setup-center/src-tauri/target/release/bundle/**/*.rpm
