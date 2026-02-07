@@ -339,6 +339,14 @@ fn apply_no_window(cmd: &mut Command) {
 #[cfg(not(windows))]
 fn apply_no_window(_cmd: &mut Command) {}
 
+async fn spawn_blocking_result<R: Send + 'static>(
+    f: impl FnOnce() -> Result<R, String> + Send + 'static,
+) -> Result<R, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("后台任务失败（join error）: {e}"))?
+}
+
 fn read_env_kv(path: &Path) -> Vec<(String, String)> {
     let Ok(content) = fs::read_to_string(path) else {
         return vec![];
@@ -883,112 +891,120 @@ fn find_python_executable(root: &Path) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-fn install_embedded_python(python_series: Option<String>) -> Result<EmbeddedPythonInstallResult, String> {
-    let python_series = python_series.unwrap_or_else(|| "3.11".to_string());
-    let triple = target_triple_hint()?;
+async fn install_embedded_python(python_series: Option<String>) -> Result<EmbeddedPythonInstallResult, String> {
+    spawn_blocking_result(move || {
+        let python_series = python_series.unwrap_or_else(|| "3.11".to_string());
+        let triple = target_triple_hint()?;
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("openakita-setup-center")
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("http client build failed: {e}"))?;
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("openakita-setup-center")
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| format!("http client build failed: {e}"))?;
 
-    let latest: LatestReleaseInfo = client
-        .get("https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json")
-        .send()
-        .map_err(|e| format!("fetch latest-release.json failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("fetch latest-release.json failed: {e}"))?
-        .json()
-        .map_err(|e| format!("parse latest-release.json failed: {e}"))?;
-
-    let gh: GhRelease = client
-        .get(format!(
-            "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}",
-            latest.tag
-        ))
-        .send()
-        .map_err(|e| format!("fetch github release failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("fetch github release failed: {e}"))?
-        .json()
-        .map_err(|e| format!("parse github release failed: {e}"))?;
-
-    let asset = pick_python_build_asset(&gh.assets, &python_series, triple)
-        .ok_or_else(|| "no matching python-build-standalone asset found".to_string())?;
-
-    let install_dir = embedded_python_root().join(&latest.tag).join(&asset.name);
-    if install_dir.exists() {
-        if let Some(py) = find_python_executable(&install_dir) {
-            return Ok(EmbeddedPythonInstallResult {
-                python_command: vec![py.to_string_lossy().to_string()],
-                python_path: py.to_string_lossy().to_string(),
-                install_dir: install_dir.to_string_lossy().to_string(),
-                asset_name: asset.name,
-                tag: latest.tag,
-            });
-        }
-    }
-
-    fs::create_dir_all(&install_dir).map_err(|e| format!("create install dir failed: {e}"))?;
-    let archive_path = runtime_dir().join("downloads").join(&latest.tag).join(&asset.name);
-    if let Some(parent) = archive_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("create download dir failed: {e}"))?;
-    }
-
-    if !archive_path.exists() {
-        let mut resp = client
-            .get(&asset.browser_download_url)
+        let latest: LatestReleaseInfo = client
+            .get("https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json")
             .send()
-            .map_err(|e| format!("download failed: {e}"))?
+            .map_err(|e| format!("fetch latest-release.json failed: {e}"))?
             .error_for_status()
-            .map_err(|e| format!("download failed: {e}"))?;
-        let mut out = std::fs::File::create(&archive_path).map_err(|e| format!("create archive failed: {e}"))?;
-        std::io::copy(&mut resp, &mut out).map_err(|e| format!("write archive failed: {e}"))?;
-    }
+            .map_err(|e| format!("fetch latest-release.json failed: {e}"))?
+            .json()
+            .map_err(|e| format!("parse latest-release.json failed: {e}"))?;
 
-    // extract
-    if asset.name.ends_with(".zip") {
-        extract_zip(&archive_path, &install_dir)?;
-    } else if asset.name.ends_with(".tar.gz") {
-        extract_tar_gz(&archive_path, &install_dir)?;
-    } else {
-        return Err("unsupported archive type".into());
-    }
+        let gh: GhRelease = client
+            .get(format!(
+                "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}",
+                latest.tag
+            ))
+            .send()
+            .map_err(|e| format!("fetch github release failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("fetch github release failed: {e}"))?
+            .json()
+            .map_err(|e| format!("parse github release failed: {e}"))?;
 
-    let py = find_python_executable(&install_dir).ok_or_else(|| "python executable not found after extract".to_string())?;
-    Ok(EmbeddedPythonInstallResult {
-        python_command: vec![py.to_string_lossy().to_string()],
-        python_path: py.to_string_lossy().to_string(),
-        install_dir: install_dir.to_string_lossy().to_string(),
-        asset_name: asset.name,
-        tag: latest.tag,
+        let asset = pick_python_build_asset(&gh.assets, &python_series, triple)
+            .ok_or_else(|| "no matching python-build-standalone asset found".to_string())?;
+
+        let install_dir = embedded_python_root().join(&latest.tag).join(&asset.name);
+        if install_dir.exists() {
+            if let Some(py) = find_python_executable(&install_dir) {
+                return Ok(EmbeddedPythonInstallResult {
+                    python_command: vec![py.to_string_lossy().to_string()],
+                    python_path: py.to_string_lossy().to_string(),
+                    install_dir: install_dir.to_string_lossy().to_string(),
+                    asset_name: asset.name,
+                    tag: latest.tag,
+                });
+            }
+        }
+
+        fs::create_dir_all(&install_dir).map_err(|e| format!("create install dir failed: {e}"))?;
+        let archive_path = runtime_dir().join("downloads").join(&latest.tag).join(&asset.name);
+        if let Some(parent) = archive_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create download dir failed: {e}"))?;
+        }
+
+        if !archive_path.exists() {
+            let mut resp = client
+                .get(&asset.browser_download_url)
+                .send()
+                .map_err(|e| format!("download failed: {e}"))?
+                .error_for_status()
+                .map_err(|e| format!("download failed: {e}"))?;
+            let mut out =
+                std::fs::File::create(&archive_path).map_err(|e| format!("create archive failed: {e}"))?;
+            std::io::copy(&mut resp, &mut out).map_err(|e| format!("write archive failed: {e}"))?;
+        }
+
+        // extract
+        if asset.name.ends_with(".zip") {
+            extract_zip(&archive_path, &install_dir)?;
+        } else if asset.name.ends_with(".tar.gz") {
+            extract_tar_gz(&archive_path, &install_dir)?;
+        } else {
+            return Err("unsupported archive type".into());
+        }
+
+        let py =
+            find_python_executable(&install_dir).ok_or_else(|| "python executable not found after extract".to_string())?;
+        Ok(EmbeddedPythonInstallResult {
+            python_command: vec![py.to_string_lossy().to_string()],
+            python_path: py.to_string_lossy().to_string(),
+            install_dir: install_dir.to_string_lossy().to_string(),
+            asset_name: asset.name,
+            tag: latest.tag,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn create_venv(python_command: Vec<String>, venv_dir: String) -> Result<String, String> {
-    let venv = PathBuf::from(venv_dir);
-    if venv.exists() {
-        return Ok(venv.to_string_lossy().to_string());
-    }
-    let cmd = python_command;
-    if cmd.is_empty() {
-        return Err("python command is empty".into());
-    }
-    let mut c = Command::new(&cmd[0]);
-    if cmd.len() > 1 {
-        c.args(&cmd[1..]);
-    }
-    apply_no_window(&mut c);
-    c.args(["-m", "venv"])
-        .arg(&venv)
-        .status()
-        .map_err(|e| format!("failed to create venv: {e}"))?
-        .success()
-        .then_some(())
-        .ok_or_else(|| "venv creation failed".to_string())?;
-    Ok(venv.to_string_lossy().to_string())
+async fn create_venv(python_command: Vec<String>, venv_dir: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let venv = PathBuf::from(venv_dir);
+        if venv.exists() {
+            return Ok(venv.to_string_lossy().to_string());
+        }
+        let cmd = python_command;
+        if cmd.is_empty() {
+            return Err("python command is empty".into());
+        }
+        let mut c = Command::new(&cmd[0]);
+        if cmd.len() > 1 {
+            c.args(&cmd[1..]);
+        }
+        apply_no_window(&mut c);
+        c.args(["-m", "venv"])
+            .arg(&venv)
+            .status()
+            .map_err(|e| format!("failed to create venv: {e}"))?
+            .success()
+            .then_some(())
+            .ok_or_else(|| "venv creation failed".to_string())?;
+        Ok(venv.to_string_lossy().to_string())
+    })
+    .await
 }
 
 fn venv_python_path(venv_dir: &str) -> PathBuf {
@@ -1001,60 +1017,83 @@ fn venv_python_path(venv_dir: &str) -> PathBuf {
 }
 
 #[tauri::command]
-fn pip_install(
-    venv_dir: String,
-    package_spec: String,
-    index_url: Option<String>,
-) -> Result<String, String> {
-    let py = venv_python_path(&venv_dir);
-    if !py.exists() {
-        return Err(format!("venv python not found: {}", py.to_string_lossy()));
-    }
+async fn pip_install(venv_dir: String, package_spec: String, index_url: Option<String>) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let py = venv_python_path(&venv_dir);
+        if !py.exists() {
+            return Err(format!("venv python not found: {}", py.to_string_lossy()));
+        }
 
-    // upgrade pip first (best-effort)
-    let mut up = Command::new(&py);
-    apply_no_window(&mut up);
-    up.args(["-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]);
-    if let Some(url) = &index_url {
-        up.args(["-i", url]);
-    }
-    let _ = up.status();
+        // upgrade pip first (best-effort)
+        let mut up = Command::new(&py);
+        apply_no_window(&mut up);
+        up.args(["-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]);
+        if let Some(url) = &index_url {
+            up.args(["-i", url]);
+        }
+        let _ = up.status();
 
-    let mut c = Command::new(&py);
-    apply_no_window(&mut c);
-    c.args(["-m", "pip", "install", "-U", &package_spec]);
-    if let Some(url) = &index_url {
-        c.args(["-i", url]);
-    }
-    let status = c
-        .status()
-        .map_err(|e| format!("pip install failed to start: {e}"))?;
-    if !status.success() {
-        return Err(format!("pip install failed: {status}"));
-    }
-    Ok("ok".into())
+        let mut c = Command::new(&py);
+        apply_no_window(&mut c);
+        c.args(["-m", "pip", "install", "-U", &package_spec]);
+        if let Some(url) = &index_url {
+            c.args(["-i", url]);
+        }
+        let out = c.output().map_err(|e| format!("pip install failed to start: {e}"))?;
+        if !out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            return Err(format!(
+                "pip install failed: {}\nstdout:\n{}\nstderr:\n{}",
+                out.status, stdout, stderr
+            ));
+        }
+
+        // Post-check: ensure Setup Center bridge exists in the installed package.
+        let mut verify = Command::new(&py);
+        apply_no_window(&mut verify);
+        verify.args([
+            "-c",
+            "import openakita; import openakita.setup_center.bridge; print(getattr(openakita,'__version__',''))",
+        ]);
+        let v = verify.output().map_err(|e| format!("verify openakita failed: {e}"))?;
+        if !v.status.success() {
+            let stdout = String::from_utf8_lossy(&v.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&v.stderr).to_string();
+            return Err(format!(
+                "openakita 已安装，但缺少 Setup Center 所需模块（openakita.setup_center.bridge）。\n这通常意味着你安装的 openakita 版本过旧或来源不包含该模块。\nstdout:\n{}\nstderr:\n{}",
+                stdout, stderr
+            ));
+        }
+
+        Ok("ok".into())
+    })
+    .await
 }
 
 #[tauri::command]
-fn pip_uninstall(venv_dir: String, package_name: String) -> Result<String, String> {
-    let py = venv_python_path(&venv_dir);
-    if !py.exists() {
-        return Err(format!("venv python not found: {}", py.to_string_lossy()));
-    }
-    if package_name.trim().is_empty() {
-        return Err("package_name is empty".into());
-    }
+async fn pip_uninstall(venv_dir: String, package_name: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let py = venv_python_path(&venv_dir);
+        if !py.exists() {
+            return Err(format!("venv python not found: {}", py.to_string_lossy()));
+        }
+        if package_name.trim().is_empty() {
+            return Err("package_name is empty".into());
+        }
 
-    let mut c = Command::new(&py);
-    apply_no_window(&mut c);
-    c.args(["-m", "pip", "uninstall", "-y", package_name.trim()]);
-    let status = c
-        .status()
-        .map_err(|e| format!("pip uninstall failed to start: {e}"))?;
-    if !status.success() {
-        return Err(format!("pip uninstall failed: {status}"));
-    }
-    Ok("ok".into())
+        let mut c = Command::new(&py);
+        apply_no_window(&mut c);
+        c.args(["-m", "pip", "uninstall", "-y", package_name.trim()]);
+        let status = c
+            .status()
+            .map_err(|e| format!("pip uninstall failed to start: {e}"))?;
+        if !status.success() {
+            return Err(format!("pip uninstall failed: {status}"));
+        }
+        Ok("ok".into())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1103,40 +1142,49 @@ fn run_python_module_json(
 }
 
 #[tauri::command]
-fn openakita_list_providers(venv_dir: String) -> Result<String, String> {
-    run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &["list-providers"], &[])
+async fn openakita_list_providers(venv_dir: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &["list-providers"], &[])
+    })
+    .await
 }
 
 #[tauri::command]
-fn openakita_list_skills(venv_dir: String, workspace_id: String) -> Result<String, String> {
-    let wd = workspace_dir(&workspace_id);
-    run_python_module_json(
-        &venv_dir,
-        "openakita.setup_center.bridge",
-        &["list-skills", "--workspace-dir", wd.to_string_lossy().as_ref()],
-        &[],
-    )
+async fn openakita_list_skills(venv_dir: String, workspace_id: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let wd = workspace_dir(&workspace_id);
+        run_python_module_json(
+            &venv_dir,
+            "openakita.setup_center.bridge",
+            &["list-skills", "--workspace-dir", wd.to_string_lossy().as_ref()],
+            &[],
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-fn openakita_list_models(
+async fn openakita_list_models(
     venv_dir: String,
     api_type: String,
     base_url: String,
     provider_slug: Option<String>,
     api_key: String,
 ) -> Result<String, String> {
-    let mut args = vec!["list-models", "--api-type", api_type.as_str(), "--base-url", base_url.as_str()];
-    if let Some(slug) = provider_slug.as_deref() {
-        args.push("--provider-slug");
-        args.push(slug);
-    }
+    spawn_blocking_result(move || {
+        let mut args = vec!["list-models", "--api-type", api_type.as_str(), "--base-url", base_url.as_str()];
+        if let Some(slug) = provider_slug.as_deref() {
+            args.push("--provider-slug");
+            args.push(slug);
+        }
 
-    run_python_module_json(
-        &venv_dir,
-        "openakita.setup_center.bridge",
-        &args,
-        &[("SETUPCENTER_API_KEY", api_key.as_str())],
-    )
+        run_python_module_json(
+            &venv_dir,
+            "openakita.setup_center.bridge",
+            &args,
+            &[("SETUPCENTER_API_KEY", api_key.as_str())],
+        )
+    })
+    .await
 }
 

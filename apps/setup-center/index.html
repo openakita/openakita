@@ -10,8 +10,20 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700;800;900&family=Noto+Serif+SC:wght@400;600;700;900&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="/src/boot.css" />
   </head>
   <body>
+    <div id="boot" aria-hidden="true">
+      <div class="bootCard">
+        <div class="bootTitle">OpenAkita Setup Center</div>
+        <div class="bootSub">正在启动界面（如果卡住，可以点右下角“关闭/刷新”）。</div>
+        <div class="bootBar"><i></i></div>
+        <div class="bootActions">
+          <button id="bootClose" type="button">关闭</button>
+          <button id="bootReload" type="button">刷新</button>
+        </div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

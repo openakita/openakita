@@ -46,6 +46,8 @@ type EmbeddedPythonInstallResult = {
   tag: string;
 };
 
+type InstallSource = "pypi" | "github" | "local";
+
 function slugify(input: string) {
   return input
     .trim()
@@ -59,6 +61,22 @@ function joinPath(a: string, b: string) {
   if (!a) return b;
   const sep = a.includes("\\") ? "\\" : "/";
   return a.replace(/[\\/]+$/, "") + sep + b.replace(/^[\\/]+/, "");
+}
+
+function toFileUrl(p: string) {
+  const t = p.trim();
+  if (!t) return "";
+  // Windows: D:\path\to\repo -> file:///D:/path/to/repo
+  if (/^[a-zA-Z]:[\\/]/.test(t)) {
+    const s = t.replace(/\\/g, "/");
+    return `file:///${s}`;
+  }
+  // POSIX: /Users/... -> file:///Users/...
+  if (t.startsWith("/")) {
+    return `file://${t}`;
+  }
+  // Fallback (best-effort)
+  return `file://${t}`;
 }
 
 function envKeyFromSlug(slug: string) {
@@ -106,6 +124,13 @@ type Step = {
   desc: string;
 };
 
+const PIP_INDEX_PRESETS: { id: "official" | "tuna" | "aliyun" | "custom"; label: string; url: string }[] = [
+  { id: "official", label: "官方 PyPI（默认）", url: "" },
+  { id: "tuna", label: "清华 TUNA", url: "https://pypi.tuna.tsinghua.edu.cn/simple" },
+  { id: "aliyun", label: "阿里云", url: "https://mirrors.aliyun.com/pypi/simple/" },
+  { id: "custom", label: "自定义…", url: "" },
+];
+
 export function App() {
   const [info, setInfo] = useState<PlatformInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -114,6 +139,16 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [dangerAck, setDangerAck] = useState(false);
+
+  // Ensure boot overlay is removed once React actually mounts.
+  useEffect(() => {
+    try {
+      document.getElementById("boot")?.remove();
+      window.dispatchEvent(new Event("openakita_app_ready"));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const steps: Step[] = useMemo(
     () => [
@@ -176,6 +211,13 @@ export function App() {
   const [venvStatus, setVenvStatus] = useState<string>("");
   const [extras, setExtras] = useState<string>("all");
   const [indexUrl, setIndexUrl] = useState<string>("");
+  const [venvReady, setVenvReady] = useState(false);
+  const [openakitaInstalled, setOpenakitaInstalled] = useState(false);
+  const [installSource, setInstallSource] = useState<InstallSource>("pypi");
+  const [githubRepo, setGithubRepo] = useState<string>("openakita/openakita");
+  const [githubRefType, setGithubRefType] = useState<"branch" | "tag">("branch");
+  const [githubRef, setGithubRef] = useState<string>("main");
+  const [localSourcePath, setLocalSourcePath] = useState<string>("");
 
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -200,17 +242,6 @@ export function App() {
   const [skillSummary, setSkillSummary] = useState<{ count: number; systemCount: number; externalCount: number } | null>(null);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [serviceStatus, setServiceStatus] = useState<{ running: boolean; pid: number | null; pidFile: string } | null>(null);
-
-  const done = useMemo(() => {
-    const d = new Set<StepId>();
-    if (info) d.add("welcome");
-    if (currentWorkspaceId) d.add("workspace");
-    if (pythonCandidates.some((c) => c.isUsable)) d.add("python");
-    if (venvStatus.includes("安装完成")) d.add("install");
-    if (models.length > 0 && selectedModelId) d.add("llm");
-    // integrations/finish are completion-oriented; keep manual.
-    return d;
-  }, [info, currentWorkspaceId, pythonCandidates, venvStatus, models.length, selectedModelId]);
 
   // unified env draft (full coverage)
   const [envDraft, setEnvDraft] = useState<EnvMap>({});
@@ -279,6 +310,31 @@ export function App() {
     return pythonCandidates[selectedPythonIdx]?.isUsable ?? false;
   }, [pythonCandidates, selectedPythonIdx]);
 
+  const pipIndexPresetId = useMemo<"official" | "tuna" | "aliyun" | "custom">(() => {
+    const t = indexUrl.trim();
+    if (!t) return "official";
+    const hit = PIP_INDEX_PRESETS.find((p) => p.url && p.url === t);
+    return hit ? hit.id : "custom";
+  }, [indexUrl]);
+
+  const done = useMemo(() => {
+    const d = new Set<StepId>();
+    if (info) d.add("welcome");
+    if (currentWorkspaceId) d.add("workspace");
+    if (canUsePython) d.add("python");
+    if (openakitaInstalled) d.add("install");
+    if (models.length > 0 && selectedModelId) d.add("llm");
+    // integrations/finish are completion-oriented; keep manual.
+    return d;
+  }, [info, currentWorkspaceId, canUsePython, openakitaInstalled, models.length, selectedModelId]);
+
+  // Keep boolean flags in sync with the visible status string (best-effort).
+  useEffect(() => {
+    if (!venvStatus) return;
+    if (venvStatus.includes("venv 就绪")) setVenvReady(true);
+    if (venvStatus.includes("安装完成")) setOpenakitaInstalled(true);
+  }, [venvStatus]);
+
   async function ensureEnvLoaded(workspaceId: string) {
     if (envLoadedForWs.current === workspaceId) return;
     const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
@@ -327,6 +383,8 @@ export function App() {
       const firstUsable = cands.findIndex((c) => c.isUsable);
       setSelectedPythonIdx(firstUsable);
       setNotice(firstUsable >= 0 ? "已找到可用 Python（3.11+）" : "未找到可用 Python（建议安装内置 Python）");
+    } catch (e) {
+      setError(String(e));
     } finally {
       setBusy(null);
     }
@@ -347,6 +405,9 @@ export function App() {
       setSelectedPythonIdx(0);
       setVenvStatus(`内置 Python 就绪：${r.pythonPath}`);
       setNotice("内置 Python 安装完成，可以继续创建 venv");
+    } catch (e) {
+      setError(String(e));
+      setVenvStatus(`内置 Python 安装失败：${String(e)}`);
     } finally {
       setBusy(null);
     }
@@ -361,25 +422,84 @@ export function App() {
       const py = pythonCandidates[selectedPythonIdx].command;
       await invoke<string>("create_venv", { pythonCommand: py, venvDir });
       setVenvStatus(`venv 就绪：${venvDir}`);
+      setVenvReady(true);
+      setOpenakitaInstalled(false);
       setNotice("venv 已准备好，可以安装 openakita");
+    } catch (e) {
+      setError(String(e));
+      setVenvStatus(`创建 venv 失败：${String(e)}`);
     } finally {
       setBusy(null);
     }
   }
 
-  async function doInstallOpenAkita() {
+  async function doSetupVenvAndInstallOpenAkita() {
+    if (!canUsePython) {
+      setError("请先在 Python 步骤安装/检测并选择一个可用 Python（3.11+）。");
+      return;
+    }
     setError(null);
-    setBusy("pip 安装 openakita...");
+    setNotice(null);
+    setBusy("创建 venv 并安装 openakita...");
     try {
+      // 1) create venv (idempotent)
+      setVenvStatus("创建 venv 中...");
+      const py = pythonCandidates[selectedPythonIdx].command;
+      await invoke<string>("create_venv", { pythonCommand: py, venvDir });
+      setVenvReady(true);
+      setOpenakitaInstalled(false);
+      setVenvStatus(`venv 就绪：${venvDir}`);
+
+      // 2) pip install
       setVenvStatus("安装 openakita 中（pip）...");
-      const spec = extras.trim() ? `openakita[${extras.trim()}]` : "openakita";
+      const ex = extras.trim();
+      const extrasPart = ex ? `[${ex}]` : "";
+      const spec = (() => {
+        if (installSource === "github") {
+          const repo = githubRepo.trim() || "openakita/openakita";
+          const ref = githubRef.trim() || "main";
+          const kind = githubRefType;
+          const url =
+            kind === "tag"
+              ? `https://github.com/${repo}/archive/refs/tags/${ref}.zip`
+              : `https://github.com/${repo}/archive/refs/heads/${ref}.zip`;
+          return `openakita${extrasPart} @ ${url}`;
+        }
+        if (installSource === "local") {
+          const p = localSourcePath.trim();
+          if (!p) {
+            throw new Error("请选择/填写本地源码路径（例如本仓库根目录）");
+          }
+          const url = toFileUrl(p);
+          if (!url) {
+            throw new Error("本地路径无效");
+          }
+          return `openakita${extrasPart} @ ${url}`;
+        }
+        return `openakita${extrasPart}`;
+      })();
       await invoke("pip_install", {
         venvDir,
         packageSpec: spec,
         indexUrl: indexUrl.trim() ? indexUrl.trim() : null,
       });
+      setOpenakitaInstalled(true);
       setVenvStatus(`安装完成：${spec}`);
       setNotice("openakita 已安装，可以读取服务商列表并配置端点");
+
+      // 3) verify by attempting to list providers (makes failures visible early)
+      try {
+        await doLoadProviders();
+      } catch {
+        // ignore; doLoadProviders already sets error
+      }
+    } catch (e) {
+      const msg = String(e);
+      setError(msg);
+      setVenvStatus(`安装失败：${msg}`);
+      if (msg.includes("缺少 Setup Center 所需模块") || msg.includes("No module named 'openakita.setup_center'")) {
+        setNotice("你安装到的 openakita 不包含 Setup Center 模块。建议切换“安装来源”为 GitHub 或 本地源码，然后重新安装。");
+      }
     } finally {
       setBusy(null);
     }
@@ -395,6 +515,9 @@ export function App() {
       const first = parsed[0]?.slug ?? "";
       setProviderSlug((prev) => prev || first);
       setNotice(`已加载服务商：${parsed.length} 个`);
+    } catch (e) {
+      setError(String(e));
+      throw e;
     } finally {
       setBusy(null);
     }
@@ -545,11 +668,11 @@ export function App() {
       setError("请先创建或选择一个当前工作区。");
       return;
     }
-    if (stepId === "python" && !pythonCandidates.some((c) => c.isUsable)) {
-      setError("请先安装内置 Python 或检测到系统 Python（3.11+）。");
+    if (stepId === "python" && !canUsePython) {
+      setError("请先安装/检测到 Python，并在下拉框选择一个可用 Python（3.11+）。");
       return;
     }
-    if (stepId === "install" && !venvStatus.includes("安装完成")) {
+    if (stepId === "install" && !openakitaInstalled) {
       setError("请先创建 venv 并完成 pip 安装 openakita。");
       return;
     }
@@ -1063,6 +1186,59 @@ export function App() {
           <div className="cardTitle">venv + 安装 openakita</div>
           <div className="cardHint">这一步会在固定目录创建 venv：`~/.openakita/venv`，并安装 `openakita[extras]`。</div>
           <div className="divider" />
+          <div className="field">
+            <div className="labelRow">
+              <div className="label">安装来源</div>
+              <div className="help">如果 PyPI 版本不包含 Setup Center 模块，可切到 GitHub / 本地源码</div>
+            </div>
+            <div className="btnRow">
+              <button className={installSource === "pypi" ? "btnPrimary" : ""} onClick={() => setInstallSource("pypi")} disabled={!!busy}>
+                PyPI / 镜像
+              </button>
+              <button className={installSource === "github" ? "btnPrimary" : ""} onClick={() => setInstallSource("github")} disabled={!!busy}>
+                GitHub
+              </button>
+              <button className={installSource === "local" ? "btnPrimary" : ""} onClick={() => setInstallSource("local")} disabled={!!busy}>
+                本地源码
+              </button>
+            </div>
+          </div>
+
+          {installSource === "github" ? (
+            <div className="grid2" style={{ marginTop: 10 }}>
+              <div className="field">
+                <div className="labelRow">
+                  <div className="label">GitHub 仓库</div>
+                  <div className="help">格式：owner/repo</div>
+                </div>
+                <input value={githubRepo} onChange={(e) => setGithubRepo(e.target.value)} placeholder="openakita/openakita" />
+              </div>
+              <div className="field">
+                <div className="labelRow">
+                  <div className="label">分支/Tag</div>
+                  <div className="help">默认 main</div>
+                </div>
+                <div className="row">
+                  <select value={githubRefType} onChange={(e) => setGithubRefType(e.target.value as any)} style={{ width: 140 }}>
+                    <option value="branch">branch</option>
+                    <option value="tag">tag</option>
+                  </select>
+                  <input value={githubRef} onChange={(e) => setGithubRef(e.target.value)} placeholder="main / v1.2.7 ..." />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {installSource === "local" ? (
+            <div className="field" style={{ marginTop: 10 }}>
+              <div className="labelRow">
+                <div className="label">本地源码路径</div>
+                <div className="help">例如：本仓库根目录 `D:\\coder\\myagent`</div>
+              </div>
+              <input value={localSourcePath} onChange={(e) => setLocalSourcePath(e.target.value)} placeholder="D:\\coder\\myagent" />
+            </div>
+          ) : null}
+
           <div className="grid2">
             <div className="field">
               <div className="labelRow">
@@ -1073,18 +1249,37 @@ export function App() {
             </div>
             <div className="field">
               <div className="labelRow">
-                <div className="label">pip index-url（可选）</div>
-                <div className="help">国内可填镜像源</div>
+                <div className="label">pip 源（可切换）</div>
+                <div className="help">选择国内镜像会自动填充 index-url</div>
               </div>
-              <input value={indexUrl} onChange={(e) => setIndexUrl(e.target.value)} placeholder="例如：https://pypi.tuna.tsinghua.edu.cn/simple" />
+              <select
+                value={pipIndexPresetId}
+                onChange={(e) => {
+                  const id = e.target.value as "official" | "tuna" | "aliyun" | "custom";
+                  const preset = PIP_INDEX_PRESETS.find((p) => p.id === id);
+                  if (!preset) return;
+                  if (id === "custom") return;
+                  setIndexUrl(preset.url);
+                }}
+              >
+                {PIP_INDEX_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                style={{ marginTop: 10 }}
+                value={indexUrl}
+                onChange={(e) => setIndexUrl(e.target.value)}
+                placeholder="自定义 index-url（可选）"
+                disabled={pipIndexPresetId !== "custom"}
+              />
             </div>
           </div>
           <div className="btnRow" style={{ marginTop: 12 }}>
-            <button className="btnPrimary" onClick={doCreateVenv} disabled={!canUsePython || !!busy}>
-              创建 venv
-            </button>
-            <button onClick={doInstallOpenAkita} disabled={!venvDir || !!busy}>
-              pip 安装 openakita
+            <button className="btnPrimary" onClick={doSetupVenvAndInstallOpenAkita} disabled={!canUsePython || !!busy}>
+              一键创建 venv 并安装 openakita
             </button>
           </div>
           {venvStatus ? <div className="okBox">{venvStatus}</div> : null}
