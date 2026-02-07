@@ -12,8 +12,11 @@
 - 会话结束: 保存新记忆到 memories.json 和 ChromaDB
 """
 
+import contextlib
 import json
 import logging
+import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -67,6 +70,7 @@ class MemoryManager:
         # 记忆存储
         self.memories_file = self.data_dir / "memories.json"
         self._memories: dict[str, Memory] = {}
+        self._memories_lock = threading.RLock()
 
         # 当前会话
         self._current_session_id: str | None = None
@@ -107,13 +111,27 @@ class MemoryManager:
 
     def _load_memories(self) -> None:
         """加载所有记忆"""
+        if not self.memories_file.exists():
+            # 尝试从备份恢复
+            bak = self.memories_file.with_suffix(self.memories_file.suffix + ".bak")
+            tmp = self.memories_file.with_suffix(self.memories_file.suffix + ".tmp")
+            if bak.exists():
+                with contextlib.suppress(Exception):
+                    os.replace(str(bak), str(self.memories_file))
+                    logger.warning("Recovered memories.json from backup")
+            elif tmp.exists():
+                with contextlib.suppress(Exception):
+                    os.replace(str(tmp), str(self.memories_file))
+                    logger.warning("Recovered memories.json from temp file")
+
         if self.memories_file.exists():
             try:
                 with open(self.memories_file, encoding="utf-8") as f:
                     data = json.load(f)
-                    for item in data:
-                        memory = Memory.from_dict(item)
-                        self._memories[memory.id] = memory
+                    with self._memories_lock:
+                        for item in data:
+                            memory = Memory.from_dict(item)
+                            self._memories[memory.id] = memory
                 logger.info(f"Loaded {len(self._memories)} memories")
             except Exception as e:
                 logger.error(f"Failed to load memories: {e}")
@@ -121,9 +139,26 @@ class MemoryManager:
     def _save_memories(self) -> None:
         """保存所有记忆"""
         try:
-            data = [m.to_dict() for m in self._memories.values()]
-            with open(self.memories_file, "w", encoding="utf-8") as f:
+            with self._memories_lock:
+                data = [m.to_dict() for m in self._memories.values()]
+
+            tmp = self.memories_file.with_suffix(self.memories_file.suffix + ".tmp")
+            bak = self.memories_file.with_suffix(self.memories_file.suffix + ".bak")
+
+            self.memories_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            # 尽力备份旧文件
+            if self.memories_file.exists():
+                with contextlib.suppress(Exception):
+                    if bak.exists():
+                        bak.unlink()
+                    os.replace(str(self.memories_file), str(bak))
+
+            os.replace(str(tmp), str(self.memories_file))
         except Exception as e:
             logger.error(f"Failed to save memories: {e}")
 
@@ -238,49 +273,50 @@ class MemoryManager:
         1. 字符串前缀匹配（快速）
         2. 向量相似度检测（语义）
         """
-        # 1. 字符串去重检查（快速）
-        existing = list(self._memories.values())
-        unique = self.extractor.deduplicate([memory], existing)
+        with self._memories_lock:
+            # 1. 字符串去重检查（快速）
+            existing = list(self._memories.values())
+            unique = self.extractor.deduplicate([memory], existing)
 
-        if not unique:
-            logger.debug(f"Memory duplicate (string match): {memory.content}")
-            return ""
+            if not unique:
+                logger.debug(f"Memory duplicate (string match): {memory.content}")
+                return ""
 
-        memory = unique[0]
+            memory = unique[0]
 
-        # 2. 向量相似度检测（语义去重）
-        if self.vector_store.enabled and len(self._memories) > 0:
-            # 去掉通用前缀后再比较，避免格式相似但内容不同的被误判
-            core_content = self._strip_common_prefix(memory.content)
-            similar = self.vector_store.search(core_content, limit=3)
-            for mid, distance in similar:
-                if distance < self.DUPLICATE_DISTANCE_THRESHOLD:
-                    existing_mem = self._memories.get(mid)
-                    if existing_mem:
-                        # 也去掉已存在记忆的前缀再比较
-                        existing_core = self._strip_common_prefix(existing_mem.content)
-                        # 如果核心内容不同，跳过（不是真正的重复）
-                        if core_content != existing_core:
-                            continue
-                        logger.info(
-                            f"Memory duplicate (semantic, dist={distance:.3f}): "
-                            f"'{memory.content}' similar to '{existing_mem.content}'"
-                        )
-                        return ""  # 语义重复，不存入
+            # 2. 向量相似度检测（语义去重）
+            if self.vector_store.enabled and len(self._memories) > 0:
+                # 去掉通用前缀后再比较，避免格式相似但内容不同的被误判
+                core_content = self._strip_common_prefix(memory.content)
+                similar = self.vector_store.search(core_content, limit=3)
+                for mid, distance in similar:
+                    if distance < self.DUPLICATE_DISTANCE_THRESHOLD:
+                        existing_mem = self._memories.get(mid)
+                        if existing_mem:
+                            # 也去掉已存在记忆的前缀再比较
+                            existing_core = self._strip_common_prefix(existing_mem.content)
+                            # 如果核心内容不同，跳过（不是真正的重复）
+                            if core_content != existing_core:
+                                continue
+                            logger.info(
+                                f"Memory duplicate (semantic, dist={distance:.3f}): "
+                                f"'{memory.content}' similar to '{existing_mem.content}'"
+                            )
+                            return ""  # 语义重复，不存入
 
-        # 3. 存入 memories.json
-        self._memories[memory.id] = memory
-        self._save_memories()
+            # 3. 存入 memories.json
+            self._memories[memory.id] = memory
+            self._save_memories()
 
-        # 4. 存入向量库
-        self.vector_store.add_memory(
-            memory_id=memory.id,
-            content=memory.content,
-            memory_type=memory.type.value,
-            priority=memory.priority.value,
-            importance=memory.importance_score,
-            tags=memory.tags,
-        )
+            # 4. 存入向量库
+            self.vector_store.add_memory(
+                memory_id=memory.id,
+                content=memory.content,
+                memory_type=memory.type.value,
+                priority=memory.priority.value,
+                importance=memory.importance_score,
+                tags=memory.tags,
+            )
 
         logger.debug(f"Added memory: {memory.id} - {memory.content}")
         return memory.id
@@ -318,11 +354,12 @@ class MemoryManager:
 
     def get_memory(self, memory_id: str) -> Memory | None:
         """获取单条记忆"""
-        memory = self._memories.get(memory_id)
-        if memory:
-            memory.access_count += 1
-            memory.updated_at = datetime.now()
-        return memory
+        with self._memories_lock:
+            memory = self._memories.get(memory_id)
+            if memory:
+                memory.access_count += 1
+                memory.updated_at = datetime.now()
+            return memory
 
     def search_memories(
         self,
@@ -334,20 +371,21 @@ class MemoryManager:
         """搜索记忆"""
         results = []
 
-        for memory in self._memories.values():
-            # 类型过滤
-            if memory_type and memory.type != memory_type:
-                continue
+        with self._memories_lock:
+            for memory in self._memories.values():
+                # 类型过滤
+                if memory_type and memory.type != memory_type:
+                    continue
 
-            # 标签过滤
-            if tags and not any(tag in memory.tags for tag in tags):
-                continue
+                # 标签过滤
+                if tags and not any(tag in memory.tags for tag in tags):
+                    continue
 
-            # 关键词过滤
-            if query and query.lower() not in memory.content.lower():
-                continue
+                # 关键词过滤
+                if query and query.lower() not in memory.content.lower():
+                    continue
 
-            results.append(memory)
+                results.append(memory)
 
         # 按重要性和访问次数排序
         results.sort(key=lambda m: (m.importance_score, m.access_count), reverse=True)
@@ -362,17 +400,18 @@ class MemoryManager:
         1. memories.json
         2. ChromaDB 向量库
         """
-        if memory_id in self._memories:
-            # 1. 从 memories.json 删除
-            del self._memories[memory_id]
-            self._save_memories()
+        with self._memories_lock:
+            if memory_id in self._memories:
+                # 1. 从 memories.json 删除
+                del self._memories[memory_id]
+                self._save_memories()
 
-            # 2. 从向量库删除
-            self.vector_store.delete_memory(memory_id)
+                # 2. 从向量库删除
+                self.vector_store.delete_memory(memory_id)
 
-            logger.debug(f"Deleted memory: {memory_id}")
-            return True
-        return False
+                logger.debug(f"Deleted memory: {memory_id}")
+                return True
+            return False
 
     # ==================== 记忆注入 ====================
 
@@ -481,22 +520,28 @@ class MemoryManager:
         now = datetime.now()
         expired = []
 
-        for memory_id, memory in self._memories.items():
-            # 短期记忆: 3天过期
-            if memory.priority == MemoryPriority.SHORT_TERM:
-                if (now - memory.updated_at) > timedelta(days=3):
-                    expired.append(memory_id)
+        with self._memories_lock:
+            for memory_id, memory in list(self._memories.items()):
+                # 短期记忆: 3天过期
+                if memory.priority == MemoryPriority.SHORT_TERM:
+                    if (now - memory.updated_at) > timedelta(days=3):
+                        expired.append(memory_id)
 
-            # 临时记忆: 1天过期
-            elif memory.priority == MemoryPriority.TRANSIENT:
-                if (now - memory.updated_at) > timedelta(days=1):
-                    expired.append(memory_id)
+                # 临时记忆: 1天过期
+                elif memory.priority == MemoryPriority.TRANSIENT:
+                    if (now - memory.updated_at) > timedelta(days=1):
+                        expired.append(memory_id)
 
-        for memory_id in expired:
-            del self._memories[memory_id]
+            for memory_id in expired:
+                with contextlib.suppress(KeyError):
+                    del self._memories[memory_id]
 
         if expired:
             self._save_memories()
+            # 同步清理向量库，避免幽灵记录
+            for memory_id in expired:
+                with contextlib.suppress(Exception):
+                    self.vector_store.delete_memory(memory_id)
             logger.info(f"Cleaned up {len(expired)} expired memories")
 
         return len(expired)

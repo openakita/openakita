@@ -275,9 +275,10 @@ class Agent:
     # BASE_TOOLS 已移至 tools/definitions/ 目录
     # 通过 from ..tools.definitions import BASE_TOOLS 导入
 
-    # 当前 IM 会话信息（由 chat_with_session 设置）
-    _current_im_session = None
-    _current_im_gateway = None
+    # 说明：历史上这里用类变量保存 IM 上下文，存在并发串台风险。
+    # 现在改为使用 `openakita.core.im_context` 中的 contextvars（协程隔离）。
+    _current_im_session = None  # legacy: 保留字段避免外部引用崩溃（不再使用）
+    _current_im_gateway = None  # legacy: 保留字段避免外部引用崩溃（不再使用）
 
     # 停止任务的指令列表（用户发送这些指令时会立即停止当前任务）
     STOP_COMMANDS = {
@@ -1291,28 +1292,11 @@ search_github → install_skill → 使用
 - **提醒/定时任务必须使用 schedule_task 工具**，不要只是回复"好的"
 - 当用户说"X分钟后提醒我"时，立即调用 schedule_task 创建任务
 
-### 主动沟通 (极其重要!!!)
+### 主动沟通
 
-**第一条铁律：收到用户消息后，先用“正常文本回复”确认收到，再开始执行！**
-
-不管任务简单还是复杂，先让用户知道你收到了：
-- 收到任务 → 先回复一句“收到！我开始处理…” → 然后开始干活
-- **不要**闷头执行一堆命令不回话（IM 会话里网关会转发你的文本；CLI 里文本会直接显示）
-
-**执行过程中也要汇报进度：**
-- 每完成一个重要步骤，用简短文字说明进展
-- 遇到问题需要确认时，提出**最小**澄清问题
-- 完成后给出最终结果；如涉及附件交付，用 `deliver_artifacts` 并以回执为证据
-
-**示例流程**:
-1. 用户: "语音功能实现了吗"
-2. AI: "收到！我来检查一下语音功能的实现状态..."  ← 先回复！
-3. AI: [执行检查命令]
-4. AI: "检查完毕：语音识别脚本已创建，但还需要集成到系统中。"
-5. AI: [继续处理]
-6. AI: "✅ 完成！你现在可以发送语音消息测试了。"
-
-**禁止：收到消息后不回复就开始执行一堆命令！**
+- 对话型请求：直接回答即可，不需要固定的“收到/开始处理”确认语。
+- 任务型请求：在关键节点给出简短进度与结果（避免刷屏）。
+- 如涉及附件交付：使用 `deliver_artifacts` 并以回执为证据（不要空口宣称“已发送/已交付”）。
 
 ### 定时任务/提醒 (极其重要!!!)
 
@@ -1872,9 +1856,10 @@ search_github → install_skill → 使用
         except Exception as e:
             logger.warning(f"[Memory] Failed to align memory session: {e}")
 
-        # 保存当前 IM 会话信息（供 deliver_artifacts / get_chat_history 等 IM 工具使用）
-        Agent._current_im_session = session
-        Agent._current_im_gateway = gateway
+        # 保存当前 IM 会话信息（供 IM 工具使用，协程隔离）
+        from .im_context import reset_im_context, set_im_context
+
+        im_tokens = set_im_context(session=session, gateway=gateway)
 
         # === 设置当前会话（供中断检查使用）===
         self._current_session = session
@@ -2017,9 +2002,9 @@ search_github → install_skill → 使用
             # 清理临时任务定义（避免跨会话串扰）
             self._current_task_definition = ""
             self._current_task_query = ""
-            # 清除 IM 会话信息
-            Agent._current_im_session = None
-            Agent._current_im_gateway = None
+            # 清除 IM 会话信息（协程隔离）
+            with contextlib.suppress(Exception):
+                reset_im_context(im_tokens)
             # 清除当前会话引用
             self._current_session = None
 

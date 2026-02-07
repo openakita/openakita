@@ -8,6 +8,7 @@
 """
 
 import logging
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -77,51 +78,53 @@ class VectorStore:
 
         # 延迟初始化
         self._initialized = False
+        self._lock = threading.RLock()
 
     def _ensure_initialized(self) -> bool:
         """确保已初始化"""
-        if self._initialized:
-            return self._enabled
+        with self._lock:
+            if self._initialized:
+                return self._enabled
 
-        self._initialized = True
+            self._initialized = True
 
-        if not _lazy_import():
-            self._enabled = False
-            return False
+            if not _lazy_import():
+                self._enabled = False
+                return False
 
-        try:
-            # 初始化 embedding 模型
-            logger.info(f"Loading embedding model: {self.model_name}")
-            self._model = _sentence_transformer(
-                self.model_name,
-                device=self.device,
-            )
+            try:
+                # 初始化 embedding 模型
+                logger.info(f"Loading embedding model: {self.model_name}")
+                self._model = _sentence_transformer(
+                    self.model_name,
+                    device=self.device,
+                )
 
-            # 初始化 ChromaDB
-            chromadb_dir = self.data_dir / "chromadb"
-            chromadb_dir.mkdir(parents=True, exist_ok=True)
+                # 初始化 ChromaDB
+                chromadb_dir = self.data_dir / "chromadb"
+                chromadb_dir.mkdir(parents=True, exist_ok=True)
 
-            from chromadb.config import Settings
+                from chromadb.config import Settings
 
-            self._client = _chromadb.PersistentClient(
-                path=str(chromadb_dir),
-                settings=Settings(anonymized_telemetry=False),
-            )
+                self._client = _chromadb.PersistentClient(
+                    path=str(chromadb_dir),
+                    settings=Settings(anonymized_telemetry=False),
+                )
 
-            # 获取或创建 collection
-            self._collection = self._client.get_or_create_collection(
-                name="memories",
-                metadata={"hnsw:space": "cosine"},
-            )
+                # 获取或创建 collection
+                self._collection = self._client.get_or_create_collection(
+                    name="memories",
+                    metadata={"hnsw:space": "cosine"},
+                )
 
-            self._enabled = True
-            logger.info(f"VectorStore initialized with {self._collection.count()} memories")
-            return True
+                self._enabled = True
+                logger.info(f"VectorStore initialized with {self._collection.count()} memories")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to initialize VectorStore: {e}")
-            self._enabled = False
-            return False
+            except Exception as e:
+                logger.error(f"Failed to initialize VectorStore: {e}")
+                self._enabled = False
+                return False
 
     @property
     def enabled(self) -> bool:
@@ -155,23 +158,24 @@ class VectorStore:
             return False
 
         try:
-            # 计算 embedding
-            embedding = self._model.encode(content).tolist()
+            with self._lock:
+                # 计算 embedding
+                embedding = self._model.encode(content).tolist()
 
-            # 存储到 ChromaDB
-            self._collection.add(
-                ids=[memory_id],
-                embeddings=[embedding],
-                documents=[content],
-                metadatas=[
-                    {
-                        "type": memory_type,
-                        "priority": priority,
-                        "importance": importance,
-                        "tags": ",".join(tags) if tags else "",
-                    }
-                ],
-            )
+                # 存储到 ChromaDB
+                self._collection.add(
+                    ids=[memory_id],
+                    embeddings=[embedding],
+                    documents=[content],
+                    metadatas=[
+                        {
+                            "type": memory_type,
+                            "priority": priority,
+                            "importance": importance,
+                            "tags": ",".join(tags) if tags else "",
+                        }
+                    ],
+                )
 
             logger.debug(f"Added memory to vector store: {memory_id}")
             return True
@@ -203,20 +207,21 @@ class VectorStore:
             return []
 
         try:
-            # 计算查询 embedding
-            query_embedding = self._model.encode(query).tolist()
+            with self._lock:
+                # 计算查询 embedding
+                query_embedding = self._model.encode(query).tolist()
 
-            # 构建过滤条件
-            where = None
-            if filter_type:
-                where = {"type": filter_type}
+                # 构建过滤条件
+                where = None
+                if filter_type:
+                    where = {"type": filter_type}
 
-            # 搜索
-            results = self._collection.query(
-                query_embeddings=[query_embedding],
-                n_results=limit,
-                where=where,
-            )
+                # 搜索
+                results = self._collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=limit,
+                    where=where,
+                )
 
             if not results["ids"] or not results["ids"][0]:
                 return []
@@ -254,7 +259,8 @@ class VectorStore:
             return False
 
         try:
-            self._collection.delete(ids=[memory_id])
+            with self._lock:
+                self._collection.delete(ids=[memory_id])
             logger.debug(f"Deleted memory from vector store: {memory_id}")
             return True
         except Exception as e:
@@ -288,23 +294,24 @@ class VectorStore:
             return False
 
         try:
-            # 计算新 embedding
-            embedding = self._model.encode(content).tolist()
+            with self._lock:
+                # 计算新 embedding
+                embedding = self._model.encode(content).tolist()
 
-            # 更新
-            self._collection.update(
-                ids=[memory_id],
-                embeddings=[embedding],
-                documents=[content],
-                metadatas=[
-                    {
-                        "type": memory_type,
-                        "priority": priority,
-                        "importance": importance,
-                        "tags": ",".join(tags) if tags else "",
-                    }
-                ],
-            )
+                # 更新
+                self._collection.update(
+                    ids=[memory_id],
+                    embeddings=[embedding],
+                    documents=[content],
+                    metadatas=[
+                        {
+                            "type": memory_type,
+                            "priority": priority,
+                            "importance": importance,
+                            "tags": ",".join(tags) if tags else "",
+                        }
+                    ],
+                )
 
             logger.debug(f"Updated memory in vector store: {memory_id}")
             return True
@@ -318,12 +325,13 @@ class VectorStore:
         if not self._ensure_initialized():
             return {"enabled": False, "count": 0}
 
-        return {
-            "enabled": True,
-            "count": self._collection.count(),
-            "model": self.model_name,
-            "device": self.device,
-        }
+        with self._lock:
+            return {
+                "enabled": True,
+                "count": self._collection.count(),
+                "model": self.model_name,
+                "device": self.device,
+            }
 
     def clear(self) -> bool:
         """清空所有记忆"""
@@ -331,12 +339,13 @@ class VectorStore:
             return False
 
         try:
-            # 删除并重新创建 collection
-            self._client.delete_collection("memories")
-            self._collection = self._client.get_or_create_collection(
-                name="memories",
-                metadata={"hnsw:space": "cosine"},
-            )
+            with self._lock:
+                # 删除并重新创建 collection
+                self._client.delete_collection("memories")
+                self._collection = self._client.get_or_create_collection(
+                    name="memories",
+                    metadata={"hnsw:space": "cosine"},
+                )
             logger.info("Cleared all memories from vector store")
             return True
         except Exception as e:
@@ -363,29 +372,30 @@ class VectorStore:
             return 0
 
         try:
-            # 批量计算 embedding
-            contents = [m["content"] for m in memories]
-            embeddings = self._model.encode(contents).tolist()
+            with self._lock:
+                # 批量计算 embedding
+                contents = [m["content"] for m in memories]
+                embeddings = self._model.encode(contents).tolist()
 
-            # 准备数据
-            ids = [m["id"] for m in memories]
-            metadatas = [
-                {
-                    "type": m.get("type", "fact"),
-                    "priority": m.get("priority", "short_term"),
-                    "importance": m.get("importance", 0.5),
-                    "tags": ",".join(m.get("tags", [])),
-                }
-                for m in memories
-            ]
+                # 准备数据
+                ids = [m["id"] for m in memories]
+                metadatas = [
+                    {
+                        "type": m.get("type", "fact"),
+                        "priority": m.get("priority", "short_term"),
+                        "importance": m.get("importance", 0.5),
+                        "tags": ",".join(m.get("tags", [])),
+                    }
+                    for m in memories
+                ]
 
-            # 批量添加
-            self._collection.add(
-                ids=ids,
-                embeddings=embeddings,
-                documents=contents,
-                metadatas=metadatas,
-            )
+                # 批量添加
+                self._collection.add(
+                    ids=ids,
+                    embeddings=embeddings,
+                    documents=contents,
+                    metadatas=metadatas,
+                )
 
             logger.info(f"Batch added {len(memories)} memories to vector store")
             return len(memories)

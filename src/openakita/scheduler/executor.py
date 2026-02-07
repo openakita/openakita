@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -119,13 +120,17 @@ class TaskExecutor:
             message_sent = False
 
             if task.channel_id and task.chat_id and self.gateway:
-                await self.gateway.send(
+                msg_id = await self.gateway.send(
                     channel=task.channel_id,
                     chat_id=task.chat_id,
                     text=message,
                 )
+                if not msg_id:
+                    raise RuntimeError(
+                        f"Reminder send failed (no message_id) for {task.channel_id}/{task.chat_id}"
+                    )
                 message_sent = True
-                logger.info(f"TaskExecutor: reminder {task.id} message sent")
+                logger.info(f"TaskExecutor: reminder {task.id} message sent (message_id={msg_id})")
 
             # 2. 让 LLM 判断是否需要执行额外操作
             # 这是为了防止设定任务时误判，把复杂任务变成了提醒
@@ -159,12 +164,11 @@ class TaskExecutor:
         """
         try:
             # 清除 IM 上下文，防止判断时发送消息
-            from ..core.agent import Agent
+            from ..core.im_context import get_im_gateway, get_im_session, reset_im_context, set_im_context
 
-            old_session = getattr(Agent, "_current_im_session", None)
-            old_gateway = getattr(Agent, "_current_im_gateway", None)
-            Agent._current_im_session = None
-            Agent._current_im_gateway = None
+            old_session = get_im_session()
+            old_gateway = get_im_gateway()
+            tokens = set_im_context(session=None, gateway=None)
 
             try:
                 # 使用 Brain 直接判断，不创建完整 Agent（更轻量、不会发消息）
@@ -194,8 +198,7 @@ class TaskExecutor:
 
             finally:
                 # 恢复 IM 上下文
-                Agent._current_im_session = old_session
-                Agent._current_im_gateway = old_gateway
+                reset_im_context(tokens)
 
         except Exception as e:
             logger.warning(f"Failed to check reminder execution: {e}, assuming no action needed")
@@ -233,12 +236,13 @@ class TaskExecutor:
         if task.action and task.action.startswith("system:"):
             return await self._execute_system_task(task)
 
+        agent = None
+        im_context_set = False
         try:
             # 1. 创建 Agent
             agent = await self._create_agent()
 
             # 2. 如果任务有 IM 通道信息，注入 IM 上下文
-            im_context_set = False
             if task.channel_id and task.chat_id and self.gateway:
                 im_context_set = await self._setup_im_context(agent, task)
 
@@ -256,30 +260,29 @@ class TaskExecutor:
                 if not skip_end_notification:
                     await self._send_end_notification(task, success=False, message=error_msg)
                 return False, error_msg
-            finally:
-                # 清理 IM 上下文
-                if im_context_set:
-                    self._cleanup_im_context(agent)
 
             # 5. 发送结果通知（如果需要）
-            # - 如果 Agent 已经通过 send_to_chat 发送，不重复发送
-            # - 如果是从提醒升级的，也不重复发送
             agent_sent = getattr(agent, "_task_message_sent", False)
             if not agent_sent and not skip_end_notification:
                 await self._send_end_notification(task, success=True, message=result)
-
-            # 6. 清理 Agent
-            await self._cleanup_agent(agent)
 
             logger.info(f"TaskExecutor: task {task.id} completed successfully")
             return True, result
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"TaskExecutor: task {task.id} failed: {error_msg}")
+            logger.error(f"TaskExecutor: task {task.id} failed: {error_msg}", exc_info=True)
             if not skip_end_notification:
                 await self._send_end_notification(task, success=False, message=error_msg)
             return False, error_msg
+        finally:
+            # 清理 IM 上下文
+            if agent and im_context_set:
+                self._cleanup_im_context(agent)
+            # 清理 Agent（确保超时/异常路径也会执行）
+            if agent:
+                with contextlib.suppress(Exception):
+                    await self._cleanup_agent(agent)
 
     async def _send_start_notification(self, task: ScheduledTask) -> None:
         """发送任务开始通知"""
@@ -345,7 +348,7 @@ class TaskExecutor:
         为定时任务注入 IM 上下文，让 Agent 可以使用 IM 工具（如 deliver_artifacts / get_chat_history）
         """
         try:
-            from ..core.agent import Agent
+            from ..core.im_context import set_im_context
             from ..sessions import Session
 
             # 创建虚拟 Session（用于 IM 工具上下文）
@@ -355,9 +358,8 @@ class TaskExecutor:
                 user_id=task.user_id or "scheduled_task",
             )
 
-            # 注入到 Agent 类变量
-            Agent._current_im_session = virtual_session
-            Agent._current_im_gateway = self.gateway
+            # 注入到协程上下文（避免并发串台）
+            set_im_context(session=virtual_session, gateway=self.gateway)
 
             logger.info(f"Set up IM context for task {task.id}: {task.channel_id}/{task.chat_id}")
             return True
@@ -369,10 +371,9 @@ class TaskExecutor:
     def _cleanup_im_context(self, agent: Any) -> None:
         """清理 IM 上下文"""
         try:
-            from ..core.agent import Agent
+            from ..core.im_context import set_im_context
 
-            Agent._current_im_session = None
-            Agent._current_im_gateway = None
+            set_im_context(session=None, gateway=None)
         except Exception:
             pass
 

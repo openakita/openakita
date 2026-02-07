@@ -240,21 +240,43 @@ class LLMClient:
 
         if eligible:
             return await self._try_endpoints(eligible, request, allow_failover=allow_failover)
-        elif require_video:
-            # 视频能力是硬需求，无法降级
+        # eligible 为空时，可能原因包括：
+        # - 配置里确实没有满足能力的端点
+        # - 端点存在但都处于冷静期/不健康（被筛掉）
+        providers_sorted = sorted(self._providers.values(), key=lambda p: p.config.priority)
+        capability_matched = [
+            p
+            for p in providers_sorted
+            if (not require_tools or p.config.has_capability("tools"))
+            and (not require_vision or p.config.has_capability("vision"))
+            and (not require_video or p.config.has_capability("video"))
+            and (not require_thinking or p.config.has_capability("thinking"))
+        ]
+
+        if require_video and not capability_matched:
+            # 视频能力是硬需求：如果配置里没有视频端点，明确报错
             raise UnsupportedMediaError(
                 "No endpoint supports video. Configure a video-capable endpoint (e.g., kimi-k2.5)."
             )
-        else:
-            # 其他能力无匹配：警告后用首选端点尝试
+
+        if capability_matched:
+            # 有能力匹配的端点，但都不健康/冷静期，日志要避免误导
             logger.warning(
-                f"No endpoint supports required capabilities: "
-                f"tools={require_tools}, vision={require_vision}, "
-                f"video={require_video}. Falling back to primary endpoint."
+                "No healthy endpoint meets required capabilities: "
+                f"tools={require_tools}, vision={require_vision}, video={require_video}, "
+                f"thinking={require_thinking}. Trying capability-matched endpoints anyway."
             )
             return await self._try_endpoints(
-                list(self._providers.values()), request, allow_failover=allow_failover
+                capability_matched, request, allow_failover=allow_failover
             )
+
+        # 配置里确实没有能力匹配：警告后用首选端点尝试（尽量不中断）
+        logger.warning(
+            f"No endpoint supports required capabilities: "
+            f"tools={require_tools}, vision={require_vision}, "
+            f"video={require_video}, thinking={require_thinking}. Falling back to primary endpoint."
+        )
+        return await self._try_endpoints(providers_sorted, request, allow_failover=allow_failover)
 
     async def chat_stream(
         self,
@@ -300,9 +322,18 @@ class LLMClient:
         )
 
         if not eligible:
-            if require_video:
+            providers_sorted = sorted(self._providers.values(), key=lambda p: p.config.priority)
+            capability_matched = [
+                p
+                for p in providers_sorted
+                if (not require_tools or p.config.has_capability("tools"))
+                and (not require_vision or p.config.has_capability("vision"))
+                and (not require_video or p.config.has_capability("video"))
+            ]
+
+            if require_video and not capability_matched:
                 raise UnsupportedMediaError("No endpoint supports video")
-            eligible = list(self._providers.values())
+            eligible = capability_matched if capability_matched else providers_sorted
 
         # 流式只尝试第一个端点
         provider = eligible[0]

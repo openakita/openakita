@@ -50,9 +50,9 @@ class IMChannelHandler:
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
-        from ...core.agent import Agent
+        from ...core.im_context import get_im_session
 
-        if not Agent._current_im_session:
+        if not get_im_session():
             # CLI 模式下静默成功，避免死循环（建议 3）
             if tool_name == "send_to_chat":
                 message = params.get("message", "")[:50]
@@ -80,9 +80,9 @@ class IMChannelHandler:
         Returns:
             (adapter, chat_id, channel_name) 或 (None, None, None) 如果获取失败
         """
-        from ...core.agent import Agent
+        from ...core.im_context import get_im_session
 
-        session = Agent._current_im_session
+        session = get_im_session()
         if not session:
             return None, None, None
 
@@ -96,7 +96,10 @@ class IMChannelHandler:
 
         # 获取对应的 adapter
         channel = current_message.channel
-        adapter = gateway._adapters.get(channel)
+        # 避免访问私有属性：优先使用公开接口
+        adapter = gateway.get_adapter(channel) if hasattr(gateway, "get_adapter") else None
+        if adapter is None:
+            adapter = getattr(gateway, "_adapters", {}).get(channel)
 
         if not adapter:
             logger.warning(f"Adapter not found for channel: {channel}")
@@ -254,7 +257,7 @@ class IMChannelHandler:
                     msg = await self._send_voice(adapter, chat_id, path, caption, channel)
                     receipt["status"] = "delivered" if msg.startswith("✅") else "failed"
                     receipt["message"] = msg
-                    m = re.search(r"message_id=([^)]+)\\)", msg)
+                    m = re.search(r"message_id=([^)]+)\)", msg)
                     if m:
                         receipt["message_id"] = m.group(1)
                     if receipt["status"] != "delivered":
@@ -263,7 +266,7 @@ class IMChannelHandler:
                     msg = await self._send_image(adapter, chat_id, path, caption, channel)
                     receipt["status"] = "delivered" if msg.startswith("✅") else "failed"
                     receipt["message"] = msg
-                    m = re.search(r"message_id=([^)]+)\\)", msg)
+                    m = re.search(r"message_id=([^)]+)\)", msg)
                     if m:
                         receipt["message_id"] = m.group(1)
                     if receipt["status"] != "delivered":
@@ -272,7 +275,7 @@ class IMChannelHandler:
                     msg = await self._send_file(adapter, chat_id, path, caption, channel)
                     receipt["status"] = "delivered" if msg.startswith("✅") else "failed"
                     receipt["message"] = msg
-                    m = re.search(r"message_id=([^)]+)\\)", msg)
+                    m = re.search(r"message_id=([^)]+)\)", msg)
                     if m:
                         receipt["message_id"] = m.group(1)
                     if receipt["status"] != "delivered":
@@ -389,9 +392,9 @@ class IMChannelHandler:
 
     def _get_voice_file(self, params: dict) -> str:
         """获取语音文件路径"""
-        from ...core.agent import Agent
+        from ...core.im_context import get_im_session
 
-        session = Agent._current_im_session
+        session = get_im_session()
 
         # 从 session metadata 获取语音信息
         pending_voices = session.get_metadata("pending_voices")
@@ -405,9 +408,9 @@ class IMChannelHandler:
 
     def _get_image_file(self, params: dict) -> str:
         """获取图片文件路径"""
-        from ...core.agent import Agent
+        from ...core.im_context import get_im_session
 
-        session = Agent._current_im_session
+        session = get_im_session()
 
         # 从 session metadata 获取图片信息
         pending_images = session.get_metadata("pending_images")
@@ -421,9 +424,9 @@ class IMChannelHandler:
 
     async def _get_chat_history(self, params: dict) -> str:
         """获取聊天历史"""
-        from ...core.agent import Agent
+        from ...core.im_context import get_im_session
 
-        session = Agent._current_im_session
+        session = get_im_session()
         limit = params.get("limit", 20)
 
         # 从 session context 获取消息历史

@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -78,6 +79,7 @@ class TaskScheduler:
 
         # 加载任务
         self._load_tasks()
+        self._load_executions()
 
     async def start(self) -> None:
         """启动调度器"""
@@ -310,24 +312,36 @@ class TaskScheduler:
 
         try:
             if self.executor:
-                success, result = await self.executor(task)
-                execution.finish(success, result=result)
+                success, result_or_error = await self.executor(task)
+                if success:
+                    execution.finish(True, result=result_or_error)
+                else:
+                    execution.finish(False, error=result_or_error)
             else:
                 # 没有执行器，模拟执行
                 execution.finish(True, result="No executor configured")
 
-            # 更新任务状态
-            trigger = self._triggers.get(task.id)
-            next_run = trigger.get_next_run_time(datetime.now()) if trigger else None
-            task.mark_completed(next_run)
-
-            logger.info(f"Task {task.id} completed successfully")
+            # 根据执行结果更新任务状态
+            if execution.status == "success":
+                trigger = self._triggers.get(task.id)
+                next_run = trigger.get_next_run_time(datetime.now()) if trigger else None
+                task.mark_completed(next_run)
+                logger.info(f"Task {task.id} completed successfully")
+            else:
+                # 失败：标记失败并尽量推进下一次运行时间（避免 next_run 停留在过去）
+                error_msg = execution.error or "Unknown error"
+                task.mark_failed(error_msg)
+                trigger = self._triggers.get(task.id)
+                next_run = trigger.get_next_run_time(datetime.now()) if trigger else None
+                if next_run:
+                    task.next_run = next_run
+                logger.warning(f"Task {task.id} reported failure: {error_msg}")
 
         except Exception as e:
             error_msg = str(e)
             execution.finish(False, error=error_msg)
             task.mark_failed(error_msg)
-            logger.error(f"Task {task.id} failed: {error_msg}")
+            logger.error(f"Task {task.id} failed: {error_msg}", exc_info=True)
 
         # 保存执行记录
         self._executions.append(execution)
@@ -383,10 +397,66 @@ class TaskScheduler:
 
     # ==================== 持久化 ====================
 
+    def _atomic_write_json(self, target: Path, data: object) -> None:
+        """
+        原子写入 JSON 文件（Windows 友好）
+        - 写入临时文件
+        - fsync 落盘
+        - 使用 os.replace 原子替换目标文件
+        - 保留 .bak 备份（尽力而为，不阻塞主流程）
+        """
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        bak = target.with_suffix(target.suffix + ".bak")
+
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+
+        # 尽力备份旧文件
+        if target.exists():
+            with contextlib.suppress(Exception):
+                if bak.exists():
+                    bak.unlink()
+                # 用 replace，允许覆盖旧 bak
+                os.replace(str(target), str(bak))
+
+        os.replace(str(tmp), str(target))
+
+    def _try_recover_json(self, target: Path) -> bool:
+        """
+        当 target 缺失/损坏时，尝试从 .bak 或 .tmp 恢复。
+        返回是否执行了恢复动作（成功与否都算尝试过）。
+        """
+        bak = target.with_suffix(target.suffix + ".bak")
+        tmp = target.with_suffix(target.suffix + ".tmp")
+
+        # 目标文件存在则不恢复
+        if target.exists():
+            return False
+
+        if bak.exists():
+            with contextlib.suppress(Exception):
+                os.replace(str(bak), str(target))
+                logger.warning(f"Recovered {target.name} from backup")
+                return True
+
+        if tmp.exists():
+            with contextlib.suppress(Exception):
+                os.replace(str(tmp), str(target))
+                logger.warning(f"Recovered {target.name} from temp file")
+                return True
+
+        return False
+
     def _load_tasks(self) -> None:
         """加载任务"""
         tasks_file = self.storage_path / "tasks.json"
 
+        # 若文件不存在，尝试恢复（Windows 上 rename 非原子，可能在崩溃窗口丢失）
+        if not tasks_file.exists():
+            self._try_recover_json(tasks_file)
         if not tasks_file.exists():
             return
 
@@ -411,15 +481,35 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
 
+    def _load_executions(self) -> None:
+        """加载执行记录（可选）"""
+        executions_file = self.storage_path / "executions.json"
+
+        if not executions_file.exists():
+            self._try_recover_json(executions_file)
+        if not executions_file.exists():
+            return
+
+        try:
+            with open(executions_file, encoding="utf-8") as f:
+                data = json.load(f)
+            loaded = []
+            for item in data or []:
+                with contextlib.suppress(Exception):
+                    loaded.append(TaskExecution.from_dict(item))
+            # 只保留最近 1000 条
+            self._executions = loaded[-1000:]
+            logger.info(f"Loaded {len(self._executions)} executions from storage")
+        except Exception as e:
+            logger.warning(f"Failed to load executions: {e}")
+
     def _save_tasks(self) -> None:
         """保存任务"""
         tasks_file = self.storage_path / "tasks.json"
 
         try:
             data = [task.to_dict() for task in self._tasks.values()]
-
-            with open(tasks_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            self._atomic_write_json(tasks_file, data)
 
         except Exception as e:
             logger.error(f"Failed to save tasks: {e}")
@@ -432,9 +522,9 @@ class TaskScheduler:
             # 只保留最近 1000 条记录
             recent = self._executions[-1000:]
             data = [e.to_dict() for e in recent]
-
-            with open(executions_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            # 同步裁剪内存，避免长期运行无限增长
+            self._executions = recent
+            self._atomic_write_json(executions_file, data)
 
         except Exception as e:
             logger.error(f"Failed to save executions: {e}")

@@ -1,3 +1,187 @@
+# 测试与 CI 指南（当前仓库实情版）
+
+本文档以仓库当前实现为准，目标是让你能：
+- 本地一键复现 CI
+- 了解哪些测试是纯单测/模拟，哪些需要外部凭据
+- 明确工程的测试分层与覆盖范围
+
+---
+
+## CI 流程（GitHub Actions）
+
+CI 配置文件：`.github/workflows/ci.yml`，当前分 3 个 job。
+
+### 1) `lint`（Ubuntu / Python 3.11）
+
+安装：
+
+- `ruff`、`mypy`
+- `pip install -e .`
+
+执行：
+
+```bash
+ruff check src/
+mypy src/ --ignore-missing-imports
+```
+
+说明：
+- `mypy` 当前作为“尽力而为”检查（见 `pyproject.toml`：`ignore_errors = true`），用于尽早暴露明显问题；不以“全量类型正确”为门槛。
+
+### 2) `test`（多 OS / 多版本）
+
+矩阵：
+- OS：Ubuntu / Windows / macOS
+- Python：3.11 / 3.12
+
+安装：
+
+```bash
+pip install -e ".[dev]"
+```
+
+执行：
+
+```bash
+pytest tests/ -v --cov=src/openakita --cov-report=xml
+```
+
+覆盖率：
+- 产物：`coverage.xml`
+- 上传：仅 Ubuntu + Python 3.11 的矩阵分支会上传到 Codecov
+
+### 3) `build`（Ubuntu / Python 3.11）
+
+依赖：`lint`、`test`
+
+执行：
+
+```bash
+python -m build
+```
+
+并上传 `dist/` 作为构建产物。
+
+---
+
+## 本地复现 CI（推荐命令）
+
+### 安装开发依赖
+
+```bash
+python -m pip install -U pip
+pip install -e ".[dev]"
+```
+
+### Lint / Type Check
+
+```bash
+ruff check src/
+mypy src/ --ignore-missing-imports
+```
+
+### 运行测试（与 CI 一致）
+
+```bash
+pytest tests/ -v
+```
+
+带覆盖率：
+
+```bash
+pytest tests/ -v --cov=src/openakita --cov-report=xml
+```
+
+---
+
+## 测试分层与目录结构（真实结构）
+
+当前 pytest 用例主要分布在：
+
+```text
+tests/
+├── llm/
+│   ├── unit/          # 纯单测：能力推断、配置解析、消息格式、类型结构等
+│   ├── integration/   # Provider/Registry/Routing 的集成层测试（目前多使用 mock，不依赖真实 API）
+│   ├── fault/         # 故障/容错：超时、failover、降级策略
+│   ├── regression/    # 回归/兼容：Brain、媒体处理、memory 注入等关键路径
+│   └── e2e/           # 端到端：对话、工具、多模态、调度等（当前以可复现/离线为优先）
+├── test_memory_system.py
+├── test_new_features.py
+├── test_orchestration.py
+├── test_scheduler_detailed.py
+└── test_telegram_simple.py    # 需要真实凭据：默认跳过
+```
+
+---
+
+## 需要外部凭据/环境的测试
+
+目标原则：
+- 默认 CI 只跑 **离线可复现** 的测试（mock、纯逻辑、无网络依赖）
+- 真实外部依赖（IM、真实 LLM key）尽量 **默认 skip**，避免把 CI 稳定性绑在外部服务上
+
+### Telegram 集成测试（默认跳过）
+
+文件：`tests/test_telegram_simple.py`
+
+行为：如果没有 `TELEGRAM_BOT_TOKEN`，模块会在导入时直接 skip。
+
+需要的环境变量：
+- `TELEGRAM_BOT_TOKEN`（必需）
+- `TELEGRAM_CHAT_ID`（部分用例需要）
+
+本地启用示例：
+
+```bash
+export TELEGRAM_BOT_TOKEN="..."
+export TELEGRAM_CHAT_ID="..."
+pytest tests/test_telegram_simple.py -v
+```
+
+### `--api-keys` 选项（当前是预留能力）
+
+`tests/llm/conftest.py` 里预留了 `--api-keys` 参数与 `api_keys` marker（不加参数时自动 skip 被标记用例）。
+
+现状：仓库中该 marker 的覆盖还不完整（很多用例仍使用 mock、或用其它方式进行 skip）。
+
+建议标准化口径（后续可落地到文档+代码）：
+- 默认 CI：不启用 `--api-keys`
+- 手动/夜间任务：显式 `pytest --api-keys ...` 跑真实 key 的用例
+
+---
+
+## 功能/烟囱测试脚本（不在 CI，适合本地冒烟）
+
+脚本：`scripts/run_tests.py`
+
+用途：做工具可用性与关键行为的“冒烟验证”（Shell/File/QA/Prompt&Memory）。
+
+运行：
+
+```bash
+python scripts/run_tests.py
+```
+
+说明：其中 QA 会初始化 `Agent()`，在某些环境下可能触发真实 LLM 路径；因此它更适合本地/部署后验证，而非默认 CI。
+
+---
+
+## 排障建议（测试失败时）
+
+常用命令：
+
+```bash
+# 单文件
+pytest tests/test_memory_system.py -v
+
+# 单用例
+pytest tests/test_memory_system.py::TestMemoryManager::test_34_get_injection_context_includes_memory_md -v
+
+# 打印 stdout / 日志
+pytest tests/test_memory_system.py -v -s
+```
+
 # Testing Guide
 
 OpenAkita includes a comprehensive testing framework with 300+ test cases.
