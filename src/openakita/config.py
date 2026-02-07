@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     max_iterations: int = Field(default=100, description="Ralph 循环最大迭代次数")
     auto_confirm: bool = Field(default=False, description="是否自动确认危险操作")
 
+    # === 工具并行执行 ===
+    # 单轮模型返回多个 tool_use/tool_calls 时，Agent 可选择并行执行工具以提升吞吐。
+    # 默认 1：保持现有串行语义（最安全，尤其是带“思维链连续性”的工具链）。
+    tool_max_parallel: int = Field(
+        default=1,
+        description="单轮并行工具调用最大并发数（默认 1=串行；>1 启用并行）",
+    )
+
     # Thinking 模式配置
     thinking_mode: str = Field(
         default="auto",

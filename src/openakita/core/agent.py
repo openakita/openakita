@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import time
 
 # Windows Desktop Automation (Windows only)
 import sys
@@ -395,7 +396,155 @@ class Agent:
         self.handler_registry = SystemHandlerRegistry()
         self._init_handlers()
 
+        # === 工具并行执行基础设施（默认不开启并行，tool_max_parallel=1）===
+        # 并行执行只影响“同一轮模型返回多个 tool_use/tool_calls”的工具批处理阶段。
+        # 注意：browser/desktop/mcp 等状态型工具默认互斥，避免并发踩踏状态。
+        self._tool_semaphore = asyncio.Semaphore(max(1, settings.tool_max_parallel))
+        self._tool_handler_locks: dict[str, asyncio.Lock] = {}
+        for hn in ("browser", "desktop", "mcp"):
+            self._tool_handler_locks[hn] = asyncio.Lock()
+        self._task_monitor_lock = asyncio.Lock()
+
         logger.info(f"Agent '{self.name}' created")
+
+    def _get_tool_handler_name(self, tool_name: str) -> str | None:
+        """获取工具对应的 handler 名称（用于互斥/并发策略）"""
+        try:
+            return self.handler_registry.get_handler_name_for_tool(tool_name)
+        except Exception:
+            return None
+
+    async def _execute_tool_calls_batch(
+        self,
+        tool_calls: list[dict],
+        *,
+        task_monitor=None,
+        allow_interrupt_checks: bool = True,
+        capture_delivery_receipts: bool = False,
+    ) -> tuple[list[dict], list[str], list | None]:
+        """
+        执行一批工具调用，并返回 tool_results（顺序与 tool_calls 一致）。
+
+        并行策略：
+        - 默认串行（settings.tool_max_parallel=1 或启用中断检查时）
+        - 当 tool_max_parallel>1 且不需要“工具间中断检查”时，允许并行执行
+        - browser/desktop/mcp handler 默认互斥锁（即使并行也不会并发执行同 handler）
+        """
+        executed_tool_names: list[str] = []
+        delivery_receipts: list | None = None
+
+        if not tool_calls:
+            return [], executed_tool_names, delivery_receipts
+
+        # 若启用中断检查，保持串行语义更可控
+        parallel_enabled = settings.tool_max_parallel > 1 and not allow_interrupt_checks
+
+        async def _run_one(tc: dict, idx: int) -> tuple[int, dict, str | None, list | None]:
+            tool_name = tc.get("name", "")
+            tool_input = tc.get("input") or {}
+            tool_use_id = tc.get("id", "")
+
+            if self._task_cancelled:
+                return (
+                    idx,
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": "[任务已被用户停止]",
+                        "is_error": True,
+                    },
+                    None,
+                    None,
+                )
+
+            handler_name = self._get_tool_handler_name(tool_name)
+            handler_lock = self._tool_handler_locks.get(handler_name) if handler_name else None
+
+            t0 = time.time()
+            success = True
+            result_str = ""
+            receipts: list | None = None
+
+            use_parallel_safe_monitor = parallel_enabled and task_monitor is not None and hasattr(
+                task_monitor, "record_tool_call"
+            )
+            if (not parallel_enabled) and task_monitor:
+                task_monitor.begin_tool_call(tool_name, tool_input)
+
+            try:
+                async with self._tool_semaphore:
+                    if handler_lock:
+                        async with handler_lock:
+                            result = await self._execute_tool(tool_name, tool_input)
+                    else:
+                        result = await self._execute_tool(tool_name, tool_input)
+
+                result_str = str(result) if result is not None else "操作已完成"
+
+                if capture_delivery_receipts and tool_name == "deliver_artifacts" and result_str:
+                    try:
+                        import json as _json
+
+                        parsed = _json.loads(result_str)
+                        rs = parsed.get("receipts") if isinstance(parsed, dict) else None
+                        if isinstance(rs, list):
+                            receipts = rs
+                    except Exception:
+                        receipts = None
+
+                out = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": result_str,
+                }
+                return idx, out, tool_name, receipts
+            except Exception as e:
+                success = False
+                result_str = str(e)
+                out = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": f"工具执行错误: {result_str}",
+                    "is_error": True,
+                }
+                return idx, out, None, None
+            finally:
+                dt_ms = int((time.time() - t0) * 1000)
+                if task_monitor:
+                    if use_parallel_safe_monitor:
+                        async with self._task_monitor_lock:
+                            task_monitor.record_tool_call(
+                                tool_name,
+                                tool_input,
+                                result_str,
+                                success=success,
+                                duration_ms=dt_ms,
+                            )
+                    else:
+                        task_monitor.end_tool_call(result_str, success=success)
+
+        if not parallel_enabled:
+            tool_results: list[dict] = []
+            for tc in tool_calls:
+                idx = len(tool_results)
+                _, out, executed_name, receipts = await _run_one(tc, idx)
+                tool_results.append(out)
+                if executed_name:
+                    executed_tool_names.append(executed_name)
+                if receipts:
+                    delivery_receipts = receipts
+            return tool_results, executed_tool_names, delivery_receipts
+
+        tasks = [_run_one(tc, idx) for idx, tc in enumerate(tool_calls)]
+        done = await asyncio.gather(*tasks, return_exceptions=False)
+        done.sort(key=lambda x: x[0])
+        tool_results = [out for _, out, _, _ in done]
+        for _, _, executed_name, receipts in done:
+            if executed_name:
+                executed_tool_names.append(executed_name)
+            if receipts:
+                delivery_receipts = receipts
+        return tool_results, executed_tool_names, delivery_receipts
 
     async def initialize(self, start_scheduler: bool = True) -> None:
         """
@@ -2741,7 +2890,6 @@ NEXT: 建议的下一步（如有）"""
             )
 
             # 执行工具调用（支持中断检查和任务取消）
-            tool_results = []
 
             # === 工具执行前检查取消 ===
             if self._task_cancelled:
@@ -2750,94 +2898,18 @@ NEXT: 建议的下一步（如有）"""
                 )
                 return "✅ 任务已停止。"
 
-            for i, tc in enumerate(tool_calls):
-                # === 中断检查点 ===
-                # 检查是否有新消息请求停止任务
-                if self._task_cancelled:
-                    logger.info(
-                        f"[StopTask] Task cancelled during tool loop: {self._cancel_reason}"
-                    )
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tc["id"],
-                            "content": "[任务已被用户停止]",
-                        }
-                    )
-                    break
-
-                # 在每个工具调用之前检查是否有新消息（第一个工具除外）
-                if i > 0:
-                    interrupt_hint = await self._check_interrupt()
-                    if interrupt_hint:
-                        logger.info(
-                            f"[Interrupt] Detected during tool execution in context mode, tool {i + 1}/{len(tool_calls)}"
-                        )
-                        # 将中断提示添加到结果中
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tc["id"],
-                                "content": f"{interrupt_hint}\n\n注意：由于用户发送了新消息，请尽快完成当前任务或询问用户是否需要处理新消息。",
-                            }
-                        )
-                        # 跳过剩余的工具调用
-                        for remaining_tc in tool_calls[i + 1 :]:
-                            tool_results.append(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": remaining_tc["id"],
-                                    "content": "[工具调用已跳过: 用户发送了新消息]",
-                                }
-                            )
-                        # 任务监控：记录中断
-                        if task_monitor:
-                            task_monitor.end_tool_call("用户中断", success=False)
-                        break
-
-                # 任务监控：开始工具调用
-                if task_monitor:
-                    task_monitor.begin_tool_call(tc["name"], tc["input"])
-
-                try:
-                    result = await self._execute_tool(tc["name"], tc["input"])
-                    # capture deliver_artifacts receipts for evidence-based verification
-                    if tc["name"] == "deliver_artifacts" and result:
-                        try:
-                            import json as _json
-
-                            parsed = _json.loads(str(result))
-                            receipts = parsed.get("receipts") if isinstance(parsed, dict) else None
-                            if isinstance(receipts, list):
-                                delivery_receipts = receipts
-                        except Exception:
-                            pass
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tc["id"],
-                            "content": str(result) if result else "操作已完成",
-                        }
-                    )
-                    tools_executed_in_task = True
-                    # 记录已执行的工具名称（用于任务完成度复核）
-                    executed_tool_names.append(tc["name"])
-                    # 任务监控：结束工具调用（成功）
-                    if task_monitor:
-                        task_monitor.end_tool_call(str(result) if result else "", success=True)
-                except Exception as e:
-                    logger.error(f"Tool {tc['name']} error: {e}")
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tc["id"],
-                            "content": f"工具执行错误: {str(e)}",
-                            "is_error": True,
-                        }
-                    )
-                    # 任务监控：结束工具调用（失败）
-                    if task_monitor:
-                        task_monitor.end_tool_call(str(e), success=False)
+            # 会话模式默认启用“工具间中断检查”；如用户关闭中断检查且配置允许，可启用并行
+            tool_results, executed, receipts = await self._execute_tool_calls_batch(
+                tool_calls,
+                task_monitor=task_monitor,
+                allow_interrupt_checks=self._interrupt_enabled,
+                capture_delivery_receipts=True,
+            )
+            if executed:
+                tools_executed_in_task = True
+                executed_tool_names.extend(executed)
+            if receipts:
+                delivery_receipts = receipts
 
             # 添加工具结果
             working_messages.append(
@@ -3045,47 +3117,13 @@ NEXT: 建议的下一步（如有）"""
 
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # 执行工具并收集结果（支持中断检查）
-            tool_results = []
-
-            for i, tool_call in enumerate(tool_calls):
-                # === 中断检查点 ===
-                # 在每个工具调用之前检查是否有新消息
-                if i > 0:  # 第一个工具不检查，避免过早中断
-                    interrupt_hint = await self._check_interrupt()
-                    if interrupt_hint:
-                        logger.info(
-                            f"[Interrupt] Detected during tool execution, tool {i + 1}/{len(tool_calls)}"
-                        )
-                        # 将中断提示添加到结果中
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call["id"],
-                                "content": f"{interrupt_hint}\n\n注意：由于用户发送了新消息，请尽快完成当前任务或询问用户是否需要处理新消息。",
-                            }
-                        )
-                        # 跳过剩余的工具调用
-                        for remaining_call in tool_calls[i + 1 :]:
-                            tool_results.append(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": remaining_call["id"],
-                                    "content": "[工具调用已跳过: 用户发送了新消息]",
-                                }
-                            )
-                        break
-
-                # 正常执行工具
-                result = await self._execute_tool(tool_call["name"], tool_call["input"])
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_call["id"],
-                        "content": result,
-                    }
-                )
-                logger.info(f"Tool {tool_call['name']} result: {result}")
+            # 执行工具并收集结果（默认启用工具间中断检查；关闭中断检查时可并行）
+            tool_results, _, _ = await self._execute_tool_calls_batch(
+                tool_calls,
+                task_monitor=None,
+                allow_interrupt_checks=self._interrupt_enabled,
+                capture_delivery_receipts=False,
+            )
 
             messages.append({"role": "user", "content": tool_results})
 
@@ -3512,40 +3550,17 @@ NEXT: 建议的下一步（如有）"""
                 messages.append({"role": "assistant", "content": assistant_content})
 
                 # 执行每个工具并收集结果
-                tool_results = []
-                executed_tools = []  # 记录执行的工具，用于生成摘要
-                for tool_call in tool_calls:
-                    # 任务监控：开始工具调用
-                    task_monitor.begin_tool_call(tool_call["name"], tool_call["input"])
-
-                    try:
-                        result = await self._execute_tool(tool_call["name"], tool_call["input"])
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call["id"],
-                                "content": result,
-                            }
-                        )
-                        executed_tools.append(
-                            {"name": tool_call["name"], "result_preview": result if result else ""}
-                        )
-                        logger.info(f"Tool {tool_call['name']} result: {result}")
-
-                        # 任务监控：结束工具调用（成功）
-                        task_monitor.end_tool_call(str(result) if result else "", success=True)
-                    except Exception as e:
-                        logger.error(f"Tool {tool_call['name']} error: {e}")
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call["id"],
-                                "content": f"工具执行错误: {str(e)}",
-                                "is_error": True,
-                            }
-                        )
-                        # 任务监控：结束工具调用（失败）
-                        task_monitor.end_tool_call(str(e), success=False)
+                # execute_task() 场景没有“工具间中断检查”的强需求，可按配置启用并行
+                tool_results, executed_names, _ = await self._execute_tool_calls_batch(
+                    tool_calls,
+                    task_monitor=task_monitor,
+                    allow_interrupt_checks=False,
+                    capture_delivery_receipts=False,
+                )
+                executed_tools = [
+                    {"name": n, "result_preview": ""}
+                    for n in executed_names
+                ]  # 兼容后续摘要逻辑（如有）
 
                 messages.append({"role": "user", "content": tool_results})
 

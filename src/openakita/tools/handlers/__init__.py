@@ -186,6 +186,10 @@ class SystemHandlerRegistry:
         """获取某个处理器处理的所有工具"""
         return [tool for tool, handler in self._tool_to_handler.items() if handler == handler_name]
 
+    def get_handler_name_for_tool(self, tool_name: str) -> str | None:
+        """获取工具对应的处理器名称（用于并发/互斥策略等）"""
+        return self._tool_to_handler.get(tool_name)
+
     @property
     def handler_count(self) -> int:
         """处理器数量"""
