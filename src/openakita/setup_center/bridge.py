@@ -77,10 +77,7 @@ async def _list_models_anthropic(api_key: str, base_url: str, provider_slug: str
     from openakita.llm.capabilities import infer_capabilities
 
     b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        url = b + "/models"
-    else:
-        url = b + "/v1/models"
+    url = b + "/models" if b.endswith("/v1") else b + "/v1/models"
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
