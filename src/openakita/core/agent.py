@@ -1721,7 +1721,7 @@ search_github → install_skill → 使用
         Returns:
             编译后的系统提示词
         """
-        from ..prompt.retriever import async_search_related_memories, retrieve_memory
+        from ..prompt.retriever import retrieve_memory
 
         identity_dir = settings.identity_path
 
