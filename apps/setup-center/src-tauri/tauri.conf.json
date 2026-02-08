@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenAkita Setup Center",
-  "version": "1.2.12",
+  "version": "1.2.13",
   "identifier": "com.openakita.setupcenter",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -20,7 +20,9 @@
         "installerHooks": "./windows/hooks.nsh",
         "template": "./windows/installer.nsi",
         "displayLanguageSelector": false,
-        "languages": ["SimpChinese"]
+        "languages": [
+          "SimpChinese"
+        ]
       }
     }
   },
