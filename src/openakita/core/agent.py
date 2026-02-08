@@ -2146,7 +2146,6 @@ search_github → install_skill → 使用
                             input_summary = input_summary[:300] + "...(省略)..." + input_summary[-100:]
                         texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
                     elif item.get("type") == "tool_result":
-                        tool_id = item.get("tool_use_id", "")
                         result_text = str(item.get("content", ""))
                         # 工具结果先截断到合理长度
                         if len(result_text) > 2000:
