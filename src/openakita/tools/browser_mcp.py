@@ -1459,7 +1459,7 @@ class BrowserMCP:
             if self._llm_config:
                 from langchain_openai import ChatOpenAI
 
-                model = self._llm_config.get("model", "gpt-4o")
+                model = self._llm_config.get("model") or "gpt-4o"
                 api_key = self._llm_config.get("api_key")
                 base_url = self._llm_config.get("base_url")
 
@@ -1478,7 +1478,7 @@ class BrowserMCP:
 
                 api_key = os.getenv("OPENAI_API_KEY")
                 base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL")
-                model = os.getenv("OPENAI_MODEL", "gpt-4o")
+                model = os.getenv("OPENAI_MODEL") or "gpt-4o"
 
                 if api_key:
                     llm = ChatOpenAI(

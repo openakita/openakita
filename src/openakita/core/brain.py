@@ -788,6 +788,22 @@ class Brain:
             endpoint_name, hours, reason, conversation_id=conversation_id
         )
 
+    def get_fallback_model(self, conversation_id: str | None = None) -> str:
+        """
+        获取下一优先级的备用模型端点名称
+
+        按端点配置的 priority 排序，返回当前端点之后的下一个健康端点。
+        用于 TaskMonitor 的动态 fallback 模型选择，替代硬编码。
+
+        Args:
+            conversation_id: 可选的会话 ID
+
+        Returns:
+            下一个端点名称，无可用备选时返回空字符串
+        """
+        next_ep = self._llm_client.get_next_endpoint(conversation_id)
+        return next_ep or ""
+
     def restore_default_model(self, conversation_id: str | None = None) -> tuple[bool, str]:
         """
         恢复默认模型（清除临时覆盖）

@@ -84,10 +84,12 @@ if sys.platform == "win32":
 logger = logging.getLogger(__name__)
 
 # 上下文管理常量
-DEFAULT_MAX_CONTEXT_TOKENS = 180000  # Claude 3.5 Sonnet 默认上下文限制 (留 20k buffer)
+DEFAULT_MAX_CONTEXT_TOKENS = 180000  # 默认上下文限制 (留 20k buffer)，可通过端点配置动态覆盖
 CHARS_PER_TOKEN = 4  # 简单估算: 约 4 字符 = 1 token
 MIN_RECENT_TURNS = 4  # 至少保留最近 4 轮对话
-SUMMARY_TARGET_TOKENS = 500  # 摘要目标 token 数
+COMPRESSION_RATIO = 0.15  # 目标压缩到原上下文的 15%
+CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
+LARGE_TOOL_RESULT_THRESHOLD = 5000  # 单条 tool_result 超过此 token 数时独立压缩
 
 # Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
 PROMPT_COMPILER_SYSTEM = """【角色】
@@ -1837,6 +1839,25 @@ search_github → install_skill → 使用
 
     # ==================== 上下文管理 ====================
 
+    def _get_max_context_tokens(self) -> int:
+        """
+        动态获取当前模型的上下文 token 上限
+
+        从当前端点配置获取 max_tokens，留 15% buffer 给响应和格式开销。
+        无法获取时 fallback 到 DEFAULT_MAX_CONTEXT_TOKENS。
+        """
+        try:
+            info = self.brain.get_current_model_info()
+            ep_name = info.get("name", "")
+            endpoints = self.brain._llm_client.endpoints
+            for ep in endpoints:
+                if ep.name == ep_name:
+                    if ep.max_tokens and ep.max_tokens > 0:
+                        return int(ep.max_tokens * 0.85)  # 留 15% buffer
+            return DEFAULT_MAX_CONTEXT_TOKENS
+        except Exception:
+            return DEFAULT_MAX_CONTEXT_TOKENS
+
     def _estimate_tokens(self, text: str) -> int:
         """
         估算文本的 token 数量
@@ -1872,48 +1893,68 @@ search_github → install_skill → 使用
 
     async def _compress_context(self, messages: list[dict], max_tokens: int = None) -> list[dict]:
         """
-        压缩对话上下文（使用 LLM 压缩，不直接截断）
+        压缩对话上下文（使用 LLM 分块压缩，目标压缩到 15%）
 
         策略:
-        1. 保留最近 MIN_RECENT_TURNS 轮对话完整
-        2. 将早期对话用 LLM 摘要成简短描述
-        3. 如果还是太长，递归压缩
+        1. 先对单条过大的 tool_result 内容独立 LLM 压缩
+        2. 保留最近 MIN_RECENT_TURNS 轮对话完整
+        3. 将早期对话分块，每块调 LLM 摘要（目标 15%）
+        4. 如果还是太长，递归压缩（减少保留轮数）
 
         Args:
             messages: 消息列表
-            max_tokens: 最大 token 数 (默认使用 DEFAULT_MAX_CONTEXT_TOKENS)
+            max_tokens: 最大 token 数 (默认动态获取或使用 DEFAULT_MAX_CONTEXT_TOKENS)
 
         Returns:
             压缩后的消息列表
         """
-        max_tokens = max_tokens or DEFAULT_MAX_CONTEXT_TOKENS
+        max_tokens = max_tokens or self._get_max_context_tokens()
 
         # 估算系统提示的 token
         system_tokens = self._estimate_tokens(self._context.system)
-        available_tokens = max_tokens - system_tokens - 1000  # 留 1000 给响应
+        hard_limit = max_tokens - system_tokens - 1000  # 绝对上限（留 1000 给响应）
+        soft_limit = int(hard_limit * 0.7)  # 70% 提前压缩阈值，留出充足缓冲
 
         current_tokens = self._estimate_messages_tokens(messages)
 
-        # 如果没超过限制，直接返回
-        if current_tokens <= available_tokens:
+        # 如果没超过 70% 软阈值，直接返回
+        if current_tokens <= soft_limit:
             return messages
 
-        logger.info(f"Context too large ({current_tokens} tokens), compressing with LLM...")
+        logger.info(
+            f"Context approaching limit ({current_tokens} tokens, soft={soft_limit}, hard={hard_limit}), "
+            f"compressing with LLM (target {COMPRESSION_RATIO * 100:.0f}%)..."
+        )
+
+        # 第一步：对单条过大的 tool_result 内容独立压缩
+        messages = await self._compress_large_tool_results(messages)
+        current_tokens = self._estimate_messages_tokens(messages)
+        if current_tokens <= soft_limit:
+            logger.info(f"After tool_result compression: {current_tokens} tokens, within limit")
+            return messages
 
         # 计算需要保留的最近对话数量 (user + assistant = 1 轮)
         recent_count = MIN_RECENT_TURNS * 2  # 4 轮 = 8 条消息
 
         if len(messages) <= recent_count:
-            # 消息本身就不多，无法再压缩，原样返回并记录警告
-            logger.warning(f"Cannot compress further: only {len(messages)} messages, keeping all")
-            return messages
+            # 消息不多但每条很大——已在上面做了 tool_result 压缩
+            # 如果还超限，尝试对最近消息中的大 tool_result 再压缩（更激进的阈值）
+            logger.warning(
+                f"Only {len(messages)} messages but still {current_tokens} tokens, "
+                f"attempting aggressive tool_result compression..."
+            )
+            messages = await self._compress_large_tool_results(messages, threshold=2000)
+            # 硬保底：如果激进压缩后仍超 hard_limit，硬截断
+            return self._hard_truncate_if_needed(messages, hard_limit)
 
         # 分离早期消息和最近消息
         early_messages = messages[:-recent_count]
         recent_messages = messages[-recent_count:]
 
-        # 使用 LLM 摘要早期对话
-        summary = await self._summarize_messages(early_messages)
+        # 使用 LLM 分块摘要早期对话
+        early_tokens = self._estimate_messages_tokens(early_messages)
+        target_summary_tokens = max(int(early_tokens * COMPRESSION_RATIO), 200)
+        summary = await self._summarize_messages_chunked(early_messages, target_summary_tokens)
 
         # 构建压缩后的消息列表
         compressed = []
@@ -1929,53 +1970,132 @@ search_github → install_skill → 使用
         # 检查压缩后的大小
         compressed_tokens = self._estimate_messages_tokens(compressed)
 
-        if compressed_tokens <= available_tokens:
+        if compressed_tokens <= soft_limit:
             logger.info(f"Compressed context from {current_tokens} to {compressed_tokens} tokens")
             return compressed
 
         # 还是太长，递归压缩（减少保留的最近消息数量）
         logger.warning(f"Context still large ({compressed_tokens} tokens), compressing further...")
-        return await self._compress_long_messages(compressed, available_tokens)
+        compressed = await self._compress_further(compressed, soft_limit)
 
-    async def _summarize_messages(self, messages: list[dict]) -> str:
+        # === 硬保底：无论如何保证不超过 hard_limit ===
+        return self._hard_truncate_if_needed(compressed, hard_limit)
+
+    async def _compress_large_tool_results(
+        self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
+    ) -> list[dict]:
         """
-        将消息列表摘要成简短描述
+        对单条过大的 tool_result 内容独立 LLM 压缩
 
-        使用 LLM 生成摘要，不截断原始内容
+        遍历消息，对 tokens > threshold 的 tool_result 调 LLM 压缩其内容，
+        保留消息结构（role/type 不变）。
+
+        Args:
+            messages: 消息列表
+            threshold: token 阈值，超过则压缩（默认 LARGE_TOOL_RESULT_THRESHOLD）
+
+        Returns:
+            压缩后的消息列表（原地修改 tool_result 内容）
         """
-        if not messages:
-            return ""
-
-        # 构建完整对话文本（不截断）
-        conversation_text = ""
+        result = []
         for msg in messages:
-            role = "用户" if msg["role"] == "user" else "助手"
             content = msg.get("content", "")
-            if isinstance(content, str):
-                conversation_text += f"{role}: {content}\n"
-            elif isinstance(content, list):
-                # 复杂内容保留完整文本部分
-                texts = []
+            if isinstance(content, list):
+                new_content = []
                 for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        texts.append(item.get("text", ""))
-                if texts:
-                    conversation_text += f"{role}: {' '.join(texts)}\n"
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        result_text = str(item.get("content", ""))
+                        result_tokens = self._estimate_tokens(result_text)
+                        if result_tokens > threshold:
+                            # 调 LLM 压缩这条 tool_result
+                            target_tokens = max(int(result_tokens * COMPRESSION_RATIO), 100)
+                            compressed_text = await self._llm_compress_text(
+                                result_text, target_tokens, context_type="tool_result"
+                            )
+                            new_item = dict(item)
+                            new_item["content"] = compressed_text
+                            new_content.append(new_item)
+                            logger.info(
+                                f"Compressed tool_result from {result_tokens} to "
+                                f"~{self._estimate_tokens(compressed_text)} tokens"
+                            )
+                        else:
+                            new_content.append(item)
+                    elif isinstance(item, dict) and item.get("type") == "tool_use":
+                        # tool_use 的 input 也可能很大
+                        input_text = json.dumps(item.get("input", {}), ensure_ascii=False)
+                        input_tokens = self._estimate_tokens(input_text)
+                        if input_tokens > threshold:
+                            target_tokens = max(int(input_tokens * COMPRESSION_RATIO), 100)
+                            compressed_input = await self._llm_compress_text(
+                                input_text, target_tokens, context_type="tool_input"
+                            )
+                            new_item = dict(item)
+                            new_item["input"] = {"compressed_summary": compressed_input}
+                            new_content.append(new_item)
+                            logger.info(
+                                f"Compressed tool_use input from {input_tokens} to "
+                                f"~{self._estimate_tokens(compressed_input)} tokens"
+                            )
+                        else:
+                            new_content.append(item)
+                    else:
+                        new_content.append(item)
+                result.append({**msg, "content": new_content})
+            else:
+                result.append(msg)
+        return result
 
-        if not conversation_text:
-            return ""
+    async def _llm_compress_text(
+        self, text: str, target_tokens: int, context_type: str = "general"
+    ) -> str:
+        """
+        使用 LLM 压缩一段文本到目标 token 数
+
+        Args:
+            text: 要压缩的文本
+            target_tokens: 目标 token 数
+            context_type: 上下文类型（tool_result/tool_input/conversation）
+
+        Returns:
+            压缩后的文本
+        """
+        # 如果文本本身超出 LLM 上下文能处理的范围，先做硬截断
+        max_input = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN
+        if len(text) > max_input:
+            # 保留头尾，中间截断
+            head_size = int(max_input * 0.6)
+            tail_size = int(max_input * 0.3)
+            text = text[:head_size] + "\n...(中间内容过长已省略)...\n" + text[-tail_size:]
+
+        target_chars = target_tokens * CHARS_PER_TOKEN
+
+        if context_type == "tool_result":
+            system_prompt = (
+                "你是一个信息压缩助手。请将以下工具执行结果压缩为简洁摘要，"
+                "保留关键数据、状态码、错误信息和重要输出，去掉冗余细节。"
+            )
+        elif context_type == "tool_input":
+            system_prompt = (
+                "你是一个信息压缩助手。请将以下工具调用参数压缩为简洁摘要，"
+                "保留关键参数名和值，去掉冗余内容。"
+            )
+        else:
+            system_prompt = (
+                "你是一个对话压缩助手。请将以下对话内容压缩为简洁摘要，"
+                "保留用户意图、关键决策、执行结果和当前状态。"
+            )
 
         try:
-            # 使用 LLM 生成摘要（在线程池中执行同步调用）
             response = await asyncio.to_thread(
                 self.brain.messages_create,
                 model=self.brain.model,
-                max_tokens=SUMMARY_TARGET_TOKENS,
-                system="你是一个对话摘要助手。请用简洁的中文摘要以下对话的要点，只保留最重要的信息。",
+                max_tokens=target_tokens,
+                system=system_prompt,
                 messages=[
                     {
                         "role": "user",
-                        "content": f"请摘要以下对话（200字以内）:\n\n{conversation_text}",
+                        "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
                     }
                 ],
             )
@@ -1984,37 +2104,205 @@ search_github → install_skill → 使用
             for block in response.content:
                 if block.type == "text":
                     summary += block.text
-
             return summary.strip()
 
         except Exception as e:
-            logger.warning(f"Failed to summarize messages: {e}")
-            # 回退: 返回消息数量提示
-            return f"[早期对话共 {len(messages)} 条消息]"
+            logger.warning(f"LLM compression failed: {e}")
+            # 回退: 硬截断保留头尾
+            if len(text) > target_chars:
+                head = int(target_chars * 0.7)
+                tail = int(target_chars * 0.2)
+                return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+            return text
 
-    async def _compress_long_messages(self, messages: list[dict], max_tokens: int) -> list[dict]:
+    def _extract_message_text(self, msg: dict) -> str:
         """
-        压缩过长的消息内容（使用 LLM 压缩，不直接截断）
+        从消息中提取文本内容（包括 tool_use/tool_result 结构化信息）
 
-        策略: 保留最近消息完整，早期消息用 LLM 压缩
+        Args:
+            msg: 消息字典
+
+        Returns:
+            提取的文本内容
+        """
+        role = "用户" if msg["role"] == "user" else "助手"
+        content = msg.get("content", "")
+
+        if isinstance(content, str):
+            return f"{role}: {content}\n"
+
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        texts.append(item.get("text", ""))
+                    elif item.get("type") == "tool_use":
+                        name = item.get("name", "unknown")
+                        input_data = item.get("input", {})
+                        # 工具输入只保留关键信息
+                        input_summary = json.dumps(input_data, ensure_ascii=False)
+                        if len(input_summary) > 500:
+                            input_summary = input_summary[:300] + "...(省略)..." + input_summary[-100:]
+                        texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
+                    elif item.get("type") == "tool_result":
+                        tool_id = item.get("tool_use_id", "")
+                        result_text = str(item.get("content", ""))
+                        # 工具结果先截断到合理长度
+                        if len(result_text) > 2000:
+                            result_text = result_text[:1000] + "...(省略)..." + result_text[-500:]
+                        is_error = item.get("is_error", False)
+                        status = "错误" if is_error else "成功"
+                        texts.append(f"[工具结果({status}): {result_text}]")
+            if texts:
+                return f"{role}: {' '.join(texts)}\n"
+
+        return ""
+
+    async def _summarize_messages_chunked(
+        self, messages: list[dict], target_tokens: int
+    ) -> str:
+        """
+        分块 LLM 摘要消息列表
+
+        将消息按 CHUNK_MAX_TOKENS 分块，每块独立调 LLM 压缩，
+        最后将所有块的摘要拼接。如果摘要拼接后还很长，再做一次汇总压缩。
+
+        Args:
+            messages: 要摘要的消息列表
+            target_tokens: 最终目标 token 数
+
+        Returns:
+            摘要文本
+        """
+        if not messages:
+            return ""
+
+        # 将消息转换为文本并分块
+        chunks: list[str] = []
+        current_chunk = ""
+        current_chunk_tokens = 0
+
+        for msg in messages:
+            msg_text = self._extract_message_text(msg)
+            msg_tokens = self._estimate_tokens(msg_text)
+
+            if current_chunk_tokens + msg_tokens > CHUNK_MAX_TOKENS and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = msg_text
+                current_chunk_tokens = msg_tokens
+            else:
+                current_chunk += msg_text
+                current_chunk_tokens += msg_tokens
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        if not chunks:
+            return ""
+
+        logger.info(f"Splitting {len(messages)} messages into {len(chunks)} chunks for compression")
+
+        # 每块独立压缩
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            chunk_tokens = self._estimate_tokens(chunk)
+            # 每块的目标 = 总目标 / 块数（均分）
+            chunk_target = max(int(target_tokens / len(chunks)), 100)
+
+            try:
+                response = await asyncio.to_thread(
+                    self.brain.messages_create,
+                    model=self.brain.model,
+                    max_tokens=chunk_target,
+                    system=(
+                        "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
+                        "要求：\n"
+                        "1. 保留用户的原始意图和关键指令\n"
+                        "2. 保留工具调用的名称、关键参数和执行结果（成功/失败/关键输出）\n"
+                        "3. 保留重要的状态变化和决策\n"
+                        "4. 去掉重复信息、冗余输出和中间过程细节\n"
+                        "5. 使用简练的描述，不需要保留原文格式"
+                    ),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": (
+                                f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
+                                f"约 {chunk_tokens} tokens）压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内:\n\n"
+                                f"{chunk}"
+                            ),
+                        }
+                    ],
+                )
+
+                summary = ""
+                for block in response.content:
+                    if block.type == "text":
+                        summary += block.text
+                chunk_summaries.append(summary.strip())
+                logger.info(
+                    f"Chunk {i + 1}/{len(chunks)}: {chunk_tokens} -> "
+                    f"~{self._estimate_tokens(summary)} tokens"
+                )
+
+            except Exception as e:
+                logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
+                # 回退: 硬截断
+                max_chars = chunk_target * CHARS_PER_TOKEN
+                if len(chunk) > max_chars:
+                    chunk_summaries.append(
+                        chunk[:max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                    )
+                else:
+                    chunk_summaries.append(chunk)
+
+        # 拼接所有块摘要
+        combined = "\n---\n".join(chunk_summaries)
+        combined_tokens = self._estimate_tokens(combined)
+
+        # 如果拼接后还超过目标的 2 倍，再做一次汇总压缩
+        if combined_tokens > target_tokens * 2 and len(chunks) > 1:
+            logger.info(
+                f"Combined summary still large ({combined_tokens} tokens), "
+                f"doing final consolidation..."
+            )
+            combined = await self._llm_compress_text(
+                combined, target_tokens, context_type="conversation"
+            )
+
+        return combined
+
+    async def _compress_further(self, messages: list[dict], max_tokens: int) -> list[dict]:
+        """
+        递归压缩：减少保留的最近消息数量，继续压缩
+
+        Args:
+            messages: 当前消息列表
+            max_tokens: 目标 token 上限
+
+        Returns:
+            压缩后的消息列表
         """
         current_tokens = self._estimate_messages_tokens(messages)
 
         if current_tokens <= max_tokens:
             return messages
 
-        # 保留最近 4 条消息完整
+        # 保留最近 4 条消息完整（比 _compress_context 的 recent_count 更小）
         recent_count = min(4, len(messages))
         recent_messages = messages[-recent_count:] if recent_count > 0 else []
         early_messages = messages[:-recent_count] if len(messages) > recent_count else []
 
         if not early_messages:
-            # 只有最近消息，无法再压缩，原样返回
-            logger.warning("Cannot compress further, only recent messages left")
-            return messages
+            # 只有最近消息了，做最后一次 tool_result 压缩
+            logger.warning("Cannot compress further, attempting final tool_result compression")
+            return await self._compress_large_tool_results(messages, threshold=1000)
 
         # 用 LLM 压缩早期消息
-        summary = await self._summarize_messages(early_messages)
+        early_tokens = self._estimate_messages_tokens(early_messages)
+        target = max(int(early_tokens * COMPRESSION_RATIO), 100)
+        summary = await self._summarize_messages_chunked(early_messages, target)
 
         compressed = []
         if summary:
@@ -2025,10 +2313,96 @@ search_github → install_skill → 使用
 
         compressed.extend(recent_messages)
 
+        compressed_tokens = self._estimate_messages_tokens(compressed)
         logger.info(
-            f"Compressed context from {current_tokens} to {self._estimate_messages_tokens(compressed)} tokens"
+            f"Further compressed context from {current_tokens} to {compressed_tokens} tokens"
         )
         return compressed
+
+    def _hard_truncate_if_needed(self, messages: list[dict], hard_limit: int) -> list[dict]:
+        """
+        硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断保证能提交到 API
+
+        策略：
+        1. 从最早的消息开始丢弃，保留最近的消息
+        2. 对剩余消息中仍然过大的单条内容做字符级截断
+        3. 添加截断提示让模型知道上下文不完整
+
+        Args:
+            messages: 消息列表
+            hard_limit: 绝对 token 上限
+
+        Returns:
+            保证不超过 hard_limit 的消息列表
+        """
+        current_tokens = self._estimate_messages_tokens(messages)
+        if current_tokens <= hard_limit:
+            return messages
+
+        logger.error(
+            f"[HardTruncate] LLM compression insufficient! "
+            f"Still {current_tokens} tokens > hard_limit {hard_limit}. "
+            f"Applying hard truncation to guarantee API submission."
+        )
+
+        # 策略一：从最早的消息开始丢弃，保留最近的
+        truncated = list(messages)
+        while len(truncated) > 2 and self._estimate_messages_tokens(truncated) > hard_limit:
+            # 丢弃最早的消息（但至少保留 2 条：1 条用户消息 + 1 条最新交互）
+            removed = truncated.pop(0)
+            removed_role = removed.get("role", "?")
+            logger.warning(f"[HardTruncate] Dropped earliest message (role={removed_role})")
+
+        # 策略二：如果只剩 2 条还是超限，对单条消息内容做字符级截断
+        if self._estimate_messages_tokens(truncated) > hard_limit:
+            max_chars_per_msg = (hard_limit * CHARS_PER_TOKEN) // max(len(truncated), 1)
+            for i, msg in enumerate(truncated):
+                content = msg.get("content", "")
+                if isinstance(content, str) and len(content) > max_chars_per_msg:
+                    keep_head = int(max_chars_per_msg * 0.7)
+                    keep_tail = int(max_chars_per_msg * 0.2)
+                    truncated[i] = {
+                        **msg,
+                        "content": (
+                            content[:keep_head]
+                            + "\n\n...[内容过长已硬截断]...\n\n"
+                            + content[-keep_tail:]
+                        ),
+                    }
+                elif isinstance(content, list):
+                    # 对 list 类型内容，截断其中过大的文本块
+                    new_content = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            for key in ("text", "content"):
+                                val = item.get(key, "")
+                                if isinstance(val, str) and len(val) > max_chars_per_msg:
+                                    keep_h = int(max_chars_per_msg * 0.7)
+                                    keep_t = int(max_chars_per_msg * 0.2)
+                                    item = dict(item)
+                                    item[key] = (
+                                        val[:keep_h]
+                                        + "\n...[硬截断]...\n"
+                                        + val[-keep_t:]
+                                    )
+                        new_content.append(item)
+                    truncated[i] = {**msg, "content": new_content}
+
+        # 在最前面插入截断提示
+        truncated.insert(0, {
+            "role": "user",
+            "content": (
+                "[系统提示] 上下文因超出模型限制已被紧急截断，早期对话内容可能丢失。"
+                "请基于当前可见的消息继续处理，如信息不足请询问用户。"
+            ),
+        })
+
+        final_tokens = self._estimate_messages_tokens(truncated)
+        logger.warning(
+            f"[HardTruncate] Final: {final_tokens} tokens "
+            f"(hard_limit={hard_limit}, messages={len(truncated)})"
+        )
+        return truncated
 
     async def chat(self, message: str, session_id: str | None = None) -> str:
         """
@@ -2090,8 +2464,9 @@ search_github → install_skill → 使用
         # 定期检查并压缩持久上下文（每 10 轮对话检查一次）
         if len(self._context.messages) > 20:
             current_tokens = self._estimate_messages_tokens(self._context.messages)
-            if current_tokens > DEFAULT_MAX_CONTEXT_TOKENS * 0.7:  # 70% 阈值时预压缩
-                logger.info(f"Proactively compressing persistent context ({current_tokens} tokens)")
+            dynamic_limit = self._get_max_context_tokens()
+            if current_tokens > dynamic_limit * 0.7:  # 70% 阈值时预压缩
+                logger.info(f"Proactively compressing persistent context ({current_tokens}/{dynamic_limit} tokens)")
                 self._context.messages = await self._compress_context(self._context.messages)
 
         # 记录到记忆系统
@@ -2301,7 +2676,7 @@ search_github → install_skill → 使用
                 timeout_seconds=settings.progress_timeout_seconds,
                 hard_timeout_seconds=settings.hard_timeout_seconds,
                 retrospect_threshold=60,  # 复盘阈值：60秒
-                fallback_model="gpt-4o",  # 超时后切换的备用模型
+                fallback_model=self.brain.get_fallback_model(session_id),  # 动态获取备用模型
             )
             task_monitor.start(self.brain.model)
             # 暴露给系统工具：允许 LLM 动态调整超时策略
@@ -2902,6 +3277,9 @@ NEXT: 建议的下一步（如有）"""
                     tools_executed_in_task = False
                     verify_incomplete_count = 0
                     executed_tool_names = []
+                    consecutive_tool_rounds = 0
+                    recent_tool_signatures = []
+                    no_confirmation_text_count = 0
 
                     # 添加模型切换说明，让新模型了解情况
                     working_messages.append(
@@ -2910,7 +3288,7 @@ NEXT: 建议的下一步（如有）"""
                             "content": (
                                 "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
                                 "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_status；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
-                                "如果无法复核（缺权限/缺工具/缺输入），请进入 waiting_for_user 并提出最小澄清问题。"
+                                "请从头开始处理上面的用户请求。"
                             ),
                         }
                     )
@@ -2974,6 +3352,9 @@ NEXT: 建议的下一步（如有）"""
                         tools_executed_in_task = False
                         verify_incomplete_count = 0
                         executed_tool_names = []
+                        consecutive_tool_rounds = 0
+                        recent_tool_signatures = []
+                        no_confirmation_text_count = 0
                         working_messages.append(
                             {
                                 "role": "user",
@@ -3262,11 +3643,13 @@ NEXT: 建议的下一步（如有）"""
                     }
                 )
 
-            # (d) 极端安全阈值：不终止，而是提醒用户
+            # (d) 极端安全阈值：不终止，而是提醒用户，并禁用 ForceToolCall 防止覆盖
             if consecutive_tool_rounds == extreme_safety_threshold:
                 logger.warning(
-                    f"[LoopGuard] Reached extreme safety threshold ({extreme_safety_threshold} rounds)."
+                    f"[LoopGuard] Reached extreme safety threshold ({extreme_safety_threshold} rounds). "
+                    f"Disabling ForceToolCall to allow user-facing response."
                 )
+                max_no_tool_retries = 0  # 禁用 ForceToolCall，让 LLM 能直接回复用户
                 working_messages.append(
                     {
                         "role": "user",
@@ -3621,7 +4004,7 @@ NEXT: 建议的下一步（如有）"""
             timeout_seconds=settings.progress_timeout_seconds,
             hard_timeout_seconds=settings.hard_timeout_seconds,
             retrospect_threshold=60,  # 复盘阈值：60秒
-            fallback_model="gpt-4o",  # 超时后切换的备用模型
+            fallback_model=self.brain.get_fallback_model(task.session_id),  # 动态获取备用模型
             retry_before_switch=3,  # 切换前重试 3 次
         )
         task_monitor.start(self.brain.model)

@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 # 默认配置
 DEFAULT_TIMEOUT_SECONDS = 600  # 无进展超时阈值（秒）
 DEFAULT_RETROSPECT_THRESHOLD = 60  # 复盘阈值（秒）
-DEFAULT_FALLBACK_MODEL = "gpt-4o"  # 备用模型
 DEFAULT_RETRY_BEFORE_SWITCH = 3  # 切换模型前重试次数
 DEFAULT_RETRY_INTERVAL = 5  # 重试间隔（秒）
 
@@ -132,7 +131,7 @@ class TaskMonitor:
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         hard_timeout_seconds: int = 0,
         retrospect_threshold: int = DEFAULT_RETROSPECT_THRESHOLD,
-        fallback_model: str = DEFAULT_FALLBACK_MODEL,
+        fallback_model: str = "",
         on_timeout: Callable[["TaskMonitor"], None] | None = None,
         retry_before_switch: int = DEFAULT_RETRY_BEFORE_SWITCH,
     ):
@@ -399,11 +398,17 @@ class TaskMonitor:
             # 超时重试次数用尽，切换到备用模型并重置上下文
             self._timeout_triggered = True
             self.metrics.retry_count = self._timeout_retry_count
-            self.switch_model(
-                self.fallback_model,
-                f"任务执行超过 {self.timeout_seconds} 秒，已重试 {self.retry_before_switch} 次",
-                reset_context=True,  # 重要：切换时重置上下文
-            )
+            if not self.fallback_model:
+                logger.error(
+                    "[TaskMonitor] Timeout retries exhausted but no fallback_model configured; "
+                    "cannot switch model."
+                )
+            else:
+                self.switch_model(
+                    self.fallback_model,
+                    f"任务执行超过 {self.timeout_seconds} 秒，已重试 {self.retry_before_switch} 次",
+                    reset_context=True,  # 重要：切换时重置上下文
+                )
 
             # 触发回调
             if self.on_timeout:

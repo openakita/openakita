@@ -756,6 +756,38 @@ class LLMClient:
 
         return None
 
+    def get_next_endpoint(self, conversation_id: str | None = None) -> str | None:
+        """
+        获取下一优先级的健康端点名称（用于 fallback）
+
+        逻辑：找到当前生效端点，按 priority 排序后返回它之后的第一个健康端点。
+        如果当前端点已是最低优先级或无可用端点，返回 None。
+
+        Args:
+            conversation_id: 可选的会话 ID（用于识别 per-conversation override）
+
+        Returns:
+            下一个端点名称，或 None
+        """
+        current = self.get_current_model()
+        if not current:
+            return None
+
+        sorted_providers = sorted(
+            (p for p in self._providers.values() if p.is_healthy),
+            key=lambda p: p.config.priority,
+        )
+
+        found_current = False
+        for p in sorted_providers:
+            if p.config.name == current.name:
+                found_current = True
+                continue
+            if found_current:
+                return p.config.name
+
+        return None
+
     def list_available_models(self) -> list[ModelInfo]:
         """
         列出所有可用模型
