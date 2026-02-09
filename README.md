@@ -50,7 +50,7 @@ Like the Akita dog it's named after: **loyal, reliable, never quits**.
 - **Never Gives Up** — Ralph Wiggum Mode: persistent execution loop until task completion
 - **Growing Memory** — Remembers your preferences and habits, auto-consolidates daily
 - **Standards-Based** — MCP and Agent Skills standard compliance for broad ecosystem compatibility
-- **Multi-Platform** — Setup Center GUI, CLI, Telegram, Feishu, WeCom, DingTalk, QQ
+- **Multi-Platform** — Setup Center GUI, CLI, Telegram, Feishu, DingTalk, WeCom, QQ
 
 ---
 
@@ -89,7 +89,7 @@ OpenAkita provides a cross-platform **Setup Center** desktop app (built with Tau
 | **Skill System** | Agent Skills standard (SKILL.md), 8 discovery directories, GitHub install, LLM auto-generation |
 | **Plan Mode** | Auto-detect multi-step tasks, create execution plans, real-time progress tracking, persisted as Markdown |
 | **Multi-LLM Endpoints** | 9 providers, capability-based routing, priority failover, thinking mode, multimodal (text/image/video/voice) |
-| **Multi-Platform IM** | CLI / Telegram / Feishu (full support); WeCom / DingTalk / QQ (implemented) |
+| **Multi-Platform IM** | CLI / Telegram / Feishu / DingTalk (full support); WeCom / QQ (implemented) |
 | **Desktop Automation** | Windows UIAutomation + vision fallback, 9 tools: screenshot, click, type, hotkeys, window management |
 | **Multi-Agent** | Master-Worker architecture, ZMQ message bus, smart routing, dynamic scaling, fault recovery |
 | **Scheduled Tasks** | Cron / interval / one-time triggers, reminder + task types, persistent storage |

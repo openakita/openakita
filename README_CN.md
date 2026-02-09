@@ -90,7 +90,7 @@ OpenAkita 提供跨平台的 **Setup Center** 桌面应用（基于 Tauri + Reac
 | **Skill 标准化集成** | Agent Skills 规范（SKILL.md），8 个标准目录加载，GitHub 一键安装，LLM 自动生成 |
 | **Plan 模式** | 智能检测多步骤任务，自动创建执行计划，实时进度追踪，持久化为 Markdown |
 | **多 LLM 端点** | 9 个服务商、能力路由、优先级故障转移、Thinking 模式、多模态（文本/图片/视频/语音） |
-| **多平台 IM** | CLI / Telegram / 飞书（完整支持）；企业微信 / 钉钉 / QQ（已实现） |
+| **多平台 IM** | CLI / Telegram / 飞书 / 钉钉（完整支持）；企业微信 / QQ（已实现） |
 | **桌面自动化** | Windows UIAutomation + 视觉识别，9 个工具：截屏、点击、输入、快捷键、窗口管理等 |
 | **多 Agent 协同** | Master-Worker 架构，ZMQ 消息总线，智能路由，动态扩缩容，故障自恢复 |
 | **定时任务** | Cron / 间隔 / 一次性触发，提醒型 + 任务型，持久化存储 |
