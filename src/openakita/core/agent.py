@@ -3564,16 +3564,26 @@ NEXT: 建议的下一步（如有）"""
                             verify_incomplete_count += 1
 
                             # 检查是否有活跃 Plan 且仍有 pending steps
+                            # 使用与 _verify_task_completion 相同的方式访问 PlanHandler
                             has_active_plan_pending = False
                             try:
-                                plan_handler = self._get_handler("plan")
-                                if plan_handler and hasattr(plan_handler, "current_plan") and plan_handler.current_plan:
-                                    steps = plan_handler.current_plan.get("steps", [])
-                                    pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
-                                    if pending:
-                                        has_active_plan_pending = True
-                            except Exception:
-                                pass
+                                from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan
+                                conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
+                                    self, "_current_session_id", None
+                                )
+                                if conversation_id and has_active_plan(conversation_id):
+                                    handler = get_plan_handler_for_session(conversation_id)
+                                    if handler and handler.current_plan:
+                                        steps = handler.current_plan.get("steps", [])
+                                        pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
+                                        if pending:
+                                            has_active_plan_pending = True
+                                            logger.info(
+                                                f"[ForceToolCall] Active plan has {len(pending)} pending steps, "
+                                                f"increasing verify tolerance"
+                                            )
+                            except Exception as e:
+                                logger.debug(f"[ForceToolCall] Plan check failed: {e}")
 
                             # 有活跃 Plan 时，提高容忍度（Plan 本身就是多步骤任务，不应过早放弃）
                             effective_max_retries = max_verify_retries * 2 if has_active_plan_pending else max_verify_retries
@@ -3810,18 +3820,42 @@ NEXT: 建议的下一步（如有）"""
                 logger.info(
                     f"[LoopGuard] Round {consecutive_tool_rounds}: triggering LLM self-check."
                 )
-                working_messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"[系统提示] 你已连续执行了 {consecutive_tool_rounds} 轮工具调用。请自我评估：\n"
-                            "1. 当前任务进度如何？预计还需要多少轮？\n"
-                            "2. 是否陷入了循环或遇到了无法解决的问题？\n"
-                            "3. 如果任务已完成，请停止工具调用，直接回复用户结果。\n"
-                            "如果确实需要继续，请简要说明原因后继续执行。"
-                        ),
-                    }
-                )
+                # 检查是否有活跃 Plan：有的话用更温和的提示，避免打断正常执行
+                _self_check_has_plan = False
+                try:
+                    from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan as _has_active_plan
+                    _sc_conv_id = getattr(self, "_current_conversation_id", None) or getattr(
+                        self, "_current_session_id", None
+                    )
+                    if _sc_conv_id and _has_active_plan(_sc_conv_id):
+                        _self_check_has_plan = True
+                except Exception:
+                    pass
+
+                if _self_check_has_plan:
+                    # 有活跃 Plan：提示简短，鼓励继续执行
+                    working_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"[系统提示] 已连续执行 {consecutive_tool_rounds} 轮工具调用，当前 Plan 仍有未完成步骤。"
+                                "如果遇到困难（如某个工具反复失败），请换一种方法继续推进，不要停下来。"
+                            ),
+                        }
+                    )
+                else:
+                    working_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"[系统提示] 你已连续执行了 {consecutive_tool_rounds} 轮工具调用。请自我评估：\n"
+                                "1. 当前任务进度如何？预计还需要多少轮？\n"
+                                "2. 是否陷入了循环或遇到了无法解决的问题？\n"
+                                "3. 如果任务已完成，请停止工具调用，直接回复用户结果。\n"
+                                "如果确实需要继续，请简要说明原因后继续执行。"
+                            ),
+                        }
+                    )
 
             # (d) 极端安全阈值：不终止，而是提醒用户，并禁用 ForceToolCall 防止覆盖
             if consecutive_tool_rounds == extreme_safety_threshold:
