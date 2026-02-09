@@ -380,39 +380,100 @@ class DingTalkAdapter(ChannelAdapter):
         发送消息 - 智能路由
 
         路由策略：
-        - 纯文本/Markdown → 优先 SessionWebhook（快，无限制），回退 OpenAPI
-        - 图片/文件/语音等媒体 → 只能用 OpenAPI（Webhook 不支持媒体类型）
-          - 群聊 → robot/groupMessages/send
-          - 单聊 → robot/oToMessages/batchSend
-        """
-        await self._refresh_token()
+        - 所有消息 → 优先 SessionWebhook
+          - 纯文本 → text 类型
+          - Markdown → markdown 类型
+          - 媒体 → 转为 markdown 内嵌 (图片: ![img](@lAL...))
+        - Webhook 不可用时 → 回退 OpenAPI
+        - OpenAPI 失败时 → 降级为文本
 
+        核心约束: 钉钉 Webhook 只支持 text/markdown/actionCard/feedCard，
+        不支持 image/file/voice 原生类型。所有图片必须通过 markdown 嵌入。
+        """
+        # 获取 webhook
+        session_webhook = message.metadata.get("session_webhook", "")
+        if not session_webhook:
+            session_webhook = self._session_webhooks.get(message.chat_id, "")
+
+        # 媒体消息：转为 markdown 通过 webhook 发送
         has_media = (
             message.content.images
             or message.content.files
             or message.content.voices
         )
-        is_group = message.metadata.get("is_group", self._is_group_chat(message.chat_id))
 
-        # 媒体消息：必须走 OpenAPI（Webhook 不支持）
-        if has_media:
+        if has_media and session_webhook:
+            md_parts = []
+            text_part = message.content.text or ""
+            if text_part:
+                md_parts.append(text_part)
+
+            # 图片 → 上传获取 media_id，嵌入 markdown
+            for img in message.content.images or []:
+                mid = img.file_id
+                if not mid and img.local_path:
+                    try:
+                        uploaded = await self.upload_media(
+                            Path(img.local_path), img.mime_type or "image/png"
+                        )
+                        mid = uploaded.file_id
+                    except Exception as e:
+                        logger.warning(f"Image upload failed: {e}")
+                if mid:
+                    md_parts.append(f"![image]({mid})")
+                else:
+                    md_parts.append(f"📎 图片: {img.filename}")
+
+            # 文件 → 只能发文件名
+            for f in message.content.files or []:
+                md_parts.append(f"📎 文件: {f.filename}")
+
+            # 语音 → 只能发提示
+            for v in message.content.voices or []:
+                md_parts.append(f"🎤 语音: {v.filename}")
+
+            md_text = "\n\n".join(md_parts)
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": md_text[:20] if md_text else "消息",
+                    "text": md_text,
+                },
+            }
+            try:
+                response = await self._http_client.post(session_webhook, json=payload)
+                result = response.json()
+                if result.get("errcode", 0) == 0:
+                    logger.info("Sent media via webhook markdown")
+                    return f"webhook_{int(time.time())}"
+                else:
+                    logger.warning(f"Webhook media failed: {result.get('errmsg')}")
+            except Exception as e:
+                logger.warning(f"Webhook media error: {e}")
+
+            # 降级为纯文本
+            fallback_text = message.content.text or "[媒体消息]"
+            fallback = OutgoingMessage.text(message.chat_id, fallback_text)
+            if session_webhook:
+                return await self._send_via_webhook(fallback, session_webhook)
+
+        # 纯文本消息：优先走 Webhook（更快）
+        if session_webhook:
+            return await self._send_via_webhook(message, session_webhook)
+
+        # 回退到 OpenAPI（文本消息）
+        await self._refresh_token()
+        is_group = message.metadata.get(
+            "is_group", self._is_group_chat(message.chat_id)
+        )
+        try:
             if is_group:
                 return await self._send_group_message(message)
             else:
                 return await self._send_via_api(message)
-
-        # 纯文本消息：优先走 Webhook（更快）
-        session_webhook = message.metadata.get("session_webhook", "")
-        if not session_webhook:
-            session_webhook = self._session_webhooks.get(message.chat_id, "")
-        if session_webhook:
-            return await self._send_via_webhook(message, session_webhook)
-
-        # 回退到 OpenAPI
-        if is_group:
-            return await self._send_group_message(message)
-        else:
-            return await self._send_via_api(message)
+        except RuntimeError as e:
+            logger.error(f"OpenAPI send failed: {e}")
+            raise
 
     async def _build_msg_key_param(
         self, message: OutgoingMessage
@@ -618,66 +679,107 @@ class DingTalkAdapter(ChannelAdapter):
         """
         发送图片消息 - 钉钉定制实现
 
-        通过 OpenAPI 发送图片（Webhook 不支持图片类型）:
-        - 群聊 → robot/groupMessages/send + sampleImageMsg
-        - 单聊 → robot/oToMessages/batchSend + sampleImageMsg
+        策略 (按优先级):
+        1. 上传图片获取 media_id
+        2. 通过 SessionWebhook + Markdown 嵌入图片
+           - 优先使用 upload 返回的 URL（如有）
+           - 否则用 media_id（@lAL...格式，钉钉内部可渲染）
+        3. 尝试旧版 API 工作通知（仅单聊，使用 media_id）
+        4. 降级为文本
+
+        参考: https://open.dingtalk.com/document/robots/custom-robot-access/
         """
-        await self._refresh_token()
         path = Path(image_path)
 
-        # 上传图片获取 media_id 和临时 URL
+        # Step 1: 上传图片获取 media_id
         try:
             uploaded = await self.upload_media(path, "image/png")
         except Exception as e:
             logger.error(f"Failed to upload image: {e}")
-            # 降级为发送文件名文本
             text = f"📎 图片: {path.name}"
             if caption:
                 text = f"{caption}\n{text}"
             msg = OutgoingMessage.text(chat_id, text)
             return await self.send_message(msg)
 
-        photo_url = uploaded.url or uploaded.file_id
-        if not photo_url:
+        media_id = uploaded.file_id
+        media_url = uploaded.url  # 可能为空
+        if not media_id:
             text = f"[图片上传失败: {path.name}]"
             msg = OutgoingMessage.text(chat_id, text)
             return await self.send_message(msg)
 
-        # 通过 OpenAPI 发送图片
-        is_group = self._is_group_chat(chat_id)
-        msg_param = json.dumps({"photoURL": photo_url})
+        logger.info(
+            f"Image uploaded: {path.name} -> media_id={media_id}, url={'YES' if media_url else 'NO'}"
+        )
 
-        if is_group:
-            url = f"{self.API_NEW}/robot/groupMessages/send"
-            headers = {"x-acs-dingtalk-access-token": self._access_token}
-            data = {
-                "robotCode": self.config.app_key,
-                "openConversationId": chat_id,
-                "msgKey": "sampleImageMsg",
-                "msgParam": msg_param,
+        # Step 2: 通过 SessionWebhook + Markdown 嵌入图片
+        session_webhook = self._session_webhooks.get(chat_id, "")
+        if session_webhook:
+            # 优先使用 URL（公网可访问），否则使用 media_id 引用
+            img_ref = media_url or media_id
+            md_text = f"![image]({img_ref})"
+            if caption:
+                md_text = f"{caption}\n\n{md_text}"
+
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": caption or "图片",
+                    "text": md_text,
+                },
             }
-        else:
+
+            try:
+                response = await self._http_client.post(session_webhook, json=payload)
+                result = response.json()
+                if result.get("errcode", 0) == 0:
+                    logger.info(
+                        f"Sent image via webhook markdown: ref={img_ref[:40]}..."
+                    )
+                    return f"webhook_{int(time.time())}"
+                else:
+                    logger.warning(
+                        f"Webhook markdown image failed: {result.get('errmsg')}"
+                    )
+            except Exception as e:
+                logger.warning(f"Webhook image send error: {e}")
+
+        # Step 3: 尝试旧版工作通知 API（仅限单聊，使用 media_id 发送 image 类型）
+        if not self._is_group_chat(chat_id):
             user_id = self._conversation_users.get(chat_id, chat_id)
-            url = f"{self.API_NEW}/robot/oToMessages/batchSend"
-            headers = {"x-acs-dingtalk-access-token": self._access_token}
-            data = {
-                "robotCode": self.config.app_key,
-                "userIds": [user_id],
-                "msgKey": "sampleImageMsg",
-                "msgParam": msg_param,
-            }
+            try:
+                old_token = await self._refresh_old_token()
+                url = f"{self.API_BASE}/topapi/message/corpconversation/asyncsend_v2"
+                data = {
+                    "access_token": old_token,
+                    "agent_id": getattr(self.config, "agent_id", ""),
+                    "userid_list": user_id,
+                    "msg": json.dumps({
+                        "msgtype": "image",
+                        "image": {"media_id": media_id},
+                    }),
+                }
+                # 仅在有 agent_id 时尝试
+                if data.get("agent_id"):
+                    response = await self._http_client.post(url, params=data)
+                    result = response.json()
+                    if result.get("errcode", 0) == 0:
+                        logger.info(f"Sent image via work notification: {media_id[:20]}...")
+                        return f"work_notification_{int(time.time())}"
+                    else:
+                        logger.warning(
+                            f"Work notification image failed: {result.get('errmsg')}"
+                        )
+            except Exception as e:
+                logger.warning(f"Work notification error: {e}")
 
-        logger.info(f"Sending image via API: photoURL={photo_url[:30]}...")
-        response = await self._http_client.post(url, headers=headers, json=data)
-        result = response.json()
-
-        if "processQueryKey" not in result:
-            error = result.get("message", "Unknown error")
-            logger.error(f"Failed to send image: {error}")
-            # 降级为文件发送
-            return await self.send_file(chat_id, image_path, caption)
-
-        return result["processQueryKey"]
+        # Step 4: 降级为文本
+        text = f"📎 图片: {path.name}"
+        if caption:
+            text = f"{caption}\n{text}"
+        msg = OutgoingMessage.text(chat_id, text)
+        return await self.send_message(msg)
 
     async def send_file(
         self,
@@ -688,54 +790,19 @@ class DingTalkAdapter(ChannelAdapter):
         """
         发送文件
 
-        通过 OpenAPI 发送文件 (sampleFile):
-        - 先上传到钉钉获取 media_id
-        - 再通过群聊/单聊 API 发送 sampleFile 类型
-        - 如果上传失败，降级为发送文件名文本
+        钉钉 Webhook 不支持文件类型消息，降级为 Markdown 链接文本。
+        如果上传成功且有 URL，用 Markdown 链接；否则发文件名。
         """
-        await self._refresh_token()
         path = Path(file_path)
 
         try:
             uploaded = await self.upload_media(path, "application/octet-stream")
-            if uploaded.file_id:
-                ext = path.suffix.lstrip(".") or "file"
-                msg_param = json.dumps({
-                    "mediaId": uploaded.file_id,
-                    "fileName": path.name,
-                    "fileType": ext,
-                })
-
-                is_group = self._is_group_chat(chat_id)
-                headers = {"x-acs-dingtalk-access-token": self._access_token}
-
-                if is_group:
-                    url = f"{self.API_NEW}/robot/groupMessages/send"
-                    data = {
-                        "robotCode": self.config.app_key,
-                        "openConversationId": chat_id,
-                        "msgKey": "sampleFile",
-                        "msgParam": msg_param,
-                    }
-                else:
-                    user_id = self._conversation_users.get(chat_id, chat_id)
-                    url = f"{self.API_NEW}/robot/oToMessages/batchSend"
-                    data = {
-                        "robotCode": self.config.app_key,
-                        "userIds": [user_id],
-                        "msgKey": "sampleFile",
-                        "msgParam": msg_param,
-                    }
-
-                logger.info(f"Sending file via API: {path.name}, mediaId={uploaded.file_id[:20]}...")
-                response = await self._http_client.post(url, headers=headers, json=data)
-                result = response.json()
-
-                if "processQueryKey" in result:
-                    return result["processQueryKey"]
-                else:
-                    error = result.get("message", "Unknown error")
-                    logger.warning(f"sampleFile send failed: {error}, falling back to text")
+            if uploaded.url:
+                text = f"📎 [{path.name}]({uploaded.url})"
+                if caption:
+                    text = f"{caption}\n{text}"
+                msg = OutgoingMessage.text(chat_id, text, parse_mode="markdown")
+                return await self.send_message(msg)
         except Exception as e:
             logger.warning(f"DingTalk upload_media failed for file: {e}")
 
@@ -755,56 +822,8 @@ class DingTalkAdapter(ChannelAdapter):
         """
         发送语音
 
-        通过 OpenAPI 发送语音 (sampleAudio):
-        - 先上传到钉钉获取 media_id
-        - 再通过群聊/单聊 API 发送 sampleAudio 类型
-        - 如果失败，降级为文件发送
+        钉钉 Webhook 不支持语音，降级为文件发送 → 文本
         """
-        await self._refresh_token()
-        path = Path(voice_path)
-
-        try:
-            uploaded = await self.upload_media(path, "audio/ogg")
-            if uploaded.file_id:
-                msg_param = json.dumps({
-                    "mediaId": uploaded.file_id,
-                    "duration": "3000",  # 默认 3 秒
-                })
-
-                is_group = self._is_group_chat(chat_id)
-                headers = {"x-acs-dingtalk-access-token": self._access_token}
-
-                if is_group:
-                    url = f"{self.API_NEW}/robot/groupMessages/send"
-                    data = {
-                        "robotCode": self.config.app_key,
-                        "openConversationId": chat_id,
-                        "msgKey": "sampleAudio",
-                        "msgParam": msg_param,
-                    }
-                else:
-                    user_id = self._conversation_users.get(chat_id, chat_id)
-                    url = f"{self.API_NEW}/robot/oToMessages/batchSend"
-                    data = {
-                        "robotCode": self.config.app_key,
-                        "userIds": [user_id],
-                        "msgKey": "sampleAudio",
-                        "msgParam": msg_param,
-                    }
-
-                logger.info(f"Sending voice via API: {path.name}")
-                response = await self._http_client.post(url, headers=headers, json=data)
-                result = response.json()
-
-                if "processQueryKey" in result:
-                    return result["processQueryKey"]
-                else:
-                    error = result.get("message", "Unknown error")
-                    logger.warning(f"sampleAudio send failed: {error}, falling back to file")
-        except Exception as e:
-            logger.warning(f"DingTalk voice upload failed: {e}")
-
-        # 降级: 以文件形式发送
         return await self.send_file(chat_id, voice_path, caption or "语音消息")
 
     # ==================== Markdown / 卡片 ====================
