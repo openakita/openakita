@@ -713,10 +713,53 @@ class DingTalkAdapter(ChannelAdapter):
             f"Image uploaded: {path.name} -> media_id={media_id}, url={'YES' if media_url else 'NO'}"
         )
 
-        # Step 2: 通过 SessionWebhook + Markdown 嵌入图片
+        # Step 2: 尝试 OpenAPI sampleImageMsg（需要权限）
+        await self._refresh_token()
+        is_group = self._is_group_chat(chat_id)
+        # sampleImageMsg 的 photoURL 可以是 URL 或 media_id
+        photo_url = media_url or media_id
+        msg_param = json.dumps({"photoURL": photo_url})
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+
+        if is_group:
+            url = f"{self.API_NEW}/robot/groupMessages/send"
+            data = {
+                "robotCode": self.config.app_key,
+                "openConversationId": chat_id,
+                "msgKey": "sampleImageMsg",
+                "msgParam": msg_param,
+            }
+        else:
+            user_id = self._conversation_users.get(chat_id, chat_id)
+            url = f"{self.API_NEW}/robot/oToMessages/batchSend"
+            data = {
+                "robotCode": self.config.app_key,
+                "userIds": [user_id],
+                "msgKey": "sampleImageMsg",
+                "msgParam": msg_param,
+            }
+
+        try:
+            logger.info(f"Sending image via OpenAPI: {path.name}")
+            response = await self._http_client.post(url, headers=headers, json=data)
+            result = response.json()
+            logger.debug(f"OpenAPI image response: {result}")
+
+            if "processQueryKey" in result:
+                logger.info(f"Image sent via OpenAPI: {path.name}")
+                return result["processQueryKey"]
+            else:
+                error = result.get("message", result.get("errmsg", "Unknown"))
+                logger.warning(
+                    f"OpenAPI sampleImageMsg failed: {error} "
+                    f"(hint: 需要在钉钉开发者后台开通'企业内部机器人发送群聊消息'权限)"
+                )
+        except Exception as e:
+            logger.warning(f"OpenAPI image send error: {e}")
+
+        # Step 3: 降级为 webhook markdown 嵌入图片
         session_webhook = self._session_webhooks.get(chat_id, "")
         if session_webhook:
-            # 优先使用 URL（公网可访问），否则使用 media_id 引用
             img_ref = media_url or media_id
             md_text = f"![image]({img_ref})"
             if caption:
@@ -745,35 +788,6 @@ class DingTalkAdapter(ChannelAdapter):
             except Exception as e:
                 logger.warning(f"Webhook image send error: {e}")
 
-        # Step 3: 尝试旧版工作通知 API（仅限单聊，使用 media_id 发送 image 类型）
-        if not self._is_group_chat(chat_id):
-            user_id = self._conversation_users.get(chat_id, chat_id)
-            try:
-                old_token = await self._refresh_old_token()
-                url = f"{self.API_BASE}/topapi/message/corpconversation/asyncsend_v2"
-                data = {
-                    "access_token": old_token,
-                    "agent_id": getattr(self.config, "agent_id", ""),
-                    "userid_list": user_id,
-                    "msg": json.dumps({
-                        "msgtype": "image",
-                        "image": {"media_id": media_id},
-                    }),
-                }
-                # 仅在有 agent_id 时尝试
-                if data.get("agent_id"):
-                    response = await self._http_client.post(url, params=data)
-                    result = response.json()
-                    if result.get("errcode", 0) == 0:
-                        logger.info(f"Sent image via work notification: {media_id[:20]}...")
-                        return f"work_notification_{int(time.time())}"
-                    else:
-                        logger.warning(
-                            f"Work notification image failed: {result.get('errmsg')}"
-                        )
-            except Exception as e:
-                logger.warning(f"Work notification error: {e}")
-
         # Step 4: 降级为文本
         text = f"📎 图片: {path.name}"
         if caption:
@@ -790,23 +804,77 @@ class DingTalkAdapter(ChannelAdapter):
         """
         发送文件
 
-        钉钉 Webhook 不支持文件类型消息，降级为 Markdown 链接文本。
-        如果上传成功且有 URL，用 Markdown 链接；否则发文件名。
+        策略 (按优先级):
+        1. 上传文件获取 media_id
+        2. 尝试 OpenAPI 发送 sampleFile（需要权限）
+        3. 降级为 webhook 文本提示
         """
         path = Path(file_path)
 
+        # Step 1: 上传文件
+        media_id = None
         try:
             uploaded = await self.upload_media(path, "application/octet-stream")
-            if uploaded.url:
-                text = f"📎 [{path.name}]({uploaded.url})"
-                if caption:
-                    text = f"{caption}\n{text}"
-                msg = OutgoingMessage.text(chat_id, text, parse_mode="markdown")
-                return await self.send_message(msg)
+            media_id = uploaded.file_id
+            logger.info(
+                f"File uploaded: {path.name} -> media_id={media_id}, "
+                f"url={'YES' if uploaded.url else 'NO'}"
+            )
         except Exception as e:
             logger.warning(f"DingTalk upload_media failed for file: {e}")
 
-        # 降级: 发送文件名文本
+        # Step 2: 尝试 OpenAPI sampleFile
+        if media_id:
+            await self._refresh_token()
+            ext = path.suffix.lstrip(".") or "file"
+            msg_param = json.dumps({
+                "mediaId": media_id,
+                "fileName": path.name,
+                "fileType": ext,
+            })
+
+            is_group = self._is_group_chat(chat_id)
+            headers = {"x-acs-dingtalk-access-token": self._access_token}
+
+            if is_group:
+                url = f"{self.API_NEW}/robot/groupMessages/send"
+                data = {
+                    "robotCode": self.config.app_key,
+                    "openConversationId": chat_id,
+                    "msgKey": "sampleFile",
+                    "msgParam": msg_param,
+                }
+            else:
+                user_id = self._conversation_users.get(chat_id, chat_id)
+                url = f"{self.API_NEW}/robot/oToMessages/batchSend"
+                data = {
+                    "robotCode": self.config.app_key,
+                    "userIds": [user_id],
+                    "msgKey": "sampleFile",
+                    "msgParam": msg_param,
+                }
+
+            try:
+                logger.info(f"Sending file via OpenAPI: {path.name}")
+                response = await self._http_client.post(
+                    url, headers=headers, json=data
+                )
+                result = response.json()
+                logger.debug(f"OpenAPI file response: {result}")
+
+                if "processQueryKey" in result:
+                    logger.info(f"File sent via OpenAPI: {path.name}")
+                    return result["processQueryKey"]
+                else:
+                    error = result.get("message", result.get("errmsg", "Unknown"))
+                    logger.warning(
+                        f"OpenAPI sampleFile failed: {error} "
+                        f"(hint: 需要在钉钉开发者后台开通'企业内部机器人发送群聊消息'权限)"
+                    )
+            except Exception as e:
+                logger.warning(f"OpenAPI file send error: {e}")
+
+        # Step 3: 降级为 webhook 文本提示
         text = f"📎 文件: {path.name}"
         if caption:
             text = f"{caption}\n{text}"
