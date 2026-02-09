@@ -123,9 +123,10 @@ class DingTalkAdapter(ChannelAdapter):
         self._stream_thread: threading.Thread | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
 
-        # 缓存每个会话的 session webhook 和发送者 userId
+        # 缓存每个会话的 session webhook、发送者 userId、会话类型
         self._session_webhooks: dict[str, str] = {}
         self._conversation_users: dict[str, str] = {}  # conversationId -> senderId
+        self._conversation_types: dict[str, str] = {}  # conversationId -> "1"(单聊)/"2"(群聊)
 
     async def start(self) -> None:
         """启动钉钉适配器 (Stream 模式)"""
@@ -237,6 +238,8 @@ class DingTalkAdapter(ChannelAdapter):
             self._session_webhooks[conversation_id] = session_webhook
         if sender_id and conversation_id:
             self._conversation_users[conversation_id] = sender_id
+        if conversation_id and conversation_type:
+            self._conversation_types[conversation_id] = conversation_type
         metadata = {
             "session_webhook": session_webhook,
             "conversation_type": conversation_type,
@@ -372,8 +375,16 @@ class DingTalkAdapter(ChannelAdapter):
 
     def _is_group_chat(self, chat_id: str) -> bool:
         """判断 chat_id 是否为群聊会话"""
-        # conversationId 以 "cid" 开头的是群聊
-        return chat_id.startswith("cid")
+        # 优先使用缓存的 conversationType（来自接收消息时的回调数据）
+        # "1" = 单聊, "2" = 群聊
+        cached_type = self._conversation_types.get(chat_id)
+        if cached_type is not None:
+            return cached_type == "2"
+        # 没有缓存时保守地认为是单聊（避免误调群聊API导致 robot 不存在）
+        logger.warning(
+            f"No cached conversationType for {chat_id[:20]}..., defaulting to private chat"
+        )
+        return False
 
     async def send_message(self, message: OutgoingMessage) -> str:
         """
@@ -740,19 +751,24 @@ class DingTalkAdapter(ChannelAdapter):
             }
 
         try:
-            logger.info(f"Sending image via OpenAPI: {path.name}")
+            chat_mode = "group" if is_group else "private"
+            logger.info(f"Sending image via OpenAPI ({chat_mode}): {path.name}")
             response = await self._http_client.post(url, headers=headers, json=data)
             result = response.json()
             logger.debug(f"OpenAPI image response: {result}")
 
             if "processQueryKey" in result:
-                logger.info(f"Image sent via OpenAPI: {path.name}")
+                logger.info(f"Image sent via OpenAPI ({chat_mode}): {path.name}")
                 return result["processQueryKey"]
             else:
                 error = result.get("message", result.get("errmsg", "Unknown"))
+                perm_hint = (
+                    "'企业内部机器人发送群聊消息'" if is_group
+                    else "'企业内部机器人发送单聊消息'"
+                )
                 logger.warning(
-                    f"OpenAPI sampleImageMsg failed: {error} "
-                    f"(hint: 需要在钉钉开发者后台开通'企业内部机器人发送群聊消息'权限)"
+                    f"OpenAPI sampleImageMsg failed ({chat_mode}): {error} "
+                    f"(hint: 需要在钉钉开发者后台开通{perm_hint}权限)"
                 )
         except Exception as e:
             logger.warning(f"OpenAPI image send error: {e}")
@@ -855,7 +871,8 @@ class DingTalkAdapter(ChannelAdapter):
                 }
 
             try:
-                logger.info(f"Sending file via OpenAPI: {path.name}")
+                chat_mode = "group" if is_group else "private"
+                logger.info(f"Sending file via OpenAPI ({chat_mode}): {path.name}")
                 response = await self._http_client.post(
                     url, headers=headers, json=data
                 )
@@ -863,13 +880,17 @@ class DingTalkAdapter(ChannelAdapter):
                 logger.debug(f"OpenAPI file response: {result}")
 
                 if "processQueryKey" in result:
-                    logger.info(f"File sent via OpenAPI: {path.name}")
+                    logger.info(f"File sent via OpenAPI ({chat_mode}): {path.name}")
                     return result["processQueryKey"]
                 else:
                     error = result.get("message", result.get("errmsg", "Unknown"))
+                    perm_hint = (
+                        "'企业内部机器人发送群聊消息'" if is_group
+                        else "'企业内部机器人发送单聊消息'"
+                    )
                     logger.warning(
-                        f"OpenAPI sampleFile failed: {error} "
-                        f"(hint: 需要在钉钉开发者后台开通'企业内部机器人发送群聊消息'权限)"
+                        f"OpenAPI sampleFile failed ({chat_mode}): {error} "
+                        f"(hint: 需要在钉钉开发者后台开通{perm_hint}权限)"
                     )
             except Exception as e:
                 logger.warning(f"OpenAPI file send error: {e}")
