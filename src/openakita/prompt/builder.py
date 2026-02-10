@@ -311,6 +311,11 @@ def _build_session_type_rules(session_type: str) -> str:
 
 关键：闲聊和简单问答类消息**完成后不需要验证任务是否完成**——它们本身不是任务。
 
+## 提问与暂停
+
+需要向用户提问、请求确认或澄清时，**必须调用 `ask_user` 工具**。调用后系统会暂停执行并等待用户回复。
+**禁止在文本中直接提问然后继续执行**——纯文本中的问号不会触发暂停机制。
+
 """
 
     if session_type == "im":
@@ -341,7 +346,7 @@ def _build_catalogs_section(
     parts = []
 
     # 工具清单（预算的 33%）
-    # 高频工具 (run_shell, read_file, write_file, list_directory) 已通过
+    # 高频工具 (run_shell, read_file, write_file, list_directory, ask_user) 已通过
     # LLM tools 参数直接注入完整 schema，文本清单默认排除以节省 token
     if tool_catalog:
         tools_text = tool_catalog.get_catalog()  # exclude_high_freq=True by default

@@ -782,6 +782,7 @@ class Agent:
             "system",
             create_system_handler(self),
             [
+                "ask_user",
                 "get_tool_info",
                 "get_session_logs",
                 "enable_thinking",
@@ -2726,8 +2727,9 @@ search_github → install_skill → 使用
             gateway=gateway,
         )
 
-        # === 设置当前会话（供中断检查使用）===
+        # === 设置当前会话（供中断检查 & ReasoningEngine ask_user 等待使用）===
         self._current_session = session
+        self._state.current_session = session
 
         # 设置当前会话到日志缓存（供 get_session_logs 工具使用）
         from ..logging import get_session_log_buffer
@@ -2896,6 +2898,7 @@ search_github → install_skill → 使用
                 reset_im_context(im_tokens)
             # 清除当前会话引用
             self._current_session = None
+            self._state.current_session = None
             # 清除当前任务监控器引用
             self._current_task_monitor = None
 
@@ -3150,6 +3153,7 @@ search_github → install_skill → 使用
 
                 if pending:
                     pending_ids = [s.get("id", "?") for s in pending[:3]]
+                    # 提问暂停由 ask_user 工具在 ReasoningEngine 中拦截处理
                     logger.info(
                         f"[TaskVerify] Plan has {len(pending)} pending steps: {pending_ids}, forcing continue"
                     )

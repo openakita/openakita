@@ -21,6 +21,7 @@ class SystemHandler:
     """系统功能处理器"""
 
     TOOLS = [
+        "ask_user",
         "enable_thinking",
         "get_session_logs",
         "get_tool_info",
@@ -33,7 +34,13 @@ class SystemHandler:
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
-        if tool_name == "enable_thinking":
+        if tool_name == "ask_user":
+            # ask_user 正常由 ReasoningEngine 在 ACT 阶段拦截，不会到达此处
+            # 此为防御性兜底：若意外到达，返回问题文本而不是报错
+            question = params.get("question", "")
+            logger.warning(f"[SystemHandler] ask_user reached handler (should be intercepted): {question[:80]}")
+            return question or "（等待用户回复）"
+        elif tool_name == "enable_thinking":
             return self._enable_thinking(params)
         elif tool_name == "get_session_logs":
             return self._get_session_logs(params)

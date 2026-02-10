@@ -2,6 +2,7 @@
 System 工具定义
 
 包含系统功能相关的工具：
+- ask_user: 向用户提问并等待回复（暂停执行）
 - enable_thinking: 控制深度思考模式
 - get_session_logs: 获取会话日志
 - get_tool_info: 获取工具详细信息
@@ -10,6 +11,33 @@ System 工具定义
 """
 
 SYSTEM_TOOLS = [
+    {
+        "name": "ask_user",
+        "category": "System",
+        "description": "Ask the user a question and PAUSE execution until they reply. Use when: (1) critical information is missing, (2) task is ambiguous and needs clarification, (3) user confirmation is required before proceeding. Do NOT put questions in plain text — only this tool triggers a real pause.",
+        "detail": """向用户提问并暂停执行，等待用户回复。
+
+**何时使用**：
+- 关键信息缺失（如：路径、账号、具体目标不明确）
+- 任务有歧义，需要用户澄清
+- 需要用户确认后才能继续（如：危险操作、多选方案）
+
+**重要**：
+- 调用此工具后，系统会立即暂停当前任务的执行循环
+- 用户回复后，系统会在保留上下文的情况下继续执行
+- **不要**在纯文本回复中提出问题然后继续执行——文本中的问号不会触发暂停
+- 不需要提问的场景：闲聊/问候、简单确认、任务总结""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "要向用户提出的问题或需要确认的内容",
+                },
+            },
+            "required": ["question"],
+        },
+    },
     {
         "name": "enable_thinking",
         "category": "System",

@@ -109,6 +109,117 @@ class ReasoningEngine:
             "browser_get_content", "browser_screenshot", "browser_list_tabs",
         })
 
+    # ==================== ask_user 等待用户回复 ====================
+
+    async def _wait_for_user_reply(
+        self,
+        question: str,
+        state: TaskState,
+        *,
+        timeout_seconds: int = 60,
+        max_reminders: int = 1,
+        poll_interval: float = 2.0,
+    ) -> str | None:
+        """
+        等待用户回复 ask_user 的问题（仅 IM 模式生效）。
+
+        利用 Gateway 的中断队列机制：IM 用户在 Agent 处理中发送的消息
+        会被 Gateway 放入 interrupt_queue，本方法轮询该队列获取回复。
+
+        流程:
+        1. 通过 Gateway 发送问题给用户
+        2. 轮询 interrupt_queue 等待回复（timeout_seconds 超时）
+        3. 第一次超时 → 发送提醒，再等一轮
+        4. 第二次超时 → 返回 None，由调用方注入系统消息让 LLM 自行决策
+
+        Args:
+            question: 要发送给用户的问题文本
+            state: 当前任务状态（用于取消检查）
+            timeout_seconds: 每轮等待超时（秒）
+            max_reminders: 最大追问提醒次数
+            poll_interval: 轮询间隔（秒）
+
+        Returns:
+            用户回复文本，或 None（超时/无 gateway/被取消）
+        """
+        # 获取 gateway 和 session 引用
+        session = self._state.current_session
+        if not session:
+            return None
+
+        gateway = session.get_metadata("_gateway") if hasattr(session, "get_metadata") else None
+        session_key = session.get_metadata("_session_key") if gateway else None
+
+        if not gateway or not session_key:
+            # CLI 模式或无 gateway，不做等待
+            return None
+
+        # 发送问题到用户
+        try:
+            await gateway.send_to_session(session, question, role="assistant")
+            logger.info(f"[ask_user] Question sent to user, waiting for reply (timeout={timeout_seconds}s)")
+        except Exception as e:
+            logger.warning(f"[ask_user] Failed to send question via gateway: {e}")
+            return None
+
+        reminders_sent = 0
+
+        while reminders_sent <= max_reminders:
+            # 轮询等待用户回复
+            elapsed = 0.0
+
+            while elapsed < timeout_seconds:
+                # 检查任务是否被取消
+                if state.cancelled:
+                    logger.info("[ask_user] Task cancelled while waiting for reply")
+                    return None
+
+                # 检查中断队列
+                try:
+                    reply_msg = await gateway.check_interrupt(session_key)
+                except Exception as e:
+                    logger.warning(f"[ask_user] check_interrupt error: {e}")
+                    reply_msg = None
+
+                if reply_msg:
+                    # 从 UnifiedMessage 提取文本
+                    reply_text = (
+                        reply_msg.plain_text.strip()
+                        if hasattr(reply_msg, "plain_text") and reply_msg.plain_text
+                        else str(reply_msg).strip()
+                    )
+                    if reply_text:
+                        logger.info(f"[ask_user] User replied: {reply_text[:80]}")
+                        # 记录到 session 历史
+                        try:
+                            session.add_message(role="user", content=reply_text, source="ask_user_reply")
+                        except Exception:
+                            pass
+                        return reply_text
+
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+            # 本轮超时
+            if reminders_sent < max_reminders:
+                # 发送追问提醒
+                reminders_sent += 1
+                reminder = "⏰ 我在等你回复上面的问题哦，看到的话回复一下~"
+                try:
+                    await gateway.send_to_session(session, reminder, role="assistant")
+                    logger.info(f"[ask_user] Timeout #{reminders_sent}, reminder sent")
+                except Exception as e:
+                    logger.warning(f"[ask_user] Failed to send reminder: {e}")
+            else:
+                # 追问次数用尽，返回 None
+                logger.info(
+                    f"[ask_user] Final timeout after {reminders_sent} reminder(s), "
+                    f"total wait ~{timeout_seconds * (max_reminders + 1)}s"
+                )
+                return None
+
+        return None
+
     # ==================== Checkpoint / Rollback ====================
 
     def _save_checkpoint(
@@ -357,6 +468,7 @@ class ReasoningEngine:
             return f"{name}({param_hash})"
 
         # ==================== 主循环 ====================
+        logger.info(f"[ReAct] === Loop started (max_iterations={max_iterations}, model={current_model}) ===")
 
         for iteration in range(max_iterations):
             state.iteration = iteration
@@ -393,6 +505,7 @@ class ReasoningEngine:
                 )
 
             # ==================== REASON 阶段 ====================
+            logger.info(f"[ReAct] Iter {iteration+1}/{max_iterations} — REASON (model={current_model})")
             if state.status != TaskStatus.REASONING:
                 state.transition(TaskStatus.REASONING)
 
@@ -436,6 +549,8 @@ class ReasoningEngine:
 
             if decision.type == DecisionType.FINAL_ANSWER:
                 # 纯文本响应 - 处理完成度验证
+                answer_preview = (decision.text_content or "")[:80].replace("\n", " ")
+                logger.info(f"[ReAct] Iter {iteration+1} — FINAL_ANSWER: \"{answer_preview}...\"")
                 consecutive_tool_rounds = 0
 
                 result = await self._handle_final_answer(
@@ -457,6 +572,10 @@ class ReasoningEngine:
 
                 if isinstance(result, str):
                     # 最终答案
+                    logger.info(
+                        f"[ReAct] === COMPLETED after {iteration+1} iterations, "
+                        f"tools: {list(set(executed_tool_names))} ==="
+                    )
                     state.transition(TaskStatus.COMPLETED)
                     tracer.end_trace(metadata={
                         "result": "completed",
@@ -466,6 +585,7 @@ class ReasoningEngine:
                     return result
                 else:
                     # 需要继续循环（验证不通过）
+                    logger.info(f"[ReAct] Iter {iteration+1} — VERIFY: incomplete, continuing loop")
                     state.transition(TaskStatus.VERIFYING)
                     (
                         working_messages,
@@ -478,7 +598,122 @@ class ReasoningEngine:
 
             elif decision.type == DecisionType.TOOL_CALLS:
                 # ==================== ACT 阶段 ====================
+                tool_names = [tc.get("name", "?") for tc in decision.tool_calls]
+                logger.info(f"[ReAct] Iter {iteration+1} — ACT: {tool_names}")
                 state.transition(TaskStatus.ACTING)
+
+                # ---- ask_user 拦截 ----
+                # 如果 LLM 调用了 ask_user，立即中断循环，将问题返回给用户
+                ask_user_calls = [tc for tc in decision.tool_calls if tc.get("name") == "ask_user"]
+                other_calls = [tc for tc in decision.tool_calls if tc.get("name") != "ask_user"]
+
+                if ask_user_calls:
+                    logger.info(
+                        f"[ReAct] Iter {iteration+1} — ask_user intercepted, "
+                        f"pausing for user input (other_tools={[tc.get('name') for tc in other_calls]})"
+                    )
+
+                    # 添加 assistant 消息（保留完整的 tool_use 内容用于上下文连贯）
+                    working_messages.append({
+                        "role": "assistant",
+                        "content": decision.assistant_content,
+                    })
+
+                    # 如果同时还有其他工具调用，先执行它们
+                    # 收集其他工具的 tool_result（Claude API 要求每个 tool_use 都有对应 tool_result）
+                    other_tool_results: list[dict] = []
+                    if other_calls:
+                        other_results, other_executed, other_receipts = (
+                            await self._tool_executor.execute_batch(
+                                other_calls,
+                                state=state,
+                                task_monitor=task_monitor,
+                                allow_interrupt_checks=self._state.interrupt_enabled,
+                                capture_delivery_receipts=True,
+                            )
+                        )
+                        if other_executed:
+                            tools_executed_in_task = True
+                            executed_tool_names.extend(other_executed)
+                            state.record_tool_execution(other_executed)
+                        # 保留其他工具的 tool_result 内容
+                        other_tool_results = other_results if other_results else []
+
+                    # 提取 ask_user 的问题文本
+                    question = ask_user_calls[0].get("input", {}).get("question", "")
+                    ask_tool_id = ask_user_calls[0].get("id", "ask_user_0")
+
+                    # 合并 LLM 的文本回复 + 问题
+                    text_part = strip_thinking_tags(decision.text_content or "").strip()
+                    if text_part and question:
+                        final_text = f"{text_part}\n\n{question}"
+                    elif question:
+                        final_text = question
+                    else:
+                        final_text = text_part or "（等待用户回复）"
+
+                    state.transition(TaskStatus.WAITING_USER)
+
+                    # ---- IM 模式：等待用户回复（超时 + 追问） ----
+                    user_reply = await self._wait_for_user_reply(
+                        final_text, state, timeout_seconds=60, max_reminders=1,
+                    )
+
+                    # 构建 tool_result 消息（其他工具结果 + ask_user 结果必须在同一条 user 消息中）
+                    def _build_ask_user_tool_results(ask_user_content: str) -> list[dict]:
+                        """构建包含所有 tool_result 的 user 消息 content"""
+                        results = list(other_tool_results)  # 其他工具的 tool_result
+                        results.append({
+                            "type": "tool_result",
+                            "tool_use_id": ask_tool_id,
+                            "content": ask_user_content,
+                        })
+                        return results
+
+                    if user_reply:
+                        # 用户在超时内回复了 → 注入回复，继续 ReAct 循环
+                        logger.info(
+                            f"[ReAct] Iter {iteration+1} — ask_user: user replied, resuming loop"
+                        )
+                        working_messages.append({
+                            "role": "user",
+                            "content": _build_ask_user_tool_results(f"用户回复：{user_reply}"),
+                        })
+                        state.transition(TaskStatus.REASONING)
+                        continue  # 继续 ReAct 循环
+
+                    elif user_reply is None and self._state.current_session and (
+                        self._state.current_session.get_metadata("_gateway")
+                        if hasattr(self._state.current_session, "get_metadata")
+                        else None
+                    ):
+                        # IM 模式，用户超时未回复 → 注入系统提示让 LLM 自行决策
+                        logger.info(
+                            f"[ReAct] Iter {iteration+1} — ask_user: user timeout, "
+                            f"injecting auto-decide prompt"
+                        )
+                        working_messages.append({
+                            "role": "user",
+                            "content": _build_ask_user_tool_results(
+                                "[系统] 用户 2 分钟内未回复你的提问。"
+                                "请自行决策：如果能合理推断用户意图，继续执行任务；"
+                                "否则终止当前任务并告知用户你需要什么信息。"
+                            ),
+                        })
+                        state.transition(TaskStatus.REASONING)
+                        continue  # 继续 ReAct 循环，让 LLM 自行决策
+
+                    else:
+                        # CLI 模式或无 gateway → 直接返回问题文本
+                        tracer.end_trace(metadata={
+                            "result": "waiting_user",
+                            "iterations": iteration + 1,
+                            "tools_used": list(set(executed_tool_names)),
+                        })
+                        logger.info(
+                            f"[ReAct] === WAITING_USER (CLI) after {iteration+1} iterations ==="
+                        )
+                        return final_text
 
                 # 保存检查点（在工具执行前）
                 self._save_checkpoint(working_messages, state, decision, iteration)
@@ -521,6 +756,10 @@ class ReasoningEngine:
                     delivery_receipts = receipts
 
                 # ==================== OBSERVE 阶段 ====================
+                logger.info(
+                    f"[ReAct] Iter {iteration+1} — OBSERVE: "
+                    f"{len(tool_results)} results from {executed or []}"
+                )
                 state.transition(TaskStatus.OBSERVING)
 
                 # 检查是否应该回滚

@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 # 高频工具白名单 - 直接提供完整 schema 给 LLM API，跳过渐进式披露
-HIGH_FREQ_TOOLS = {"run_shell", "read_file", "write_file", "list_directory"}
+HIGH_FREQ_TOOLS = {"run_shell", "read_file", "write_file", "list_directory", "ask_user"}
 
 
 class ToolCatalog:

@@ -164,6 +164,8 @@ class ResponseHandler:
             return False
 
         # Plan 步骤检查
+        # 注意: 提问暂停现在由 ask_user 工具在 ReasoningEngine ACT 阶段拦截处理，
+        # 到达此处时 ask_user 已被消费，不会出现"文本提问但未暂停"的情况。
         try:
             from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan
 
@@ -174,7 +176,9 @@ class ResponseHandler:
                     pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
                     if pending:
                         pending_ids = [s.get("id", "?") for s in pending[:3]]
-                        logger.info(f"[TaskVerify] Plan has {len(pending)} pending steps: {pending_ids}")
+                        logger.info(
+                            f"[TaskVerify] Plan has {len(pending)} pending steps: {pending_ids}"
+                        )
                         return False
         except Exception:
             pass

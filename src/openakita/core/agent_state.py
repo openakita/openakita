@@ -27,6 +27,7 @@ class TaskStatus(Enum):
     OBSERVING = "observing"  # 观察工具结果阶段
     VERIFYING = "verifying"  # 任务完成度验证阶段
     MODEL_SWITCHING = "model_switching"  # 模型切换中
+    WAITING_USER = "waiting_user"  # 等待用户回复（ask_user 工具触发）
     COMPLETED = "completed"  # 任务完成
     FAILED = "failed"  # 任务失败
     CANCELLED = "cancelled"  # 任务被取消
@@ -41,12 +42,14 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.OBSERVING,
         TaskStatus.VERIFYING,
         TaskStatus.COMPLETED,
+        TaskStatus.WAITING_USER,
         TaskStatus.CANCELLED,
         TaskStatus.MODEL_SWITCHING,
         TaskStatus.FAILED,
     },
     TaskStatus.ACTING: {
         TaskStatus.OBSERVING,
+        TaskStatus.WAITING_USER,
         TaskStatus.CANCELLED,
         TaskStatus.FAILED,
     },
@@ -61,6 +64,7 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.CANCELLED,
     },
     TaskStatus.MODEL_SWITCHING: {TaskStatus.REASONING, TaskStatus.FAILED},
+    TaskStatus.WAITING_USER: {TaskStatus.REASONING, TaskStatus.IDLE, TaskStatus.CANCELLED},
     TaskStatus.COMPLETED: {TaskStatus.IDLE},
     TaskStatus.FAILED: {TaskStatus.IDLE},
     TaskStatus.CANCELLED: {TaskStatus.IDLE},
@@ -169,7 +173,7 @@ class TaskState:
 
     @property
     def is_active(self) -> bool:
-        """任务是否处于活跃状态"""
+        """任务是否处于活跃状态（包含 WAITING_USER，因为 IM 模式下仍在等待回复）"""
         return self.status not in (
             TaskStatus.IDLE,
             TaskStatus.COMPLETED,
@@ -179,7 +183,7 @@ class TaskState:
 
     @property
     def is_terminal(self) -> bool:
-        """任务是否处于终态"""
+        """任务是否处于终态（WAITING_USER 不算终态，IM 模式下可继续）"""
         return self.status in (
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,
