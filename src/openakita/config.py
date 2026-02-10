@@ -191,15 +191,9 @@ class Settings(BaseSettings):
     feishu_app_id: str = Field(default="", description="飞书 App ID")
     feishu_app_secret: str = Field(default="", description="飞书 App Secret")
 
-    # 企业微信
+    # 企业微信（智能机器人）
     wework_enabled: bool = Field(default=False, description="是否启用企业微信")
-    wework_mode: str = Field(
-        default="bot",
-        description="企业微信模式: bot(智能机器人，默认) / app(自建应用)",
-    )
     wework_corp_id: str = Field(default="", description="企业微信 Corp ID")
-    wework_agent_id: str = Field(default="", description="企业微信 Agent ID（仅 app 模式需要）")
-    wework_secret: str = Field(default="", description="企业微信 Secret（仅 app 模式需要）")
     wework_token: str = Field(default="", description="企业微信回调 Token")
     wework_encoding_aes_key: str = Field(default="", description="企业微信回调加密 AES Key")
     wework_callback_port: int = Field(default=9880, description="企业微信回调服务端口")
