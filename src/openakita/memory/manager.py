@@ -519,11 +519,14 @@ class MemoryManager:
         """
         from .daily_consolidator import DailyConsolidator
 
+        from ..config import settings
+
         daily_consolidator = DailyConsolidator(
             data_dir=self.data_dir,
             memory_md_path=self.memory_md_path,
             memory_manager=self,
             brain=self.brain,
+            identity_dir=settings.identity_path,
         )
 
         return await daily_consolidator.consolidate_daily()

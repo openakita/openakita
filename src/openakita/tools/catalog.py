@@ -77,6 +77,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         "System",
         "MCP",
         "Plan",
+        "Persona",
     ]
 
     # 分类显示名映射（内部名 -> 系统提示中的显示名）

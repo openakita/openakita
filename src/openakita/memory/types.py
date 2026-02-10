@@ -22,6 +22,7 @@ class MemoryType(Enum):
     CONTEXT = "context"  # 上下文信息 (项目背景、当前任务)
     RULE = "rule"  # 规则约束 (禁止行为、安全边界)
     ERROR = "error"  # 错误教训 (失败原因、避免重复)
+    PERSONA_TRAIT = "persona_trait"  # 人格偏好特质 (沟通风格、情感距离等)
 
 
 class MemoryPriority(Enum):

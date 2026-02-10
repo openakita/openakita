@@ -133,6 +133,64 @@ USER_PROFILE_ITEMS = [
         priority=4,
         category="habits",
     ),
+    # === 个人信息 (优先级 3-4，日常渐进收集) ===
+    UserProfileItem(
+        key="hobbies",
+        name="兴趣爱好",
+        description="用户的兴趣爱好",
+        question="你平时有什么兴趣爱好吗？",
+        priority=3,
+        category="personal",
+    ),
+    UserProfileItem(
+        key="health_habits",
+        name="健康习惯",
+        description="用户的作息和运动习惯",
+        question="你的作息规律吗？有运动习惯吗？",
+        priority=4,
+        category="personal",
+    ),
+    # === 人格偏好 (优先级 2-3，与 persona 系统联动) ===
+    UserProfileItem(
+        key="communication_style",
+        name="沟通风格",
+        description="偏好的沟通风格",
+        question="你喜欢我说话正式还是随意？",
+        priority=2,
+        category="persona",
+    ),
+    UserProfileItem(
+        key="humor_preference",
+        name="幽默偏好",
+        description="是否喜欢幽默",
+        question="你希望我偶尔开玩笑吗？",
+        priority=2,
+        category="persona",
+    ),
+    UserProfileItem(
+        key="proactive_preference",
+        name="主动消息偏好",
+        description="是否喜欢主动消息",
+        question="你希望我主动给你发消息吗？比如问候、提醒之类的",
+        priority=2,
+        category="persona",
+    ),
+    UserProfileItem(
+        key="emoji_preference",
+        name="表情偏好",
+        description="是否喜欢表情和表情包",
+        question="你喜欢我在回复中使用表情吗？",
+        priority=3,
+        category="persona",
+    ),
+    UserProfileItem(
+        key="care_topics",
+        name="关心话题",
+        description="希望被特别关注的话题",
+        question="有什么话题你希望我特别关注？比如健康提醒、项目进度之类的",
+        priority=3,
+        category="persona",
+    ),
 ]
 
 

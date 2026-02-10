@@ -81,6 +81,21 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
     else:
         logger.warning("USER.md not found, skipping")
 
+    # 4. 编译 personas/user_custom.md
+    persona_custom_path = identity_dir / "personas" / "user_custom.md"
+    if persona_custom_path.exists():
+        persona_content = persona_custom_path.read_text(encoding="utf-8")
+        persona_summary = compile_persona(persona_content)
+        if persona_summary.strip():
+            persona_out = compiled_dir / "persona.custom.md"
+            persona_out.write_text(persona_summary, encoding="utf-8")
+            results["persona_custom"] = persona_out
+            logger.info(f"Compiled user_custom.md -> {persona_out}")
+        else:
+            logger.info("user_custom.md has no learned preferences, skipping")
+    else:
+        logger.debug("personas/user_custom.md not found, skipping")
+
     # 写入编译时间戳
     timestamp_file = compiled_dir / ".compiled_at"
     timestamp_file.write_text(datetime.now().isoformat(), encoding="utf-8")
@@ -353,6 +368,44 @@ def compile_user(user_content: str) -> str:
 
 """
     summary += "\n".join(learned_items[:15])  # 限制 15 条
+
+    return summary
+
+
+def compile_persona(persona_content: str) -> str:
+    """
+    personas/user_custom.md -> persona.custom.md
+
+    保留已归集的用户偏好，跳过空白占位内容。
+    目标: <=150 tokens (~600 字符)
+    """
+    # 如果内容是占位符/空白，跳过
+    if "尚未收集" in persona_content or len(persona_content.strip()) < 100:
+        return ""
+
+    # 提取有实质内容的条目
+    items = []
+    lines = persona_content.split("\n")
+
+    for line in lines:
+        stripped = line.strip()
+
+        # 跳过标题和注释
+        if stripped.startswith("#") or stripped.startswith("<!--") or stripped.startswith(">"):
+            continue
+
+        # 提取有内容的条目
+        if stripped.startswith("-") and ":" in stripped:
+            # 检查冒号后面是否有实际内容
+            parts = stripped.split(":", 1)
+            if len(parts) == 2 and parts[1].strip():
+                items.append(stripped)
+
+    if not items:
+        return ""
+
+    summary = "# User Persona Preferences\n\n"
+    summary += "\n".join(items[:15])  # 限制 15 条
 
     return summary
 

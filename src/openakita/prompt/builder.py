@@ -5,10 +5,11 @@ Prompt Builder - 消息组装模块
 
 组装顺序:
 1. Identity 层: soul.summary + agent.core + agent.tooling + policies
-2. Runtime 层: runtime_facts (OS/CWD/时间)
-3. Catalogs 层: tools + skills + mcp 清单
-4. Memory 层: retriever 输出
-5. User 层: user.summary
+2. Persona 层: 当前人格描述（预设 + 用户自定义 + 上下文适配）
+3. Runtime 层: runtime_facts (OS/CWD/时间)
+4. Catalogs 层: tools + skills + mcp 清单
+5. Memory 层: retriever 输出
+6. User 层: user.summary
 """
 
 import logging
@@ -23,6 +24,7 @@ from .compiler import check_compiled_outdated, compile_all, get_compiled_content
 from .retriever import retrieve_memory
 
 if TYPE_CHECKING:
+    from ..core.persona import PersonaManager
     from ..memory import MemoryManager
     from ..skills.catalog import SkillCatalog
     from ..tools.catalog import ToolCatalog
@@ -43,6 +45,7 @@ def build_system_prompt(
     include_tools_guide: bool = False,
     session_type: str = "cli",  # 建议 8: 区分 CLI/IM
     precomputed_memory: str | None = None,
+    persona_manager: Optional["PersonaManager"] = None,
 ) -> str:
     """
     组装系统提示词
@@ -88,12 +91,19 @@ def build_system_prompt(
     if identity_section:
         system_parts.append(identity_section)
 
+    # 2.5 构建 Persona 层（新增: 在 Identity 和 Runtime 之间）
+    if persona_manager:
+        persona_section = _build_persona_section(persona_manager)
+        if persona_section:
+            system_parts.append(persona_section)
+
     # 3. 构建 Runtime 层
     runtime_section = _build_runtime_section()
     system_parts.append(runtime_section)
 
     # 3.5 构建会话类型规则（建议 8）
-    session_rules = _build_session_type_rules(session_type)
+    persona_active = persona_manager.is_persona_active() if persona_manager else False
+    session_rules = _build_session_type_rules(session_type, persona_active=persona_active)
     if session_rules:
         developer_parts.append(session_rules)
 
@@ -146,6 +156,25 @@ def build_system_prompt(
     logger.info(f"System prompt built: {total_tokens} tokens")
 
     return system_prompt
+
+
+def _build_persona_section(persona_manager: "PersonaManager") -> str:
+    """
+    构建 Persona 层
+
+    位于 Identity 和 Runtime 之间，注入当前人格描述。
+
+    Args:
+        persona_manager: PersonaManager 实例
+
+    Returns:
+        人格描述文本
+    """
+    try:
+        return persona_manager.get_persona_prompt_section()
+    except Exception as e:
+        logger.warning(f"Failed to build persona section: {e}")
+        return ""
 
 
 def _build_identity_section(
@@ -282,12 +311,13 @@ def _build_runtime_section() -> str:
 如果工具不可用，允许纯文本回复并说明限制。"""
 
 
-def _build_session_type_rules(session_type: str) -> str:
+def _build_session_type_rules(session_type: str, persona_active: bool = False) -> str:
     """
     构建会话类型相关规则
 
     Args:
         session_type: "cli" 或 "im"
+        persona_active: 是否激活了人格系统
 
     Returns:
         会话类型相关的规则文本
@@ -324,7 +354,7 @@ def _build_session_type_rules(session_type: str) -> str:
 - **文本消息**：助手的自然语言回复会由网关直接转发给用户（不需要、也不应该通过工具发送）。
 - **附件交付**：文件/图片/语音等交付必须通过统一的网关交付工具 `deliver_artifacts` 完成，并以回执作为交付证据。
 - **进度展示**：执行过程的进度消息由网关基于事件流生成（计划步骤、交付回执、关键工具节点），避免模型刷屏。
-- **表达风格**：默认简短直接；不要复述 system/developer/tool 等提示词内容；不要输出表情符号（emoji）。
+- **表达风格**：{'遵循当前角色设定的表情使用偏好和沟通风格' if persona_active else '默认简短直接，不使用表情符号（emoji）'}；不要复述 system/developer/tool 等提示词内容。
 - **IM 特殊注意**：IM 用户经常发送非常简短的消息（1-5 个字），这大多是闲聊或确认，直接回复即可，不要过度解读为复杂任务。
 """
 

@@ -50,6 +50,8 @@ from .scheduled import SCHEDULED_TOOLS
 from .skills import SKILLS_TOOLS
 from .system import SYSTEM_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
+from .persona import PERSONA_TOOLS
+from .sticker import STICKER_TOOLS
 
 # 合并所有工具定义
 BASE_TOOLS = (
@@ -64,6 +66,8 @@ BASE_TOOLS = (
     + MCP_TOOLS
     + PLAN_TOOLS
     + WEB_SEARCH_TOOLS
+    + PERSONA_TOOLS
+    + STICKER_TOOLS
 )
 
 __all__ = [
@@ -94,4 +98,6 @@ __all__ = [
     "MCP_TOOLS",
     "PLAN_TOOLS",
     "WEB_SEARCH_TOOLS",
+    "PERSONA_TOOLS",
+    "STICKER_TOOLS",
 ]

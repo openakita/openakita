@@ -377,6 +377,7 @@ class MemoryExtractor:
                     "ERROR": MemoryType.ERROR,
                     "RULE": MemoryType.RULE,
                     "CONTEXT": MemoryType.CONTEXT,
+                    "PERSONA_TRAIT": MemoryType.PERSONA_TRAIT,
                 }
                 mem_type = type_map.get(type_str, MemoryType.FACT)
 
@@ -437,6 +438,7 @@ class MemoryExtractor:
                 "SKILL": MemoryType.SKILL,
                 "ERROR": MemoryType.ERROR,
                 "RULE": MemoryType.RULE,
+                "PERSONA_TRAIT": MemoryType.PERSONA_TRAIT,
             }
 
             mem_type = type_map.get(type_str.upper(), MemoryType.FACT)

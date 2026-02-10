@@ -2,10 +2,14 @@
 OpenAkita 配置模块
 """
 
+import json
+import logging
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -230,6 +234,23 @@ class Settings(BaseSettings):
     orchestration_heartbeat_interval: int = Field(default=5, description="Worker 心跳间隔（秒）")
     orchestration_health_check_interval: int = Field(default=10, description="健康检查间隔（秒）")
 
+    # === 人格系统配置 ===
+    persona_name: str = Field(
+        default="default", description="当前激活的人格预设名称 (default/business/tech_expert/butler/girlfriend/boyfriend/family/jarvis)"
+    )
+
+    # === 活人感引擎配置 ===
+    proactive_enabled: bool = Field(default=False, description="是否启用活人感模式")
+    proactive_max_daily_messages: int = Field(default=3, description="每日最多主动消息数")
+    proactive_min_interval_minutes: int = Field(default=120, description="两条主动消息最短间隔（分钟）")
+    proactive_quiet_hours_start: int = Field(default=23, description="安静时段开始（小时，0-23）")
+    proactive_quiet_hours_end: int = Field(default=7, description="安静时段结束（小时，0-23）")
+    proactive_idle_threshold_hours: int = Field(default=24, description="用户空闲多久后触发闲聊问候（小时）")
+
+    # === 表情包配置 ===
+    sticker_enabled: bool = Field(default=True, description="是否启用表情包功能")
+    sticker_data_dir: str = Field(default="data/sticker", description="表情包数据目录")
+
     # === 追踪配置 ===
     tracing_enabled: bool = Field(default=False, description="是否启用 Agent 追踪")
     tracing_export_dir: str = Field(default="data/traces", description="追踪导出目录")
@@ -274,6 +295,16 @@ class Settings(BaseSettings):
         return self.identity_path / "MEMORY.md"
 
     @property
+    def personas_path(self) -> Path:
+        """人格预设目录路径"""
+        return self.identity_path / "personas"
+
+    @property
+    def sticker_data_path(self) -> Path:
+        """表情包数据目录路径"""
+        return self.project_root / self.sticker_data_dir
+
+    @property
     def skills_path(self) -> Path:
         """技能目录路径"""
         return self.project_root / "skills"
@@ -309,5 +340,82 @@ class Settings(BaseSettings):
         return self.project_root / "data" / "selfcheck"
 
 
+# ---------------------------------------------------------------------------
+# 运行时状态持久化
+# ---------------------------------------------------------------------------
+# 用于保存用户通过对话动态修改的设置（角色、活人感开关等），
+# 使其在 Agent 重启后依然生效。
+# 存储位置: data/runtime_state.json
+# ---------------------------------------------------------------------------
+
+# 需要持久化的 settings 字段名
+_PERSISTABLE_KEYS: list[str] = [
+    "persona_name",
+    "proactive_enabled",
+    "proactive_max_daily_messages",
+    "proactive_min_interval_minutes",
+    "proactive_quiet_hours_start",
+    "proactive_quiet_hours_end",
+]
+
+
+class RuntimeState:
+    """
+    轻量级运行时状态持久化。
+
+    在 settings 单例上修改可持久化字段后，调用 save() 写入磁盘；
+    在 Agent 启动时调用 load() 从磁盘恢复。
+    """
+
+    def __init__(self, state_file: Path | None = None):
+        # 延迟解析（settings 还没创建时不能访问 project_root）
+        self._state_file = state_file
+
+    @property
+    def state_file(self) -> Path:
+        if self._state_file is None:
+            self._state_file = settings.project_root / "data" / "runtime_state.json"
+        return self._state_file
+
+    def save(self) -> None:
+        """把当前 settings 中的可持久化字段写入 JSON 文件。"""
+        data: dict = {}
+        for key in _PERSISTABLE_KEYS:
+            data[key] = getattr(settings, key)
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.state_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info(f"[RuntimeState] Saved: {data}")
+        except Exception as e:
+            logger.error(f"[RuntimeState] Failed to save: {e}")
+
+    def load(self) -> None:
+        """从 JSON 文件恢复设置到 settings 单例，仅覆盖可持久化字段。"""
+        if not self.state_file.exists():
+            logger.info("[RuntimeState] No saved state found, using defaults.")
+            return
+        try:
+            with open(self.state_file, encoding="utf-8") as f:
+                data = json.load(f)
+            applied = []
+            for key in _PERSISTABLE_KEYS:
+                if key in data:
+                    old_val = getattr(settings, key)
+                    new_val = data[key]
+                    if old_val != new_val:
+                        setattr(settings, key, new_val)
+                        applied.append(f"{key}: {old_val} -> {new_val}")
+            if applied:
+                logger.info(f"[RuntimeState] Restored: {'; '.join(applied)}")
+            else:
+                logger.info("[RuntimeState] State loaded, no changes needed.")
+        except Exception as e:
+            logger.error(f"[RuntimeState] Failed to load: {e}")
+
+
 # 全局配置实例
 settings = Settings()
+
+# 全局运行时状态管理器
+runtime_state = RuntimeState()

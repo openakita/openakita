@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .consolidator import MemoryConsolidator
 from .extractor import MemoryExtractor
-from .types import Memory, MemoryPriority
+from .types import Memory, MemoryPriority, MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ class DailyConsolidator:
         memory_md_path: Path,
         memory_manager=None,
         brain=None,
+        identity_dir: Path | None = None,
     ):
         """
         Args:
@@ -47,11 +48,13 @@ class DailyConsolidator:
             memory_md_path: MEMORY.md 路径
             memory_manager: MemoryManager 实例
             brain: LLM 大脑实例
+            identity_dir: identity 目录路径（用于偏好晋升）
         """
         self.data_dir = Path(data_dir)
         self.memory_md_path = Path(memory_md_path)
         self.memory_manager = memory_manager
         self.brain = brain
+        self.identity_dir = Path(identity_dir) if identity_dir else None
 
         # 子组件
         self.extractor = MemoryExtractor(brain)
@@ -100,6 +103,10 @@ class DailyConsolidator:
             # 4. 刷新 MEMORY.md
             await self.refresh_memory_md()
             result["memory_md_refreshed"] = True
+
+            # 4.5 晋升人格偏好到 identity
+            persona_promoted = await self._promote_persona_traits_to_identity()
+            result["persona_traits_promoted"] = persona_promoted
 
             # 5. 清理过期历史
             result["cleanup"] = self.consolidator.cleanup_history()
@@ -296,6 +303,148 @@ class DailyConsolidator:
                     pass
 
         return summaries
+
+    # ==================== 人格偏好晋升 ====================
+
+    async def _promote_persona_traits_to_identity(self) -> int:
+        """
+        将高置信度的 PERSONA_TRAIT 记忆晋升到 identity/personas/user_custom.md
+
+        筛选标准:
+        - 记忆类型为 PERSONA_TRAIT
+        - 置信度 >= 0.7 或记忆被访问/强化 >= 3 次
+        - 按维度分组，每维度取置信度最高的
+
+        Returns:
+            晋升的特质数量
+        """
+        if not self.memory_manager or not self.identity_dir:
+            return 0
+
+        persona_dir = self.identity_dir / "personas"
+        user_custom_path = persona_dir / "user_custom.md"
+        if not persona_dir.exists():
+            return 0
+
+        # 1. 筛选 PERSONA_TRAIT 类型记忆
+        persona_memories = []
+        for mem in self.memory_manager._memories.values():
+            if mem.type == MemoryType.PERSONA_TRAIT:
+                persona_memories.append(mem)
+
+        if not persona_memories:
+            return 0
+
+        # 2. 筛选高置信度或高访问量的
+        qualified = [
+            m for m in persona_memories
+            if m.importance_score >= 0.7 or m.access_count >= 3
+        ]
+
+        if not qualified:
+            return 0
+
+        # 3. 按维度分组（从 tags 中提取 dimension:xxx）
+        by_dimension: dict[str, list[Memory]] = {}
+        for mem in qualified:
+            dimension = None
+            preference = None
+            for tag in mem.tags:
+                if tag.startswith("dimension:"):
+                    dimension = tag.split(":", 1)[1]
+                elif tag.startswith("preference:"):
+                    preference = tag.split(":", 1)[1]
+            if dimension:
+                if dimension not in by_dimension:
+                    by_dimension[dimension] = []
+                by_dimension[dimension].append(mem)
+
+        if not by_dimension:
+            # 尝试从 content 解析
+            for mem in qualified:
+                parts = mem.content.split("=", 1)
+                if len(parts) == 2:
+                    dim = parts[0].strip()
+                    if dim not in by_dimension:
+                        by_dimension[dim] = []
+                    by_dimension[dim].append(mem)
+
+        if not by_dimension:
+            return 0
+
+        # 4. 每个维度取置信度最高的
+        promoted_traits: dict[str, tuple[str, Memory]] = {}  # dim -> (preference, memory)
+        for dim, mems in by_dimension.items():
+            best = max(mems, key=lambda m: m.importance_score)
+            # 提取偏好值
+            pref = None
+            for tag in best.tags:
+                if tag.startswith("preference:"):
+                    pref = tag.split(":", 1)[1]
+                    break
+            if not pref:
+                parts = best.content.split("=", 1)
+                pref = parts[1].strip() if len(parts) == 2 else best.content
+            promoted_traits[dim] = (pref, best)
+
+        # 5. 生成 user_custom.md 内容
+        now = datetime.now()
+        lines = [
+            "# User Custom Persona",
+            "",
+            "> 从用户交互中归集的个性化偏好，每日自动更新。",
+            f"> 最后更新: {now.strftime('%Y-%m-%d %H:%M')}",
+            "",
+        ]
+
+        # 按类别分组
+        style_traits = {}
+        interaction_traits = {}
+        care_traits = {}
+
+        style_dims = {"formality", "humor", "emoji_usage", "reply_length", "address_style"}
+        interaction_dims = {"proactiveness", "emotional_distance", "encouragement", "sticker_preference"}
+        care_dims = {"care_topics"}
+
+        for dim, (pref, mem) in promoted_traits.items():
+            entry = f"- {dim}: {pref}（置信度 {mem.importance_score:.2f}）"
+            if dim in style_dims:
+                style_traits[dim] = entry
+            elif dim in interaction_dims:
+                interaction_traits[dim] = entry
+            elif dim in care_dims:
+                care_traits[dim] = entry
+            else:
+                style_traits[dim] = entry
+
+        if style_traits:
+            lines.append("## 沟通风格偏好")
+            lines.extend(style_traits.values())
+            lines.append("")
+
+        if interaction_traits:
+            lines.append("## 互动偏好")
+            lines.extend(interaction_traits.values())
+            lines.append("")
+
+        if care_traits:
+            lines.append("## 关心话题")
+            lines.extend(care_traits.values())
+            lines.append("")
+
+        content = "\n".join(lines)
+        user_custom_path.write_text(content, encoding="utf-8")
+        logger.info(f"Promoted {len(promoted_traits)} persona traits to {user_custom_path}")
+
+        # 6. 触发重编译
+        try:
+            from ..prompt.compiler import compile_all
+            compile_all(self.identity_dir)
+            logger.info("Triggered prompt recompilation after persona trait promotion")
+        except Exception as e:
+            logger.warning(f"Failed to recompile after persona promotion: {e}")
+
+        return len(promoted_traits)
 
     # ==================== 去重清理 ====================
 

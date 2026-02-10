@@ -28,7 +28,14 @@ PROFILE_TOOLS = [
 - code_comment_lang: 代码注释语言
 - work_hours: 工作时间
 - timezone: 时区
-- confirm_preference: 确认偏好""",
+- confirm_preference: 确认偏好
+- hobbies: 兴趣爱好
+- health_habits: 健康习惯
+- communication_style: 沟通风格偏好
+- humor_preference: 幽默偏好
+- proactive_preference: 主动消息偏好
+- emoji_preference: 表情偏好
+- care_topics: 关心话题""",
         "input_schema": {
             "type": "object",
             "properties": {

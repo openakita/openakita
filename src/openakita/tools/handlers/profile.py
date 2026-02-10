@@ -48,13 +48,13 @@ class ProfileHandler:
         if key not in available_keys:
             return f"❌ 未知的档案项: {key}\n可用的键: {', '.join(available_keys)}"
 
-        self.agent.profile_manager.set(key, value)
+        self.agent.profile_manager.update_profile(key, value)
         return f"✅ 已更新档案: {key} = {value}"
 
     def _skip_question(self, params: dict) -> str:
         """跳过档案问题"""
         key = params["key"]
-        self.agent.profile_manager.skip(key)
+        self.agent.profile_manager.skip_question(key)
         return f"✅ 已跳过问题: {key}"
 
     def _get_profile(self, params: dict) -> str:
