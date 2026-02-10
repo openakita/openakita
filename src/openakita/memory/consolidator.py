@@ -242,7 +242,7 @@ class MemoryConsolidator:
             # 解析 JSON
             import re
 
-            json_match = re.search(r"\{.*\}", response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response.content, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
                 return SessionSummary(

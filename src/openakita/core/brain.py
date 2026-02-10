@@ -506,6 +506,7 @@ class Brain:
         context: Context | None = None,
         system: str | None = None,
         tools: list[ToolParam] | None = None,
+        max_tokens: int | None = None,
     ) -> Response:
         """
         发送思考请求到 LLM（通过 LLMClient）
@@ -515,6 +516,7 @@ class Brain:
             context: 对话上下文
             system: 系统提示词
             tools: 可用工具列表
+            max_tokens: 最大输出 token（不传则使用 self.max_tokens）
 
         Returns:
             Response 对象
@@ -546,7 +548,7 @@ class Brain:
             messages=llm_messages,
             system=sys_prompt,
             tools=llm_tools,
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens or self.max_tokens,
             enable_thinking=self.is_thinking_enabled(),
         )
 

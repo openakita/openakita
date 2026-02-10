@@ -242,7 +242,7 @@ class DailyConsolidator:
                 prompt, system="你是内容精简专家。输出精简后的 Markdown 内容。"
             )
 
-            return response.strip()
+            return response.content.strip()
 
         except Exception as e:
             logger.error(f"Failed to compress MEMORY.md: {e}")

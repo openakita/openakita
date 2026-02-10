@@ -334,7 +334,7 @@ class MemoryExtractor:
                 max_tokens=1000,
             )
 
-            return self._parse_json_response(response)
+            return self._parse_json_response(response.content)
 
         except Exception as e:
             logger.error(f"LLM batch extraction failed: {e}")

@@ -347,7 +347,7 @@ class MemoryManager:
 
         try:
             response = await self.brain.think(prompt, max_tokens=20)
-            return "DUPLICATE" in response.upper()
+            return "DUPLICATE" in response.content.upper()
         except Exception as e:
             logger.error(f"LLM duplicate check failed: {e}")
             return False

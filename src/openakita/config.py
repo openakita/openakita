@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     max_iterations: int = Field(default=100, description="Ralph 循环最大迭代次数")
     auto_confirm: bool = Field(default=False, description="是否自动确认危险操作")
 
+    # 自检配置
+    selfcheck_autofix: bool = Field(
+        default=True,
+        description="自检时是否执行自动修复（设为 false 则只分析不修复）",
+    )
+
     # === 任务超时策略 ===
     # 目标：避免“卡死”而不是限制长任务。推荐使用“无进展超时”。
     # - progress_timeout_seconds: 若连续超过该时间没有任何进展（LLM返回/工具完成/迭代推进），视为卡死。

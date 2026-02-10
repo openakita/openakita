@@ -685,6 +685,10 @@ ID: {result.test_id}
             # - mcp: MCP 相关（mcps/ 目录、连接/调用）
             # - channel: IM 通道适配器（属于工具层的一部分）
             allowed_fix_types = {"tool", "skill", "mcp", "channel"}
+            autofix_enabled = settings.selfcheck_autofix
+            if not autofix_enabled:
+                logger.info("Selfcheck autofix is disabled, skipping fix attempts")
+
             for result in analysis_results:
                 error_type = result.get("error_type", "unknown")
                 can_fix = result.get("can_fix", False)
@@ -705,24 +709,27 @@ ID: {result.test_id}
                         }
                     )
                 else:
-                    # 工具错误，尝试修复
+                    # 工具错误
                     report.tool_errors += 1
-                    report.fix_attempted += 1
 
-                    try:
-                        fix_record = await self._execute_fix_by_llm_decision(result)
-                        report.fix_records.append(fix_record)
+                    # 仅当 autofix 开启时尝试修复
+                    if autofix_enabled:
+                        report.fix_attempted += 1
 
-                        if fix_record.success:
-                            report.fix_success += 1
-                        else:
+                        try:
+                            fix_record = await self._execute_fix_by_llm_decision(result)
+                            report.fix_records.append(fix_record)
+
+                            if fix_record.success:
+                                report.fix_success += 1
+                            else:
+                                report.fix_failed += 1
+
+                        except Exception as e:
+                            logger.error(f"Fix failed for {result.get('error_id')}: {e}")
                             report.fix_failed += 1
 
-                    except Exception as e:
-                        logger.error(f"Fix failed for {result.get('error_id')}: {e}")
-                        report.fix_failed += 1
-
-                    # 记录工具错误模式
+                    # 记录工具错误模式（无论是否修复都记录）
                     report.tool_error_patterns.append(
                         {
                             "pattern": result.get("error_id", ""),
@@ -1015,6 +1022,14 @@ ID: {result.test_id}
         else:
             system_prompt = self.DEFAULT_SELFCHECK_PROMPT
             logger.warning("Using default selfcheck prompt")
+
+        # 追加环境标识，让 LLM 知道当前环境类型
+        env_hint = (
+            "production"
+            if settings.selfcheck_autofix
+            else "development（自动修复已关闭，仅分析）"
+        )
+        system_prompt += f"\n\n当前环境: {env_hint}"
 
         # 检查摘要大小，如果太大则分批处理
         MAX_CHARS_PER_BATCH = 8000  # 每批最大字符数（约 2000 tokens）
