@@ -1356,22 +1356,25 @@ class Agent:
                     self.task_scheduler._save_tasks()
 
         # 任务 3: 活人感心跳（每 30 分钟触发）
-        if "system_proactive_heartbeat" not in existing_ids:
-            heartbeat_task = ScheduledTask(
-                id="system_proactive_heartbeat",
-                name="活人感心跳",
-                trigger_type=TriggerType.INTERVAL,
-                trigger_config={"minutes": 30},
-                action="system:proactive_heartbeat",
-                prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
-                description="定时检查并发送主动消息",
-                task_type=TaskType.TASK,
-                enabled=True,
-                deletable=False,
-                metadata={"notify_on_start": False, "notify_on_complete": False},
-            )
-            await self.task_scheduler.add_task(heartbeat_task)
-            logger.info("Registered system task: proactive_heartbeat (every 30 min)")
+        try:
+            if "system_proactive_heartbeat" not in existing_ids:
+                heartbeat_task = ScheduledTask(
+                    id="system_proactive_heartbeat",
+                    name="活人感心跳",
+                    trigger_type=TriggerType.INTERVAL,
+                    trigger_config={"interval_minutes": 30},
+                    action="system:proactive_heartbeat",
+                    prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
+                    description="定时检查并发送主动消息",
+                    task_type=TaskType.TASK,
+                    enabled=True,
+                    deletable=False,
+                    metadata={"notify_on_start": False, "notify_on_complete": False},
+                )
+                await self.task_scheduler.add_task(heartbeat_task)
+                logger.info("Registered system task: proactive_heartbeat (every 30 min)")
+        except Exception as e:
+            logger.warning(f"Failed to register proactive_heartbeat task: {e}")
 
     def _build_system_prompt(
         self, base_prompt: str, task_description: str = "", use_compiled: bool = False,
