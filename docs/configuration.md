@@ -41,6 +41,38 @@ OpenAkita is configured primarily through environment variables, typically store
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | - | GitHub PAT for skill search |
 
+### Persona System
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PERSONA_NAME` | `default` | Active persona preset: `default` / `business` / `tech_expert` / `butler` / `girlfriend` / `boyfriend` / `family` / `jarvis` |
+
+8 built-in presets with distinct communication styles. Users can also switch persona via chat commands. Persona preferences are learned from conversations (LLM-driven trait mining) and promoted to identity files during daily consolidation.
+
+### Living Presence (Proactive Engine)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROACTIVE_ENABLED` | `false` | Enable proactive messaging (greetings, follow-ups, memory recall) |
+| `PROACTIVE_MAX_DAILY_MESSAGES` | `3` | Max proactive messages per day |
+| `PROACTIVE_MIN_INTERVAL_MINUTES` | `120` | Min interval between proactive messages (minutes) |
+| `PROACTIVE_QUIET_HOURS_START` | `23` | Quiet hours start (0-23, no proactive messages) |
+| `PROACTIVE_QUIET_HOURS_END` | `7` | Quiet hours end (0-23) |
+| `PROACTIVE_IDLE_THRESHOLD_HOURS` | `24` | Hours of user inactivity before triggering idle greeting |
+
+When enabled, the agent proactively sends greetings, task follow-ups, and memory-based reminders. Frequency adapts based on user feedback (fast reply = keep frequency, ignored = reduce).
+
+### Sticker Engine
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STICKER_ENABLED` | `true` | Enable sticker/emoji pack feature in IM channels |
+| `STICKER_DATA_DIR` | `data/sticker` | Sticker data directory (relative to project root) |
+
+Integrates with [ChineseBQB](https://github.com/zhaoolee/ChineseBQB) (5700+ stickers). Each persona preset has a different sticker strategy (e.g., business=never, girlfriend=frequent).
+
+> **Note**: Persona, proactive, and sticker settings can also be changed at runtime via chat commands. Runtime changes are persisted to `data/runtime_state.json` and survive agent restarts.
+
 ## IM Channel Configuration
 
 ### Telegram

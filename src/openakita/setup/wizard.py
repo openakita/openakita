@@ -580,6 +580,20 @@ Press Ctrl+C at any time to cancel.
         )
         self.config["LOG_LEVEL"] = log_level
 
+        # Persona
+        persona = Prompt.ask(
+            "Persona preset (role personality)",
+            choices=["default", "business", "tech_expert", "butler", "girlfriend", "boyfriend", "family", "jarvis"],
+            default="default",
+        )
+        if persona != "default":
+            self.config["PERSONA_NAME"] = persona
+
+        # Proactive (living presence)
+        use_proactive = Confirm.ask("Enable living-presence mode? (proactive greetings & follow-ups)", default=False)
+        if use_proactive:
+            self.config["PROACTIVE_ENABLED"] = "true"
+
         # Multi-agent
         use_multi = Confirm.ask("Enable multi-agent orchestration?", default=False)
         if use_multi:

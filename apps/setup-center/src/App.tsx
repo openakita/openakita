@@ -3900,6 +3900,18 @@ export function App() {
       "MEMORY_HISTORY_DAYS",
       "MEMORY_MAX_HISTORY_FILES",
       "MEMORY_MAX_HISTORY_SIZE_MB",
+      // persona
+      "PERSONA_NAME",
+      // proactive (living presence)
+      "PROACTIVE_ENABLED",
+      "PROACTIVE_MAX_DAILY_MESSAGES",
+      "PROACTIVE_MIN_INTERVAL_MINUTES",
+      "PROACTIVE_QUIET_HOURS_START",
+      "PROACTIVE_QUIET_HOURS_END",
+      "PROACTIVE_IDLE_THRESHOLD_HOURS",
+      // sticker
+      "STICKER_ENABLED",
+      "STICKER_DATA_DIR",
       // scheduler
       "SCHEDULER_ENABLED",
       "SCHEDULER_TIMEZONE",
@@ -3947,6 +3959,37 @@ export function App() {
               <FieldText k="MEMORY_HISTORY_DAYS" label="历史保留天数" placeholder="30" />
               <FieldText k="MEMORY_MAX_HISTORY_FILES" label="最大历史文件数" placeholder="1000" />
               <FieldText k="MEMORY_MAX_HISTORY_SIZE_MB" label="最大历史大小（MB）" placeholder="500" />
+            </div>
+          </details>
+
+          <div className="divider" />
+          <details>
+            <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>人格系统</summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              <FieldText k="PERSONA_NAME" label="角色预设" placeholder="default" help="可选: default / business / tech_expert / butler / girlfriend / boyfriend / family / jarvis" />
+              <div className="cardHint">8 种预设角色，每种有不同的沟通风格。用户可在对话中随时切换。偏好会通过 LLM 从对话中自动学习。</div>
+            </div>
+          </details>
+
+          <div className="divider" />
+          <details>
+            <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>活人感模式</summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              <FieldBool k="PROACTIVE_ENABLED" label="启用活人感模式" help="开启后 Agent 会主动发问候、任务跟进、记忆回忆等消息" />
+              <FieldText k="PROACTIVE_MAX_DAILY_MESSAGES" label="每日最大主动消息数" placeholder="3" />
+              <FieldText k="PROACTIVE_MIN_INTERVAL_MINUTES" label="消息最短间隔（分钟）" placeholder="120" />
+              <FieldText k="PROACTIVE_QUIET_HOURS_START" label="安静时段开始（小时）" placeholder="23" help="0-23，安静时段内不发送主动消息" />
+              <FieldText k="PROACTIVE_QUIET_HOURS_END" label="安静时段结束（小时）" placeholder="7" />
+              <FieldText k="PROACTIVE_IDLE_THRESHOLD_HOURS" label="空闲触发阈值（小时）" placeholder="24" help="用户多久没互动后触发闲聊问候" />
+            </div>
+          </details>
+
+          <div className="divider" />
+          <details>
+            <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>表情包</summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              <FieldBool k="STICKER_ENABLED" label="启用表情包" help="开启后 Agent 可在 IM 中发送表情包（数据源：ChineseBQB）" />
+              <FieldText k="STICKER_DATA_DIR" label="表情包数据目录" placeholder="data/sticker" />
             </div>
           </details>
 
@@ -4035,6 +4078,18 @@ export function App() {
       "MEMORY_HISTORY_DAYS",
       "MEMORY_MAX_HISTORY_FILES",
       "MEMORY_MAX_HISTORY_SIZE_MB",
+      // persona
+      "PERSONA_NAME",
+      // proactive (living presence)
+      "PROACTIVE_ENABLED",
+      "PROACTIVE_MAX_DAILY_MESSAGES",
+      "PROACTIVE_MIN_INTERVAL_MINUTES",
+      "PROACTIVE_QUIET_HOURS_START",
+      "PROACTIVE_QUIET_HOURS_END",
+      "PROACTIVE_IDLE_THRESHOLD_HOURS",
+      // sticker
+      "STICKER_ENABLED",
+      "STICKER_DATA_DIR",
       // scheduler
       "SCHEDULER_ENABLED",
       "SCHEDULER_TIMEZONE",

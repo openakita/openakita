@@ -229,6 +229,31 @@ identity/
 
 ---
 
+## 环境变量配置
+
+以下配置可在 `.env` 文件、Setup Center 或 `openakita init` 向导中设置：
+
+```bash
+# 人格系统
+PERSONA_NAME=default          # 角色预设: default/business/tech_expert/butler/girlfriend/boyfriend/family/jarvis
+
+# 活人感模式
+PROACTIVE_ENABLED=false       # 是否启用主动消息
+PROACTIVE_MAX_DAILY_MESSAGES=3
+PROACTIVE_MIN_INTERVAL_MINUTES=120
+PROACTIVE_QUIET_HOURS_START=23
+PROACTIVE_QUIET_HOURS_END=7
+PROACTIVE_IDLE_THRESHOLD_HOURS=24
+
+# 表情包
+STICKER_ENABLED=true          # 是否启用表情包
+STICKER_DATA_DIR=data/sticker
+```
+
+> **运行时持久化**: 通过对话切换角色或开关活人感后，设置会自动保存到 `data/runtime_state.json`，重启后自动恢复。
+
+---
+
 ## 最佳实践
 
 ### 新用户引导
