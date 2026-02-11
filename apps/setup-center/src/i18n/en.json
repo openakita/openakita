@@ -23,7 +23,9 @@
     "connectFail": "No running service detected. Ensure openakita serve is started.",
     "start": "Start",
     "starting": "Starting service...",
-    "startFail": "Service failed to start. Check config."
+    "startFail": "Service failed to start. Check config.",
+    "disconnect": "Disconnect",
+    "disconnected": "Disconnected from service"
   },
   "chat": {
     "placeholder": "Type a message... (Enter to send, Shift+Enter for newline)",
@@ -118,7 +120,8 @@
     "noLog": "No log available",
     "feishu": "Feishu",
     "wework": "WeCom",
-    "dingtalk": "DingTalk"
+    "dingtalk": "DingTalk",
+    "needServiceRunning": "Start or connect to a service before running health checks"
   },
   "config": {
     "step": {

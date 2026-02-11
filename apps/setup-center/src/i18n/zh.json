@@ -23,7 +23,9 @@
     "connectFail": "未检测到运行中的服务，请确认 openakita serve 已启动",
     "start": "启动服务",
     "starting": "正在启动服务...",
-    "startFail": "服务启动失败，请检查配置"
+    "startFail": "服务启动失败，请检查配置",
+    "disconnect": "断开",
+    "disconnected": "已断开服务连接"
   },
   "chat": {
     "placeholder": "输入消息... (Enter 发送, Shift+Enter 换行)",
@@ -118,7 +120,8 @@
     "noLog": "暂无日志",
     "feishu": "飞书",
     "wework": "企业微信",
-    "dingtalk": "钉钉"
+    "dingtalk": "钉钉",
+    "needServiceRunning": "需要先启动或连接服务才能进行检测"
   },
   "config": {
     "step": {

@@ -1819,12 +1819,14 @@ export function App() {
   }, [currentWorkspaceId]);
 
   async function refreshStatus() {
-    if (!info && dataMode === "local") return;
+    if (!info && !serviceStatus?.running) return;
     setStatusLoading(true);
     setStatusError(null);
     try {
-      if (dataMode === "remote") {
-        // ── Remote mode: fetch everything from HTTP API ──
+      // When service is running (local or remote), prefer HTTP API for real data
+      const useHttpApi = serviceStatus?.running || dataMode === "remote";
+      if (useHttpApi) {
+        // ── HTTP API mode: fetch everything from running service ──
         try {
           // Env
           const envRes = await fetch(`${apiBaseUrl}/api/config/env`);
@@ -2195,14 +2197,16 @@ export function App() {
               setHealthChecking("all");
               try {
                 let results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }>;
-                if (dataMode === "remote") {
-                  const res = await fetch(`${apiBaseUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                // Always use HTTP API when service is running (bridge has no health-check command)
+                const healthUrl = serviceStatus?.running ? apiBaseUrl : null;
+                if (healthUrl) {
+                  const res = await fetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
                   const data = await res.json();
                   results = data.results || [];
                 } else {
-                  if (!effectiveWsId || !venvDir) return;
-                  const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId });
-                  results = JSON.parse(raw);
+                  setError(t("status.needServiceRunning"));
+                  setHealthChecking(null);
+                  return;
                 }
                 const h: typeof endpointHealth = {};
                 for (const r of results) { h[r.name] = { status: r.status, latencyMs: r.latency_ms, error: r.error, errorCategory: r.error_category, consecutiveFailures: r.consecutive_failures, cooldownRemaining: r.cooldown_remaining, isExtendedCooldown: r.is_extended_cooldown, lastCheckedAt: r.last_checked_at }; }
@@ -2242,14 +2246,15 @@ export function App() {
                       setHealthChecking(e.name);
                       try {
                         let r: any[];
-                        if (dataMode === "remote") {
-                          const res = await fetch(`${apiBaseUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }) });
+                        const healthUrl = serviceStatus?.running ? apiBaseUrl : null;
+                        if (healthUrl) {
+                          const res = await fetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }) });
                           const data = await res.json();
                           r = data.results || [];
                         } else {
-                          if (!effectiveWsId || !venvDir) return;
-                          const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId, endpointName: e.name });
-                          r = JSON.parse(raw);
+                          setError(t("status.needServiceRunning"));
+                          setHealthChecking(null);
+                          return;
                         }
                         if (r[0]) setEndpointHealth((prev: any) => ({ ...prev, [r[0].name]: { status: r[0].status, latencyMs: r[0].latency_ms, error: r[0].error, errorCategory: r[0].error_category, consecutiveFailures: r[0].consecutive_failures, cooldownRemaining: r[0].cooldown_remaining, isExtendedCooldown: r[0].is_extended_cooldown, lastCheckedAt: r[0].last_checked_at } }));
                       } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
@@ -2269,25 +2274,18 @@ export function App() {
               <button className="btnSmall" onClick={async () => {
                 setHealthChecking("im-all");
                 try {
-                  if (dataMode === "remote") {
-                    // Remote mode: use /api/im/channels for status
-                    try {
-                      const res = await fetch(`${apiBaseUrl}/api/im/channels`);
-                      const data = await res.json();
-                      const channels = data.channels || [];
-                      const h: typeof imHealth = {};
-                      for (const c of channels) {
-                        h[c.channel || c.name] = { status: c.status || "unknown", error: c.error || null, lastCheckedAt: c.last_checked_at || null };
-                      }
-                      setImHealth(h);
-                    } catch (err) { setError(String(err)); }
-                  } else {
-                    if (!effectiveWsId || !venvDir) return;
-                    const raw = await invoke<string>("openakita_health_check_im", { venvDir, workspaceId: effectiveWsId });
-                    const results: Array<{ channel: string; name: string; status: string; error: string | null; last_checked_at: string | null }> = JSON.parse(raw);
+                  const healthUrl = serviceStatus?.running ? apiBaseUrl : null;
+                  if (healthUrl) {
+                    const res = await fetch(`${healthUrl}/api/im/channels`);
+                    const data = await res.json();
+                    const channels = data.channels || [];
                     const h: typeof imHealth = {};
-                    for (const r of results) h[r.channel] = { status: r.status, error: r.error, lastCheckedAt: r.last_checked_at };
+                    for (const c of channels) {
+                      h[c.channel || c.name] = { status: c.status || "unknown", error: c.error || null, lastCheckedAt: c.last_checked_at || null };
+                    }
                     setImHealth(h);
+                  } else {
+                    setError(t("status.needServiceRunning"));
                   }
                 } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
               }} disabled={!!healthChecking || !!busy}>
@@ -4249,7 +4247,23 @@ export function App() {
             {dataMode === "remote" && <span className="pill" style={{ fontSize: 10, marginLeft: 4, background: "#e3f2fd", color: "#1565c0" }}>{t("connect.remoteMode")}</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {!serviceStatus?.running && (
+            {serviceStatus?.running ? (
+              <button
+                className="topbarConnectBtn"
+                onClick={() => {
+                  // Disconnect: reset to local idle mode
+                  setDataMode("local");
+                  setServiceStatus({ running: false, pid: null, pidFile: "" });
+                  envLoadedForWs.current = null;
+                  setNotice(t("topbar.disconnected"));
+                }}
+                disabled={!!busy}
+                title={t("topbar.disconnect")}
+              >
+                <IconX size={13} />
+                <span>{t("topbar.disconnect")}</span>
+              </button>
+            ) : (
               <>
                 <button
                   className="topbarConnectBtn"
@@ -4272,6 +4286,7 @@ export function App() {
                     setError(null);
                     try {
                       setDataMode("local");
+                      setApiBaseUrl("http://127.0.0.1:18900");
                       const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_start", { venvDir, workspaceId: effectiveWsId });
                       setServiceStatus(ss);
                       await new Promise((r) => setTimeout(r, 600));
