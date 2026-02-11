@@ -14,6 +14,7 @@ import {
   IconChevronDown, IconChevronRight, IconChevronUp, IconGlobe, IconLink, IconPower,
   IconEdit, IconTrash, IconEye, IconEyeOff, IconInfo, IconClipboard,
   DotGreen, DotGray,
+  IconBook, LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ,
 } from "./icons";
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
@@ -3011,8 +3012,11 @@ export function App() {
     const channels = [
       {
         title: "Telegram",
+        appType: t("config.imTypeLongPolling"),
+        logo: <LogoTelegram size={22} />,
         enabledKey: "TELEGRAM_ENABLED",
         docUrl: "https://t.me/BotFather",
+        needPublicIp: false,
         body: (
           <>
             <FieldText k="TELEGRAM_BOT_TOKEN" label={t("config.imBotToken")} placeholder="BotFather token" type="password" />
@@ -3025,8 +3029,11 @@ export function App() {
       },
       {
         title: t("config.imFeishu"),
+        appType: t("config.imTypeCustomApp"),
+        logo: <LogoFeishu size={22} />,
         enabledKey: "FEISHU_ENABLED",
         docUrl: "https://open.feishu.cn/",
+        needPublicIp: false,
         body: (
           <>
             <FieldText k="FEISHU_APP_ID" label="App ID" />
@@ -3036,8 +3043,11 @@ export function App() {
       },
       {
         title: t("config.imWework"),
+        appType: t("config.imTypeSmartBot"),
+        logo: <LogoWework size={22} />,
         enabledKey: "WEWORK_ENABLED",
         docUrl: "https://work.weixin.qq.com/",
+        needPublicIp: true,
         body: (
           <>
             <FieldText k="WEWORK_CORP_ID" label="Corp ID" help={t("config.imWeworkCorpIdHelp")} />
@@ -3049,8 +3059,11 @@ export function App() {
       },
       {
         title: t("config.imDingtalk"),
+        appType: t("config.imTypeInternalApp"),
+        logo: <LogoDingtalk size={22} />,
         enabledKey: "DINGTALK_ENABLED",
         docUrl: "https://open.dingtalk.com/",
+        needPublicIp: false,
         body: (
           <>
             <FieldText k="DINGTALK_CLIENT_ID" label="Client ID" />
@@ -3060,8 +3073,11 @@ export function App() {
       },
       {
         title: "QQ (OneBot)",
+        appType: t("config.imTypeOneBot"),
+        logo: <LogoQQ size={22} />,
         enabledKey: "QQ_ENABLED",
         docUrl: "https://github.com/botuniverse/onebot-11",
+        needPublicIp: false,
         body: <FieldText k="QQ_ONEBOT_URL" label="OneBot WebSocket URL" placeholder="ws://127.0.0.1:8080" />,
       },
     ];
@@ -3069,7 +3085,13 @@ export function App() {
     return (
       <>
         <div className="card">
-          <div className="cardTitle">{t("config.imTitle")}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="cardTitle">{t("config.imTitle")}</div>
+            <button className="btnSmall" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12 }}
+              onClick={() => { navigator.clipboard.writeText("https://github.com/anthropic-lab/openakita/blob/main/docs/im-channels.md"); setNotice(t("config.imGuideDocCopied")); }}
+              title={t("config.imGuideDoc")}
+            ><IconBook size={13} />{t("config.imGuideDoc")}</button>
+          </div>
           <div className="cardHint">{t("config.imHint")}</div>
           <div className="divider" />
 
@@ -3079,19 +3101,24 @@ export function App() {
               <div key={c.enabledKey} className="card" style={{ marginTop: 10 }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
                   <div className="row" style={{ alignItems: "center", gap: 10 }}>
+                    {c.logo}
                     <span className="label" style={{ marginBottom: 0 }}>{c.title}</span>
-                    <button className="btnSmall"
-                      style={{ fontSize: 11, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}
-                      title={c.docUrl}
-                      onClick={() => { navigator.clipboard.writeText(c.docUrl); setNotice(t("config.imDocCopied")); }}
-                    ><IconClipboard size={12} />{t("config.imDoc")}</button>
-                    <span className="help" style={{ fontSize: 11, userSelect: "all", marginLeft: 4 }}>{c.docUrl}</span>
+                    <span className="pill" style={{ fontSize: 10, padding: "1px 6px", background: "#f1f5f9", color: "#475569" }}>{c.appType}</span>
+                    {c.needPublicIp && <span className="pill" style={{ fontSize: 10, padding: "1px 6px", background: "#fef3c7", color: "#92400e" }}>{t("config.imNeedPublicIp")}</span>}
                   </div>
                   <label className="pill" style={{ cursor: "pointer", userSelect: "none" }}>
                     <input style={{ width: 16, height: 16 }} type="checkbox" checked={enabled}
                       onChange={(e) => setEnvDraft((m) => envSet(m, c.enabledKey, String(e.target.checked)))} />
                     {t("config.enable")}
                   </label>
+                </div>
+                <div className="row" style={{ alignItems: "center", gap: 6, marginTop: 4 }}>
+                  <button className="btnSmall"
+                    style={{ fontSize: 11, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}
+                    title={c.docUrl}
+                    onClick={() => { navigator.clipboard.writeText(c.docUrl); setNotice(t("config.imDocCopied")); }}
+                  ><IconClipboard size={12} />{t("config.imDoc")}</button>
+                  <span className="help" style={{ fontSize: 11, userSelect: "all", opacity: 0.6 }}>{c.docUrl}</span>
                 </div>
                 {enabled && (
                   <>

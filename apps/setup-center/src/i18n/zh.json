@@ -319,7 +319,15 @@
     "imDocCopied": "链接已复制到剪贴板",
     "imWeworkCorpIdHelp": "在企业微信管理后台「我的企业 → 企业信息」页面底部获取",
     "imWeworkTokenHelp": "在智能机器人「接收消息服务器配置」中获取",
-    "imWeworkAesKeyHelp": "在智能机器人「接收消息服务器配置」中获取"
+    "imWeworkAesKeyHelp": "在智能机器人「接收消息服务器配置」中获取",
+    "imTypeLongPolling": "Bot (Long Polling)",
+    "imTypeCustomApp": "自建应用 (WebSocket)",
+    "imTypeSmartBot": "智能机器人 (HTTP 回调)",
+    "imTypeInternalApp": "企业内部应用 (Stream)",
+    "imTypeOneBot": "OneBot (WebSocket)",
+    "imNeedPublicIp": "需要公网 IP",
+    "imGuideDoc": "配置指南",
+    "imGuideDocCopied": "配置指南文档链接已复制"
   },
   "im": {
     "channels": "IM 通道",

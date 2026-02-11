@@ -319,7 +319,15 @@
     "imDocCopied": "Link copied to clipboard",
     "imWeworkCorpIdHelp": "Found at bottom of 'My Corp → Corp Info' page in WeCom admin",
     "imWeworkTokenHelp": "From Smart Bot 'Receive Messages' server config",
-    "imWeworkAesKeyHelp": "From Smart Bot 'Receive Messages' server config"
+    "imWeworkAesKeyHelp": "From Smart Bot 'Receive Messages' server config",
+    "imTypeLongPolling": "Bot (Long Polling)",
+    "imTypeCustomApp": "Custom App (WebSocket)",
+    "imTypeSmartBot": "Smart Bot (HTTP Callback)",
+    "imTypeInternalApp": "Internal App (Stream)",
+    "imTypeOneBot": "OneBot (WebSocket)",
+    "imNeedPublicIp": "Needs Public IP",
+    "imGuideDoc": "Setup Guide",
+    "imGuideDocCopied": "Guide document link copied"
   },
   "im": {
     "channels": "IM Channels",

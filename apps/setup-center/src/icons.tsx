@@ -486,3 +486,60 @@ export function IconInfo(p: IconProps = {}) {
     <line x1="12" y1="8" x2="12.01" y2="8" />
   </>);
 }
+
+export function IconBook(p: IconProps = {}) {
+  return svg(p, <>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+  </>);
+}
+
+// ── IM Platform Logos (simplified brand marks) ──
+
+export function LogoTelegram({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="11" fill="#2AABEE" />
+      <path d="M5.5 11.5l11.2-4.3c.5-.2.9.1.8.7l-1.9 9c-.1.5-.5.6-.9.4l-2.7-2-1.3 1.3c-.1.1-.3.2-.5.2l.2-2.7 4.8-4.3c.2-.2 0-.3-.3-.1l-6 3.8-2.6-.8c-.5-.2-.5-.5.1-.7z" fill="#fff" />
+    </svg>
+  );
+}
+
+export function LogoFeishu({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect width="24" height="24" rx="5" fill="#3370FF" />
+      <path d="M7 8.5c0-.3.3-.5.5-.3l4.5 3.3 4.5-3.3c.2-.2.5 0 .5.3v6.5c0 .3-.2.5-.5.5H7.5c-.3 0-.5-.2-.5-.5V8.5z" fill="#fff" />
+    </svg>
+  );
+}
+
+export function LogoWework({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect width="24" height="24" rx="5" fill="#07C160" />
+      <path d="M12 4C7.6 4 4 7.1 4 11c0 2.2 1.2 4.1 3 5.4V20l3.2-1.8c.6.1 1.2.2 1.8.2 4.4 0 8-3.1 8-7S16.4 4 12 4z" fill="#fff" />
+    </svg>
+  );
+}
+
+export function LogoDingtalk({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect width="24" height="24" rx="5" fill="#0089FF" />
+      <path d="M17.2 10.2c-.4.2-1.1.5-2 .8l-.4.1.8 1.2.1.2H13l-.1.3v.8h2l-.3 1.1H13v2.3h-1.5v-2.3h-1.7l-.2-1.1h1.9V12.7H10l-.1-.2h2.5l-1.6-2.3c1.8-.5 3.2-1.3 4.2-2.2.5.5.9 1 1.2 1.5l1-.6z" fill="#fff" />
+    </svg>
+  );
+}
+
+export function LogoQQ({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect width="24" height="24" rx="5" fill="#12B7F5" />
+      <ellipse cx="12" cy="11" rx="5" ry="6" fill="#fff" />
+      <ellipse cx="10.5" cy="10" rx="1" ry="1.5" fill="#333" />
+      <ellipse cx="13.5" cy="10" rx="1" ry="1.5" fill="#333" />
+      <path d="M9 15c0 0 1.5 2 3 2s3-2 3-2" stroke="#333" strokeWidth="0.8" fill="none" />
+    </svg>
+  );
+}
