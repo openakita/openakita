@@ -99,7 +99,7 @@ OpenAkita provides a cross-platform **Desktop Terminal** (built with Tauri + Rea
 | **Living Presence** | Proactive engine: greetings, task follow-ups, memory recall; frequency control, quiet hours, feedback loop; feels like a real assistant |
 | **Sticker Engine** | ChineseBQB integration (5700+ stickers), keyword search, mood mapping, per-persona sticker strategy |
 | **Tool System** | 11 categories, 50+ tools, 3-level progressive disclosure (catalog → detail → execute) to reduce token usage |
-| **Setup Center** | Tauri cross-platform desktop app, guided wizard, tray residency, status monitoring |
+| **Desktop App** | Tauri cross-platform desktop app, AI chat, guided wizard, tray residency, status monitoring |
 
 ---
 
@@ -151,12 +151,12 @@ The core differentiator: **OpenAkita doesn't just execute — it learns and grow
 
 ## Quick Start
 
-### Option 1: Setup Center (Recommended)
+### Option 1: OpenAkita Desktop (Recommended)
 
 The easiest way — graphical guided setup, no command-line experience needed:
 
 1. Download the installer from [GitHub Releases](https://github.com/openakita/openakita/releases)
-2. Install and launch Setup Center
+2. Install and launch OpenAkita Desktop
 3. Follow the wizard: Workspace → Python → Install → LLM Endpoints → IM Channels → Finish & Start
 
 ### Option 2: PyPI Install
@@ -239,8 +239,8 @@ TELEGRAM_BOT_TOKEN=your-bot-token
 │                          OpenAkita                               │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌──────────────────── Setup Center ────────────────────────┐   │
-│  │  Tauri + React Desktop Terminal · AI Chat · Config · Monitor   │   │
+│  ┌──────────────────── Desktop App ────────────────────────┐   │
+│  │  Tauri + React · AI Chat · Config · Monitor · Skills    │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                              │                                   │
 │  ┌──────────────────── Identity Layer ──────────────────────┐   │
@@ -338,7 +338,7 @@ Join our community for help, discussions, and updates:
 ## Acknowledgments
 
 - [Anthropic Claude](https://www.anthropic.com/claude) — LLM Engine
-- [Tauri](https://tauri.app/) — Cross-platform desktop framework for Setup Center
+- [Tauri](https://tauri.app/) — Cross-platform desktop framework
 - [browser-use](https://github.com/browser-use/browser-use) — AI browser automation
 - [AGENTS.md Standard](https://agentsmd.io/) — Agent behavior specification
 - [Agent Skills](https://agentskills.io/) — Skill standardization specification
