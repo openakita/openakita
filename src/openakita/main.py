@@ -1044,7 +1044,11 @@ def serve():
         api_task = None
         try:
             from openakita.api.server import start_api_server
-            api_task = await start_api_server(agent=agent_or_master)
+            api_task = await start_api_server(
+                agent=agent_or_master,
+                shutdown_event=shutdown_event,
+                session_manager=_session_manager,
+            )
             console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
         except ImportError:
             console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")

@@ -14,6 +14,7 @@ import type {
   ChatPlanStep,
   ChatAskUser,
   ChatAttachment,
+  ChatArtifact,
   SlashCommand,
   EndpointSummary,
 } from "../types";
@@ -40,6 +41,7 @@ type StreamEvent =
   | { type: "plan_step_updated"; stepIdx: number; status: string }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[] }
   | { type: "agent_switch"; agentName: string; reason: string }
+  | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
   | { type: "error"; message: string }
   | { type: "done"; usage?: { input_tokens: number; output_tokens: number } };
 
@@ -286,9 +288,11 @@ function SlashCommandPanel({
 function MessageBubble({
   msg,
   onAskAnswer,
+  apiBaseUrl,
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
+  apiBaseUrl?: string;
 }) {
   const isUser = msg.role === "user";
   return (
@@ -350,6 +354,78 @@ function MessageBubble({
 
         {/* Plan */}
         {msg.plan && <PlanBlock plan={msg.plan} />}
+
+        {/* Artifacts (images, files delivered by agent) */}
+        {msg.artifacts && msg.artifacts.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            {msg.artifacts.map((art, i) => {
+              const fullUrl = art.file_url.startsWith("http")
+                ? art.file_url
+                : `${apiBaseUrl || ""}${art.file_url}`;
+              if (art.artifact_type === "image") {
+                return (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <img
+                      src={fullUrl}
+                      alt={art.caption || art.name}
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: 400,
+                        borderRadius: 8,
+                        border: "1px solid var(--line)",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => window.open(fullUrl, "_blank")}
+                    />
+                    {art.caption && (
+                      <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
+                    )}
+                  </div>
+                );
+              }
+              if (art.artifact_type === "voice") {
+                return (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <audio controls src={fullUrl} style={{ maxWidth: "100%" }} />
+                    {art.caption && (
+                      <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
+                    )}
+                  </div>
+                );
+              }
+              // Generic file artifact — clickable card to download/open
+              const sizeStr = art.size != null
+                ? art.size > 1048576 ? `${(art.size / 1048576).toFixed(1)} MB` : `${(art.size / 1024).toFixed(1)} KB`
+                : "";
+              return (
+                <div key={i} style={{
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  padding: "8px 14px", borderRadius: 8, border: "1px solid var(--line)",
+                  fontSize: 13, marginBottom: 4, cursor: "pointer",
+                  background: "rgba(255,255,255,0.5)",
+                  transition: "background 0.15s",
+                }}
+                  onClick={() => {
+                    // Trigger download via hidden <a> tag
+                    const a = document.createElement("a");
+                    a.href = fullUrl;
+                    a.download = art.name || "file";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(14,165,233,0.08)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.5)"; }}
+                >
+                  <IconPaperclip size={14} />
+                  <span style={{ fontWeight: 600 }}>{art.name}</span>
+                  {sizeStr && <span style={{ opacity: 0.5 }}>{sizeStr}</span>}
+                  {art.caption && <span style={{ opacity: 0.6, fontSize: 12 }}>{art.caption}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Ask user */}
         {msg.askUser && (
@@ -627,6 +703,7 @@ export function ChatView({
       let currentPlan: ChatPlan | null = null;
       let currentAsk: ChatAskUser | null = null;
       let currentAgent: string | null = null;
+      let currentArtifacts: ChatArtifact[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -709,6 +786,16 @@ export function ChatView({
               case "ask_user":
                 currentAsk = { question: event.question, options: event.options };
                 break;
+              case "artifact":
+                currentArtifacts = [...currentArtifacts, {
+                  artifact_type: event.artifact_type,
+                  file_url: event.file_url,
+                  path: event.path,
+                  name: event.name,
+                  caption: event.caption,
+                  size: event.size,
+                }];
+                break;
               case "agent_switch":
                 currentAgent = event.agentName;
                 // 添加一条系统提示
@@ -749,6 +836,7 @@ export function ChatView({
                     toolCalls: currentToolCalls.length > 0 ? [...currentToolCalls] : null,
                     plan: currentPlan ? { ...currentPlan } : null,
                     askUser: currentAsk ? { ...currentAsk } : null,
+                    artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
                     streaming: event.type !== "done",
                   }
                 : m
@@ -1062,7 +1150,7 @@ export function ChatView({
             </div>
           )}
           {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} />
+            <MessageBubble key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} />
           ))}
           <div ref={messagesEndRef} />
         </div>

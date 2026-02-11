@@ -51,6 +51,9 @@ class IMChannelHandler:
         from ...core.im_context import get_im_session
 
         if not get_im_session():
+            # deliver_artifacts can work in desktop mode too (returns file URLs)
+            if tool_name == "deliver_artifacts":
+                return await self._deliver_artifacts_desktop(params)
             return "❌ 当前不在 IM 会话中，无法使用此工具"
 
         if tool_name == "deliver_artifacts":
@@ -104,6 +107,69 @@ class IMChannelHandler:
         channel_user_id = getattr(current_message, "channel_user_id", None)
 
         return adapter, current_message.chat_id, channel, reply_to, channel_user_id
+
+    async def _deliver_artifacts_desktop(self, params: dict) -> str:
+        """
+        Desktop mode: instead of sending via IM adapter, return file URLs
+        so the desktop frontend can display them inline.
+        """
+        import json
+        import urllib.parse
+
+        artifacts = params.get("artifacts") or []
+        receipts = []
+
+        for idx, art in enumerate(artifacts):
+            art_type = (art or {}).get("type", "")
+            path_str = (art or {}).get("path", "")
+            caption = (art or {}).get("caption", "") or ""
+            name = (art or {}).get("name", "") or ""
+
+            if not path_str:
+                receipts.append({
+                    "index": idx,
+                    "status": "error",
+                    "error": "missing_path",
+                })
+                continue
+
+            p = Path(path_str)
+            if not p.exists() or not p.is_file():
+                receipts.append({
+                    "index": idx,
+                    "status": "error",
+                    "error": f"file_not_found: {path_str}",
+                })
+                continue
+
+            # Build a URL that the desktop frontend can use via /api/files endpoint
+            abs_path = str(p.resolve())
+            file_url = f"/api/files?path={urllib.parse.quote(abs_path, safe='')}"
+            size = p.stat().st_size
+
+            receipts.append({
+                "index": idx,
+                "status": "delivered",
+                "type": art_type,
+                "path": str(p.resolve()),
+                "file_url": file_url,
+                "caption": caption,
+                "name": name or p.name,
+                "size": size,
+                "channel": "desktop",
+            })
+
+        return json.dumps(
+            {
+                "ok": all(r.get("status") == "delivered" for r in receipts),
+                "channel": "desktop",
+                "receipts": receipts,
+                "hint": "Desktop mode: files are served via /api/files/ endpoint. "
+                        "Frontend should display images inline using the file_url.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
     async def _deliver_artifacts(self, params: dict) -> str:
         """

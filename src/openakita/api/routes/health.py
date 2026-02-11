@@ -1,5 +1,8 @@
 """
 Health check routes: GET /api/health, POST /api/health/check
+
+POST /api/health/check 使用 dry_run=True 模式执行只读检测，
+不会修改 provider 的健康状态和冷静期计数，避免干扰正在运行的 Agent。
 """
 
 from __future__ import annotations
@@ -41,11 +44,40 @@ def _get_llm_client(agent: object):
     return getattr(brain, "_llm_client", None)
 
 
+async def _check_endpoint_readonly(name: str, provider) -> HealthResult:
+    """Check an endpoint in dry_run mode: test connectivity without modifying provider state."""
+    t0 = time.time()
+    try:
+        await provider.health_check(dry_run=True)
+        latency = round((time.time() - t0) * 1000)
+        return HealthResult(
+            name=name,
+            status="healthy",
+            latency_ms=latency,
+            last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+    except Exception as e:
+        latency = round((time.time() - t0) * 1000)
+        return HealthResult(
+            name=name,
+            status="unhealthy",
+            latency_ms=latency,
+            error=str(e)[:500],
+            consecutive_failures=getattr(provider, "consecutive_cooldowns", 0),
+            cooldown_remaining=getattr(provider, "cooldown_remaining", 0),
+            is_extended_cooldown=getattr(provider, "is_extended_cooldown", False),
+            last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+
+
 @router.post("/api/health/check")
 async def health_check(request: Request, body: HealthCheckRequest):
     """
-    Check health of a specific LLM endpoint or IM channel.
-    Returns detailed health status.
+    Check health of a specific LLM endpoint or all endpoints.
+
+    Uses dry_run mode: sends a real test request but does NOT modify
+    the provider's healthy/cooldown state, ensuring no interference
+    with ongoing Agent LLM calls.
     """
     agent = getattr(request.app.state, "agent", None)
     if agent is None:
@@ -62,53 +94,12 @@ async def health_check(request: Request, body: HealthCheckRequest):
         provider = llm_client._providers.get(body.endpoint_name)
         if not provider:
             return {"error": f"Endpoint not found: {body.endpoint_name}"}
-
-        t0 = time.time()
-        try:
-            await provider.health_check()
-            latency = round((time.time() - t0) * 1000)
-            results.append(HealthResult(
-                name=body.endpoint_name,
-                status="healthy",
-                latency_ms=latency,
-                last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-            ))
-        except Exception as e:
-            latency = round((time.time() - t0) * 1000)
-            results.append(HealthResult(
-                name=body.endpoint_name,
-                status="unhealthy",
-                latency_ms=latency,
-                error=str(e)[:500],
-                consecutive_failures=getattr(provider, "consecutive_cooldowns", 0),
-                cooldown_remaining=getattr(provider, "cooldown_remaining", 0),
-                is_extended_cooldown=getattr(provider, "is_extended_cooldown", False),
-                last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-            ))
+        result = await _check_endpoint_readonly(body.endpoint_name, provider)
+        results.append(result)
     else:
         # Check all endpoints
         for name, provider in llm_client._providers.items():
-            t0 = time.time()
-            try:
-                await provider.health_check()
-                latency = round((time.time() - t0) * 1000)
-                results.append(HealthResult(
-                    name=name,
-                    status="healthy",
-                    latency_ms=latency,
-                    last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-                ))
-            except Exception as e:
-                latency = round((time.time() - t0) * 1000)
-                results.append(HealthResult(
-                    name=name,
-                    status="unhealthy",
-                    latency_ms=latency,
-                    error=str(e)[:500],
-                    consecutive_failures=getattr(provider, "consecutive_cooldowns", 0),
-                    cooldown_remaining=getattr(provider, "cooldown_remaining", 0),
-                    is_extended_cooldown=getattr(provider, "is_extended_cooldown", False),
-                    last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-                ))
+            result = await _check_endpoint_readonly(name, provider)
+            results.append(result)
 
     return {"results": [r.model_dump() for r in results]}

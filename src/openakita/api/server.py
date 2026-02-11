@@ -15,13 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import chat, chat_models, config, health, im, skills, upload
+from .routes import chat, chat_models, config, files, health, im, skills, upload
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ API_HOST = "127.0.0.1"
 API_PORT = 18900
 
 
-def create_app(agent: Any = None) -> FastAPI:
+def create_app(agent: Any = None, shutdown_event: asyncio.Event | None = None, session_manager: Any = None) -> FastAPI:
     """Create the FastAPI application with all routes mounted."""
 
     app = FastAPI(
@@ -47,13 +46,16 @@ def create_app(agent: Any = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Store agent reference in app state
+    # Store references in app state
     app.state.agent = agent
+    app.state.shutdown_event = shutdown_event
+    app.state.session_manager = session_manager
 
     # Mount routes
     app.include_router(chat.router)
     app.include_router(chat_models.router)
     app.include_router(config.router)
+    app.include_router(files.router)
     app.include_router(health.router)
     app.include_router(im.router)
     app.include_router(skills.router)
@@ -69,21 +71,29 @@ def create_app(agent: Any = None) -> FastAPI:
 
     @app.post("/api/shutdown")
     async def shutdown():
-        """Gracefully shut down the OpenAkita service process."""
+        """Gracefully shut down the OpenAkita service process.
+
+        Uses the shared shutdown_event to trigger the same graceful cleanup
+        path as SIGINT/SIGTERM (sessions saved, IM adapters stopped, etc.).
+        """
         logger.info("Shutdown requested via API")
-
-        async def _delayed_exit():
-            await asyncio.sleep(0.5)
-            logger.info("Exiting process via shutdown API")
-            os._exit(0)
-
-        asyncio.create_task(_delayed_exit())
-        return {"status": "shutting_down"}
+        if app.state.shutdown_event is not None:
+            app.state.shutdown_event.set()
+            return {"status": "shutting_down"}
+        # Fallback: no shutdown_event (e.g. running outside of `openakita serve`)
+        logger.warning("No shutdown_event available, shutdown request ignored")
+        return {"status": "error", "message": "shutdown not available in this mode"}
 
     return app
 
 
-async def start_api_server(agent: Any = None, host: str = API_HOST, port: int = API_PORT) -> asyncio.Task:
+async def start_api_server(
+    agent: Any = None,
+    shutdown_event: asyncio.Event | None = None,
+    session_manager: Any = None,
+    host: str = API_HOST,
+    port: int = API_PORT,
+) -> asyncio.Task:
     """
     Start the HTTP API server as a background asyncio task.
 
@@ -94,7 +104,7 @@ async def start_api_server(agent: Any = None, host: str = API_HOST, port: int = 
     """
     import uvicorn
 
-    app = create_app(agent=agent)
+    app = create_app(agent=agent, shutdown_event=shutdown_event, session_manager=session_manager)
 
     config = uvicorn.Config(
         app=app,

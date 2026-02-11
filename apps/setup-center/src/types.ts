@@ -128,6 +128,15 @@ export type IMStatus = {
 
 // ─── Chat types ───
 
+export type ChatArtifact = {
+  artifact_type: string;  // "image" | "file" | "voice" etc.
+  file_url: string;       // relative URL for /api/files/...
+  path: string;           // absolute local path
+  name: string;
+  caption: string;
+  size?: number;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -138,6 +147,7 @@ export type ChatMessage = {
   plan?: ChatPlan | null;
   askUser?: ChatAskUser | null;
   attachments?: ChatAttachment[] | null;
+  artifacts?: ChatArtifact[] | null;
   timestamp: number;
   streaming?: boolean;
 };

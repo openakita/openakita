@@ -300,11 +300,15 @@ class LLMProvider(ABC):
         """
         pass
 
-    async def health_check(self) -> bool:
+    async def health_check(self, dry_run: bool = False) -> bool:
         """
         健康检查
 
         默认实现：发送一个简单请求测试连接
+
+        Args:
+            dry_run: 如果为 True，只测试连通性，不修改 provider 的健康/冷静期状态。
+                     适用于桌面端手动检测，避免干扰正在进行的 Agent 调用。
         """
         try:
             from ..types import Message
@@ -314,11 +318,17 @@ class LLMProvider(ABC):
                 max_tokens=10,
             )
             await self.chat(request)
-            self.mark_healthy()
+            if not dry_run:
+                self.mark_healthy()
             return True
         except Exception as e:
-            self.mark_unhealthy(str(e))
-            return False
+            if dry_run:
+                # dry_run 模式：不修改状态，抛出异常让调用方获取错误详情
+                raise
+            else:
+                # 正常模式：标记不健康，返回 False（保持原始行为）
+                self.mark_unhealthy(str(e))
+                return False
 
     @property
     def supports_tools(self) -> bool:
