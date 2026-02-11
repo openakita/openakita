@@ -14,10 +14,9 @@
     "extra_params": "额外参数（传递给 API 的特殊参数）",
     "note":         "备注说明"
   },
-
-  "endpoints": [
+  "_doc_examples": [
     {
-      "_doc": "从一个“主端点”开始（priority=1）。后续新增备份端点，只需要 priority 递增即可。",
+      "_doc": "示例 1: OpenAI（主端点，priority=1）",
       "name": "primary",
       "provider": "openai",
       "api_type": "openai",
@@ -30,7 +29,7 @@
       "capabilities": ["text", "tools"]
     },
     {
-      "_doc": "示例：DashScope（OpenAI 兼容）。如需思考模式，可设置 capabilities 包含 thinking，并在 extra_params 里打开 enable_thinking。",
+      "_doc": "示例 2: DashScope（备份端点，priority=2）。如需思考模式，可设置 capabilities 包含 thinking，并在 extra_params 里打开 enable_thinking。",
       "name": "backup-dashscope",
       "provider": "dashscope",
       "api_type": "openai",
@@ -45,36 +44,9 @@
     }
   ],
 
-  "compiler_endpoints": [
-    {
-      "_doc": "Prompt Compiler 专用端点（主）。使用快速小模型对用户指令做预处理，建议低延迟模型，不启用思考模式。如不配置，自动回退到主端点。",
-      "name": "compiler-primary",
-      "provider": "dashscope",
-      "api_type": "openai",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "api_key_env": "DASHSCOPE_API_KEY",
-      "model": "qwen-turbo-latest",
-      "priority": 1,
-      "max_tokens": 2048,
-      "timeout": 30,
-      "capabilities": ["text"],
-      "note": "Prompt Compiler 主端点（快速模型，不启用思考）"
-    },
-    {
-      "_doc": "Prompt Compiler 专用端点（备）。主端点失败时自动切换到备用。",
-      "name": "compiler-backup",
-      "provider": "dashscope",
-      "api_type": "openai",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "api_key_env": "DASHSCOPE_API_KEY",
-      "model": "qwen-plus-latest",
-      "priority": 2,
-      "max_tokens": 2048,
-      "timeout": 30,
-      "capabilities": ["text"],
-      "note": "Prompt Compiler 备用端点"
-    }
-  ],
+  "endpoints": [],
+
+  "compiler_endpoints": [],
 
   "settings": {
     "retry_count": 2,

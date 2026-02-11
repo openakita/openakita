@@ -1569,7 +1569,79 @@ export function App() {
         return;
       }
     }
+
+    // 自动保存当前页面填写的配置到 .env（避免用户忘记点"保存"导致配置丢失）
+    if (currentWorkspaceId) {
+      try {
+        const autoSaveKeys = getAutoSaveKeysForStep(stepId);
+        if (autoSaveKeys.length > 0) {
+          setBusy("自动保存配置...");
+          await saveEnvKeys(autoSaveKeys);
+          setBusy(null);
+        }
+      } catch {
+        // 自动保存失败不阻塞跳转
+        setBusy(null);
+      }
+    }
+
     setStepId(steps[Math.min(currentStepIdx + 1, steps.length - 1)].id);
+  }
+
+  /** 根据当前步骤返回需要自动保存的 env key 列表 */
+  function getAutoSaveKeysForStep(sid: StepId): string[] {
+    switch (sid) {
+      case "im":
+        return [
+          "TELEGRAM_ENABLED", "TELEGRAM_BOT_TOKEN", "TELEGRAM_PROXY",
+          "TELEGRAM_REQUIRE_PAIRING", "TELEGRAM_PAIRING_CODE", "TELEGRAM_WEBHOOK_URL",
+          "FEISHU_ENABLED", "FEISHU_APP_ID", "FEISHU_APP_SECRET",
+          "WEWORK_ENABLED", "WEWORK_CORP_ID", "WEWORK_AGENT_ID", "WEWORK_SECRET",
+          "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
+          "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
+          "QQ_ENABLED", "QQ_ONEBOT_URL",
+        ];
+      case "tools":
+        return [
+          "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FORCE_IPV4",
+          "TOOL_MAX_PARALLEL", "FORCE_TOOL_CALL_MAX_RETRIES",
+          "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
+          "MCP_ENABLED", "MCP_TIMEOUT", "MCP_BROWSER_ENABLED",
+          "MCP_MYSQL_ENABLED", "MCP_MYSQL_HOST", "MCP_MYSQL_USER", "MCP_MYSQL_PASSWORD", "MCP_MYSQL_DATABASE",
+          "MCP_POSTGRES_ENABLED", "MCP_POSTGRES_URL",
+          "DESKTOP_ENABLED", "DESKTOP_DEFAULT_MONITOR", "DESKTOP_COMPRESSION_QUALITY",
+          "DESKTOP_MAX_WIDTH", "DESKTOP_MAX_HEIGHT", "DESKTOP_CACHE_TTL",
+          "DESKTOP_UIA_TIMEOUT", "DESKTOP_UIA_RETRY_INTERVAL", "DESKTOP_UIA_MAX_RETRIES",
+          "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MODEL", "DESKTOP_VISION_FALLBACK_MODEL",
+          "DESKTOP_VISION_OCR_MODEL", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
+          "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
+          "DESKTOP_FAILSAFE", "DESKTOP_PAUSE", "DESKTOP_LOG_ACTIONS", "DESKTOP_LOG_SCREENSHOTS", "DESKTOP_LOG_DIR",
+          "WHISPER_MODEL", "GITHUB_TOKEN",
+        ];
+      case "agent":
+        return [
+          "AGENT_NAME", "MAX_ITERATIONS", "AUTO_CONFIRM",
+          "THINKING_MODE", "FAST_MODEL",
+          "PROGRESS_TIMEOUT_SECONDS", "HARD_TIMEOUT_SECONDS",
+          "DATABASE_PATH", "LOG_LEVEL",
+          "LOG_DIR", "LOG_FILE_PREFIX", "LOG_MAX_SIZE_MB", "LOG_BACKUP_COUNT",
+          "LOG_RETENTION_DAYS", "LOG_FORMAT", "LOG_TO_CONSOLE", "LOG_TO_FILE",
+          "EMBEDDING_MODEL", "EMBEDDING_DEVICE",
+          "MEMORY_HISTORY_DAYS", "MEMORY_MAX_HISTORY_FILES", "MEMORY_MAX_HISTORY_SIZE_MB",
+          "PERSONA_NAME",
+          "PROACTIVE_ENABLED", "PROACTIVE_MAX_DAILY_MESSAGES", "PROACTIVE_MIN_INTERVAL_MINUTES",
+          "PROACTIVE_QUIET_HOURS_START", "PROACTIVE_QUIET_HOURS_END", "PROACTIVE_IDLE_THRESHOLD_HOURS",
+          "STICKER_ENABLED", "STICKER_DATA_DIR",
+          "SCHEDULER_ENABLED", "SCHEDULER_TIMEZONE", "SCHEDULER_MAX_CONCURRENT", "SCHEDULER_TASK_TIMEOUT",
+          "SESSION_TIMEOUT_MINUTES", "SESSION_MAX_HISTORY", "SESSION_STORAGE_PATH",
+          "ORCHESTRATION_ENABLED", "ORCHESTRATION_MODE",
+          "ORCHESTRATION_BUS_ADDRESS", "ORCHESTRATION_PUB_ADDRESS",
+          "ORCHESTRATION_MIN_WORKERS", "ORCHESTRATION_MAX_WORKERS",
+          "ORCHESTRATION_HEARTBEAT_INTERVAL", "ORCHESTRATION_HEALTH_CHECK_INTERVAL",
+        ];
+      default:
+        return [];
+    }
   }
 
   function goPrev() {
@@ -2696,7 +2768,7 @@ export function App() {
                   </select>
                   {providerApplyUrl ? (
                     <div className="help" style={{ marginTop: 6 }}>
-                      申请 Key：<a href={providerApplyUrl}>{providerApplyUrl}</a>
+                      申请 Key：<code style={{ userSelect: "all", fontSize: 12 }}>{providerApplyUrl}</code>
                     </div>
                   ) : null}
                 </div>
@@ -3494,6 +3566,9 @@ export function App() {
       "TELEGRAM_ENABLED",
       "TELEGRAM_BOT_TOKEN",
       "TELEGRAM_PROXY",
+      "TELEGRAM_REQUIRE_PAIRING",
+      "TELEGRAM_PAIRING_CODE",
+      "TELEGRAM_WEBHOOK_URL",
       "FEISHU_ENABLED",
       "FEISHU_APP_ID",
       "FEISHU_APP_SECRET",
@@ -3527,6 +3602,9 @@ export function App() {
                 <>
                   <FieldText k="TELEGRAM_BOT_TOKEN" label="Bot Token（必填）" placeholder="从 BotFather 获取（仅会显示一次）" type="password" />
                   <FieldText k="TELEGRAM_PROXY" label="代理（可选）" placeholder="http://127.0.0.1:7890 / socks5://..." />
+                  <FieldBool k="TELEGRAM_REQUIRE_PAIRING" label="需要配对码" help="开启后新用户必须输入配对码才能使用 Bot（默认 true）" />
+                  <FieldText k="TELEGRAM_PAIRING_CODE" label="配对码（可选）" placeholder="留空则自动生成" />
+                  <FieldText k="TELEGRAM_WEBHOOK_URL" label="Webhook URL（可选）" placeholder="https://your-domain.com/webhook" help="留空则使用 Polling 模式" />
                 </>
               ),
             },
@@ -3592,7 +3670,7 @@ export function App() {
                   </label>
                 </div>
                 <div className="help" style={{ marginTop: 8 }}>
-                  申请/文档：<a href={c.apply}>{c.apply}</a>
+                  申请/文档：<code style={{ userSelect: "all", fontSize: 12 }}>{c.apply}</code>
                 </div>
                 {enabled ? (
                   <>
@@ -3634,6 +3712,8 @@ export function App() {
       "ALL_PROXY",
       "FORCE_IPV4",
       "TOOL_MAX_PARALLEL",
+      "FORCE_TOOL_CALL_MAX_RETRIES",
+      "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
       // MCP
       "MCP_ENABLED",
       "MCP_TIMEOUT",
@@ -3799,6 +3879,10 @@ export function App() {
               <FieldText k="TOOL_MAX_PARALLEL" label="TOOL_MAX_PARALLEL" placeholder="1" help="单轮多工具并行数（默认 1=串行）" />
               <FieldText k="WHISPER_MODEL" label="WHISPER_MODEL" placeholder="base" help="tiny/base/small/medium/large" />
             </div>
+            <div className="grid3" style={{ marginTop: 10 }}>
+              <FieldText k="FORCE_TOOL_CALL_MAX_RETRIES" label="ForceToolCall 重试" placeholder="1" help="工具护栏：强制工具调用的最大重试次数" />
+              <FieldBool k="ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS" label="并行工具中断检查" help="允许并行工具执行时插入中断检查（默认 false）" />
+            </div>
           </div>
 
           <div className="card">
@@ -3888,12 +3972,23 @@ export function App() {
       "AGENT_NAME",
       "MAX_ITERATIONS",
       "AUTO_CONFIRM",
+      // thinking
+      "THINKING_MODE",
+      "FAST_MODEL",
       // timeouts
       "PROGRESS_TIMEOUT_SECONDS",
       "HARD_TIMEOUT_SECONDS",
       // logging/db
       "DATABASE_PATH",
       "LOG_LEVEL",
+      "LOG_DIR",
+      "LOG_FILE_PREFIX",
+      "LOG_MAX_SIZE_MB",
+      "LOG_BACKUP_COUNT",
+      "LOG_RETENTION_DAYS",
+      "LOG_FORMAT",
+      "LOG_TO_CONSOLE",
+      "LOG_TO_FILE",
       // memory / embedding
       "EMBEDDING_MODEL",
       "EMBEDDING_DEVICE",
@@ -3920,8 +4015,10 @@ export function App() {
       // session
       "SESSION_TIMEOUT_MINUTES",
       "SESSION_MAX_HISTORY",
+      "SESSION_STORAGE_PATH",
       // orchestration
       "ORCHESTRATION_ENABLED",
+      "ORCHESTRATION_MODE",
       "ORCHESTRATION_BUS_ADDRESS",
       "ORCHESTRATION_PUB_ADDRESS",
       "ORCHESTRATION_MIN_WORKERS",
@@ -3945,8 +4042,25 @@ export function App() {
               <FieldText k="AGENT_NAME" label="Agent 名称" placeholder="OpenAkita" />
               <FieldText k="MAX_ITERATIONS" label="最大迭代次数" placeholder="300" />
               <FieldBool k="AUTO_CONFIRM" label="自动确认（慎用）" help="打开后会减少交互确认，建议只在可信环境中使用" />
+              <FieldText k="THINKING_MODE" label="Thinking 模式" placeholder="auto" help="auto=自动判断 / always=始终思考 / never=从不思考" />
+              <FieldText k="FAST_MODEL" label="快速模型（Thinking auto 时用）" placeholder="claude-sonnet-4-20250514" help="THINKING_MODE=auto 时，简单任务会切到此模型" />
               <FieldText k="DATABASE_PATH" label="数据库路径" placeholder="data/agent.db" />
               <FieldText k="LOG_LEVEL" label="日志级别" placeholder="INFO" help="DEBUG/INFO/WARNING/ERROR" />
+            </div>
+          </details>
+
+          <div className="divider" />
+          <details>
+            <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>日志高级</summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+              <FieldText k="LOG_DIR" label="日志目录" placeholder="logs" />
+              <FieldText k="LOG_FILE_PREFIX" label="日志文件前缀" placeholder="openakita" />
+              <FieldText k="LOG_MAX_SIZE_MB" label="单文件最大 MB" placeholder="10" />
+              <FieldText k="LOG_BACKUP_COUNT" label="备份文件数" placeholder="30" />
+              <FieldText k="LOG_RETENTION_DAYS" label="保留天数" placeholder="30" />
+              <FieldText k="LOG_FORMAT" label="日志格式" placeholder="%(asctime)s - %(name)s - %(levelname)s - %(message)s" />
+              <FieldBool k="LOG_TO_CONSOLE" label="输出到控制台" help="默认 true" />
+              <FieldBool k="LOG_TO_FILE" label="输出到文件" help="默认 true" />
             </div>
           </details>
 
@@ -3999,6 +4113,7 @@ export function App() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
               <FieldText k="SESSION_TIMEOUT_MINUTES" label="会话超时（分钟）" placeholder="30" />
               <FieldText k="SESSION_MAX_HISTORY" label="会话最大历史条数" placeholder="50" />
+              <FieldText k="SESSION_STORAGE_PATH" label="会话存储路径" placeholder="data/sessions" />
             </div>
           </details>
 
@@ -4026,6 +4141,7 @@ export function App() {
             <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>多 Agent 协同（可选）</summary>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
               <FieldBool k="ORCHESTRATION_ENABLED" label="启用多 Agent（Master/Worker）" help="多数用户不需要；开启前建议先完成单 Agent 跑通" />
+              <FieldText k="ORCHESTRATION_MODE" label="编排模式" placeholder="single" help="single=单 Agent / handoff=接力 / master-worker=主从" />
               <FieldText k="ORCHESTRATION_BUS_ADDRESS" label="总线地址" placeholder="tcp://127.0.0.1:5555" />
               <FieldText k="ORCHESTRATION_PUB_ADDRESS" label="广播地址" placeholder="tcp://127.0.0.1:5556" />
               <FieldText k="ORCHESTRATION_MIN_WORKERS" label="最小 Worker 数" placeholder="1" />
@@ -4062,13 +4178,25 @@ export function App() {
       "AGENT_NAME",
       "MAX_ITERATIONS",
       "AUTO_CONFIRM",
+      "THINKING_MODE",
+      "FAST_MODEL",
       "TOOL_MAX_PARALLEL",
+      "FORCE_TOOL_CALL_MAX_RETRIES",
+      "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
       // timeouts
       "PROGRESS_TIMEOUT_SECONDS",
       "HARD_TIMEOUT_SECONDS",
       // logging/db
       "DATABASE_PATH",
       "LOG_LEVEL",
+      "LOG_DIR",
+      "LOG_FILE_PREFIX",
+      "LOG_MAX_SIZE_MB",
+      "LOG_BACKUP_COUNT",
+      "LOG_RETENTION_DAYS",
+      "LOG_FORMAT",
+      "LOG_TO_CONSOLE",
+      "LOG_TO_FILE",
       // github/whisper
       "GITHUB_TOKEN",
       "WHISPER_MODEL",
@@ -4098,8 +4226,10 @@ export function App() {
       // session
       "SESSION_TIMEOUT_MINUTES",
       "SESSION_MAX_HISTORY",
+      "SESSION_STORAGE_PATH",
       // orchestration
       "ORCHESTRATION_ENABLED",
+      "ORCHESTRATION_MODE",
       "ORCHESTRATION_BUS_ADDRESS",
       "ORCHESTRATION_PUB_ADDRESS",
       "ORCHESTRATION_MIN_WORKERS",
@@ -4110,6 +4240,9 @@ export function App() {
       "TELEGRAM_ENABLED",
       "TELEGRAM_BOT_TOKEN",
       "TELEGRAM_PROXY",
+      "TELEGRAM_REQUIRE_PAIRING",
+      "TELEGRAM_PAIRING_CODE",
+      "TELEGRAM_WEBHOOK_URL",
       "FEISHU_ENABLED",
       "FEISHU_APP_ID",
       "FEISHU_APP_SECRET",
@@ -4289,7 +4422,7 @@ export function App() {
                     </label>
                   </div>
                   <div className="help" style={{ marginTop: 8 }}>
-                    申请/文档：<a href={c.apply}>{c.apply}</a>
+                    申请/文档：<code style={{ userSelect: "all", fontSize: 12 }}>{c.apply}</code>
                   </div>
                   {enabled ? (
                     <>
@@ -4386,8 +4519,25 @@ export function App() {
                 <FieldText k="AGENT_NAME" label="Agent 名称" placeholder="OpenAkita" />
                 <FieldText k="MAX_ITERATIONS" label="最大迭代次数" placeholder="300" />
                 <FieldBool k="AUTO_CONFIRM" label="自动确认（慎用）" help="打开后会减少交互确认，建议只在可信环境中使用" />
+                <FieldText k="THINKING_MODE" label="Thinking 模式" placeholder="auto" help="auto=自动判断 / always=始终思考 / never=从不思考" />
+                <FieldText k="FAST_MODEL" label="快速模型（Thinking auto 时用）" placeholder="claude-sonnet-4-20250514" help="THINKING_MODE=auto 时，简单任务会切到此模型" />
                 <FieldText k="DATABASE_PATH" label="数据库路径" placeholder="data/agent.db" />
                 <FieldText k="LOG_LEVEL" label="日志级别" placeholder="INFO" help="DEBUG/INFO/WARNING/ERROR" />
+              </div>
+            </details>
+
+            <div className="divider" />
+            <details>
+              <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>日志高级</summary>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+                <FieldText k="LOG_DIR" label="日志目录" placeholder="logs" />
+                <FieldText k="LOG_FILE_PREFIX" label="日志文件前缀" placeholder="openakita" />
+                <FieldText k="LOG_MAX_SIZE_MB" label="单文件最大 MB" placeholder="10" />
+                <FieldText k="LOG_BACKUP_COUNT" label="备份文件数" placeholder="30" />
+                <FieldText k="LOG_RETENTION_DAYS" label="保留天数" placeholder="30" />
+                <FieldText k="LOG_FORMAT" label="日志格式" placeholder="%(asctime)s - %(name)s - %(levelname)s - %(message)s" />
+                <FieldBool k="LOG_TO_CONSOLE" label="输出到控制台" help="默认 true" />
+                <FieldBool k="LOG_TO_FILE" label="输出到文件" help="默认 true" />
               </div>
             </details>
 
@@ -4409,6 +4559,7 @@ export function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 <FieldText k="SESSION_TIMEOUT_MINUTES" label="会话超时（分钟）" placeholder="30" />
                 <FieldText k="SESSION_MAX_HISTORY" label="会话最大历史条数" placeholder="50" />
+                <FieldText k="SESSION_STORAGE_PATH" label="会话存储路径" placeholder="data/sessions" />
               </div>
             </details>
 
@@ -4436,6 +4587,7 @@ export function App() {
               <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>多 Agent 协同（可选）</summary>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 <FieldBool k="ORCHESTRATION_ENABLED" label="启用多 Agent（Master/Worker）" help="多数用户不需要；开启前建议先完成单 Agent 跑通" />
+                <FieldText k="ORCHESTRATION_MODE" label="编排模式" placeholder="single" help="single=单 Agent / handoff=接力 / master-worker=主从" />
                 <FieldText k="ORCHESTRATION_BUS_ADDRESS" label="总线地址" placeholder="tcp://127.0.0.1:5555" />
                 <FieldText k="ORCHESTRATION_PUB_ADDRESS" label="广播地址" placeholder="tcp://127.0.0.1:5556" />
                 <FieldText k="ORCHESTRATION_MIN_WORKERS" label="最小 Worker 数" placeholder="1" />

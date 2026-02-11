@@ -224,6 +224,14 @@ function Install-Dependencies {
     
     Write-Step "安装项目依赖"
     
+    Write-Host ""
+    Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Yellow
+    Write-Host "║  ⏳ 此步骤需要下载并安装大量 Python 依赖包               ║" -ForegroundColor Yellow
+    Write-Host "║  根据网络状况，可能需要 5~15 分钟，请耐心等待...         ║" -ForegroundColor Yellow
+    Write-Host "║  如果安装失败，脚本会自动回退到清华镜像源重试            ║" -ForegroundColor Yellow
+    Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Yellow
+    Write-Host ""
+    
     $pipPath = Join-Path (Split-Path $PythonPath) "pip.exe"
     
     # 升级 pip
@@ -234,9 +242,11 @@ function Install-Dependencies {
     $pyprojectPath = Join-Path (Get-Location) "pyproject.toml"
     $requirementsPath = Join-Path (Get-Location) "requirements.txt"
     
+    $usePyproject = $false
     if (Test-Path $pyprojectPath) {
         Write-Info "使用 pyproject.toml 安装..."
         & $pipPath install -e .
+        $usePyproject = $true
     } elseif (Test-Path $requirementsPath) {
         Write-Info "使用 requirements.txt 安装..."
         & $pipPath install -r requirements.txt
@@ -247,7 +257,11 @@ function Install-Dependencies {
     
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "部分依赖安装失败，尝试使用国内镜像..."
-        & $pipPath install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple
+        if ($usePyproject) {
+            & $pipPath install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple
+        } else {
+            & $pipPath install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+        }
     }
     
     Write-Success "依赖安装完成"
@@ -346,8 +360,8 @@ function Initialize-Config {
     # 1. 基础环境配置 (.env)
     if (Test-Path $envFile) {
         Write-Info ".env 配置文件已存在"
-        $answer = Read-Host "是否覆盖? (y/N)"
-        if ($answer -ne "y" -and $answer -ne "Y") {
+        $answer = Read-Host "是否覆盖? (Y/n)"
+        if ($answer -eq "n" -or $answer -eq "N") {
             Write-Info "保留现有 .env 配置"
         } else {
             New-EnvFile -EnvFile $envFile -EnvExample $envExample
@@ -359,9 +373,54 @@ function Initialize-Config {
     # 2. LLM 端点配置 (data/llm_endpoints.json)
     Initialize-LLMEndpoints
     
+    # 3. Identity 模板文件
+    Initialize-IdentityTemplates
+    
     Write-Warning "请编辑配置文件:"
     Write-Info "  - .env: 基础设置 (Telegram Token 等)"
     Write-Info "  - data\llm_endpoints.json: LLM 端点配置 (API Key, 模型等)"
+    Write-Info "  - identity\SOUL.md: Agent 身份与核心特质"
+}
+
+function Initialize-IdentityTemplates {
+    Write-Info "初始化 Identity 模板..."
+    
+    $identityDir = Join-Path (Get-Location) "identity"
+    if (-not (Test-Path $identityDir)) {
+        New-Item -ItemType Directory -Path $identityDir -Force | Out-Null
+    }
+    
+    $templates = @("SOUL", "AGENT", "USER", "MEMORY")
+    foreach ($name in $templates) {
+        $target = Join-Path $identityDir "$name.md"
+        $example = Join-Path $identityDir "$name.md.example"
+        if ((-not (Test-Path $target)) -and (Test-Path $example)) {
+            Copy-Item $example $target
+            Write-Success "已创建 identity\$name.md (从 example 复制)"
+        }
+    }
+    
+    # 如果 SOUL.md 仍不存在（没有 example），创建基础模板
+    $soulPath = Join-Path $identityDir "SOUL.md"
+    if (-not (Test-Path $soulPath)) {
+        $soulContent = @"
+# Agent Soul
+
+你是 OpenAkita，一个忠诚可靠的 AI 助手。
+
+## 核心特质
+- 永不放弃，持续尝试直到成功
+- 诚实可靠，不会隐瞒问题
+- 主动学习，不断自我改进
+
+## 行为准则
+- 优先考虑用户的真实需求
+- 遇到困难时寻找替代方案
+- 保持简洁清晰的沟通方式
+"@
+        Set-Content -Path $soulPath -Value $soulContent -Encoding UTF8
+        Write-Success "已创建 identity\SOUL.md (默认模板)"
+    }
 }
 
 function New-EnvFile {
@@ -379,22 +438,75 @@ function New-EnvFile {
 # OpenAkita 基础配置
 # =====================================================
 
+# LLM API（推荐使用 data/llm_endpoints.json 管理多端点）
+ANTHROPIC_API_KEY=
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+DEFAULT_MODEL=claude-opus-4-5-20251101-thinking
+MAX_TOKENS=8192
+
 # Agent 配置
 AGENT_NAME=OpenAkita
 MAX_ITERATIONS=100
 AUTO_CONFIRM=false
 
-# 数据库路径
-DATABASE_PATH=data/agent.db
+# Thinking 模式（auto/always/never）
+# THINKING_MODE=auto
+# FAST_MODEL=claude-sonnet-4-20250514
 
-# 日志级别
+# 数据库 & 日志
+DATABASE_PATH=data/agent.db
 LOG_LEVEL=INFO
 
 # =====================================================
-# Telegram 配置 (可选)
+# IM 通道（启用后填写对应密钥）
 # =====================================================
 TELEGRAM_ENABLED=false
-TELEGRAM_BOT_TOKEN=your-bot-token
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_PROXY=
+
+FEISHU_ENABLED=false
+# FEISHU_APP_ID=
+# FEISHU_APP_SECRET=
+
+WEWORK_ENABLED=false
+# WEWORK_CORP_ID=
+# WEWORK_AGENT_ID=
+# WEWORK_SECRET=
+
+DINGTALK_ENABLED=false
+# DINGTALK_CLIENT_ID=
+# DINGTALK_CLIENT_SECRET=
+
+QQ_ENABLED=false
+# QQ_ONEBOT_URL=ws://127.0.0.1:8080
+
+# =====================================================
+# 功能开关（可选）
+# =====================================================
+PERSONA_NAME=default
+STICKER_ENABLED=true
+PROACTIVE_ENABLED=false
+SCHEDULER_ENABLED=true
+# SCHEDULER_TIMEZONE=Asia/Shanghai
+ORCHESTRATION_ENABLED=false
+
+# 记忆
+EMBEDDING_MODEL=shibing624/text2vec-base-chinese
+EMBEDDING_DEVICE=cpu
+
+# 会话
+# SESSION_TIMEOUT_MINUTES=30
+# SESSION_MAX_HISTORY=50
+
+# 网络代理（可选）
+# HTTP_PROXY=http://127.0.0.1:7890
+# HTTPS_PROXY=http://127.0.0.1:7890
+
+# 语音
+WHISPER_MODEL=base
+
+# GitHub
+# GITHUB_TOKEN=
 
 # =====================================================
 # LLM 端点配置
@@ -430,24 +542,11 @@ function Initialize-LLMEndpoints {
         Copy-Item $llmExample $llmConfig
         Write-Success "LLM 端点配置已创建: $llmConfig (从 example 复制)"
     } else {
-        # 生成默认配置
+        # 生成空端点配置（由用户通过 Setup Center 或 llm-config 添加端点）
         $llmConfigContent = @"
 {
-  "endpoints": [
-    {
-      "name": "claude-primary",
-      "provider": "anthropic",
-      "api_type": "anthropic",
-      "base_url": "https://api.anthropic.com",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-opus-4-5-20251101-thinking",
-      "priority": 1,
-      "max_tokens": 8192,
-      "timeout": 60,
-      "capabilities": ["text", "tools"],
-      "note": "Anthropic 官方 API"
-    }
-  ],
+  "endpoints": [],
+  "compiler_endpoints": [],
   "settings": {
     "retry_count": 2,
     "retry_delay_seconds": 2,
@@ -459,7 +558,7 @@ function Initialize-LLMEndpoints {
         Set-Content -Path $llmConfig -Value $llmConfigContent -Encoding UTF8
         Write-Success "LLM 端点配置已创建: $llmConfig"
     }
-    Write-Info "提示: 编辑 data\llm_endpoints.json 添加你的 API Key"
+    Write-Info "提示: 通过 Setup Center 或 openakita llm-config 添加 LLM 端点"
     Write-Info "提示: 可添加多个端点实现自动故障切换"
 }
 
@@ -473,8 +572,11 @@ function Initialize-DataDirs {
         "data\scheduler",
         "data\temp",
         "data\telegram\pairing",
+        "data\sticker",
+        "identity",
         "skills",
-        "plugins"
+        "plugins",
+        "logs"
     )
     
     foreach ($dir in $dirs) {

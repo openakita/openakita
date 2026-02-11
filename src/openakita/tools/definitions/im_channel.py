@@ -86,17 +86,16 @@ IM_CHANNEL_TOOLS = [
     {
         "name": "get_image_file",
         "category": "IM Channel",
-        "description": "Get local file path of image sent by user. When user sends image, system auto-downloads it. When you need to: (1) Process user's image, (2) Analyze image content.",
+        "description": "Get local file path of image sent by user. ONLY use when you need the file path for programmatic operations (forward, save, crop, convert format). Do NOT use this to view or analyze image content — images are already included in your message as multimodal content and you can see them directly.",
         "detail": """获取用户发送的图片的本地文件路径。
 
-**工作流程**：
-1. 用户发送图片
-2. 系统自动下载到本地
-3. 使用此工具获取文件路径
+⚠️ **重要**：用户发送的图片已作为多模态内容包含在你的消息中，你可以直接看到并理解图片。
+**不要**为了查看或分析图片内容而调用此工具。
 
-**适用场景**：
-- 处理用户的图片
-- 分析图片内容""",
+**仅在以下场景使用**：
+- 需要将图片文件转发、保存到其他位置
+- 需要用外部工具对图片文件进行格式转换、裁剪、压缩等操作
+- 需要将图片路径传给其他工具或脚本""",
         "input_schema": {"type": "object", "properties": {}},
     },
     {

@@ -958,11 +958,7 @@ class ReasoningEngine:
                 effective_max = max_verify_retries * 2 if has_plan_pending else max_verify_retries
 
                 if verify_incomplete_count >= effective_max:
-                    return (
-                        f"{cleaned_text}\n\n"
-                        "我已多次复核，但仍无法确认是否已完全满足你的需求。"
-                        "请告诉我还缺少什么、或期望的最终状态是什么。"
-                    )
+                    return cleaned_text
 
                 # 继续循环
                 working_messages.append({

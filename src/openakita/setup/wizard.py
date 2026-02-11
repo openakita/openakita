@@ -206,6 +206,35 @@ Press Ctrl+C at any time to cancel.
             )
             self.config["THINKING_MODE"] = "auto" if use_thinking else "never"
 
+        # FAST_MODEL（THINKING_MODE=auto 时使用）
+        if self.config.get("THINKING_MODE") == "auto":
+            console.print(
+                "\n[bold]Fast Model (for simple tasks when THINKING_MODE=auto):[/bold]\n"
+            )
+            console.print("  When THINKING_MODE=auto, simple tasks will use a faster model.\n")
+
+            fast_models = [
+                ("claude-sonnet-4-20250514", "Claude Sonnet 4 (default)"),
+                ("gpt-4o-mini", "GPT-4o Mini"),
+                ("qwen3-max", "Qwen3 Max"),
+                ("custom", "Enter custom model name"),
+            ]
+
+            for i, (_model, desc) in enumerate(fast_models, 1):
+                console.print(f"  [{i}] {desc}")
+
+            fast_choice = Prompt.ask(
+                "\nSelect fast model",
+                choices=[str(i) for i in range(1, len(fast_models) + 1)],
+                default="1",
+            )
+
+            fast_idx = int(fast_choice) - 1
+            if fast_models[fast_idx][0] == "custom":
+                self.config["FAST_MODEL"] = Prompt.ask("Enter fast model name")
+            else:
+                self.config["FAST_MODEL"] = fast_models[fast_idx][0]
+
         console.print("\n[green]LLM configuration complete![/green]\n")
 
     def _configure_anthropic(self):
@@ -375,6 +404,17 @@ Press Ctrl+C at any time to cancel.
             api_type = "anthropic" if "anthropic.com" in base_url else "openai"
             provider = "anthropic" if api_type == "anthropic" else "openai-compatible"
 
+            # 从模型名自动推断能力（而非硬编码）
+            from openakita.llm.capabilities import (
+                get_provider_slug_from_base_url,
+                infer_capabilities,
+            )
+            provider_slug = get_provider_slug_from_base_url(base_url) or provider
+            caps = infer_capabilities(model, provider_slug=provider_slug)
+            capabilities = [k for k, v in caps.items() if v and k != "thinking_only"]
+            if not capabilities:
+                capabilities = ["text", "tools"]
+
             existing_data["endpoints"] = [
                 {
                     "name": "primary",
@@ -386,7 +426,7 @@ Press Ctrl+C at any time to cancel.
                     "priority": 1,
                     "max_tokens": int(self.config.get("MAX_TOKENS", "8192")),
                     "timeout": 180,
-                    "capabilities": ["text", "tools"],
+                    "capabilities": capabilities,
                 }
             ]
 
@@ -463,9 +503,10 @@ Press Ctrl+C at any time to cancel.
         console.print("  [2] Feishu (Lark)")
         console.print("  [3] WeCom (企业微信)")
         console.print("  [4] DingTalk (钉钉)")
-        console.print("  [5] Skip\n")
+        console.print("  [5] QQ (OneBot)")
+        console.print("  [6] Skip\n")
 
-        choice = Prompt.ask("Select channel", choices=["1", "2", "3", "4", "5"], default="5")
+        choice = Prompt.ask("Select channel", choices=["1", "2", "3", "4", "5", "6"], default="6")
 
         if choice == "1":
             self._configure_telegram()
@@ -475,6 +516,8 @@ Press Ctrl+C at any time to cancel.
             self._configure_wework()
         elif choice == "4":
             self._configure_dingtalk()
+        elif choice == "5":
+            self._configure_qq()
 
         console.print("\n[green]IM channel configuration complete![/green]\n")
 
@@ -490,6 +533,15 @@ Press Ctrl+C at any time to cancel.
         use_pairing = Confirm.ask("Require pairing code for new users?", default=True)
         self.config["TELEGRAM_REQUIRE_PAIRING"] = "true" if use_pairing else "false"
 
+        # 代理配置（大陆用户常用）
+        use_proxy = Confirm.ask("Use a proxy for Telegram? (recommended in mainland China)", default=False)
+        if use_proxy:
+            proxy = Prompt.ask(
+                "Enter proxy URL",
+                default="http://127.0.0.1:7890",
+            )
+            self.config["TELEGRAM_PROXY"] = proxy
+
     def _configure_feishu(self):
         """配置飞书"""
         console.print("\n[bold]Feishu (Lark) Configuration[/bold]\n")
@@ -504,6 +556,7 @@ Press Ctrl+C at any time to cancel.
     def _configure_wework(self):
         """配置企业微信"""
         console.print("\n[bold]WeCom Configuration[/bold]\n")
+        console.print("Note: WeCom callback requires a public URL (use ngrok/frp/cpolar)\n")
 
         corp_id = Prompt.ask("Enter Corp ID")
         agent_id = Prompt.ask("Enter Agent ID")
@@ -513,6 +566,22 @@ Press Ctrl+C at any time to cancel.
         self.config["WEWORK_CORP_ID"] = corp_id
         self.config["WEWORK_AGENT_ID"] = agent_id
         self.config["WEWORK_SECRET"] = secret
+
+        # 回调加解密配置（接收消息必填）
+        console.print("\n[bold]Callback Configuration (required for receiving messages):[/bold]\n")
+        console.print("Get these from WeCom admin -> App -> Receive Messages settings\n")
+
+        token = Prompt.ask("Enter callback Token", default="")
+        if token:
+            self.config["WEWORK_TOKEN"] = token
+
+        aes_key = Prompt.ask("Enter EncodingAESKey", default="")
+        if aes_key:
+            self.config["WEWORK_ENCODING_AES_KEY"] = aes_key
+
+        port = Prompt.ask("Callback port", default="9880")
+        if port != "9880":
+            self.config["WEWORK_CALLBACK_PORT"] = port
 
     def _configure_dingtalk(self):
         """配置钉钉"""
@@ -524,6 +593,20 @@ Press Ctrl+C at any time to cancel.
         self.config["DINGTALK_ENABLED"] = "true"
         self.config["DINGTALK_CLIENT_ID"] = app_key
         self.config["DINGTALK_CLIENT_SECRET"] = app_secret
+
+    def _configure_qq(self):
+        """配置 QQ (OneBot)"""
+        console.print("\n[bold]QQ (OneBot) Configuration[/bold]\n")
+        console.print("QQ 通道需要先部署 NapCat 或 Lagrange 作为 OneBot 服务端\n")
+        console.print("参考: https://github.com/botuniverse/onebot-11\n")
+
+        onebot_url = Prompt.ask(
+            "Enter OneBot WebSocket URL",
+            default="ws://127.0.0.1:8080",
+        )
+
+        self.config["QQ_ENABLED"] = "true"
+        self.config["QQ_ONEBOT_URL"] = onebot_url
 
     def _configure_memory(self):
         """配置记忆系统"""
@@ -589,15 +672,63 @@ Press Ctrl+C at any time to cancel.
         if persona != "default":
             self.config["PERSONA_NAME"] = persona
 
+        # Sticker (表情包)
+        use_sticker = Confirm.ask("Enable sticker (emoji packs) in IM?", default=True)
+        self.config["STICKER_ENABLED"] = "true" if use_sticker else "false"
+
         # Proactive (living presence)
         use_proactive = Confirm.ask("Enable living-presence mode? (proactive greetings & follow-ups)", default=False)
         if use_proactive:
             self.config["PROACTIVE_ENABLED"] = "true"
+            max_daily = Prompt.ask("  Max daily proactive messages", default="3")
+            self.config["PROACTIVE_MAX_DAILY_MESSAGES"] = max_daily
+            min_interval = Prompt.ask("  Min interval between messages (minutes)", default="120")
+            self.config["PROACTIVE_MIN_INTERVAL_MINUTES"] = min_interval
+            quiet_start = Prompt.ask("  Quiet hours start (0-23)", default="23")
+            self.config["PROACTIVE_QUIET_HOURS_START"] = quiet_start
+            quiet_end = Prompt.ask("  Quiet hours end (0-23)", default="7")
+            self.config["PROACTIVE_QUIET_HOURS_END"] = quiet_end
+
+        # Scheduler (调度器)
+        console.print("\n[bold]Scheduler Configuration:[/bold]")
+        use_scheduler = Confirm.ask("Enable task scheduler? (recommended)", default=True)
+        self.config["SCHEDULER_ENABLED"] = "true" if use_scheduler else "false"
+        if use_scheduler:
+            tz = Prompt.ask("  Timezone", default="Asia/Shanghai")
+            self.config["SCHEDULER_TIMEZONE"] = tz
+
+        # Session (会话)
+        console.print("\n[bold]Session Configuration:[/bold]")
+        session_timeout = Prompt.ask("Session timeout (minutes)", default="30")
+        self.config["SESSION_TIMEOUT_MINUTES"] = session_timeout
+        session_history = Prompt.ask("Max session history messages", default="50")
+        self.config["SESSION_MAX_HISTORY"] = session_history
+
+        # Network proxy
+        console.print("\n[bold]Network Proxy (optional):[/bold]")
+        use_proxy = Confirm.ask("Configure network proxy?", default=False)
+        if use_proxy:
+            http_proxy = Prompt.ask("HTTP_PROXY", default="http://127.0.0.1:7890")
+            self.config["HTTP_PROXY"] = http_proxy
+            self.config["HTTPS_PROXY"] = http_proxy
+
+        # GitHub token
+        console.print("\n[bold]GitHub Token (optional):[/bold]")
+        console.print("Used for downloading skills and GitHub API access\n")
+        github_token = Prompt.ask("Enter GitHub Token (leave empty to skip)", default="", password=True)
+        if github_token:
+            self.config["GITHUB_TOKEN"] = github_token
 
         # Multi-agent
-        use_multi = Confirm.ask("Enable multi-agent orchestration?", default=False)
+        use_multi = Confirm.ask("\nEnable multi-agent orchestration?", default=False)
         if use_multi:
             self.config["ORCHESTRATION_ENABLED"] = "true"
+            mode = Prompt.ask(
+                "  Orchestration mode",
+                choices=["single", "handoff", "master-worker"],
+                default="single",
+            )
+            self.config["ORCHESTRATION_MODE"] = mode
 
         console.print("\n[green]Advanced configuration complete![/green]\n")
 
@@ -608,13 +739,19 @@ Press Ctrl+C at any time to cancel.
         # 检查是否已存在
         if self.env_path.exists():
             overwrite = Confirm.ask(
-                f".env file already exists at {self.env_path}. Overwrite?", default=False
+                f".env file already exists at {self.env_path}. Overwrite?", default=True
             )
             if not overwrite:
-                # 备份旧文件
-                backup_path = self.env_path.with_suffix(".env.backup")
-                self.env_path.rename(backup_path)
-                console.print(f"  [yellow]Backed up to {backup_path}[/yellow]")
+                console.print("  [dim]Keeping existing .env file.[/dim]")
+                console.print("  [dim]New configuration saved to .env.new for reference.[/dim]")
+                # 将新配置写入 .env.new 供参考
+                env_content = self._generate_env_content()
+                new_path = self.env_path.parent / ".env.new"
+                new_path.write_text(env_content, encoding="utf-8")
+                console.print(f"  [green]✓[/green] Reference config saved to {new_path}")
+                # 继续写入 llm_endpoints
+                self._write_llm_endpoints()
+                return
 
         # 构建 .env 内容
         env_content = self._generate_env_content()
@@ -637,95 +774,249 @@ Press Ctrl+C at any time to cancel.
             "# OpenAkita Configuration",
             "# Generated by setup wizard",
             "",
-            "# === LLM API ===",
+            "# ========== LLM API ==========",
             f"ANTHROPIC_API_KEY={self.config.get('ANTHROPIC_API_KEY', '')}",
             f"ANTHROPIC_BASE_URL={self.config.get('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')}",
             "",
-            "# === Model Configuration ===",
+            "# ========== Model Configuration ==========",
             f"DEFAULT_MODEL={self.config.get('DEFAULT_MODEL', 'claude-sonnet-4-20250514')}",
             f"MAX_TOKENS={self.config.get('MAX_TOKENS', '8192')}",
             f"THINKING_MODE={self.config.get('THINKING_MODE', 'auto')}",
+        ]
+
+        if self.config.get("FAST_MODEL"):
+            lines.append(f"FAST_MODEL={self.config['FAST_MODEL']}")
+        else:
+            lines.append("# FAST_MODEL=claude-sonnet-4-20250514")
+
+        lines.extend([
             "",
-            "# === Agent Configuration ===",
+            "# ========== Agent Configuration ==========",
             "AGENT_NAME=OpenAkita",
             f"MAX_ITERATIONS={self.config.get('MAX_ITERATIONS', '100')}",
             "AUTO_CONFIRM=false",
+            "# FORCE_TOOL_CALL_MAX_RETRIES=1",
+            "# TOOL_MAX_PARALLEL=1",
             "",
-            "# === Paths ===",
+            "# ========== Timeout ==========",
+            "# PROGRESS_TIMEOUT_SECONDS=600",
+            "# HARD_TIMEOUT_SECONDS=0",
+            "",
+            "# ========== Paths & Logging ==========",
             "DATABASE_PATH=data/agent.db",
             f"LOG_LEVEL={self.config.get('LOG_LEVEL', 'INFO')}",
+            "# LOG_DIR=logs",
+            "# LOG_TO_CONSOLE=true",
+            "# LOG_TO_FILE=true",
             "",
-        ]
+        ])
+
+        # 网络代理
+        if self.config.get("HTTP_PROXY") or self.config.get("HTTPS_PROXY"):
+            lines.extend([
+                "# ========== Network Proxy ==========",
+                f"HTTP_PROXY={self.config.get('HTTP_PROXY', '')}",
+                f"HTTPS_PROXY={self.config.get('HTTPS_PROXY', '')}",
+                "# ALL_PROXY=",
+                "# FORCE_IPV4=false",
+                "",
+            ])
+        else:
+            lines.extend([
+                "# ========== Network Proxy (optional) ==========",
+                "# HTTP_PROXY=http://127.0.0.1:7890",
+                "# HTTPS_PROXY=http://127.0.0.1:7890",
+                "# ALL_PROXY=socks5://127.0.0.1:1080",
+                "# FORCE_IPV4=false",
+                "",
+            ])
+
+        # GitHub Token
+        if self.config.get("GITHUB_TOKEN"):
+            lines.extend([
+                "# ========== GitHub Token ==========",
+                f"GITHUB_TOKEN={self.config['GITHUB_TOKEN']}",
+                "",
+            ])
+        else:
+            lines.extend([
+                "# ========== GitHub Token (optional) ==========",
+                "# GITHUB_TOKEN=",
+                "",
+            ])
+
+        # Whisper
+        lines.extend([
+            "# ========== Voice (optional) ==========",
+            "WHISPER_MODEL=base",
+            "",
+        ])
 
         # IM 通道配置
+        lines.append("# ========== IM Channels ==========")
+
         if self.config.get("TELEGRAM_ENABLED"):
-            lines.extend(
-                [
-                    "# === Telegram ===",
-                    f"TELEGRAM_ENABLED={self.config.get('TELEGRAM_ENABLED', 'false')}",
-                    f"TELEGRAM_BOT_TOKEN={self.config.get('TELEGRAM_BOT_TOKEN', '')}",
-                    f"TELEGRAM_REQUIRE_PAIRING={self.config.get('TELEGRAM_REQUIRE_PAIRING', 'true')}",
-                    "",
-                ]
-            )
+            lines.extend([
+                f"TELEGRAM_ENABLED={self.config.get('TELEGRAM_ENABLED', 'false')}",
+                f"TELEGRAM_BOT_TOKEN={self.config.get('TELEGRAM_BOT_TOKEN', '')}",
+                f"TELEGRAM_REQUIRE_PAIRING={self.config.get('TELEGRAM_REQUIRE_PAIRING', 'true')}",
+            ])
+            if self.config.get("TELEGRAM_PROXY"):
+                lines.append(f"TELEGRAM_PROXY={self.config['TELEGRAM_PROXY']}")
+            else:
+                lines.append("# TELEGRAM_PROXY=")
+        else:
+            lines.extend([
+                "TELEGRAM_ENABLED=false",
+                "# TELEGRAM_BOT_TOKEN=",
+                "# TELEGRAM_PROXY=",
+            ])
+        lines.append("")
 
         if self.config.get("FEISHU_ENABLED"):
-            lines.extend(
-                [
-                    "# === Feishu ===",
-                    f"FEISHU_ENABLED={self.config.get('FEISHU_ENABLED', 'false')}",
-                    f"FEISHU_APP_ID={self.config.get('FEISHU_APP_ID', '')}",
-                    f"FEISHU_APP_SECRET={self.config.get('FEISHU_APP_SECRET', '')}",
-                    "",
-                ]
-            )
+            lines.extend([
+                f"FEISHU_ENABLED={self.config.get('FEISHU_ENABLED', 'false')}",
+                f"FEISHU_APP_ID={self.config.get('FEISHU_APP_ID', '')}",
+                f"FEISHU_APP_SECRET={self.config.get('FEISHU_APP_SECRET', '')}",
+            ])
+        else:
+            lines.extend([
+                "FEISHU_ENABLED=false",
+                "# FEISHU_APP_ID=",
+                "# FEISHU_APP_SECRET=",
+            ])
+        lines.append("")
 
         if self.config.get("WEWORK_ENABLED"):
-            lines.extend(
-                [
-                    "# === WeCom ===",
-                    f"WEWORK_ENABLED={self.config.get('WEWORK_ENABLED', 'false')}",
-                    f"WEWORK_CORP_ID={self.config.get('WEWORK_CORP_ID', '')}",
-                    f"WEWORK_AGENT_ID={self.config.get('WEWORK_AGENT_ID', '')}",
-                    f"WEWORK_SECRET={self.config.get('WEWORK_SECRET', '')}",
-                    "",
-                ]
-            )
+            lines.extend([
+                f"WEWORK_ENABLED={self.config.get('WEWORK_ENABLED', 'false')}",
+                f"WEWORK_CORP_ID={self.config.get('WEWORK_CORP_ID', '')}",
+                f"WEWORK_AGENT_ID={self.config.get('WEWORK_AGENT_ID', '')}",
+                f"WEWORK_SECRET={self.config.get('WEWORK_SECRET', '')}",
+            ])
+            if self.config.get("WEWORK_TOKEN"):
+                lines.append(f"WEWORK_TOKEN={self.config['WEWORK_TOKEN']}")
+            if self.config.get("WEWORK_ENCODING_AES_KEY"):
+                lines.append(f"WEWORK_ENCODING_AES_KEY={self.config['WEWORK_ENCODING_AES_KEY']}")
+            if self.config.get("WEWORK_CALLBACK_PORT"):
+                lines.append(f"WEWORK_CALLBACK_PORT={self.config['WEWORK_CALLBACK_PORT']}")
+        else:
+            lines.extend([
+                "WEWORK_ENABLED=false",
+                "# WEWORK_CORP_ID=",
+                "# WEWORK_AGENT_ID=",
+                "# WEWORK_SECRET=",
+            ])
+        lines.append("")
 
         if self.config.get("DINGTALK_ENABLED"):
-            lines.extend(
-                [
-                    "# === DingTalk ===",
-                    f"DINGTALK_ENABLED={self.config.get('DINGTALK_ENABLED', 'false')}",
-                    f"DINGTALK_CLIENT_ID={self.config.get('DINGTALK_CLIENT_ID', '')}",
-                    f"DINGTALK_CLIENT_SECRET={self.config.get('DINGTALK_CLIENT_SECRET', '')}",
-                    "",
-                ]
-            )
+            lines.extend([
+                f"DINGTALK_ENABLED={self.config.get('DINGTALK_ENABLED', 'false')}",
+                f"DINGTALK_CLIENT_ID={self.config.get('DINGTALK_CLIENT_ID', '')}",
+                f"DINGTALK_CLIENT_SECRET={self.config.get('DINGTALK_CLIENT_SECRET', '')}",
+            ])
+        else:
+            lines.extend([
+                "DINGTALK_ENABLED=false",
+                "# DINGTALK_CLIENT_ID=",
+                "# DINGTALK_CLIENT_SECRET=",
+            ])
+        lines.append("")
+
+        if self.config.get("QQ_ENABLED"):
+            lines.extend([
+                f"QQ_ENABLED={self.config.get('QQ_ENABLED', 'false')}",
+                f"QQ_ONEBOT_URL={self.config.get('QQ_ONEBOT_URL', 'ws://127.0.0.1:8080')}",
+            ])
+        else:
+            lines.extend([
+                "QQ_ENABLED=false",
+                "# QQ_ONEBOT_URL=ws://127.0.0.1:8080",
+            ])
+        lines.append("")
+
+        # 人格系统
+        lines.extend([
+            "# ========== Persona ==========",
+            f"PERSONA_NAME={self.config.get('PERSONA_NAME', 'default')}",
+            "",
+        ])
+
+        # 表情包
+        lines.extend([
+            "# ========== Sticker ==========",
+            f"STICKER_ENABLED={self.config.get('STICKER_ENABLED', 'true')}",
+            "# STICKER_DATA_DIR=data/sticker",
+            "",
+        ])
+
+        # 活人感模式
+        lines.append("# ========== Proactive (Living Presence) ==========")
+        if self.config.get("PROACTIVE_ENABLED") == "true":
+            lines.extend([
+                "PROACTIVE_ENABLED=true",
+                f"PROACTIVE_MAX_DAILY_MESSAGES={self.config.get('PROACTIVE_MAX_DAILY_MESSAGES', '3')}",
+                f"PROACTIVE_MIN_INTERVAL_MINUTES={self.config.get('PROACTIVE_MIN_INTERVAL_MINUTES', '120')}",
+                f"PROACTIVE_QUIET_HOURS_START={self.config.get('PROACTIVE_QUIET_HOURS_START', '23')}",
+                f"PROACTIVE_QUIET_HOURS_END={self.config.get('PROACTIVE_QUIET_HOURS_END', '7')}",
+                "# PROACTIVE_IDLE_THRESHOLD_HOURS=24",
+            ])
+        else:
+            lines.extend([
+                "PROACTIVE_ENABLED=false",
+                "# PROACTIVE_MAX_DAILY_MESSAGES=3",
+                "# PROACTIVE_MIN_INTERVAL_MINUTES=120",
+            ])
+        lines.append("")
 
         # 记忆系统配置
-        lines.extend(
-            [
-                "# === Memory System ===",
-                f"EMBEDDING_MODEL={self.config.get('EMBEDDING_MODEL', 'shibing624/text2vec-base-chinese')}",
-                f"EMBEDDING_DEVICE={self.config.get('EMBEDDING_DEVICE', 'cpu')}",
-                "MEMORY_HISTORY_DAYS=30",
-                "",
-            ]
-        )
+        lines.extend([
+            "# ========== Memory System ==========",
+            f"EMBEDDING_MODEL={self.config.get('EMBEDDING_MODEL', 'shibing624/text2vec-base-chinese')}",
+            f"EMBEDDING_DEVICE={self.config.get('EMBEDDING_DEVICE', 'cpu')}",
+            "MEMORY_HISTORY_DAYS=30",
+            "# MEMORY_MAX_HISTORY_FILES=1000",
+            "# MEMORY_MAX_HISTORY_SIZE_MB=500",
+            "",
+        ])
+
+        # 调度器
+        lines.extend([
+            "# ========== Scheduler ==========",
+            f"SCHEDULER_ENABLED={self.config.get('SCHEDULER_ENABLED', 'true')}",
+            f"SCHEDULER_TIMEZONE={self.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai')}",
+            "# SCHEDULER_MAX_CONCURRENT=5",
+            "# SCHEDULER_TASK_TIMEOUT=600",
+            "",
+        ])
+
+        # 会话
+        lines.extend([
+            "# ========== Session ==========",
+            f"SESSION_TIMEOUT_MINUTES={self.config.get('SESSION_TIMEOUT_MINUTES', '30')}",
+            f"SESSION_MAX_HISTORY={self.config.get('SESSION_MAX_HISTORY', '50')}",
+            "# SESSION_STORAGE_PATH=data/sessions",
+            "",
+        ])
 
         # 多 Agent 配置
-        if self.config.get("ORCHESTRATION_ENABLED"):
-            lines.extend(
-                [
-                    "# === Multi-Agent Orchestration ===",
-                    "ORCHESTRATION_ENABLED=true",
-                    "ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555",
-                    "ORCHESTRATION_MIN_WORKERS=1",
-                    "ORCHESTRATION_MAX_WORKERS=5",
-                    "",
-                ]
-            )
+        lines.append("# ========== Multi-Agent Orchestration ==========")
+        if self.config.get("ORCHESTRATION_ENABLED") == "true":
+            lines.extend([
+                "ORCHESTRATION_ENABLED=true",
+                f"ORCHESTRATION_MODE={self.config.get('ORCHESTRATION_MODE', 'single')}",
+                "ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555",
+                "ORCHESTRATION_PUB_ADDRESS=tcp://127.0.0.1:5556",
+                "ORCHESTRATION_MIN_WORKERS=1",
+                "ORCHESTRATION_MAX_WORKERS=5",
+            ])
+        else:
+            lines.extend([
+                "ORCHESTRATION_ENABLED=false",
+                "# ORCHESTRATION_MODE=single",
+                "# ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555",
+            ])
+        lines.append("")
 
         return "\n".join(lines)
 

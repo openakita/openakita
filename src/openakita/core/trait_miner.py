@@ -155,6 +155,9 @@ class TraitMiner:
                 system=TRAIT_MINING_SYSTEM,
             )
 
+            if not response or not getattr(response, "content", None):
+                return []
+
             traits = self._parse_trait_response(response.content)
 
             # 应用到 persona_manager
@@ -361,6 +364,9 @@ class TraitMiner:
             prompt=prompt,
             system=ANSWER_ANALYSIS_SYSTEM,
         )
+
+        if not response or not getattr(response, "content", None):
+            return answer.strip()
 
         # 解析 JSON
         json_match = re.search(r"\{[\s\S]*?\}", response.content)

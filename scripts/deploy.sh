@@ -251,6 +251,14 @@ create_venv() {
 install_dependencies() {
     print_step "安装项目依赖"
     
+    echo ""
+    echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗"
+    echo -e "║  ⏳ 此步骤需要下载并安装大量 Python 依赖包               ║"
+    echo -e "║  根据网络状况，可能需要 5~15 分钟，请耐心等待...         ║"
+    echo -e "║  如果安装失败，脚本会自动回退到清华镜像源重试            ║"
+    echo -e "╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
     # 升级 pip
     print_info "升级 pip..."
     $VENV_PIP install --upgrade pip
@@ -361,8 +369,8 @@ init_config() {
     # 1. 基础环境配置 (.env)
     if [ -f ".env" ]; then
         print_info ".env 配置文件已存在"
-        read -p "是否覆盖? (y/N): " answer
-        if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+        read -p "是否覆盖? (Y/n): " answer
+        if [[ "$answer" =~ ^[Nn]$ ]]; then
             print_info "保留现有 .env 配置"
         else
             create_env_file
@@ -374,9 +382,48 @@ init_config() {
     # 2. LLM 端点配置 (data/llm_endpoints.json)
     init_llm_endpoints
     
+    # 3. Identity 模板文件
+    init_identity_templates
+    
     print_warning "请编辑配置文件:"
     print_info "  - .env: 基础设置 (Telegram Token 等)"
     print_info "  - data/llm_endpoints.json: LLM 端点配置 (API Key, 模型等)"
+    print_info "  - identity/SOUL.md: Agent 身份与核心特质"
+}
+
+init_identity_templates() {
+    print_info "初始化 Identity 模板..."
+    mkdir -p identity
+    
+    local templates=("SOUL" "AGENT" "USER" "MEMORY")
+    for name in "${templates[@]}"; do
+        local target="identity/${name}.md"
+        local example="identity/${name}.md.example"
+        if [ ! -f "$target" ] && [ -f "$example" ]; then
+            cp "$example" "$target"
+            print_success "已创建 identity/${name}.md (从 example 复制)"
+        fi
+    done
+    
+    # 如果 SOUL.md 仍不存在（没有 example），创建基础模板
+    if [ ! -f "identity/SOUL.md" ]; then
+        cat > "identity/SOUL.md" << 'SOULEOF'
+# Agent Soul
+
+你是 OpenAkita，一个忠诚可靠的 AI 助手。
+
+## 核心特质
+- 永不放弃，持续尝试直到成功
+- 诚实可靠，不会隐瞒问题
+- 主动学习，不断自我改进
+
+## 行为准则
+- 优先考虑用户的真实需求
+- 遇到困难时寻找替代方案
+- 保持简洁清晰的沟通方式
+SOULEOF
+        print_success "已创建 identity/SOUL.md (默认模板)"
+    fi
 }
 
 create_env_file() {
@@ -389,22 +436,75 @@ create_env_file() {
 # OpenAkita 基础配置
 # =====================================================
 
+# LLM API（推荐使用 data/llm_endpoints.json 管理多端点）
+ANTHROPIC_API_KEY=
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+DEFAULT_MODEL=claude-opus-4-5-20251101-thinking
+MAX_TOKENS=8192
+
 # Agent 配置
 AGENT_NAME=OpenAkita
 MAX_ITERATIONS=100
 AUTO_CONFIRM=false
 
-# 数据库路径
-DATABASE_PATH=data/agent.db
+# Thinking 模式（auto/always/never）
+# THINKING_MODE=auto
+# FAST_MODEL=claude-sonnet-4-20250514
 
-# 日志级别
+# 数据库 & 日志
+DATABASE_PATH=data/agent.db
 LOG_LEVEL=INFO
 
 # =====================================================
-# Telegram 配置 (可选)
+# IM 通道（启用后填写对应密钥）
 # =====================================================
 TELEGRAM_ENABLED=false
-TELEGRAM_BOT_TOKEN=your-bot-token
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_PROXY=
+
+FEISHU_ENABLED=false
+# FEISHU_APP_ID=
+# FEISHU_APP_SECRET=
+
+WEWORK_ENABLED=false
+# WEWORK_CORP_ID=
+# WEWORK_AGENT_ID=
+# WEWORK_SECRET=
+
+DINGTALK_ENABLED=false
+# DINGTALK_CLIENT_ID=
+# DINGTALK_CLIENT_SECRET=
+
+QQ_ENABLED=false
+# QQ_ONEBOT_URL=ws://127.0.0.1:8080
+
+# =====================================================
+# 功能开关（可选）
+# =====================================================
+PERSONA_NAME=default
+STICKER_ENABLED=true
+PROACTIVE_ENABLED=false
+SCHEDULER_ENABLED=true
+# SCHEDULER_TIMEZONE=Asia/Shanghai
+ORCHESTRATION_ENABLED=false
+
+# 记忆
+EMBEDDING_MODEL=shibing624/text2vec-base-chinese
+EMBEDDING_DEVICE=cpu
+
+# 会话
+# SESSION_TIMEOUT_MINUTES=30
+# SESSION_MAX_HISTORY=50
+
+# 网络代理（可选）
+# HTTP_PROXY=http://127.0.0.1:7890
+# HTTPS_PROXY=http://127.0.0.1:7890
+
+# 语音
+WHISPER_MODEL=base
+
+# GitHub
+# GITHUB_TOKEN=
 
 # =====================================================
 # LLM 端点配置
@@ -434,24 +534,11 @@ init_llm_endpoints() {
         cp "$llm_example" "$llm_config"
         print_success "LLM 端点配置已创建: $llm_config (从 example 复制)"
     else
-        # 生成默认配置
+        # 生成空端点配置（由用户通过 Setup Center 或 llm-config 添加端点）
         cat > "$llm_config" << 'EOF'
 {
-  "endpoints": [
-    {
-      "name": "claude-primary",
-      "provider": "anthropic",
-      "api_type": "anthropic",
-      "base_url": "https://api.anthropic.com",
-      "api_key_env": "ANTHROPIC_API_KEY",
-      "model": "claude-opus-4-5-20251101-thinking",
-      "priority": 1,
-      "max_tokens": 8192,
-      "timeout": 60,
-      "capabilities": ["text", "tools"],
-      "note": "Anthropic 官方 API"
-    }
-  ],
+  "endpoints": [],
+  "compiler_endpoints": [],
   "settings": {
     "retry_count": 2,
     "retry_delay_seconds": 2,
@@ -462,7 +549,7 @@ init_llm_endpoints() {
 EOF
         print_success "LLM 端点配置已创建: $llm_config"
     fi
-    print_info "提示: 编辑 data/llm_endpoints.json 添加你的 API Key"
+    print_info "提示: 通过 Setup Center 或 openakita llm-config 添加 LLM 端点"
     print_info "提示: 可添加多个端点实现自动故障切换"
 }
 
@@ -477,8 +564,11 @@ init_data_dirs() {
         "data/scheduler"
         "data/temp"
         "data/telegram/pairing"
+        "data/sticker"
+        "identity"
         "skills"
         "plugins"
+        "logs"
     )
     
     for dir in "${dirs[@]}"; do

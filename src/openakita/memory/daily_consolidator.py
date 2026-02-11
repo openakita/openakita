@@ -322,9 +322,8 @@ class DailyConsolidator:
             return 0
 
         persona_dir = self.identity_dir / "personas"
+        persona_dir.mkdir(parents=True, exist_ok=True)
         user_custom_path = persona_dir / "user_custom.md"
-        if not persona_dir.exists():
-            return 0
 
         # 1. 筛选 PERSONA_TRAIT 类型记忆
         persona_memories = []

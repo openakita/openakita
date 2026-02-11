@@ -12,6 +12,7 @@ LLM 统一客户端
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -103,6 +104,7 @@ class LLMClient:
 
     # 默认临时切换有效期（小时）
     DEFAULT_OVERRIDE_HOURS = 12
+    _COOLDOWN_STATE_FILENAME = ".llm_cooldown_state.json"
 
     def __init__(
         self,
@@ -134,6 +136,9 @@ class LLMClient:
 
         # 创建 Provider 实例
         self._init_providers()
+
+        # 恢复持久化的升级冷静期状态（防止重启绕过 1 小时冷静期）
+        self._restore_cooldown_state()
 
     def _init_providers(self):
         """初始化所有 Provider"""
@@ -265,6 +270,7 @@ class LLMClient:
 
         if eligible:
             return await self._try_endpoints(eligible, request, allow_failover=allow_failover)
+
         # eligible 为空时，可能原因包括：
         # - 配置里确实没有满足能力的端点
         # - 端点存在但都处于冷静期/不健康（被筛掉）
@@ -279,13 +285,40 @@ class LLMClient:
         ]
 
         if require_video and not capability_matched:
-            # 视频能力是硬需求：如果配置里没有视频端点，明确报错
             raise UnsupportedMediaError(
                 "No endpoint supports video. Configure a video-capable endpoint (e.g., kimi-k2.5)."
             )
 
         if capability_matched:
-            # 有能力匹配的端点，但都不健康/冷静期，日志要避免误导
+            # 有能力匹配的端点，但都不健康/冷静期
+            # 检查是否所有端点都在短冷静期（全局故障恢复场景），如果是则等待后重试
+            min_cooldown = min(
+                (p.cooldown_remaining for p in capability_matched if not p.is_healthy),
+                default=0,
+            )
+            if min_cooldown > 0 and min_cooldown <= 15:
+                # 全局故障场景：最短冷静期 ≤ 15s，等一下再试
+                logger.info(
+                    f"[LLM] All endpoints in cooldown, shortest={min_cooldown}s. "
+                    f"Waiting for recovery (likely transient network issue)..."
+                )
+                await asyncio.sleep(min(min_cooldown + 1, 12))
+                # 等待后重新筛选
+                eligible = self._filter_eligible_endpoints(
+                    require_tools=require_tools,
+                    require_vision=require_vision,
+                    require_video=require_video,
+                    require_thinking=require_thinking,
+                    conversation_id=conversation_id,
+                )
+                if eligible:
+                    logger.info(
+                        f"[LLM] Recovery detected: {len(eligible)} endpoints available after wait"
+                    )
+                    return await self._try_endpoints(
+                        eligible, request, allow_failover=allow_failover
+                    )
+
             logger.warning(
                 "No healthy endpoint meets required capabilities: "
                 f"tools={require_tools}, vision={require_vision}, video={require_video}, "
@@ -472,7 +505,10 @@ class LLMClient:
 
         默认策略：有备选端点时快速切换，不重试同一个端点（提高响应速度）
         """
+        from .providers.base import COOLDOWN_GLOBAL_FAILURE
+
         errors = []
+        failed_providers: list[LLMProvider] = []  # 跟踪本次调用中失败的端点
         retry_count = self._settings.get("retry_count", 2)
         retry_delay = self._settings.get("retry_delay_seconds", 2)
         retry_same_first = self._settings.get("retry_same_endpoint_first", False)
@@ -500,19 +536,40 @@ class LLMClient:
 
                     response = await provider.chat(request)
 
+                    # 成功：重置连续失败计数
+                    had_consecutive = provider.consecutive_cooldowns > 0
+                    provider.record_success()
+
                     logger.info(
                         f"[LLM] endpoint={provider.name} model={provider.model} "
                         f"action=response tokens_in={response.usage.input_tokens} tokens_out={response.usage.output_tokens}"
                     )
 
+                    # 成功：如果之前有其他端点因本次全局故障被标记，缩短它们的冷静期
+                    if failed_providers:
+                        for fp in failed_providers:
+                            if fp is not provider and fp.error_category == "transient":
+                                fp.shorten_cooldown(COOLDOWN_GLOBAL_FAILURE)
+                                logger.info(
+                                    f"[LLM] endpoint={fp.name} cooldown shortened "
+                                    f"(peer recovered, likely transient network issue)"
+                                )
+
+                    # 成功：如果该端点之前有连续失败记录，刷新持久化状态
+                    if had_consecutive:
+                        self.save_cooldown_state()
+
                     return response
 
                 except AuthenticationError as e:
-                    # 认证错误：设置冷静期，直接切换
+                    # 认证错误：长冷静期，直接切换
                     logger.error(f"[LLM] endpoint={provider.name} auth_error={e}")
-                    provider.mark_unhealthy(str(e))
+                    provider.mark_unhealthy(str(e), category="auth")
                     errors.append(f"{provider.name}: {e}")
-                    logger.warning(f"[LLM] endpoint={provider.name} cooldown=180s (auth error)")
+                    failed_providers.append(provider)
+                    logger.warning(
+                        f"[LLM] endpoint={provider.name} cooldown={provider.cooldown_remaining}s (auth error)"
+                    )
                     break
 
                 except LLMError as e:
@@ -521,7 +578,6 @@ class LLMClient:
                     errors.append(f"{provider.name}: {e}")
 
                     # 检测不可重试的结构性错误（重试不会修复，浪费配额）
-                    # 这类错误通常是消息格式问题，需要上层修复上下文后重新提交
                     non_retryable_patterns = [
                         "invalid_request_error",
                         "invalid_parameter",
@@ -537,8 +593,9 @@ class LLMClient:
                             f"[LLM] endpoint={provider.name} non-retryable structural error detected, "
                             f"skipping remaining retries. Error: {error_str[:200]}"
                         )
-                        provider.mark_unhealthy(error_str)
-                        break  # 跳出重试循环，直接让上层处理
+                        provider.mark_unhealthy(error_str, category="structural")
+                        failed_providers.append(provider)
+                        break
 
                     # 无备选时才重试（或禁止 failover 时）
                     if (not has_fallback or not allow_failover) and attempt < max_attempts - 1:
@@ -548,16 +605,24 @@ class LLMClient:
                         )
                         await asyncio.sleep(retry_delay)
                     else:
-                        # 最后一次尝试也失败，设置冷静期
+                        # 最后一次尝试也失败，设置冷静期（自动分类错误类型）
                         provider.mark_unhealthy(error_str)
-                        logger.warning(f"[LLM] endpoint={provider.name} cooldown=180s")
+                        failed_providers.append(provider)
+                        logger.warning(
+                            f"[LLM] endpoint={provider.name} "
+                            f"cooldown={provider.cooldown_remaining}s "
+                            f"(category={provider.error_category})"
+                        )
 
                 except Exception as e:
                     logger.error(f"[LLM] endpoint={provider.name} unexpected_error={e}")
                     provider.mark_unhealthy(str(e))
                     errors.append(f"{provider.name}: {e}")
+                    failed_providers.append(provider)
                     logger.warning(
-                        f"[LLM] endpoint={provider.name} cooldown=180s (unexpected error)"
+                        f"[LLM] endpoint={provider.name} "
+                        f"cooldown={provider.cooldown_remaining}s "
+                        f"(category={provider.error_category})"
                     )
                     break
 
@@ -568,12 +633,35 @@ class LLMClient:
                     f"[LLM] endpoint={provider.name} action=failover target={next_provider.name}"
                 )
 
+        # ── 全局故障检测 ──
+        # 所有端点在同一次请求中连续失败，且主要是瞬时错误（超时/连接）
+        # → 很可能是主机网络波动，而非端点本身异常
+        # → 缩短冷静期，让系统尽快恢复
+        if len(failed_providers) >= 2:
+            transient_count = sum(
+                1 for fp in failed_providers if fp.error_category == "transient"
+            )
+            if transient_count >= len(failed_providers) * 0.5:
+                # 多数为瞬时错误 → 判定为全局网络故障
+                logger.warning(
+                    f"[LLM] Global failure detected: {len(failed_providers)} endpoints failed "
+                    f"({transient_count} transient). Likely network issue on host. "
+                    f"Shortening cooldowns to {COOLDOWN_GLOBAL_FAILURE}s for quick recovery."
+                )
+                for fp in failed_providers:
+                    if fp.error_category == "transient":
+                        fp.shorten_cooldown(COOLDOWN_GLOBAL_FAILURE)
+
         # 如果禁止 failover，给出明确的日志
         if not allow_failover:
             logger.warning(
                 "[LLM] Tool context detected, failover disabled. "
                 "Let upper layer (Agent/TaskMonitor) handle retry/switch."
             )
+
+        # 持久化升级冷静期状态（如果有端点刚升级到 1 小时冷静期）
+        if any(fp.is_extended_cooldown for fp in failed_providers):
+            self.save_cooldown_state()
 
         raise AllEndpointsFailedError(f"All endpoints failed: {'; '.join(errors)}")
 
@@ -618,6 +706,103 @@ class LLMClient:
                         if block_type in ("tool_use", "tool_result"):
                             return True
         return False
+
+    def reset_all_cooldowns(self):
+        """重置所有端点冷静期
+
+        用于全局故障恢复场景：当检测到网络已恢复时，
+        立即清除所有瞬时错误的冷静期，让端点可以立即被使用。
+        """
+        reset_count = 0
+        for name, provider in self._providers.items():
+            if not provider.is_healthy and provider.error_category == "transient":
+                provider.reset_cooldown()
+                reset_count += 1
+                logger.info(f"[LLM] endpoint={name} cooldown reset (global recovery)")
+        if reset_count:
+            logger.info(f"[LLM] Reset cooldowns for {reset_count} transient-error endpoints")
+        return reset_count
+
+    # ── 升级冷静期持久化 ──
+    # 防止通过重启进程绕过 1 小时冷静期
+
+    def _get_cooldown_state_path(self) -> Path | None:
+        """获取冷静期状态文件路径"""
+        if self._config_path:
+            return self._config_path.parent / self._COOLDOWN_STATE_FILENAME
+        default = get_default_config_path()
+        if default.parent.exists():
+            return default.parent / self._COOLDOWN_STATE_FILENAME
+        return None
+
+    def save_cooldown_state(self):
+        """持久化升级冷静期状态
+
+        仅保存处于升级冷静期（1小时）的端点。
+        普通短冷静期不持久化（重启后自然清零是合理的）。
+        """
+        state_path = self._get_cooldown_state_path()
+        if not state_path:
+            return
+
+        states = {}
+        for name, provider in self._providers.items():
+            s = provider.get_cooldown_state()
+            if s:
+                states[name] = s
+
+        try:
+            if states:
+                state_path.write_text(
+                    json.dumps(states, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                logger.info(
+                    f"[LLM] Saved extended cooldown state for {len(states)} endpoints "
+                    f"to {state_path.name}"
+                )
+            elif state_path.exists():
+                # 没有需要持久化的状态，清理旧文件
+                state_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"[LLM] Failed to save cooldown state: {e}")
+
+    def _restore_cooldown_state(self):
+        """启动时恢复持久化的升级冷静期状态"""
+        state_path = self._get_cooldown_state_path()
+        if not state_path or not state_path.exists():
+            return
+
+        try:
+            states = json.loads(state_path.read_text(encoding="utf-8"))
+
+            restored = 0
+            expired = 0
+            for name, state in states.items():
+                if name in self._providers:
+                    cooldown_until = state.get("cooldown_until", 0)
+                    if cooldown_until > time.time():
+                        self._providers[name].restore_cooldown_state(state)
+                        restored += 1
+                    else:
+                        expired += 1
+
+            if restored:
+                logger.info(
+                    f"[LLM] Restored extended cooldown for {restored} endpoints "
+                    f"({expired} already expired)"
+                )
+            else:
+                # 全部过期，清理状态文件
+                state_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            logger.warning(f"[LLM] Failed to restore cooldown state: {e}")
+            # 状态文件损坏，删除
+            try:
+                state_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     async def health_check(self) -> dict[str, bool]:
         """

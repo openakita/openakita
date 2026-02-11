@@ -523,12 +523,13 @@ class TaskExecutor:
         try:
             from ..config import settings
 
-            if not settings.proactive_enabled:
-                return True, "Proactive mode disabled, skipping heartbeat"
-
             engine = self.proactive_engine
             if not engine:
-                # fallback: 无法获取 agent 实例时新建（idle_chat 不可用）
+                # 无 engine 实例时，先检查 settings 决定是否值得新建
+                if not settings.proactive_enabled:
+                    return True, "Proactive mode disabled, skipping heartbeat"
+
+                # fallback: 新建实例（idle_chat 不可用）
                 from ..core.proactive import ProactiveConfig, ProactiveEngine
 
                 config = ProactiveConfig(

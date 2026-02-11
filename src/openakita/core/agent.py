@@ -2829,11 +2829,21 @@ search_github → install_skill → 使用
                 content_parts = []
 
                 # 添加文本部分（使用编译后的消息）
-                if compiled_message.strip():
+                # 如果文本仅是图片占位符（如 "[图片: xxx.png]"），替换为更有意义的提示
+                _text_for_llm = compiled_message.strip()
+                if _text_for_llm and re.fullmatch(
+                    r"(\[图片: [^\]]+\]\s*)+", _text_for_llm
+                ):
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_images)} 张图片（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的图片内容。"
+                    )
+
+                if _text_for_llm:
                     content_parts.append(
                         {
                             "type": "text",
-                            "text": compiled_message,
+                            "text": _text_for_llm,
                         }
                     )
 
@@ -3083,6 +3093,13 @@ search_github → install_skill → 使用
         """
         # 极短消息不需要编译（信息量不足以产生有意义的结构化 TaskDefinition）
         if len(message.strip()) < 20:
+            return False
+
+        # 纯图片/语音消息不需要编译（Compiler 看不到多模态内容，编译只会产生误导性任务定义）
+        stripped = message.strip()
+        if re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", stripped):
+            return False
+        if re.fullmatch(r"(\[语音转文字: [^\]]+\]\s*)+", stripped):
             return False
 
         # 其他情况都进行编译
@@ -3722,12 +3739,7 @@ NEXT: 建议的下一步（如有）"""
                                     f"(max={effective_max_retries}, plan_pending={has_active_plan_pending}); "
                                     f"stopping without claiming completion"
                                 )
-                                return (
-                                    f"{cleaned_text}\n\n"
-                                    "我已多次复核，但仍无法确认是否已完全满足你的需求。"
-                                    "请告诉我还缺少什么、或期望的最终状态是什么；"
-                                    "我会据此继续完成剩余步骤。"
-                                )
+                                return cleaned_text
                             logger.info(
                                 f"[ForceToolCall] Task not completed (attempt {verify_incomplete_count}/{effective_max_retries}), continuing..."
                             )
