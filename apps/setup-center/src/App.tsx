@@ -1819,37 +1819,49 @@ export function App() {
     ensureEnvLoaded(currentWorkspaceId).catch(() => {});
   }, [currentWorkspaceId]);
 
-  async function refreshStatus() {
-    if (!info && !serviceStatus?.running) return;
+  async function refreshStatus(overrideDataMode?: "local" | "remote", overrideApiBaseUrl?: string) {
+    const effectiveDataMode = overrideDataMode || dataMode;
+    const effectiveApiBaseUrl = overrideApiBaseUrl || apiBaseUrl;
+    if (!info && !serviceStatus?.running && effectiveDataMode !== "remote") return;
     setStatusLoading(true);
     setStatusError(null);
     try {
       // Verify the service is actually alive before trying HTTP API
       let serviceAlive = false;
-      if (serviceStatus?.running) {
+      if (serviceStatus?.running || effectiveDataMode === "remote") {
         try {
-          const ping = await fetch(`${apiBaseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+          const ping = await fetch(`${effectiveApiBaseUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
           serviceAlive = ping.ok;
+          if (serviceAlive && effectiveDataMode === "remote") {
+            // Ensure running state is set for remote mode
+            setServiceStatus((prev) =>
+              prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
+            );
+          }
         } catch {
-          // Service is not reachable — PID file may be stale
+          // Service is not reachable
           serviceAlive = false;
-          setServiceStatus({ running: false, pid: null, pidFile: "" });
+          if (effectiveDataMode !== "remote") {
+            setServiceStatus((prev) =>
+              prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
+            );
+          }
         }
       }
-      const useHttpApi = serviceAlive || dataMode === "remote";
+      const useHttpApi = serviceAlive;
       if (useHttpApi) {
         // ── Try HTTP API, fall back to Tauri on failure ──
         let httpOk = false;
         try {
           // Try new config API (may not exist in older service versions)
-          const envRes = await fetch(`${apiBaseUrl}/api/config/env`);
+          const envRes = await fetch(`${effectiveApiBaseUrl}/api/config/env`);
           if (envRes.ok) {
             const envData = await envRes.json();
             const env = envData.env || {};
             setEnvDraft((prev) => ({ ...prev, ...env }));
             envLoadedForWs.current = "__remote__";
 
-            const epRes = await fetch(`${apiBaseUrl}/api/config/endpoints`);
+            const epRes = await fetch(`${effectiveApiBaseUrl}/api/config/endpoints`);
             if (epRes.ok) {
               const epData = await epRes.json();
               const eps = Array.isArray(epData?.endpoints) ? epData.endpoints : [];
@@ -1879,7 +1891,7 @@ export function App() {
         // Fall back: try /api/models (always available in running service)
         if (!httpOk) {
           try {
-            const modelsRes = await fetch(`${apiBaseUrl}/api/models`);
+            const modelsRes = await fetch(`${effectiveApiBaseUrl}/api/models`);
             if (modelsRes.ok) {
               const modelsData = await modelsRes.json();
               const models = Array.isArray(modelsData?.models) ? modelsData.models : [];
@@ -1931,7 +1943,7 @@ export function App() {
 
         // Skills via HTTP
         try {
-          const skRes = await fetch(`${apiBaseUrl}/api/skills`);
+          const skRes = await fetch(`${effectiveApiBaseUrl}/api/skills`);
           if (skRes.ok) {
             const skData = await skRes.json();
             const skills = Array.isArray(skData?.skills) ? skData.skills : [];
@@ -1964,8 +1976,8 @@ export function App() {
           }
         }
 
-        // Service status
-        if (currentWorkspaceId) {
+        // Service status – only check local PID if NOT in remote mode
+        if (effectiveDataMode !== "remote" && currentWorkspaceId) {
           try {
             const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", { workspaceId: currentWorkspaceId });
             setServiceStatus(ss);
@@ -2035,18 +2047,22 @@ export function App() {
         setAutostartEnabled(null);
       }
 
-      try {
-        const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
-          workspaceId: currentWorkspaceId,
-        });
-        setServiceStatus(ss);
-      } catch {
-        setServiceStatus(null);
+      // Local mode: check PID-based service status
+      // Remote mode: skip PID check — status is determined by HTTP health check
+      if (effectiveDataMode !== "remote") {
+        try {
+          const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
+            workspaceId: currentWorkspaceId,
+          });
+          setServiceStatus(ss);
+        } catch {
+          setServiceStatus(null);
+        }
       }
       // Auto-fetch IM channel status from running service
-      if (serviceAlive) {
+      if (useHttpApi) {
         try {
-          const imRes = await fetch(`${apiBaseUrl}/api/im/channels`, { signal: AbortSignal.timeout(5000) });
+          const imRes = await fetch(`${effectiveApiBaseUrl}/api/im/channels`, { signal: AbortSignal.timeout(5000) });
           if (imRes.ok) {
             const imData = await imRes.json();
             const channels = imData.channels || [];
@@ -2893,6 +2909,18 @@ export function App() {
                 {providerApplyUrl && <div className="help" style={{ marginTop: 6, paddingLeft: 2 }}>Key: <a href={providerApplyUrl} target="_blank" rel="noreferrer">{providerApplyUrl}</a></div>}
               </div>
 
+              {/* Base URL */}
+              <div className="dialogSection">
+                <div className="dialogLabel">{t("llm.baseUrl")}</div>
+                <input
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder={selectedProvider?.default_base_url || "https://api.example.com/v1"}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}
+                />
+                <div className="help" style={{ marginTop: 4, paddingLeft: 2 }}>{t("llm.baseUrlHint")}</div>
+              </div>
+
               {/* API Key */}
               <div className="dialogSection">
                 <div className="dialogLabel">API Key</div>
@@ -2961,14 +2989,11 @@ export function App() {
                     <summary>{t("llm.advanced")}</summary>
                     <div>
                       <div style={{ marginBottom: 10 }}>
-                        <div className="dialogLabel">API Type / Base URL</div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 110, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
-                            <option value="openai">openai</option>
-                            <option value="anthropic">anthropic</option>
-                          </select>
-                          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                        </div>
+                        <div className="dialogLabel">API Type</div>
+                        <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 140, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+                          <option value="openai">openai</option>
+                          <option value="anthropic">anthropic</option>
+                        </select>
                       </div>
                       <div style={{ marginBottom: 10 }}>
                         <div className="dialogLabel">Key Env Name</div>
@@ -4509,7 +4534,7 @@ export function App() {
                       setServiceStatus({ running: true, pid: null, pidFile: "" });
                       setConnectDialogOpen(false);
                       setNotice(t("connect.success"));
-                      setTimeout(() => refreshStatus(), 100);
+                      await refreshStatus("remote", url);
                     } else {
                       setError(t("connect.fail"));
                     }

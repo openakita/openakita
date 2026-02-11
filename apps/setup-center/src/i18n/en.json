@@ -376,6 +376,8 @@
     "capVision": "Vision",
     "capVideo": "Video",
     "capTools": "Tools",
+    "baseUrl": "API URL",
+    "baseUrlHint": "Modify when using a proxy or relay service",
     "advanced": "Advanced Options",
     "compiler": "Prompt Compiler Model",
     "compilerHint": "Lightweight model for preprocessing, use a fast small model",

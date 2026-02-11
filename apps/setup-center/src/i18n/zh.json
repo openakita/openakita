@@ -376,6 +376,8 @@
     "capVision": "图片",
     "capVideo": "视频",
     "capTools": "工具",
+    "baseUrl": "API 地址",
+    "baseUrlHint": "使用中转站或代理服务时可修改为自定义地址",
     "advanced": "高级选项",
     "compiler": "提示词编译模型",
     "compilerHint": "用于预处理指令的轻量模型，建议使用快速小模型",
