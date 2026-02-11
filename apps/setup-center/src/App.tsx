@@ -1823,8 +1823,19 @@ export function App() {
     setStatusLoading(true);
     setStatusError(null);
     try {
-      // When service is running, try HTTP API first (works for both local and remote)
-      const useHttpApi = serviceStatus?.running || dataMode === "remote";
+      // Verify the service is actually alive before trying HTTP API
+      let serviceAlive = false;
+      if (serviceStatus?.running) {
+        try {
+          const ping = await fetch(`${apiBaseUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+          serviceAlive = ping.ok;
+        } catch {
+          // Service is not reachable — PID file may be stale
+          serviceAlive = false;
+          setServiceStatus({ running: false, pid: null, pidFile: "" });
+        }
+      }
+      const useHttpApi = serviceAlive || dataMode === "remote";
       if (useHttpApi) {
         // ── Try HTTP API, fall back to Tauri on failure ──
         let httpOk = false;
