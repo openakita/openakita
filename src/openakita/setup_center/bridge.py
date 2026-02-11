@@ -228,7 +228,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
             "id": "wework",
             "name": "企业微信",
             "enabled_key": "WEWORK_ENABLED",
-            "required_keys": ["WEWORK_CORP_ID", "WEWORK_AGENT_ID", "WEWORK_SECRET", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"],
+            "required_keys": ["WEWORK_CORP_ID", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"],
         },
         {
             "id": "dingtalk",
@@ -298,15 +298,17 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     if data.get("code", -1) != 0:
                         raise Exception(data.get("msg", "飞书验证失败"))
                 elif ch["id"] == "wework":
-                    corp_id = env["WEWORK_CORP_ID"]
-                    secret = env["WEWORK_SECRET"]
-                    resp = await client.get(
-                        f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={corp_id}&corpsecret={secret}"
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if data.get("errcode", -1) != 0:
-                        raise Exception(data.get("errmsg", "企业微信验证失败"))
+                    # 智能机器人模式不需要 secret/access_token，无法通过 API 验证
+                    # 只检查必填参数是否完整
+                    corp_id = env.get("WEWORK_CORP_ID", "").strip()
+                    token = env.get("WEWORK_TOKEN", "").strip()
+                    aes_key = env.get("WEWORK_ENCODING_AES_KEY", "").strip()
+                    if not corp_id or not token or not aes_key:
+                        missing = []
+                        if not corp_id: missing.append("WEWORK_CORP_ID")
+                        if not token: missing.append("WEWORK_TOKEN")
+                        if not aes_key: missing.append("WEWORK_ENCODING_AES_KEY")
+                        raise Exception(f"缺少必填参数: {', '.join(missing)}")
                 elif ch["id"] == "dingtalk":
                     client_id = env["DINGTALK_CLIENT_ID"]
                     client_secret = env["DINGTALK_CLIENT_SECRET"]

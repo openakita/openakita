@@ -559,23 +559,19 @@ Press Ctrl+C at any time to cancel.
         console.print("Note: WeCom callback requires a public URL (use ngrok/frp/cpolar)\n")
 
         corp_id = Prompt.ask("Enter Corp ID")
-        agent_id = Prompt.ask("Enter Agent ID")
-        secret = Prompt.ask("Enter Secret", password=True)
 
         self.config["WEWORK_ENABLED"] = "true"
         self.config["WEWORK_CORP_ID"] = corp_id
-        self.config["WEWORK_AGENT_ID"] = agent_id
-        self.config["WEWORK_SECRET"] = secret
 
-        # 回调加解密配置（接收消息必填）
-        console.print("\n[bold]Callback Configuration (required for receiving messages):[/bold]\n")
-        console.print("Get these from WeCom admin -> App -> Receive Messages settings\n")
+        # 回调加解密配置（智能机器人必填）
+        console.print("\n[bold]Callback Configuration (required for Smart Bot):[/bold]\n")
+        console.print("Get these from WeCom admin -> Smart Bot -> Receive Messages settings\n")
 
-        token = Prompt.ask("Enter callback Token", default="")
+        token = Prompt.ask("Enter callback Token")
         if token:
             self.config["WEWORK_TOKEN"] = token
 
-        aes_key = Prompt.ask("Enter EncodingAESKey", default="")
+        aes_key = Prompt.ask("Enter EncodingAESKey")
         if aes_key:
             self.config["WEWORK_ENCODING_AES_KEY"] = aes_key
 
@@ -891,21 +887,17 @@ Press Ctrl+C at any time to cancel.
             lines.extend([
                 f"WEWORK_ENABLED={self.config.get('WEWORK_ENABLED', 'false')}",
                 f"WEWORK_CORP_ID={self.config.get('WEWORK_CORP_ID', '')}",
-                f"WEWORK_AGENT_ID={self.config.get('WEWORK_AGENT_ID', '')}",
-                f"WEWORK_SECRET={self.config.get('WEWORK_SECRET', '')}",
+                f"WEWORK_TOKEN={self.config.get('WEWORK_TOKEN', '')}",
+                f"WEWORK_ENCODING_AES_KEY={self.config.get('WEWORK_ENCODING_AES_KEY', '')}",
             ])
-            if self.config.get("WEWORK_TOKEN"):
-                lines.append(f"WEWORK_TOKEN={self.config['WEWORK_TOKEN']}")
-            if self.config.get("WEWORK_ENCODING_AES_KEY"):
-                lines.append(f"WEWORK_ENCODING_AES_KEY={self.config['WEWORK_ENCODING_AES_KEY']}")
             if self.config.get("WEWORK_CALLBACK_PORT"):
                 lines.append(f"WEWORK_CALLBACK_PORT={self.config['WEWORK_CALLBACK_PORT']}")
         else:
             lines.extend([
                 "WEWORK_ENABLED=false",
                 "# WEWORK_CORP_ID=",
-                "# WEWORK_AGENT_ID=",
-                "# WEWORK_SECRET=",
+                "# WEWORK_TOKEN=",
+                "# WEWORK_ENCODING_AES_KEY=",
             ])
         lines.append("")
 

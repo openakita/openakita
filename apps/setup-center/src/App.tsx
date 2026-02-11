@@ -1757,7 +1757,7 @@ export function App() {
           "TELEGRAM_ENABLED", "TELEGRAM_BOT_TOKEN", "TELEGRAM_PROXY",
           "TELEGRAM_REQUIRE_PAIRING", "TELEGRAM_PAIRING_CODE", "TELEGRAM_WEBHOOK_URL",
           "FEISHU_ENABLED", "FEISHU_APP_ID", "FEISHU_APP_SECRET",
-          "WEWORK_ENABLED", "WEWORK_CORP_ID", "WEWORK_AGENT_ID", "WEWORK_SECRET",
+          "WEWORK_ENABLED", "WEWORK_CORP_ID",
           "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
           "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
           "QQ_ENABLED", "QQ_ONEBOT_URL",
@@ -2111,7 +2111,7 @@ export function App() {
     const im = [
       { k: "TELEGRAM_ENABLED", name: "Telegram", required: ["TELEGRAM_BOT_TOKEN"] },
       { k: "FEISHU_ENABLED", name: t("status.feishu"), required: ["FEISHU_APP_ID", "FEISHU_APP_SECRET"] },
-      { k: "WEWORK_ENABLED", name: t("status.wework"), required: ["WEWORK_CORP_ID", "WEWORK_AGENT_ID", "WEWORK_SECRET", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"] },
+      { k: "WEWORK_ENABLED", name: t("status.wework"), required: ["WEWORK_CORP_ID", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"] },
       { k: "DINGTALK_ENABLED", name: t("status.dingtalk"), required: ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"] },
       { k: "QQ_ENABLED", name: "QQ(OneBot)", required: ["QQ_ONEBOT_URL"] },
     ];
@@ -2191,16 +2191,23 @@ export function App() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span className="statusCardLabel">{t("status.llmEndpoints")} ({endpointSummary.length})</span>
             <button className="btnSmall" onClick={async () => {
-              if (!effectiveWsId || !venvDir) return;
               setHealthChecking("all");
               try {
-                const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId });
-                const results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }> = JSON.parse(raw);
+                let results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }>;
+                if (dataMode === "remote") {
+                  const res = await fetch(`${apiBaseUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                  const data = await res.json();
+                  results = data.results || [];
+                } else {
+                  if (!effectiveWsId || !venvDir) return;
+                  const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId });
+                  results = JSON.parse(raw);
+                }
                 const h: typeof endpointHealth = {};
                 for (const r of results) { h[r.name] = { status: r.status, latencyMs: r.latency_ms, error: r.error, errorCategory: r.error_category, consecutiveFailures: r.consecutive_failures, cooldownRemaining: r.cooldown_remaining, isExtendedCooldown: r.is_extended_cooldown, lastCheckedAt: r.last_checked_at }; }
                 setEndpointHealth(h);
               } catch (e) { setError(String(e)); } finally { setHealthChecking(null); }
-            }} disabled={!effectiveWsId || !venvDir || !!healthChecking || !!busy}>
+            }} disabled={!!healthChecking || !!busy}>
               {healthChecking === "all" ? t("status.checking") : t("status.checkAll")}
             </button>
           </div>
@@ -2231,11 +2238,18 @@ export function App() {
                       <span className="epTableStatus">{label}</span>
                     </span>
                     <button className="btnSmall" onClick={async () => {
-                      if (!effectiveWsId || !venvDir) return;
                       setHealthChecking(e.name);
                       try {
-                        const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId, endpointName: e.name });
-                        const r = JSON.parse(raw);
+                        let r: any[];
+                        if (dataMode === "remote") {
+                          const res = await fetch(`${apiBaseUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }) });
+                          const data = await res.json();
+                          r = data.results || [];
+                        } else {
+                          if (!effectiveWsId || !venvDir) return;
+                          const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId, endpointName: e.name });
+                          r = JSON.parse(raw);
+                        }
                         if (r[0]) setEndpointHealth((prev: any) => ({ ...prev, [r[0].name]: { status: r[0].status, latencyMs: r[0].latency_ms, error: r[0].error, errorCategory: r[0].error_category, consecutiveFailures: r[0].consecutive_failures, cooldownRemaining: r[0].cooldown_remaining, isExtendedCooldown: r[0].is_extended_cooldown, lastCheckedAt: r[0].last_checked_at } }));
                       } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
                     }} disabled={!!healthChecking || !!busy}>{healthChecking === e.name ? "..." : t("status.check")}</button>
@@ -2252,16 +2266,30 @@ export function App() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span className="statusCardLabel">{t("status.imChannels")}</span>
               <button className="btnSmall" onClick={async () => {
-                if (!effectiveWsId || !venvDir) return;
                 setHealthChecking("im-all");
                 try {
-                  const raw = await invoke<string>("openakita_health_check_im", { venvDir, workspaceId: effectiveWsId });
-                  const results: Array<{ channel: string; name: string; status: string; error: string | null; last_checked_at: string | null }> = JSON.parse(raw);
-                  const h: typeof imHealth = {};
-                  for (const r of results) h[r.channel] = { status: r.status, error: r.error, lastCheckedAt: r.last_checked_at };
-                  setImHealth(h);
+                  if (dataMode === "remote") {
+                    // Remote mode: use /api/im/channels for status
+                    try {
+                      const res = await fetch(`${apiBaseUrl}/api/im/channels`);
+                      const data = await res.json();
+                      const channels = data.channels || [];
+                      const h: typeof imHealth = {};
+                      for (const c of channels) {
+                        h[c.channel || c.name] = { status: c.status || "unknown", error: c.error || null, lastCheckedAt: c.last_checked_at || null };
+                      }
+                      setImHealth(h);
+                    } catch (err) { setError(String(err)); }
+                  } else {
+                    if (!effectiveWsId || !venvDir) return;
+                    const raw = await invoke<string>("openakita_health_check_im", { venvDir, workspaceId: effectiveWsId });
+                    const results: Array<{ channel: string; name: string; status: string; error: string | null; last_checked_at: string | null }> = JSON.parse(raw);
+                    const h: typeof imHealth = {};
+                    for (const r of results) h[r.channel] = { status: r.status, error: r.error, lastCheckedAt: r.last_checked_at };
+                    setImHealth(h);
+                  }
                 } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
-              }} disabled={!effectiveWsId || !venvDir || !!healthChecking || !!busy}>
+              }} disabled={!!healthChecking || !!busy}>
                 {healthChecking === "im-all" ? "..." : t("status.checkAll")}
               </button>
             </div>
@@ -2974,7 +3002,7 @@ export function App() {
       "TELEGRAM_ENABLED", "TELEGRAM_BOT_TOKEN", "TELEGRAM_PROXY",
       "TELEGRAM_REQUIRE_PAIRING", "TELEGRAM_PAIRING_CODE", "TELEGRAM_WEBHOOK_URL",
       "FEISHU_ENABLED", "FEISHU_APP_ID", "FEISHU_APP_SECRET",
-      "WEWORK_ENABLED", "WEWORK_CORP_ID", "WEWORK_AGENT_ID", "WEWORK_SECRET",
+      "WEWORK_ENABLED", "WEWORK_CORP_ID",
       "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
       "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
       "QQ_ENABLED", "QQ_ONEBOT_URL",
@@ -3012,11 +3040,9 @@ export function App() {
         docUrl: "https://work.weixin.qq.com/",
         body: (
           <>
-            <FieldText k="WEWORK_CORP_ID" label="Corp ID" />
-            <FieldText k="WEWORK_AGENT_ID" label="Agent ID" />
-            <FieldText k="WEWORK_SECRET" label="Secret" type="password" />
-            <FieldText k="WEWORK_TOKEN" label="Callback Token" />
-            <FieldText k="WEWORK_ENCODING_AES_KEY" label="EncodingAESKey" type="password" />
+            <FieldText k="WEWORK_CORP_ID" label="Corp ID" help={t("config.imWeworkCorpIdHelp")} />
+            <FieldText k="WEWORK_TOKEN" label="Callback Token" help={t("config.imWeworkTokenHelp")} />
+            <FieldText k="WEWORK_ENCODING_AES_KEY" label="EncodingAESKey" type="password" help={t("config.imWeworkAesKeyHelp")} />
             <FieldText k="WEWORK_CALLBACK_PORT" label={t("config.imCallbackPort")} placeholder="9880" />
           </>
         ),
@@ -3537,8 +3563,6 @@ export function App() {
       "FEISHU_APP_SECRET",
       "WEWORK_ENABLED",
       "WEWORK_CORP_ID",
-      "WEWORK_AGENT_ID",
-      "WEWORK_SECRET",
       "WEWORK_TOKEN",
       "WEWORK_ENCODING_AES_KEY",
       "WEWORK_CALLBACK_PORT",
@@ -3667,8 +3691,6 @@ export function App() {
                 body: (
                   <>
                     <FieldText k="WEWORK_CORP_ID" label="Corp ID" />
-                    <FieldText k="WEWORK_AGENT_ID" label="Agent ID" />
-                    <FieldText k="WEWORK_SECRET" label="Secret" type="password" />
                     <FieldText k="WEWORK_TOKEN" label="回调 Token" placeholder="在企业微信后台「接收消息」设置中获取" />
                     <FieldText k="WEWORK_ENCODING_AES_KEY" label="EncodingAESKey" placeholder="在企业微信后台「接收消息」设置中获取" type="password" />
                     <FieldText k="WEWORK_CALLBACK_PORT" label="回调端口" placeholder="9880" />

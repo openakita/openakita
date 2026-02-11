@@ -316,7 +316,10 @@
     "agentQuietStartHelp": "免打扰时段开始（24h 制）",
     "agentSchedulerEnableHelp": "启用定时任务调度器",
     "agentMaxConcurrentHelp": "同时运行的定时任务数上限",
-    "imDocCopied": "链接已复制到剪贴板"
+    "imDocCopied": "链接已复制到剪贴板",
+    "imWeworkCorpIdHelp": "在企业微信管理后台「我的企业 → 企业信息」页面底部获取",
+    "imWeworkTokenHelp": "在智能机器人「接收消息服务器配置」中获取",
+    "imWeworkAesKeyHelp": "在智能机器人「接收消息服务器配置」中获取"
   },
   "im": {
     "channels": "IM 通道",

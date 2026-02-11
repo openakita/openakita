@@ -316,7 +316,10 @@
     "agentQuietStartHelp": "Do-not-disturb start hour (24h)",
     "agentSchedulerEnableHelp": "Enable scheduled task runner",
     "agentMaxConcurrentHelp": "Max concurrent scheduled tasks",
-    "imDocCopied": "Link copied to clipboard"
+    "imDocCopied": "Link copied to clipboard",
+    "imWeworkCorpIdHelp": "Found at bottom of 'My Corp → Corp Info' page in WeCom admin",
+    "imWeworkTokenHelp": "From Smart Bot 'Receive Messages' server config",
+    "imWeworkAesKeyHelp": "From Smart Bot 'Receive Messages' server config"
   },
   "im": {
     "channels": "IM Channels",
