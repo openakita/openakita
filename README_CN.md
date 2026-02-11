@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="#setup-center可视化安装与配置">Setup Center</a> •
+  <a href="#桌面终端ai-助手--一站式管理">桌面终端</a> •
   <a href="#核心特性">核心特性</a> •
   <a href="#快速开始">快速开始</a> •
   <a href="#架构">架构</a> •
@@ -35,7 +35,7 @@
 </p>
 
 <p align="center">
-  <a href="./README.md">English Documentation</a>
+  <a href="README.md">English</a> | <strong>中文</strong>
 </p>
 
 ---
@@ -54,24 +54,24 @@ OpenAkita 是一个**自进化 AI Agent 框架**。它能自主学习新技能�
 
 ---
 
-## Setup Center：可视化安装与配置
+## 桌面终端：AI 助手 + 一站式管理
 
 <p align="center">
-  <img src="docs/assets/setupcenter.png" alt="Setup Center" width="800" />
+  <img src="docs/assets/desktop_terminal.png" alt="OpenAkita Desktop Terminal" width="800" />
 </p>
 
-OpenAkita 提供跨平台的 **Setup Center** 桌面应用（基于 Tauri + React），让安装部署变得简单直观：
+OpenAkita 提供跨平台的 **桌面终端** 应用（基于 Tauri + React），集 AI 聊天、配置管理、状态监控于一体：
 
-- **Python 环境管理** — 自动检测系统 Python，支持一键安装嵌入式 Python
-- **一键安装** — 创建 venv + pip 安装 OpenAkita，支持 PyPI / GitHub Release / 本地源码
-- **版本管理** — 支持指定安装版本，默认与 Setup Center 同版本保证兼容性
-- **国内镜像** — 内置清华 TUNA、阿里云镜像源，加速下载
-- **LLM 端点管理** — 多服务商、多端点、主备切换；在线拉取模型列表 + 搜索选择
-- **提示词编译模型** — 独立配置快速模型端点，预处理用户指令
+- **AI 聊天助手** — 流式对话、Markdown 渲染、多模态输入、Thinking 展示、Plan 模式
+- **中英文双语** — 自动识别系统语言，一键切换，全面国际化
+- **简易流程配置** — 9 步引导式配置，精简聚焦，弹窗式 LLM 端点管理
+- **中国本土化** — 国内 LLM 服务商一等支持、PyPI 镜像源、中文 IM 通道
+- **LLM 端点管理** — 多服务商、多端点、主备自动切换、在线拉取模型列表
 - **IM 通道配置** — Telegram、飞书、企业微信、钉钉、QQ 一站式配置
-- **Agent 与技能配置** — 行为参数、技能开关、MCP 工具管理
-- **后台常驻** — 系统托盘 + 开机自启动，一键启动/停止服务
-- **状态监控** — 运行状态面板，实时查看服务日志
+- **角色 & 活人感** — 8 种预设角色，主动问候、记忆回忆，越用越懂你
+- **技能市场** — 浏览、下载、配置技能，一站式管理
+- **状态监控** — 紧凑面板：服务/LLM/IM 健康状态一屏展示
+- **后台常驻** — 系统托盘 + 开机自启动，一键启动/停止
 
 > **下载安装包**：[GitHub Releases](https://github.com/openakita/openakita/releases)
 >
@@ -99,7 +99,24 @@ OpenAkita 提供跨平台的 **Setup Center** 桌面应用（基于 Tauri + Reac
 | **活人感模式** | 主动引擎：问候、任务跟进、记忆回忆；频率控制、安静时段、反馈闭环；让 Agent 像真人助理 |
 | **表情包引擎** | 集成 ChineseBQB（5700+ 表情包），关键词搜索、情绪映射、按角色定制表情包策略 |
 | **工具体系** | 11 个类别、50+ 工具，三层渐进式披露（目录 → 详情 → 执行）减少 token 消耗 |
-| **Setup Center** | Tauri 跨平台桌面应用，全流程引导式安装配置，托盘常驻，状态监控 |
+| **桌面终端** | Tauri 跨平台桌面应用，AI 聊天 + 流程化配置 + 状态监控 + 技能市场，中英双语 |
+
+---
+
+## 真人化角色系统
+
+OpenAkita 最具特色的能力——**不只是工具，更像一个有性格、有记忆、有温度的真人助理**：
+
+| 能力 | 描述 |
+|------|------|
+| **8 种预设角色** | 默认助手 / 商务顾问 / 技术专家 / 私人管家 / 虚拟女友 / 虚拟男友 / 家人 / 贾维斯 |
+| **三层人格架构** | 预设基础 → 用户偏好学习 → 上下文自适应，越用越懂你 |
+| **活人感模式** | 主动问候、任务跟进、记忆回忆（"上次你提到想学吉他..."），频率智能控制 |
+| **偏好自动挖掘** | 每轮对话 LLM 自动分析用户性格偏好，每日归纳更新身份文件 |
+| **安静时段** | 深夜自动静音，不打扰但有存在感 |
+| **表情包** | 集成 ChineseBQB 5700+ 表情包，按角色定制表情策略 |
+
+> 效果展示：Agent 会在你空闲时主动问候，记住你的生日、喜好、工作习惯，像一个真正的朋友。
 
 ---
 
@@ -120,16 +137,22 @@ OpenAkita 的核心差异：**不只是工具，而是会自主学习和成长�
 
 ---
 
-## 中文生态支持
+## 中国本土化 & 国际化
 
-OpenAkita 对中文用户提供完整的本地化支持：
+OpenAkita **生于中国，服务全球**——为中文开发者量身打造，对国内用户提供一等公民级支持：
 
-- **全中文 Setup Center** — 从安装到配置，全程中文引导界面
-- **国内 LLM 服务商** — 内置阿里云 DashScope（通义千问）、月之暗面 Kimi、MiniMax、DeepSeek、硅基流动
-- **国内 PyPI 镜像** — 内置清华 TUNA、阿里云镜像源，一键切换
-- **中文 IM 通道** — 飞书、企业微信、钉钉、QQ 原生支持
-- **中文桌面自动化** — 支持中文自然语言描述 UI 元素（如"保存按钮"）
-- **中文部署文档** — 完整的中文安装部署指南
+### 中国本土化（开箱即用）
+- **全中文桌面终端** — 从安装到聊天，全程中文界面，自动识别系统语言
+- **国内 LLM 服务商** — 阿里通义千问、月之暗面 Kimi、MiniMax、DeepSeek、硅基流动，直接可用
+- **国内镜像加速** — 内置清华 TUNA、阿里云 PyPI 源，零配置加速依赖安装
+- **中文 IM 通道** — 飞书、企业微信、钉钉、QQ 开箱即用
+- **中文桌面自动化** — 支持中文自然语言描述 UI 元素（如"点击保存按钮"）
+- **中文人格角色** — 贾维斯、虚拟女友/男友、家人、管家等角色，地道中文性格定义
+
+### 国际化（i18n）
+- 基于 `react-i18next`，中/英双语，后续可扩展更多语言
+- 系统语言自动检测 + 一键手动切换
+- LLM 服务商覆盖 Anthropic、OpenAI、Google Gemini 等国际主流
 
 ### 推荐模型
 
@@ -154,7 +177,7 @@ OpenAkita 对中文用户提供完整的本地化支持：
 
 1. 从 [GitHub Releases](https://github.com/openakita/openakita/releases) 下载对应平台安装包
 2. 安装并启动 Setup Center
-3. 按向导完成：Python 环境 → 安装 OpenAkita → 配置 LLM → 配置 IM → 完成并启动
+3. 按向导完成：工作区 → Python → 安装 → LLM 端点 → IM 通道 → 完成并启动
 
 ### 方式二：PyPI 安装
 
@@ -229,7 +252,7 @@ FEISHU_APP_SECRET=your-app-secret
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────────── Setup Center ────────────────────────┐   │
-│  │  Tauri + React 桌面应用 · 安装配置 · 托盘常驻 · 状态监控  │   │
+│  │  Tauri + React 桌面终端 · AI 聊天 · 配置管理 · 状态监控  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                              │                                   │
 │  ┌──────────────────── 身份层 ──────────────────────────────┐   │
@@ -327,7 +350,7 @@ FEISHU_APP_SECRET=your-app-secret
 ## 致谢
 
 - [Anthropic Claude](https://www.anthropic.com/claude) — 核心 LLM 引擎
-- [Tauri](https://tauri.app/) — Setup Center 跨平台桌面框架
+- [Tauri](https://tauri.app/) — 桌面终端跨平台框架
 - [browser-use](https://github.com/browser-use/browser-use) — AI 浏览器自动化
 - [AGENTS.md Standard](https://agentsmd.io/) — Agent 行为规范标准
 - [Agent Skills](https://agentskills.io/) — 技能标准化规范

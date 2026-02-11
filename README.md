@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="#setup-center">Setup Center</a> •
+  <a href="#desktop-terminal">Desktop Terminal</a> •
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#architecture">Architecture</a> •
@@ -35,7 +35,7 @@
 </p>
 
 <p align="center">
-  <a href="README_CN.md">中文文档</a>
+  <strong>English</strong> | <a href="README_CN.md">中文</a>
 </p>
 
 ---
@@ -50,27 +50,28 @@ Like the Akita dog it's named after: **loyal, reliable, never quits**.
 - **Never Gives Up** — Ralph Wiggum Mode: persistent execution loop until task completion
 - **Growing Memory** — Remembers your preferences and habits, auto-consolidates daily
 - **Standards-Based** — MCP and Agent Skills standard compliance for broad ecosystem compatibility
-- **Multi-Platform** — Setup Center GUI, CLI, Telegram, Feishu, DingTalk, WeCom, QQ
+- **Multi-Platform** — Desktop Terminal GUI, CLI, Telegram, Feishu, DingTalk, WeCom, QQ
 
 ---
 
-## Setup Center
+## Desktop Terminal
 
 <p align="center">
-  <img src="docs/assets/setupcenter.png" alt="Setup Center" width="800" />
+  <img src="docs/assets/desktop_terminal_en.png" alt="OpenAkita Desktop Terminal" width="800" />
 </p>
 
-OpenAkita provides a cross-platform **Setup Center** desktop app (built with Tauri + React) for intuitive installation and configuration:
+OpenAkita provides a cross-platform **Desktop Terminal** (built with Tauri + React) — an all-in-one AI assistant with chat, configuration, monitoring, and skill management:
 
-- **Python Environment** — Auto-detect system Python or install embedded Python
-- **One-Click Install** — Create venv + pip install OpenAkita (PyPI / GitHub Release / local source)
-- **Version Control** — Choose specific versions; defaults to Setup Center version for compatibility
-- **LLM Endpoint Manager** — Multi-provider, multi-endpoint, failover; fetch model lists + search selector
-- **Prompt Compiler Config** — Dedicated fast model endpoints for instruction preprocessing
+- **AI Chat Assistant** — Streaming output, Markdown rendering, multimodal input, Thinking display, Plan mode
+- **Bilingual (CN/EN)** — Auto-detects system language, one-click switch, fully internationalized
+- **Guided Setup Flow** — 9-step wizard, streamlined and focused, dialog-based LLM endpoint management
+- **Localization & i18n** — First-class support for Chinese and international ecosystems, PyPI mirrors, IM channels
+- **LLM Endpoint Manager** — Multi-provider, multi-endpoint, auto-failover, online model list fetching
 - **IM Channel Setup** — Telegram, Feishu, WeCom, DingTalk, QQ — all in one place
-- **Agent & Skills Config** — Behavior parameters, skill toggles, MCP tool management
+- **Persona & Living Presence** — 8 role presets, proactive greetings, memory recall, learns your preferences
+- **Skill Marketplace** — Browse, download, configure skills in one place
+- **Status Monitor** — Compact dashboard: service/LLM/IM health at a glance
 - **System Tray** — Background residency + auto-start on boot, one-click start/stop
-- **Status Monitor** — Live service status dashboard with real-time log viewing
 
 > **Download**: [GitHub Releases](https://github.com/openakita/openakita/releases)
 >
@@ -102,6 +103,35 @@ OpenAkita provides a cross-platform **Setup Center** desktop app (built with Tau
 
 ---
 
+## Persona & Living Presence
+
+One of OpenAkita's most distinctive features — **not just a tool, but a lifelike assistant with personality, memory, and warmth**:
+
+| Capability | Description |
+|-----------|-------------|
+| **8 Role Presets** | Default / Business / Tech Expert / Butler / Girlfriend / Boyfriend / Family / Jarvis |
+| **3-Layer Persona** | Preset base → User preference learning → Context-adaptive, gets to know you over time |
+| **Living Presence** | Proactive greetings, task follow-ups, memory recall ("Last time you mentioned learning guitar...") |
+| **Auto Trait Mining** | LLM analyzes user personality every conversation turn, daily promotion to identity files |
+| **Quiet Hours** | Auto-mutes at night, present but never intrusive |
+| **Sticker Engine** | ChineseBQB 5700+ stickers, per-persona sticker strategy |
+
+> The Agent proactively greets you during idle time, remembers your birthday, preferences, and work habits — like a real friend.
+
+---
+
+## Localization & i18n
+
+OpenAkita offers **first-class support for both Chinese and international ecosystems**:
+
+- **Chinese LLM Providers** — Alibaba DashScope (Qwen), Moonshot Kimi, MiniMax, DeepSeek, SiliconFlow
+- **Global LLM Support** — Anthropic, OpenAI, Google Gemini, and more
+- **Chinese IM Channels** — Feishu (Lark), WeCom, DingTalk, QQ native support
+- **PyPI Mirrors** — Built-in Tsinghua TUNA and Alibaba mirrors for faster installs in China
+- **Full i18n** — `react-i18next` based, auto system language detection, one-click switch
+
+---
+
 ## Self-Learning & Self-Evolution
 
 The core differentiator: **OpenAkita doesn't just execute — it learns and grows autonomously**.
@@ -127,7 +157,7 @@ The easiest way — graphical guided setup, no command-line experience needed:
 
 1. Download the installer from [GitHub Releases](https://github.com/openakita/openakita/releases)
 2. Install and launch Setup Center
-3. Follow the wizard: Python → Install OpenAkita → Configure LLM → Configure IM → Finish & Start
+3. Follow the wizard: Workspace → Python → Install → LLM Endpoints → IM Channels → Finish & Start
 
 ### Option 2: PyPI Install
 
@@ -210,7 +240,7 @@ TELEGRAM_BOT_TOKEN=your-bot-token
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────────── Setup Center ────────────────────────┐   │
-│  │  Tauri + React Desktop App · Install · Config · Monitor   │   │
+│  │  Tauri + React Desktop Terminal · AI Chat · Config · Monitor   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                              │                                   │
 │  ┌──────────────────── Identity Layer ──────────────────────┐   │
