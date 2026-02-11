@@ -412,14 +412,28 @@ class LLMClient:
         - enable_thinking=True 时，优先/要求端点具备 thinking 能力（避免能力/格式退化）
         - 如果有临时覆盖且覆盖端点支持所需能力，优先使用覆盖端点
         """
-        # 清理过期的 override（conversation 优先）
+        # 清理过期的 override
+        # 1) 清理当前 conversation 的过期 override
         if conversation_id:
             ov = self._conversation_overrides.get(conversation_id)
             if ov and ov.is_expired:
                 self._conversation_overrides.pop(conversation_id, None)
+        # 2) 清理全局 override
         if self._endpoint_override and self._endpoint_override.is_expired:
             logger.info("[LLM] Override expired, restoring default")
             self._endpoint_override = None
+        # 3) 定期清理所有过期的 conversation overrides（防止内存泄漏）
+        #    仅当积累超过阈值时触发，避免每次调用都遍历
+        if len(self._conversation_overrides) > 50:
+            expired_keys = [
+                k for k, v in self._conversation_overrides.items() if v.is_expired
+            ]
+            for k in expired_keys:
+                self._conversation_overrides.pop(k, None)
+            if expired_keys:
+                logger.debug(
+                    f"[LLM] Cleaned {len(expired_keys)} expired conversation overrides"
+                )
 
         eligible = []
         override_provider = None

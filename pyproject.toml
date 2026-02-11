@@ -112,6 +112,12 @@ windows = [
     "psutil>=5.9.0",
 ]
 
+# HTTP API（Chat 页面后端）
+api = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+]
+
 # 全部可选依赖
 all = [
     # 注意：不要让项目“依赖自己”。这里展开成所有 extra 的合集。
@@ -129,6 +135,8 @@ all = [
     "pywinauto>=0.6.8; platform_system == 'Windows'",
     "pyperclip>=1.8.2",
     "psutil>=5.9.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
 ]
 
 # 开发依赖

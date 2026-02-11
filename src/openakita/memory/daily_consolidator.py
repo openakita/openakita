@@ -347,12 +347,10 @@ class DailyConsolidator:
         by_dimension: dict[str, list[Memory]] = {}
         for mem in qualified:
             dimension = None
-            preference = None
             for tag in mem.tags:
                 if tag.startswith("dimension:"):
                     dimension = tag.split(":", 1)[1]
-                elif tag.startswith("preference:"):
-                    preference = tag.split(":", 1)[1]
+                    break
             if dimension:
                 if dimension not in by_dimension:
                     by_dimension[dimension] = []

@@ -10,7 +10,6 @@
 
 import logging
 import uuid
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -131,8 +130,8 @@ class PersonaHandler:
         merged = self.agent.persona_manager.get_merged_persona()
 
         lines = [
-            f"## 当前人格配置",
-            f"",
+            "## 当前人格配置",
+            "",
             f"**预设角色**: {merged.preset_name}",
             f"**正式程度**: {merged.formality}",
             f"**幽默感**: {merged.humor}",

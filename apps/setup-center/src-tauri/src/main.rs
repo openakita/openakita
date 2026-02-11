@@ -524,6 +524,12 @@ fn main() {
             openakita_list_providers,
             openakita_list_models,
             openakita_version,
+            openakita_health_check_endpoint,
+            openakita_health_check_im,
+            openakita_install_skill,
+            openakita_uninstall_skill,
+            openakita_list_marketplace,
+            openakita_get_skill_config,
             fetch_pypi_versions
         ])
         .run(tauri::generate_context!())
@@ -1739,6 +1745,133 @@ async fn openakita_version(venv_dir: String) -> Result<String, String> {
             return Err(format!("python failed: {}\nstdout:\n{}\nstderr:\n{}", out.status, stdout, stderr));
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+}
+
+/// Health check LLM endpoints via Python bridge.
+/// Returns JSON array of health results.
+#[tauri::command]
+async fn openakita_health_check_endpoint(
+    venv_dir: String,
+    workspace_id: String,
+    endpoint_name: Option<String>,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let wd = workspace_dir(&workspace_id);
+        let mut args = vec![
+            "health-check-endpoint",
+            "--workspace-dir",
+            wd.to_string_lossy().as_ref(),
+        ];
+        let ep_name_str;
+        if let Some(ref name) = endpoint_name {
+            ep_name_str = name.clone();
+            args.push("--endpoint-name");
+            args.push(&ep_name_str);
+        }
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Health check IM channels via Python bridge.
+/// Returns JSON array of health results.
+#[tauri::command]
+async fn openakita_health_check_im(
+    venv_dir: String,
+    workspace_id: String,
+    channel: Option<String>,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let wd = workspace_dir(&workspace_id);
+        let mut args = vec![
+            "health-check-im",
+            "--workspace-dir",
+            wd.to_string_lossy().as_ref(),
+        ];
+        let ch_str;
+        if let Some(ref ch) = channel {
+            ch_str = ch.clone();
+            args.push("--channel");
+            args.push(&ch_str);
+        }
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Install a skill from URL/path.
+#[tauri::command]
+async fn openakita_install_skill(
+    venv_dir: String,
+    workspace_id: String,
+    url: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let wd = workspace_dir(&workspace_id);
+        let args = vec![
+            "install-skill",
+            "--workspace-dir",
+            wd.to_string_lossy().as_ref(),
+            "--url",
+            &url,
+        ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Uninstall a skill by name.
+#[tauri::command]
+async fn openakita_uninstall_skill(
+    venv_dir: String,
+    workspace_id: String,
+    skill_name: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let wd = workspace_dir(&workspace_id);
+        let args = vec![
+            "uninstall-skill",
+            "--workspace-dir",
+            wd.to_string_lossy().as_ref(),
+            "--skill-name",
+            &skill_name,
+        ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// List marketplace skills.
+#[tauri::command]
+async fn openakita_list_marketplace(
+    venv_dir: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["list-marketplace"];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Get skill config schema.
+#[tauri::command]
+async fn openakita_get_skill_config(
+    venv_dir: String,
+    workspace_id: String,
+    skill_name: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let wd = workspace_dir(&workspace_id);
+        let args = vec![
+            "get-skill-config",
+            "--workspace-dir",
+            wd.to_string_lossy().as_ref(),
+            "--skill-name",
+            &skill_name,
+        ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })
     .await
 }

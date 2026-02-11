@@ -123,7 +123,7 @@ class TraitMiner:
         self.persona_manager = persona_manager
         self.brain = brain
         self._asked_dimensions: set[str] = set()
-        self._last_question_date: Optional[datetime] = None
+        self._last_question_date: datetime | None = None
         self._questions_today: int = 0
 
     async def mine_from_message(self, message: str, role: str = "user") -> list["PersonaTrait"]:
@@ -266,7 +266,7 @@ class TraitMiner:
         next_dim = self.persona_manager.get_next_question_dimension(self._asked_dimensions)
         return next_dim is not None
 
-    def get_next_question(self) -> Optional[tuple[str, str]]:
+    def get_next_question(self) -> tuple[str, str] | None:
         """
         获取下一个要问的人格问题
 
@@ -339,7 +339,7 @@ class TraitMiner:
 
     async def _analyze_answer_with_llm(
         self, dimension: str, answer: str, dim_info: dict
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         用 LLM 分析用户对偏好问题的回答
 

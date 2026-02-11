@@ -517,9 +517,8 @@ class MemoryManager:
         适合在空闲时段 (如凌晨) 由定时任务调用
         使用 DailyConsolidator 进行完整的归纳流程
         """
-        from .daily_consolidator import DailyConsolidator
-
         from ..config import settings
+        from .daily_consolidator import DailyConsolidator
 
         daily_consolidator = DailyConsolidator(
             data_dir=self.data_dir,

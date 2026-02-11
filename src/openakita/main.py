@@ -1035,11 +1035,22 @@ def serve():
         im_channels = await start_im_channels(agent_or_master)
 
         if not im_channels:
-            console.print("[red]✗[/red] 没有启用任何 IM 通道！")
-            console.print("请在 .env 中配置 IM 通道（如 TELEGRAM_ENABLED=true）")
-            return
+            console.print("[yellow]⚠[/yellow] 没有启用任何 IM 通道（HTTP API 仍可使用）")
 
-        console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
+        if im_channels:
+            console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
+
+        # 启动 HTTP API 服务器（供 Setup Center Chat 页面使用）
+        api_task = None
+        try:
+            from openakita.api.server import start_api_server
+            api_task = await start_api_server(agent=agent_or_master)
+            console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
+        except ImportError:
+            console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] HTTP API 启动失败: {e}")
+
         console.print()
         console.print("[bold]服务运行中...[/bold] 按 Ctrl+C 停止")
 
@@ -1053,6 +1064,13 @@ def serve():
                 shutdown_triggered = True
                 console.print("\n[yellow]正在停止服务...[/yellow]")
                 try:
+                    # 停止 HTTP API 服务器
+                    if api_task is not None:
+                        api_task.cancel()
+                        try:
+                            await asyncio.wait_for(api_task, timeout=2.0)
+                        except (asyncio.CancelledError, TimeoutError):
+                            pass
                     # 使用 asyncio.shield 保护关闭操作
                     await asyncio.wait_for(stop_im_channels(), timeout=5.0)
                     if is_orchestration_enabled() and agent_or_master:

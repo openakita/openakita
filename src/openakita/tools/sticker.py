@@ -15,7 +15,6 @@ import logging
 import random
 import re
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +101,10 @@ class StickerEngine:
         try:
             import aiohttp
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.INDEX_URL, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(self.INDEX_URL, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+            ):
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
                         self._stickers = self._extract_sticker_list(data)
@@ -177,7 +178,7 @@ class StickerEngine:
     async def search(
         self,
         query: str,
-        category: Optional[str] = None,
+        category: str | None = None,
         limit: int = 5,
     ) -> list[dict]:
         """
@@ -232,7 +233,7 @@ class StickerEngine:
 
         return results
 
-    async def get_random_by_mood(self, mood: str) -> Optional[dict]:
+    async def get_random_by_mood(self, mood: str) -> dict | None:
         """
         按情绪随机获取一张表情包
 
@@ -257,7 +258,7 @@ class StickerEngine:
 
         return random.choice(all_candidates)
 
-    async def download_and_cache(self, url: str) -> Optional[Path]:
+    async def download_and_cache(self, url: str) -> Path | None:
         """
         下载表情包到本地缓存
 
@@ -280,8 +281,10 @@ class StickerEngine:
             try:
                 import aiohttp
 
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with (
+                    aiohttp.ClientSession() as session,
+                    session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+                ):
                         if resp.status == 200:
                             content = await resp.read()
                             cache_path.write_bytes(content)

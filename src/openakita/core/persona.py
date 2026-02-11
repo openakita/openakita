@@ -14,7 +14,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ def _parse_preset_field(content: str, section_name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def _parse_dimension_from_style(style_text: str, dimension: str) -> Optional[str]:
+def _parse_dimension_from_style(style_text: str, dimension: str) -> str | None:
     """从沟通风格文本中提取维度值"""
     # 匹配 "- 正式程度: formal" 或 "- 幽默感: occasional" 等
     dim_map = {
@@ -290,7 +290,6 @@ class PersonaManager:
         for mem in memories:
             if mem.get("type") != "persona_trait":
                 continue
-            content = mem.get("content", "")
             # 解析 content 格式: "dimension:value (confidence:X, source:Y, evidence:Z)"
             try:
                 trait = self._parse_trait_from_memory(mem)
@@ -299,7 +298,7 @@ class PersonaManager:
             except Exception as e:
                 logger.warning(f"Failed to parse persona trait from memory: {e}")
 
-    def _parse_trait_from_memory(self, mem: dict) -> Optional[PersonaTrait]:
+    def _parse_trait_from_memory(self, mem: dict) -> PersonaTrait | None:
         """从记忆字典中解析 PersonaTrait"""
         content = mem.get("content", "")
         tags = mem.get("tags", [])
@@ -458,14 +457,14 @@ class PersonaManager:
         """是否激活了非默认人格"""
         return self.active_preset_name != "default" or len(self.user_traits) > 0
 
-    def get_next_question_dimension(self, asked_dimensions: set[str]) -> Optional[str]:
+    def get_next_question_dimension(self, asked_dimensions: set[str]) -> str | None:
         """获取下一个待询问的偏好维度"""
         # 按优先级排序
         sorted_dims = sorted(
             PERSONA_DIMENSIONS.items(),
             key=lambda x: x[1]["priority"],
         )
-        for dim_key, dim_info in sorted_dims:
+        for dim_key, _dim_info in sorted_dims:
             if dim_key in asked_dimensions:
                 continue
             # 检查是否已有高置信度的数据
@@ -477,7 +476,7 @@ class PersonaManager:
                 return dim_key
         return None
 
-    def get_question_for_dimension(self, dimension: str) -> Optional[str]:
+    def get_question_for_dimension(self, dimension: str) -> str | None:
         """获取指定维度的询问问题"""
         dim_info = PERSONA_DIMENSIONS.get(dimension)
         return dim_info["question"] if dim_info else None

@@ -50,14 +50,14 @@ from ..tools.handlers.filesystem import create_handler as create_filesystem_hand
 from ..tools.handlers.im_channel import create_handler as create_im_channel_handler
 from ..tools.handlers.mcp import create_handler as create_mcp_handler
 from ..tools.handlers.memory import create_handler as create_memory_handler
+from ..tools.handlers.persona import create_handler as create_persona_handler
 from ..tools.handlers.plan import create_plan_handler
 from ..tools.handlers.profile import create_handler as create_profile_handler
 from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
+from ..tools.handlers.sticker import create_handler as create_sticker_handler
 from ..tools.handlers.system import create_handler as create_system_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
-from ..tools.handlers.persona import create_handler as create_persona_handler
-from ..tools.handlers.sticker import create_handler as create_sticker_handler
 
 # MCP 系统
 from ..tools.mcp import mcp_client
@@ -261,13 +261,12 @@ class Agent:
         self.profile_manager = get_profile_manager()
 
         # ==================== 人格系统 + 活人感 + 表情包 ====================
+        # 恢复上次用户设置的运行时状态（角色、活人感开关等）
+        from ..config import runtime_state
+        from ..tools.sticker import StickerEngine
         from .persona import PersonaManager
         from .proactive import ProactiveConfig, ProactiveEngine
         from .trait_miner import TraitMiner
-        from ..tools.sticker import StickerEngine
-
-        # 恢复上次用户设置的运行时状态（角色、活人感开关等）
-        from ..config import runtime_state
         runtime_state.load()
 
         # 人格管理器
@@ -2740,9 +2739,9 @@ search_github → install_skill → 使用
                     mined_traits = await self.trait_miner.mine_from_message(message, role="user")
                     # 写入记忆系统，以便每日反思时晋升到 identity
                     for trait in mined_traits:
-                        from ..memory.types import Memory, MemoryPriority, MemoryType as MT
+                        from ..memory.types import Memory, MemoryPriority, MemoryType
                         mem = Memory(
-                            type=MT.PERSONA_TRAIT,
+                            type=MemoryType.PERSONA_TRAIT,
                             priority=MemoryPriority.LONG_TERM,
                             content=f"{trait.dimension}={trait.preference}",
                             source=trait.source,

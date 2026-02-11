@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
+import { ChatView } from "./views/ChatView";
+import { SkillManager } from "./views/SkillManager";
+import type { EndpointSummary as EndpointSummaryType } from "./types";
+import "highlight.js/styles/github.css";
 
 type PlatformInfo = {
   os: string;
@@ -366,12 +370,23 @@ export function App() {
     [],
   );
 
-  const [view, setView] = useState<"wizard" | "status">("wizard");
+  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills">("wizard");
   const [stepId, setStepId] = useState<StepId>("welcome");
   const currentStepIdxRaw = useMemo(() => steps.findIndex((s) => s.id === stepId), [steps, stepId]);
   const currentStepIdx = currentStepIdxRaw < 0 ? 0 : currentStepIdxRaw;
   const isFirst = currentStepIdx <= 0;
   const isLast = currentStepIdx >= steps.length - 1;
+
+  // 记录用户历史最远到达的步骤索引，回退后依然允许点击已到达的步骤
+  const [maxReachedStepIdx, setMaxReachedStepIdx] = useState(0);
+  useEffect(() => {
+    setMaxReachedStepIdx((prev) => Math.max(prev, currentStepIdx));
+  }, [currentStepIdx]);
+
+  // 切换工作区时重置最远步骤记录，避免新工作区可以跳到旧工作区已到达的步骤
+  useEffect(() => {
+    setMaxReachedStepIdx(0);
+  }, [currentWorkspaceId]);
 
   // workspace create
   const [newWsName, setNewWsName] = useState("默认工作区");
@@ -470,6 +485,16 @@ export function App() {
   const [serviceLogError, setServiceLogError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string>("");
   const [openakitaVersion, setOpenakitaVersion] = useState<string>("");
+
+  // Health check state
+  const [endpointHealth, setEndpointHealth] = useState<Record<string, {
+    status: string; latencyMs: number | null; error: string | null; errorCategory: string | null;
+    consecutiveFailures: number; cooldownRemaining: number; isExtendedCooldown: boolean; lastCheckedAt: string | null;
+  }>>({});
+  const [imHealth, setImHealth] = useState<Record<string, {
+    status: string; error: string | null; lastCheckedAt: string | null;
+  }>>({});
+  const [healthChecking, setHealthChecking] = useState<string | null>(null); // "all" | endpoint name | IM channel id
 
   // unified env draft (full coverage)
   const [envDraft, setEnvDraft] = useState<EnvMap>({});
@@ -631,12 +656,13 @@ export function App() {
     if (venvStatus.includes("安装完成")) setOpenakitaInstalled(true);
   }, [venvStatus]);
 
-  async function ensureEnvLoaded(workspaceId: string) {
-    if (envLoadedForWs.current === workspaceId) return;
+  async function ensureEnvLoaded(workspaceId: string): Promise<EnvMap> {
+    if (envLoadedForWs.current === workspaceId) return envDraft;
     const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
     const parsed = parseEnv(content);
     setEnvDraft(parsed);
     envLoadedForWs.current = workspaceId;
+    return parsed;
   }
 
   async function doCreateWorkspace() {
@@ -1667,7 +1693,8 @@ export function App() {
         setSkillsDetail(null);
         return;
       }
-      await ensureEnvLoaded(currentWorkspaceId);
+      // 使用 ensureEnvLoaded 的返回值，避免闭包中 envDraft 可能过期
+      const env = await ensureEnvLoaded(currentWorkspaceId);
 
       // endpoints
       const raw = await invoke<string>("workspace_read_file", {
@@ -1676,7 +1703,6 @@ export function App() {
       });
       const parsed = JSON.parse(raw);
       const eps = Array.isArray(parsed?.endpoints) ? parsed.endpoints : [];
-      const env = envDraft;
       const list = eps
         .map((e: any) => {
           const keyEnv = String(e?.api_key_env || "");
@@ -1889,6 +1915,7 @@ export function App() {
           setStepId("welcome");
         }}
         disabled={!!busy}
+        style={view === "wizard" ? { background: "rgba(14,165,233,0.1)", borderColor: "rgba(14,165,233,0.3)" } : undefined}
       >
         安装向导
       </button>
@@ -1902,8 +1929,23 @@ export function App() {
           }
         }}
         disabled={!!busy}
+        style={view === "status" ? { background: "rgba(14,165,233,0.1)", borderColor: "rgba(14,165,233,0.3)" } : undefined}
       >
         状态面板
+      </button>
+      <button
+        onClick={() => setView("chat")}
+        disabled={!!busy}
+        style={view === "chat" ? { background: "rgba(14,165,233,0.1)", borderColor: "rgba(14,165,233,0.3)" } : undefined}
+      >
+        💬 聊天
+      </button>
+      <button
+        onClick={() => setView("skills")}
+        disabled={!!busy}
+        style={view === "skills" ? { background: "rgba(14,165,233,0.1)", borderColor: "rgba(14,165,233,0.3)" } : undefined}
+      >
+        ⚡ 技能
       </button>
       <button onClick={() => refreshAll()} disabled={!!busy}>
         刷新
@@ -2131,36 +2173,78 @@ export function App() {
 
           <div className="divider" />
           <div className="card">
-            <div className="label">LLM 端点</div>
-            <div className="cardHint" style={{ marginTop: 8 }}>
-              共 <b>{endpointSummary.length}</b> 个端点（keyPresent 仅检查工作区 `.env` 是否填了对应 `api_key_env`）
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div>
+                <div className="label">LLM 端点</div>
+                <div className="cardHint" style={{ marginTop: 4 }}>共 <b>{endpointSummary.length}</b> 个端点</div>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!effectiveWsId || !venvDir) return;
+                  setHealthChecking("all");
+                  try {
+                    const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId });
+                    const results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null; }> = JSON.parse(raw);
+                    const h: typeof endpointHealth = {};
+                    for (const r of results) { h[r.name] = { status: r.status, latencyMs: r.latency_ms, error: r.error, errorCategory: r.error_category, consecutiveFailures: r.consecutive_failures, cooldownRemaining: r.cooldown_remaining, isExtendedCooldown: r.is_extended_cooldown, lastCheckedAt: r.last_checked_at }; }
+                    setEndpointHealth(h);
+                  } catch (e) { setError(String(e)); } finally { setHealthChecking(null); }
+                }}
+                disabled={!effectiveWsId || !venvDir || !!healthChecking || !!busy}
+                style={{ fontSize: 12, padding: "6px 14px" }}
+              >
+                {healthChecking === "all" ? <span className="spinIcon">⟳</span> : null} 全部检测
+              </button>
             </div>
             <div className="divider" />
             {endpointSummary.length === 0 ? (
               <div className="cardHint">未读取到端点。请先在“LLM 端点”步骤写入端点配置。</div>
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
-                {endpointSummary.slice(0, 8).map((e) => (
-                  <div key={e.name} className="card" style={{ marginTop: 0 }}>
-                    <div className="row" style={{ justifyContent: "space-between" }}>
-                      <div style={{ fontWeight: 800 }}>{e.name}</div>
-                      <div
-                        className="pill"
-                        style={{
-                          borderColor: e.keyPresent ? "rgba(16,185,129,0.25)" : "rgba(255,77,109,0.22)",
-                        }}
-                      >
-                        {e.keyPresent ? "Key 已配置" : "Key 缺失"}
+                {endpointSummary.slice(0, 12).map((e) => {
+                  const h = endpointHealth[e.name];
+                  const dotClass = h ? (h.status === "healthy" ? "healthy" : h.status === "degraded" ? "degraded" : "unhealthy") : e.keyPresent ? "unknown" : "unhealthy";
+                  const statusLabel = h
+                    ? h.status === "healthy"
+                      ? `正常${h.latencyMs != null ? ` (${h.latencyMs}ms)` : ""}`
+                      : h.isExtendedCooldown && h.cooldownRemaining > 0
+                        ? h.consecutiveFailures === 0
+                          ? `恢复中 · 剩余 ${Math.ceil(h.cooldownRemaining)}s`  // 从磁盘恢复的冷静期
+                          : `扩展冷静期 (1h) · 剩余 ${Math.ceil(h.cooldownRemaining)}s`
+                        : h.cooldownRemaining > 0
+                          ? `冷静期 · 剩余 ${Math.ceil(h.cooldownRemaining)}s · ${h.errorCategory || ""}`
+                          : `失败 · ${(h.error || "").slice(0, 80)}`
+                    : e.keyPresent ? "未检测" : "Key 缺失";
+                  return (
+                    <div key={e.name} className="card" style={{ marginTop: 0 }}>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className={`healthDot ${dotClass}`} />
+                          <span style={{ fontWeight: 800 }}>{e.name}</span>
+                        </div>
+                        <button onClick={async () => {
+                          if (!effectiveWsId || !venvDir) return;
+                          setHealthChecking(e.name);
+                          try {
+                            const raw = await invoke<string>("openakita_health_check_endpoint", { venvDir, workspaceId: effectiveWsId, endpointName: e.name });
+                            const r: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null; }> = JSON.parse(raw);
+                            if (r[0]) { setEndpointHealth((prev) => ({ ...prev, [r[0].name]: { status: r[0].status, latencyMs: r[0].latency_ms, error: r[0].error, errorCategory: r[0].error_category, consecutiveFailures: r[0].consecutive_failures, cooldownRemaining: r[0].cooldown_remaining, isExtendedCooldown: r[0].is_extended_cooldown, lastCheckedAt: r[0].last_checked_at } })); }
+                          } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
+                        }} disabled={!effectiveWsId || !venvDir || !!healthChecking || !!busy} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}>
+                          {healthChecking === e.name ? <span className="spinIcon">⟳</span> : "检测"}
+                        </button>
                       </div>
+                      <div className="help" style={{ marginTop: 4 }}>{e.provider} / {e.apiType} / {e.model}</div>
+                      <div className="help" style={{ marginTop: 2 }}>{e.baseUrl}</div>
+                      <div style={{ marginTop: 4, fontSize: 12, color: dotClass === "healthy" ? "rgba(16,185,129,0.9)" : dotClass === "degraded" ? "rgba(245,158,11,0.9)" : dotClass === "unhealthy" ? "rgba(255,77,109,0.9)" : "var(--muted)" }}>
+                        {statusLabel}
+                      </div>
+                      {h && h.consecutiveFailures > 0 && <div className="help" style={{ marginTop: 2 }}>连续失败：{h.consecutiveFailures} 次</div>}
+                      {h?.lastCheckedAt && <div className="help" style={{ marginTop: 2 }}>上次检测：{h.lastCheckedAt}</div>}
                     </div>
-                    <div className="help" style={{ marginTop: 6 }}>
-                      {e.provider} / {e.apiType} / {e.model}
-                      <br />
-                      {e.baseUrl}
-                    </div>
-                  </div>
-                ))}
-                {endpointSummary.length > 8 ? <div className="help">… 还有 {endpointSummary.length - 8} 个端点</div> : null}
+                  );
+                })}
+                {endpointSummary.length > 12 ? <div className="help">… 还有 {endpointSummary.length - 12} 个端点</div> : null}
               </div>
             )}
           </div>
@@ -2168,17 +2252,54 @@ export function App() {
           <div className="divider" />
           <div className="grid2">
             <div className="card" style={{ marginTop: 0 }}>
-              <div className="label">IM 通道</div>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+                <div className="label">IM 通道</div>
+                <button onClick={async () => {
+                  if (!effectiveWsId || !venvDir) return;
+                  setHealthChecking("im-all");
+                  try {
+                    const raw = await invoke<string>("openakita_health_check_im", { venvDir, workspaceId: effectiveWsId });
+                    const results: Array<{ channel: string; name: string; status: string; error: string | null; last_checked_at: string | null }> = JSON.parse(raw);
+                    const h: typeof imHealth = {};
+                    for (const r of results) h[r.channel] = { status: r.status, error: r.error, lastCheckedAt: r.last_checked_at };
+                    setImHealth(h);
+                  } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
+                }} disabled={!effectiveWsId || !venvDir || !!healthChecking || !!busy} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}>
+                  {healthChecking === "im-all" ? <span className="spinIcon">⟳</span> : null} 全部测试
+                </button>
+              </div>
               <div className="divider" />
               <div style={{ display: "grid", gap: 8 }}>
-                {imStatus.map((c) => (
-                  <div key={c.k} className="row" style={{ justifyContent: "space-between" }}>
-                    <div style={{ fontWeight: 700 }}>{c.name}</div>
-                    <div className="help">
-                      {c.enabled ? (c.ok ? "✅ 已配置" : `⚠ 缺少：${c.missing.join(", ")}`) : "— 未启用"}
+                {imStatus.map((c) => {
+                  const channelId = c.k.replace("_ENABLED", "").toLowerCase();
+                  const ih = imHealth[channelId];
+                  const dotClass = !c.enabled ? "disabled" : ih ? (ih.status === "healthy" ? "healthy" : "unhealthy") : c.ok ? "unknown" : "degraded";
+                  const label = !c.enabled ? "未启用" : ih ? (ih.status === "healthy" ? "连通" : `失败${ih.error ? `: ${ih.error.slice(0, 50)}` : ""}`) : c.ok ? "已配置（未检测）" : `缺少：${c.missing.join(", ")}`;
+                  return (
+                    <div key={c.k}>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span className={`healthDot ${dotClass}`} />
+                          <span style={{ fontWeight: 700, fontSize: 13 }}>{c.name}</span>
+                        </div>
+                        {c.enabled && (
+                          <button onClick={async () => {
+                            if (!effectiveWsId || !venvDir) return;
+                            setHealthChecking(`im-${channelId}`);
+                            try {
+                              const raw = await invoke<string>("openakita_health_check_im", { venvDir, workspaceId: effectiveWsId, channel: channelId });
+                              const results: Array<{ channel: string; status: string; error: string | null; last_checked_at: string | null }> = JSON.parse(raw);
+                              if (results[0]) setImHealth((prev) => ({ ...prev, [channelId]: { status: results[0].status, error: results[0].error, lastCheckedAt: results[0].last_checked_at } }));
+                            } catch (err) { setError(String(err)); } finally { setHealthChecking(null); }
+                          }} disabled={!!healthChecking || !!busy} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, border: "1px solid var(--line)", cursor: "pointer" }}>
+                            {healthChecking === `im-${channelId}` ? <span className="spinIcon">⟳</span> : "测试"}
+                          </button>
+                        )}
+                      </div>
+                      <div className="help" style={{ marginTop: 2, paddingLeft: 14 }}>{label}</div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
             <div className="card" style={{ marginTop: 0 }}>
@@ -2186,15 +2307,17 @@ export function App() {
               <div className="divider" />
               {skillSummary ? (
                 <div className="cardHint">
-                  共 <b>{skillSummary.count}</b> 个技能
-                  <br />
-                  系统技能：<b>{skillSummary.systemCount}</b>
-                  <br />
+                  共 <b>{skillSummary.count}</b> 个技能<br />
+                  系统技能：<b>{skillSummary.systemCount}</b><br />
                   外部技能：<b>{skillSummary.externalCount}</b>
                 </div>
               ) : (
                 <div className="cardHint">未能读取 skills（通常是 venv 未安装 openakita 或环境未就绪）。</div>
               )}
+              <div className="divider" />
+              <button onClick={() => setView("skills")} style={{ fontSize: 12, padding: "6px 14px", width: "100%" }}>
+                管理技能 →
+              </button>
             </div>
           </div>
         </div>
@@ -4080,7 +4203,74 @@ export function App() {
           <details>
             <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>人格系统</summary>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-              <FieldText k="PERSONA_NAME" label="角色预设" placeholder="default" help="可选: default / business / tech_expert / butler / girlfriend / boyfriend / family / jarvis" />
+              <div className="field">
+                <div className="labelRow">
+                  <div className="label">角色预设</div>
+                  <div className="help">选择一个预设角色，或输入自定义角色 ID</div>
+                </div>
+                <select
+                  value={envGet(envDraft, "PERSONA_NAME", "default")}
+                  onChange={(e) => setEnvDraft((m) => envSet(m, "PERSONA_NAME", e.target.value))}
+                  style={{ width: "100%", padding: "8px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "rgba(255,255,255,0.7)", fontSize: 14 }}
+                >
+                  {[
+                    { id: "default", name: "默认助手", desc: "专业友好、平衡得体" },
+                    { id: "business", name: "商务顾问", desc: "正式专业、数据驱动" },
+                    { id: "tech_expert", name: "技术专家", desc: "简洁精准、代码导向" },
+                    { id: "butler", name: "私人管家", desc: "周到细致、礼貌正式" },
+                    { id: "girlfriend", name: "虚拟女友", desc: "温柔体贴、情感丰富" },
+                    { id: "boyfriend", name: "虚拟男友", desc: "阳光开朗、幽默风趣" },
+                    { id: "family", name: "家人", desc: "亲切关怀、唠叨温暖" },
+                    { id: "jarvis", name: "贾维斯", desc: "冷静睿智、英式幽默" },
+                    { id: "custom", name: "自定义角色", desc: "输入自定义角色 ID" },
+                  ].map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}（{p.id}）— {p.desc}
+                    </option>
+                  ))}
+                </select>
+                {envGet(envDraft, "PERSONA_NAME", "default") === "custom" && (
+                  <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="text"
+                      placeholder="输入自定义角色 ID（如 my_role）"
+                      style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}
+                      value={envGet(envDraft, "PERSONA_CUSTOM_ID", "")}
+                      onChange={(e) => {
+                        setEnvDraft((m) => envSet(m, "PERSONA_CUSTOM_ID", e.target.value));
+                        setEnvDraft((m) => envSet(m, "PERSONA_NAME", e.target.value || "custom"));
+                      }}
+                    />
+                    <button
+                      className="btn btnSmall"
+                      style={{ whiteSpace: "nowrap" }}
+                      onClick={() => setView("chat")}
+                    >💬 让 AI 帮你创建</button>
+                  </div>
+                )}
+              </div>
+              {(() => {
+                const presets: Record<string, { name: string; desc: string; style: string }> = {
+                  default: { name: "默认助手", desc: "专业友好、平衡得体", style: "适合日常使用，万能型角色" },
+                  business: { name: "商务顾问", desc: "正式专业、数据驱动", style: "适合工作场景，正式汇报、数据分析" },
+                  tech_expert: { name: "技术专家", desc: "简洁精准、代码导向", style: "适合编程开发，技术问答" },
+                  butler: { name: "私人管家", desc: "周到细致、礼貌正式", style: "适合生活服务，日程安排、出行规划" },
+                  girlfriend: { name: "虚拟女友", desc: "温柔体贴、情感丰富", style: "适合情感陪伴，倾听与关怀" },
+                  boyfriend: { name: "虚拟男友", desc: "阳光开朗、幽默风趣", style: "适合情感陪伴，轻松有趣" },
+                  family: { name: "家人", desc: "亲切关怀、唠叨温暖", style: "适合家庭场景，长辈式温暖关怀" },
+                  jarvis: { name: "贾维斯", desc: "冷静睿智、英式幽默", style: "适合科技极客，像钢铁侠的 AI 管家" },
+                };
+                const cur = envGet(envDraft, "PERSONA_NAME", "default");
+                const info = presets[cur];
+                if (!info) return null;
+                return (
+                  <div className="card" style={{ marginTop: 4, background: "rgba(14,165,233,0.06)", borderColor: "rgba(14,165,233,0.18)" }}>
+                    <div style={{ fontWeight: 800, fontSize: 15 }}>{info.name}</div>
+                    <div className="help" style={{ marginTop: 4 }}>{info.desc}</div>
+                    <div className="help" style={{ marginTop: 2, opacity: 0.7 }}>{info.style}</div>
+                  </div>
+                );
+              })()}
               <div className="cardHint">8 种预设角色，每种有不同的沟通风格。用户可在对话中随时切换。偏好会通过 LLM 从对话中自动学习。</div>
             </div>
           </details>
@@ -4705,9 +4895,97 @@ export function App() {
     );
   }
 
+  // 构造端点摘要（供 ChatView 使用）
+  const chatEndpoints: EndpointSummaryType[] = useMemo(() =>
+    endpointSummary.map((e) => {
+      const h = endpointHealth[e.name];
+      return {
+        name: e.name,
+        provider: e.provider,
+        apiType: e.apiType,
+        baseUrl: e.baseUrl,
+        model: e.model,
+        keyEnv: e.keyEnv,
+        keyPresent: e.keyPresent,
+        health: h ? {
+          name: e.name,
+          status: h.status as "healthy" | "degraded" | "unhealthy" | "unknown",
+          latencyMs: h.latencyMs,
+          error: h.error,
+          errorCategory: h.errorCategory,
+          consecutiveFailures: h.consecutiveFailures,
+          cooldownRemaining: h.cooldownRemaining,
+          isExtendedCooldown: h.isExtendedCooldown,
+          lastCheckedAt: h.lastCheckedAt,
+        } : undefined,
+      };
+    }),
+    [endpointSummary, endpointHealth],
+  );
+
+  // 保存 env keys 的辅助函数（供 SkillManager 使用）
+  async function saveEnvKeysExternal(keys: string[]) {
+    if (!currentWorkspaceId) return;
+    const entries = keys
+      .filter((k) => Object.prototype.hasOwnProperty.call(envDraft, k))
+      .map((k) => ({ key: k, value: (envDraft[k] ?? "").trim() }));
+    if (entries.length > 0) {
+      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries });
+    }
+  }
+
   function renderStepContent() {
     if (!info) return <div className="card">加载中...</div>;
     if (view === "status") return renderStatus();
+    if (view === "chat") {
+      return (
+        <ChatView
+          serviceRunning={serviceStatus?.running ?? false}
+          endpoints={chatEndpoints}
+          onStartService={async () => {
+            const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
+            if (!effectiveWsId) {
+              setError("未找到工作区（请先创建/选择一个工作区）");
+              return;
+            }
+            setBusy("启动后台服务...");
+            setError(null);
+            try {
+              const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_start", {
+                venvDir,
+                workspaceId: effectiveWsId,
+              });
+              setServiceStatus(ss);
+              await new Promise((r) => setTimeout(r, 600));
+              const real = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
+                workspaceId: effectiveWsId,
+              });
+              setServiceStatus(real);
+              if (!real.running) {
+                setError("后台服务未能保持运行。请先完成安装向导。");
+              } else {
+                setNotice("已启动后台服务（openakita serve）。");
+              }
+            } catch (e) {
+              setError(String(e));
+            } finally {
+              setBusy(null);
+            }
+          }}
+        />
+      );
+    }
+    if (view === "skills") {
+      return (
+        <SkillManager
+          venvDir={venvDir}
+          currentWorkspaceId={currentWorkspaceId}
+          envDraft={envDraft}
+          onEnvChange={setEnvDraft}
+          onSaveEnvKeys={saveEnvKeysExternal}
+        />
+      );
+    }
     switch (stepId) {
       case "welcome":
         return renderWelcome();
@@ -4745,9 +5023,9 @@ export function App() {
         </div>
         <div className="stepList">
           {steps.map((s, idx) => {
-            const isActive = s.id === stepId;
+            const isActive = view === "wizard" && s.id === stepId;
             const isDone = done.has(s.id);
-            const canJump = idx <= currentStepIdx; // 一步一步来：只能回到已到达的步骤
+            const canJump = idx <= maxReachedStepIdx || isDone; // 已到达或已完成的步骤始终可点击
             return (
               <div
                 key={s.id}
@@ -4770,20 +5048,65 @@ export function App() {
             );
           })}
         </div>
+
+        {/* 功能入口 */}
+        <div style={{ padding: "8px 10px", borderTop: "1px solid var(--line)", marginTop: "auto" }}>
+          <div
+            className={`stepItem ${view === "chat" ? "stepItemActive" : ""}`}
+            onClick={() => setView("chat")}
+            role="button"
+            tabIndex={0}
+          >
+            <div className="stepDot" style={{ background: view === "chat" ? "var(--brand)" : undefined }}>💬</div>
+            <div className="stepMeta">
+              <div className="stepTitle">聊天</div>
+              <div className="stepDesc">AI 对话助手</div>
+            </div>
+          </div>
+          <div
+            className={`stepItem ${view === "skills" ? "stepItemActive" : ""}`}
+            onClick={() => setView("skills")}
+            role="button"
+            tabIndex={0}
+          >
+            <div className="stepDot" style={{ background: view === "skills" ? "var(--brand)" : undefined }}>⚡</div>
+            <div className="stepMeta">
+              <div className="stepTitle">技能</div>
+              <div className="stepDesc">管理与安装技能</div>
+            </div>
+          </div>
+          <div
+            className={`stepItem ${view === "status" ? "stepItemActive" : ""}`}
+            onClick={async () => {
+              setView("status");
+              try { await refreshStatus(); } catch { /* ignore */ }
+            }}
+            role="button"
+            tabIndex={0}
+          >
+            <div className="stepDot" style={{ background: view === "status" ? "var(--brand)" : undefined }}>📊</div>
+            <div className="stepMeta">
+              <div className="stepTitle">状态</div>
+              <div className="stepDesc">运行状态与监控</div>
+            </div>
+          </div>
+        </div>
       </aside>
 
       <main className="main">
         <div className="topbar">
           <div>
             <div className="topbarTitle">
-              {view === "status" ? "状态面板（独立）" : `第 ${currentStepIdx + 1} 步 / ${steps.length} 步：${step.title}`}
+              {view === "status" ? "状态面板" : view === "chat" ? "AI 聊天助手" : view === "skills" ? "技能管理" : `第 ${currentStepIdx + 1} 步 / ${steps.length} 步：${step.title}`}
             </div>
-            <div className="statusLine">{view === "status" ? "运行状态与监控入口（不属于安装流程）" : step.desc}</div>
+            <div className="statusLine">
+              {view === "status" ? "运行状态与监控入口" : view === "chat" ? "与 Agent 对话、使用工具和技能" : view === "skills" ? "安装、配置和管理技能" : step.desc}
+            </div>
           </div>
           {headerRight}
         </div>
 
-        <div className="content">
+        <div className={view === "chat" ? "contentChat" : "content"}>
           {busy ? <div className="okBox">正在处理：{busy}</div> : null}
           {notice ? <div className="okBox">{notice}</div> : null}
           {error ? <div className="errorBox">{error}</div> : null}

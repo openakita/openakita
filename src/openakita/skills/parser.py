@@ -52,6 +52,11 @@ class SkillMetadata:
     tool_name: str | None = None  # 原工具名称（用于兼容）
     category: str | None = None  # 工具分类
 
+    # 配置 schema（供 Setup Center 自动生成配置表单）
+    # 每个元素: {"key": str, "label": str, "type": "text"|"secret"|"number"|"select"|"bool",
+    #            "required": bool, "help": str, "default": Any, "options": list, "min": num, "max": num}
+    config: list[dict] = field(default_factory=list)
+
     def __post_init__(self):
         """验证字段"""
         self._validate_name()
@@ -229,6 +234,24 @@ class SkillParser:
         if system and not tool_name:
             tool_name = name.replace("-", "_")
 
+        # 配置 schema
+        config_raw = data.get("config", [])
+        config: list[dict] = []
+        if isinstance(config_raw, list):
+            for item in config_raw:
+                if isinstance(item, dict) and "key" in item:
+                    config.append({
+                        "key": str(item["key"]),
+                        "label": str(item.get("label", item["key"])),
+                        "type": str(item.get("type", "text")),
+                        "required": bool(item.get("required", False)),
+                        "help": str(item.get("help", "")),
+                        "default": item.get("default"),
+                        "options": item.get("options"),
+                        "min": item.get("min"),
+                        "max": item.get("max"),
+                    })
+
         return SkillMetadata(
             name=name,
             description=description.strip(),
@@ -241,6 +264,7 @@ class SkillParser:
             handler=handler,
             tool_name=tool_name,
             category=category,
+            config=config,
         )
 
     def parse_directory(self, skill_dir: Path) -> ParsedSkill:

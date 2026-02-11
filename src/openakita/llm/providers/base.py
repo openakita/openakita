@@ -152,18 +152,27 @@ class LLMProvider(ABC):
         self._is_extended_cooldown = False
 
     def record_success(self):
-        """记录一次成功请求，重置连续失败计数
+        """记录一次成功请求，重置连续失败计数并恢复健康状态
 
-        与 mark_healthy() 不同，这个方法仅重置连续失败计数，
-        不修改其他状态。用于 _try_endpoints 中成功响应后调用。
+        在 _try_endpoints 中成功响应后调用。
+        如果端点之前处于冷静期（包括扩展冷静期），成功请求证明端点已恢复，
+        应完全清除冷静期状态，而不是让它继续被视为不健康。
         """
-        if self._consecutive_cooldowns > 0:
+        was_unhealthy = not self._healthy or self._cooldown_until > 0
+        if was_unhealthy or self._consecutive_cooldowns > 0:
             logger.debug(
                 f"[LLM] endpoint={self.name} success, "
                 f"reset consecutive cooldowns ({self._consecutive_cooldowns} → 0)"
+                + (", clearing cooldown (endpoint proved functional)" if was_unhealthy else "")
             )
         self._consecutive_cooldowns = 0
         self._is_extended_cooldown = False
+        # 成功请求证明端点可用，清除冷静期（包括扩展冷静期）
+        if was_unhealthy:
+            self._healthy = True
+            self._cooldown_until = 0
+            self._last_error = None
+            self._error_category = ""
 
     def reset_cooldown(self):
         """重置冷静期（不改变健康标记，仅允许立即重新尝试）

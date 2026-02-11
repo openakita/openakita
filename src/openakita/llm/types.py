@@ -357,7 +357,7 @@ class EndpointConfig:
         # 仅在 capabilities 仍为默认值 ["text"] 时才做模型名推断兜底
         # （用户显式配置过 capabilities 的情况下不覆盖其意图）
         if caps == {"text"} and model:
-            from .capabilities import infer_capabilities, get_provider_slug_from_base_url
+            from .capabilities import get_provider_slug_from_base_url, infer_capabilities
             provider_slug = get_provider_slug_from_base_url(self.base_url) if self.base_url else None
             inferred = infer_capabilities(model, provider_slug=provider_slug)
             if inferred.get(cap, False):

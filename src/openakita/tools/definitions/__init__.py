@@ -44,14 +44,14 @@ from .filesystem import FILESYSTEM_TOOLS
 from .im_channel import IM_CHANNEL_TOOLS
 from .mcp import MCP_TOOLS
 from .memory import MEMORY_TOOLS
+from .persona import PERSONA_TOOLS
 from .plan import PLAN_TOOLS
 from .profile import PROFILE_TOOLS
 from .scheduled import SCHEDULED_TOOLS
 from .skills import SKILLS_TOOLS
+from .sticker import STICKER_TOOLS
 from .system import SYSTEM_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
-from .persona import PERSONA_TOOLS
-from .sticker import STICKER_TOOLS
 
 # 合并所有工具定义
 BASE_TOOLS = (

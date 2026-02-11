@@ -50,8 +50,8 @@ class ProactiveRecord:
 
     msg_type: str  # greeting/task_followup/memory_recall/idle_chat/goodnight
     timestamp: datetime = field(default_factory=datetime.now)
-    reaction: Optional[str] = None  # positive/negative/ignored
-    response_delay_minutes: Optional[float] = None
+    reaction: str | None = None  # positive/negative/ignored
+    response_delay_minutes: float | None = None
 
 
 class ProactiveFeedbackTracker:
@@ -93,7 +93,7 @@ class ProactiveFeedbackTracker:
         }
         self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def record_send(self, msg_type: str, timestamp: Optional[datetime] = None) -> None:
+    def record_send(self, msg_type: str, timestamp: datetime | None = None) -> None:
         """记录一次主动消息发送"""
         self.records.append(
             ProactiveRecord(msg_type=msg_type, timestamp=timestamp or datetime.now())
@@ -124,7 +124,7 @@ class ProactiveFeedbackTracker:
         today = datetime.now().date()
         return sum(1 for r in self.records if r.timestamp.date() == today)
 
-    def get_last_send_time(self) -> Optional[datetime]:
+    def get_last_send_time(self) -> datetime | None:
         """最后一次发送时间"""
         if self.records:
             return self.records[-1].timestamp
@@ -201,9 +201,9 @@ class ProactiveEngine:
         self.persona_manager = persona_manager
         self.memory_manager = memory_manager
         self.feedback = ProactiveFeedbackTracker(feedback_file)
-        self._last_user_interaction: Optional[datetime] = None
+        self._last_user_interaction: datetime | None = None
 
-    def update_user_interaction(self, timestamp: Optional[datetime] = None) -> None:
+    def update_user_interaction(self, timestamp: datetime | None = None) -> None:
         """记录用户最近一次互动时间"""
         self._last_user_interaction = timestamp or datetime.now()
 
@@ -212,7 +212,7 @@ class ProactiveEngine:
         self.config.enabled = enabled
         logger.info(f"Proactive mode {'enabled' if enabled else 'disabled'}")
 
-    async def heartbeat(self) -> Optional[dict[str, Any]]:
+    async def heartbeat(self) -> dict[str, Any] | None:
         """
         心跳检查 - 由调度器每 30 分钟调用一次
 
@@ -261,7 +261,7 @@ class ProactiveEngine:
             self.feedback.record_send(msg_type)
         return result
 
-    def _decide_message_type(self, now: datetime, config: ProactiveConfig) -> Optional[str]:
+    def _decide_message_type(self, now: datetime, config: ProactiveConfig) -> str | None:
         """根据当前状态决定要发送的消息类型"""
         hour = now.hour
 
@@ -305,7 +305,7 @@ class ProactiveEngine:
 
         return None
 
-    async def _generate_message(self, msg_type: str) -> Optional[dict[str, Any]]:
+    async def _generate_message(self, msg_type: str) -> dict[str, Any] | None:
         """根据消息类型生成内容（这里提供模板，实际可由 LLM 生成）"""
         persona_name = "default"
         sticker_mood = None
@@ -399,7 +399,7 @@ class ProactiveEngine:
 
         return persona_templates.get(persona_name, base_templates)
 
-    async def _generate_task_followup(self) -> Optional[str]:
+    async def _generate_task_followup(self) -> str | None:
         """生成任务跟进消息"""
         if not self.memory_manager:
             return None
@@ -419,7 +419,7 @@ class ProactiveEngine:
 
         return None
 
-    async def _generate_memory_recall(self) -> Optional[str]:
+    async def _generate_memory_recall(self) -> str | None:
         """生成记忆回顾消息"""
         if not self.memory_manager:
             return None

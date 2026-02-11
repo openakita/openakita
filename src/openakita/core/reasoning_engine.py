@@ -829,6 +829,232 @@ class ReasoningEngine:
         tracer.end_trace(metadata={"result": "max_iterations", "iterations": max_iterations})
         return "已达到最大工具调用次数，请重新描述您的需求。"
 
+    # ==================== 流式输出 (SSE) ====================
+
+    async def reason_stream(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        system_prompt: str = "",
+        plan_mode: bool = False,
+        endpoint_override: str | None = None,
+        conversation_id: str | None = None,
+    ):
+        """
+        流式推理循环，为 HTTP API (SSE) 设计。
+
+        调用方（如 Agent）需传入 tools 和 system_prompt，
+        与 run() 保持一致的上下文。
+
+        Yields dict events:
+        - {"type": "thinking_start"}
+        - {"type": "thinking_delta", "content": "..."}
+        - {"type": "thinking_end"}
+        - {"type": "text_delta", "content": "..."}
+        - {"type": "tool_call_start", "tool": "...", "args": {...}}
+        - {"type": "tool_call_end", "tool": "...", "result": "..."}
+        - {"type": "plan_created", "plan": {...}}
+        - {"type": "plan_step_updated", "stepIdx": N, "status": "..."}
+        - {"type": "error", "message": "..."}
+        - {"type": "done"}
+        """
+        tools = tools or []
+
+        try:
+            # Build system prompt with optional plan context
+            def _build_stream_system_prompt() -> str:
+                """动态追加活跃 Plan（与 run() 中逻辑一致）"""
+                try:
+                    from ..tools.handlers.plan import get_active_plan_prompt
+                    prompt = system_prompt
+                    if conversation_id:
+                        plan_section = get_active_plan_prompt(conversation_id)
+                        if plan_section:
+                            prompt += f"\n\n{plan_section}\n"
+                    return prompt
+                except Exception:
+                    return system_prompt
+
+            effective_prompt = _build_stream_system_prompt()
+            if plan_mode:
+                effective_prompt += "\n\n[PLAN MODE] 用户请求 Plan 模式。请先制定详细计划（使用 create_plan 工具），然后按计划执行。"
+
+            # 如果指定了端点，通过 LLMClient.switch_model 临时切换
+            # 关键：必须使用 per-conversation override，避免污染全局状态
+            # 否则 IM 通道、调度器等其他 LLM 调用会在 3 分钟内被错误地路由到该端点
+            _endpoint_switched = False
+            if endpoint_override:
+                # 确保有 conversation_id —— 无 id 时生成临时 id，避免设置全局 override
+                if not conversation_id:
+                    conversation_id = f"_stream_{uuid.uuid4().hex[:12]}"
+                llm_client = getattr(self._brain, "_llm_client", None)
+                if llm_client and hasattr(llm_client, "switch_model"):
+                    ok, msg = llm_client.switch_model(
+                        endpoint_name=endpoint_override,
+                        hours=0.05,  # ~3 分钟有效
+                        reason=f"chat endpoint override: {endpoint_override}",
+                        conversation_id=conversation_id,
+                    )
+                    if not ok:
+                        yield {"type": "error", "message": f"端点切换失败: {msg}"}
+                        yield {"type": "done"}
+                        return
+                    _endpoint_switched = True
+
+            current_model = self._brain.model
+
+            # ReAct multi-turn loop
+            max_iterations = min(settings.max_iterations, 10)
+            working_messages = list(messages)
+
+            for _iteration in range(max_iterations):
+                # Reason phase
+                yield {"type": "thinking_start"}
+
+                try:
+                    decision = await self._reason(
+                        working_messages,
+                        system_prompt=effective_prompt,
+                        tools=tools,
+                        current_model=current_model,
+                        conversation_id=conversation_id,
+                    )
+                except Exception as e:
+                    yield {"type": "thinking_end"}
+                    yield {"type": "error", "message": f"推理失败: {str(e)[:300]}"}
+                    yield {"type": "done"}
+                    return
+
+                # Emit thinking content
+                if decision.thinking_content:
+                    yield {"type": "thinking_delta", "content": decision.thinking_content}
+                yield {"type": "thinking_end"}
+
+                # Final answer: stream text
+                if decision.type == DecisionType.FINAL_ANSWER:
+                    text = decision.text_content or ""
+                    # Stream in chunks for better UX
+                    chunk_size = 20
+                    for i in range(0, len(text), chunk_size):
+                        yield {"type": "text_delta", "content": text[i:i + chunk_size]}
+                        await asyncio.sleep(0.01)  # Small delay for streaming effect
+                    yield {"type": "done"}
+                    return
+
+                # Tool calls: emit each call
+                if decision.type == DecisionType.TOOL_CALLS and decision.tool_calls:
+                    # assistant_content 只追加一次（完整的 assistant turn 包含所有 tool_use）
+                    working_messages.append({
+                        "role": "assistant",
+                        "content": decision.assistant_content or [{"type": "text", "text": ""}],
+                    })
+
+                    # ---- ask_user 拦截（Web Chat 模式） ----
+                    ask_user_calls = [tc for tc in decision.tool_calls if tc.get("name") == "ask_user"]
+                    other_tool_calls = [tc for tc in decision.tool_calls if tc.get("name") != "ask_user"]
+
+                    if ask_user_calls:
+                        # 先执行非 ask_user 的工具
+                        tool_results_for_msg: list[dict] = []
+                        for tc in other_tool_calls:
+                            t_name = tc.get("name", "unknown")
+                            t_args = tc.get("input", tc.get("arguments", {}))
+                            t_id = tc.get("id", str(uuid.uuid4()))
+                            yield {"type": "tool_call_start", "tool": t_name, "args": t_args, "id": t_id}
+                            try:
+                                r = await self._tool_executor.execute_tool(
+                                    tool_name=t_name,
+                                    tool_input=t_args if isinstance(t_args, dict) else {},
+                                    session_id=conversation_id,
+                                )
+                                r = str(r) if r else ""
+                            except Exception as e:
+                                r = f"Tool error: {e}"
+                            yield {"type": "tool_call_end", "tool": t_name, "result": r[:2000], "id": t_id}
+                            tool_results_for_msg.append({
+                                "type": "tool_result", "tool_use_id": t_id, "content": r[:4000],
+                            })
+
+                        # 提取 ask_user 问题并发送事件
+                        ask_q = ask_user_calls[0].get("input", {}).get("question", "")
+                        text_part = decision.text_content or ""
+                        question_text = f"{text_part}\n\n{ask_q}".strip() if text_part else ask_q
+                        yield {
+                            "type": "ask_user",
+                            "question": question_text,
+                            "conversation_id": conversation_id,
+                        }
+                        # 中断流：前端收到 ask_user 后，用户回复将作为新一轮 chat 请求发送
+                        yield {"type": "done"}
+                        return
+
+                    tool_results_for_msg: list[dict] = []
+                    for tc in decision.tool_calls:
+                        tool_name = tc.get("name", "unknown")
+                        tool_args = tc.get("input", tc.get("arguments", {}))
+                        tool_id = tc.get("id", str(uuid.uuid4()))
+
+                        yield {"type": "tool_call_start", "tool": tool_name, "args": tool_args, "id": tool_id}
+
+                        # Execute tool via ToolExecutor.execute_tool
+                        # 传递 session_id 以确保 Plan 模式检查正常工作
+                        try:
+                            result_text = await self._tool_executor.execute_tool(
+                                tool_name=tool_name,
+                                tool_input=tool_args if isinstance(tool_args, dict) else {},
+                                session_id=conversation_id,
+                            )
+                            result_text = str(result_text) if result_text else ""
+                        except Exception as e:
+                            result_text = f"Tool error: {e}"
+
+                        yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:2000], "id": tool_id}
+
+                        # Check for plan-related tools
+                        if tool_name == "create_plan" and isinstance(tool_args, dict):
+                            yield {"type": "plan_created", "plan": {
+                                "id": str(uuid.uuid4()),
+                                "taskSummary": tool_args.get("task_summary", ""),
+                                "steps": [{"description": s, "status": "pending"} for s in tool_args.get("steps", [])],
+                                "status": "in_progress",
+                            }}
+                        elif tool_name == "update_plan_step" and isinstance(tool_args, dict):
+                            yield {"type": "plan_step_updated", "stepIdx": tool_args.get("step_index", 0), "status": tool_args.get("status", "completed")}
+
+                        # Collect tool result for message
+                        tool_results_for_msg.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": result_text[:4000],
+                        })
+
+                    # Append all tool results as a single user turn
+                    working_messages.append({
+                        "role": "user",
+                        "content": tool_results_for_msg,
+                    })
+
+                    continue  # Next iteration
+
+            yield {"type": "text_delta", "content": "\n\n（已达到最大迭代次数）"}
+            yield {"type": "done"}
+
+        except Exception as e:
+            logger.error(f"reason_stream error: {e}", exc_info=True)
+            yield {"type": "error", "message": str(e)[:500]}
+            yield {"type": "done"}
+
+        finally:
+            # 清理 per-conversation endpoint override，避免残留
+            if _endpoint_switched and conversation_id:
+                llm_client = getattr(self._brain, "_llm_client", None)
+                if llm_client and hasattr(llm_client, "restore_default"):
+                    try:
+                        llm_client.restore_default(conversation_id=conversation_id)
+                    except Exception:
+                        pass  # 清理失败不影响主流程
+
     # ==================== 推理阶段 ====================
 
     async def _reason(
