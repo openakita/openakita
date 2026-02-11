@@ -17,6 +17,7 @@ Welcome to the OpenAkita documentation.
 | [Skills System](skills.md) | Creating and using skills |
 | [IM Channels](im-channels.md) | Telegram, DingTalk, Feishu setup |
 | [MCP Integration](mcp-integration.md) | Connect external services |
+| [Persona & Liveness](persona-and-liveness.md) | Persona system and proactive engine |
 | [Testing](testing.md) | Test framework and coverage |
 
 ## Additional Resources
