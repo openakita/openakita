@@ -7,6 +7,7 @@ POST /api/health/check 使用 dry_run=True 模式执行只读检测，
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -77,6 +78,21 @@ async def _check_endpoint_readonly(name: str, provider) -> HealthResult:
         )
 
 
+async def _check_with_timeout(name: str, provider, timeout: float = 30) -> HealthResult:
+    """Wrap _check_endpoint_readonly with a per-endpoint timeout."""
+    try:
+        return await asyncio.wait_for(
+            _check_endpoint_readonly(name, provider), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return HealthResult(
+            name=name,
+            status="unhealthy",
+            error=f"Health check timed out ({timeout}s)",
+            last_checked_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+
+
 @router.post("/api/health/check")
 async def health_check(request: Request, body: HealthCheckRequest):
     """
@@ -94,19 +110,21 @@ async def health_check(request: Request, body: HealthCheckRequest):
     if llm_client is None:
         return {"error": "LLM client not available"}
 
-    results = []
+    results: list[HealthResult] = []
 
     if body.endpoint_name:
-        # Check specific endpoint
+        # Check specific endpoint (with timeout)
         provider = llm_client._providers.get(body.endpoint_name)
         if not provider:
             return {"error": f"Endpoint not found: {body.endpoint_name}"}
-        result = await _check_endpoint_readonly(body.endpoint_name, provider)
+        result = await _check_with_timeout(body.endpoint_name, provider)
         results.append(result)
     else:
-        # Check all endpoints
-        for name, provider in llm_client._providers.items():
-            result = await _check_endpoint_readonly(name, provider)
-            results.append(result)
+        # Check all endpoints concurrently with per-endpoint timeout
+        tasks = [
+            _check_with_timeout(name, p)
+            for name, p in llm_client._providers.items()
+        ]
+        results = list(await asyncio.gather(*tasks))
 
     return {"results": [r.model_dump() for r in results]}

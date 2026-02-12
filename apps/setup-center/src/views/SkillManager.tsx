@@ -256,6 +256,7 @@ export function SkillManager({
   onSaveEnvKeys,
   apiBaseUrl = "http://127.0.0.1:18900",
   serviceRunning = false,
+  dataMode = "local",
 }: {
   venvDir: string;
   currentWorkspaceId: string | null;
@@ -264,6 +265,7 @@ export function SkillManager({
   onSaveEnvKeys: (keys: string[]) => Promise<void>;
   apiBaseUrl?: string;
   serviceRunning?: boolean;
+  dataMode?: "local" | "remote";
 }) {
   const [tab, setTab] = useState<"installed" | "marketplace">("installed");
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -297,8 +299,8 @@ export function SkillManager({
         }
       }
 
-      // Fallback: Tauri 本地命令
-      if (!data && venvDir && currentWorkspaceId) {
+      // Fallback: Tauri 本地命令（仅本地模式）
+      if (!data && dataMode !== "remote" && venvDir && currentWorkspaceId) {
         try {
           const raw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
           data = JSON.parse(raw);
@@ -329,7 +331,7 @@ export function SkillManager({
     } finally {
       setLoading(false);
     }
-  }, [venvDir, currentWorkspaceId, serviceRunning, apiBaseUrl]);
+  }, [venvDir, currentWorkspaceId, serviceRunning, apiBaseUrl, dataMode]);
 
   useEffect(() => {
     loadSkills();
@@ -416,27 +418,45 @@ export function SkillManager({
       const url = `https://skills.sh/api/search?q=${encodeURIComponent(q)}`;
       let data: Record<string, unknown> | null = null;
 
-      // 方式1: 通过 Tauri invoke 代理 HTTP 请求（绕过 CORS，最可靠）
-      try {
-        const raw = await invoke<string>("http_get_json", { url });
-        data = JSON.parse(raw);
-      } catch { /* Tauri 不可用或命令不存在，继续 fallback */ }
-
-      // 方式2: 通过后端 API 代理
-      if (!data && serviceRunning && apiBaseUrl) {
+      if (dataMode === "remote") {
+        // 远程模式：只走后端 API 代理（Tauri 不可用）
+        if (serviceRunning && apiBaseUrl) {
+          try {
+            const res = await fetch(`${apiBaseUrl}/api/skills/marketplace?q=${encodeURIComponent(q)}`, {
+              signal: AbortSignal.timeout(10000),
+            });
+            if (res.ok) data = await res.json();
+          } catch { /* fallback to direct */ }
+        }
+        // 备选：直接请求（可能被 CORS 阻止）
+        if (!data) {
+          const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+          if (!res.ok) throw new Error(`skills.sh returned ${res.status}`);
+          data = await res.json();
+        }
+      } else {
+        // 本地模式：方式1 Tauri invoke 代理（绕过 CORS）
         try {
-          const res = await fetch(`${apiBaseUrl}/api/skills/marketplace?q=${encodeURIComponent(q)}`, {
-            signal: AbortSignal.timeout(10000),
-          });
-          if (res.ok) data = await res.json();
-        } catch { /* fallback */ }
-      }
+          const raw = await invoke<string>("http_get_json", { url });
+          data = JSON.parse(raw);
+        } catch { /* Tauri 不可用或命令不存在，继续 fallback */ }
 
-      // 方式3: 直接请求（可能被 CORS 阻止，浏览器调试时可用）
-      if (!data) {
-        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-        if (!res.ok) throw new Error(`skills.sh returned ${res.status}`);
-        data = await res.json();
+        // 方式2: 通过后端 API 代理
+        if (!data && serviceRunning && apiBaseUrl) {
+          try {
+            const res = await fetch(`${apiBaseUrl}/api/skills/marketplace?q=${encodeURIComponent(q)}`, {
+              signal: AbortSignal.timeout(10000),
+            });
+            if (res.ok) data = await res.json();
+          } catch { /* fallback */ }
+        }
+
+        // 方式3: 直接请求
+        if (!data) {
+          const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+          if (!res.ok) throw new Error(`skills.sh returned ${res.status}`);
+          data = await res.json();
+        }
       }
 
       // 如果已有更新的请求在飞行中，丢弃此次结果
@@ -451,7 +471,7 @@ export function SkillManager({
         setMarketLoading(false);
       }
     }
-  }, [skills, t, serviceRunning, apiBaseUrl, parseMarketplaceResponse]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [skills, t, serviceRunning, apiBaseUrl, dataMode, parseMarketplaceResponse]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // 统一的市场搜索 effect：切换 tab 或搜索词变化时触发
   useEffect(() => {
@@ -466,17 +486,40 @@ export function SkillManager({
 
   // ── 安装技能 ──
   const handleInstall = useCallback(async (skill: MarketplaceSkill) => {
-    if (!venvDir || !currentWorkspaceId) {
+    if (dataMode !== "remote" && (!venvDir || !currentWorkspaceId)) {
       setError("环境未就绪：请先完成 Python 环境和工作区配置");
       return;
     }
     setInstalling(skill.name);
     try {
-      await invoke<string>("openakita_install_skill", {
-        venvDir,
-        workspaceId: currentWorkspaceId,
-        url: skill.url,
-      });
+      // 远程模式或服务运行中：优先走 HTTP API
+      if (dataMode === "remote" || serviceRunning) {
+        try {
+          const res = await fetch(`${apiBaseUrl}/api/skills/install`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: skill.url }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+        } catch (e) {
+          if (dataMode === "remote") throw e;
+          // 本地模式 HTTP 失败，回退到 Tauri
+          await invoke<string>("openakita_install_skill", {
+            venvDir,
+            workspaceId: currentWorkspaceId,
+            url: skill.url,
+          });
+        }
+      } else {
+        // 本地模式：Tauri invoke
+        await invoke<string>("openakita_install_skill", {
+          venvDir,
+          workspaceId: currentWorkspaceId,
+          url: skill.url,
+        });
+      }
       setMarketplace((prev) => prev.map((s) =>
         s.name === skill.name ? { ...s, installed: true } : s
       ));
@@ -489,7 +532,7 @@ export function SkillManager({
     } finally {
       setInstalling(null);
     }
-  }, [loadSkills, venvDir, currentWorkspaceId]);
+  }, [loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl]);
 
   // Debounced search: trigger API call when user stops typing
   useEffect(() => {

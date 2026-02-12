@@ -102,6 +102,13 @@ class SkillsWriteRequest(BaseModel):
     content: dict  # Full JSON content of skills.json
 
 
+class ListModelsRequest(BaseModel):
+    api_type: str  # "openai" | "anthropic"
+    base_url: str
+    provider_slug: str | None = None
+    api_key: str
+
+
 # ─── Routes ────────────────────────────────────────────────────────────
 
 
@@ -265,3 +272,40 @@ async def write_skills_config(body: SkillsWriteRequest):
     )
     logger.info("[Config API] Updated skills.json")
     return {"status": "ok"}
+
+
+@router.post("/api/config/list-models")
+async def list_models_api(body: ListModelsRequest):
+    """拉取 LLM 端点的模型列表（远程模式替代 Tauri openakita_list_models 命令）。
+
+    直接复用 bridge.list_models 的逻辑，在后端进程内异步调用，无需 subprocess。
+    """
+    try:
+        from openakita.setup_center.bridge import (
+            _list_models_anthropic,
+            _list_models_openai,
+        )
+
+        api_type = (body.api_type or "").strip().lower()
+        base_url = (body.base_url or "").strip()
+        api_key = (body.api_key or "").strip()
+        provider_slug = (body.provider_slug or "").strip() or None
+
+        if not api_type:
+            return {"error": "api_type 不能为空", "models": []}
+        if not base_url:
+            return {"error": "base_url 不能为空", "models": []}
+        if not api_key:
+            return {"error": "缺少 api_key", "models": []}
+
+        if api_type == "openai":
+            models = await _list_models_openai(api_key, base_url, provider_slug)
+        elif api_type == "anthropic":
+            models = await _list_models_anthropic(api_key, base_url, provider_slug)
+        else:
+            return {"error": f"不支持的 api_type: {api_type}", "models": []}
+
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"[Config API] list-models failed: {e}")
+        return {"error": str(e), "models": []}

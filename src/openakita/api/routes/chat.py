@@ -92,6 +92,7 @@ async def _stream_chat(
     _reply_preview = ""
     _done_sent = False
     _client_disconnected = False
+    _ask_user_question = ""  # ask_user 的问题文本，用于保存到 session
 
     async def _check_disconnected() -> bool:
         """Check if the client has disconnected (abort / close tab)."""
@@ -243,6 +244,9 @@ async def _stream_chat(
                     if await _check_disconnected():
                         break
                     yield _sse(event["type"], {k: v for k, v in event.items() if k != "type"})
+                    # 捕获 ask_user 事件的问题文本，用于保存到 session 历史
+                    if event.get("type") == "ask_user":
+                        _ask_user_question = event.get("question", "")
                     # Inject artifact events for deliver_artifacts results
                     if event.get("type") == "tool_call_end" and event.get("tool") == "deliver_artifacts":
                         try:
@@ -323,9 +327,15 @@ async def _stream_chat(
             actual_agent.memory_manager.record_turn("assistant", _reply_preview)
 
         # --- Save assistant response to session ---
-        if session and _reply_preview:
+        # 保存助手回复（文本回复或 ask_user 问题）到 session 历史
+        # 这样下一轮用户回答时，LLM 能看到之前问了什么
+        assistant_text_to_save = _reply_preview
+        if not assistant_text_to_save and _ask_user_question:
+            # ask_user 中断时没有文本输出，把问题内容保存为助手消息
+            assistant_text_to_save = f"[向用户提问] {_ask_user_question}"
+        if session and assistant_text_to_save:
             try:
-                session.add_message("assistant", _reply_preview)
+                session.add_message("assistant", assistant_text_to_save)
                 if session_manager:
                     session_manager.mark_dirty()
             except Exception:

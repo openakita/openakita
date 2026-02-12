@@ -220,6 +220,7 @@
     "imCallbackPort": "Callback Port",
     "imDoc": "Docs",
     "imSaved": "IM config saved",
+    "llmSaved": "LLM config saved",
     "applyRestart": "Apply & Restart",
     "applyRestartHint": "Save config and restart service to apply",
     "restarting": "Restarting service...",

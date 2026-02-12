@@ -976,15 +976,51 @@ class ReasoningEngine:
                                 "type": "tool_result", "tool_use_id": t_id, "content": r[:4000],
                             })
 
-                        # 提取 ask_user 问题并发送事件
-                        ask_q = ask_user_calls[0].get("input", {}).get("question", "")
+                        # 提取 ask_user 问题和选项并发送事件
+                        ask_input = ask_user_calls[0].get("input", {})
+                        ask_q = ask_input.get("question", "")
+                        ask_options = ask_input.get("options")
+                        ask_allow_multiple = ask_input.get("allow_multiple", False)
+                        ask_questions = ask_input.get("questions")
                         text_part = decision.text_content or ""
                         question_text = f"{text_part}\n\n{ask_q}".strip() if text_part else ask_q
-                        yield {
+                        event: dict = {
                             "type": "ask_user",
                             "question": question_text,
                             "conversation_id": conversation_id,
                         }
+                        # 单问题选项（向后兼容）
+                        if ask_options and isinstance(ask_options, list):
+                            event["options"] = [
+                                {"id": str(o.get("id", "")), "label": str(o.get("label", ""))}
+                                for o in ask_options
+                                if isinstance(o, dict) and o.get("id") and o.get("label")
+                            ]
+                        if ask_allow_multiple:
+                            event["allow_multiple"] = True
+                        # 多问题支持
+                        if ask_questions and isinstance(ask_questions, list):
+                            parsed_questions = []
+                            for q in ask_questions:
+                                if not isinstance(q, dict) or not q.get("id") or not q.get("prompt"):
+                                    continue
+                                pq: dict = {
+                                    "id": str(q["id"]),
+                                    "prompt": str(q["prompt"]),
+                                }
+                                q_options = q.get("options")
+                                if q_options and isinstance(q_options, list):
+                                    pq["options"] = [
+                                        {"id": str(o.get("id", "")), "label": str(o.get("label", ""))}
+                                        for o in q_options
+                                        if isinstance(o, dict) and o.get("id") and o.get("label")
+                                    ]
+                                if q.get("allow_multiple"):
+                                    pq["allow_multiple"] = True
+                                parsed_questions.append(pq)
+                            if parsed_questions:
+                                event["questions"] = parsed_questions
+                        yield event
                         # 中断流：前端收到 ask_user 后，用户回复将作为新一轮 chat 请求发送
                         yield {"type": "done"}
                         return

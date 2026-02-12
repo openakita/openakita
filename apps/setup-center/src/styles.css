@@ -566,7 +566,7 @@ button {
   border: 1px solid rgba(17, 24, 39, 0.12);
 }
 
-button:not(.btnPrimary):not(.btnDanger):hover {
+button:not(.btnPrimary):not(.btnDanger):not(.btnApplyRestart):hover {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(17, 24, 39, 0.16);
 }
@@ -584,6 +584,16 @@ button:disabled {
 
 .btnPrimary:hover {
   background: var(--brand2);
+}
+
+.btnApplyRestart {
+  background: #0e7490;
+  color: #fff;
+  border: 1px solid transparent;
+}
+
+.btnApplyRestart:hover {
+  background: #0c6a82;
 }
 
 .btnDanger {

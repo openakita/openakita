@@ -14,13 +14,28 @@ SYSTEM_TOOLS = [
     {
         "name": "ask_user",
         "category": "System",
-        "description": "Ask the user a question and PAUSE execution until they reply. Use when: (1) critical information is missing, (2) task is ambiguous and needs clarification, (3) user confirmation is required before proceeding. Do NOT put questions in plain text — only this tool triggers a real pause.",
-        "detail": """向用户提问并暂停执行，等待用户回复。
+        "description": "Ask the user one or more questions and PAUSE execution until they reply. Use when: (1) critical information is missing, (2) task is ambiguous and needs clarification, (3) user confirmation is required before proceeding. Do NOT put questions in plain text — only this tool triggers a real pause. When questions have choices, ALWAYS provide options. Supports both single-select and multi-select via allow_multiple. For multiple related questions, use the questions array to ask them all at once.",
+        "detail": """向用户提问并暂停执行，等待用户回复。支持单个问题和多个问题。
 
 **何时使用**：
 - 关键信息缺失（如：路径、账号、具体目标不明确）
 - 任务有歧义，需要用户澄清
 - 需要用户确认后才能继续（如：危险操作、多选方案）
+
+**单个简单问题**：
+- 使用 question + options 即可
+
+**多个问题 / 复杂问题**：
+- 使用 questions 数组，每个问题可以独立配置选项和单选/多选
+- question 字段作为总体说明或标题
+
+**选项（options）**：
+- 当问题有有限个选项时（如二选一、多选一），**必须**提供 options 参数
+- 用户可以直接点选，不需要手动输入
+- 默认是单选（allow_multiple=false），如需多选请设置 allow_multiple=true
+- 例如单选："确认还是取消？" → options: [{id:"confirm",label:"确认"},{id:"cancel",label:"取消"}]
+- 例如多选："需要安装哪些功能？" → options: [...], allow_multiple: true
+- 用户也可以选择"其他"手动输入，无需在 options 中包含"其他"选项
 
 **重要**：
 - 调用此工具后，系统会立即暂停当前任务的执行循环
@@ -32,7 +47,71 @@ SYSTEM_TOOLS = [
             "properties": {
                 "question": {
                     "type": "string",
-                    "description": "要向用户提出的问题或需要确认的内容",
+                    "description": "单个问题文本，或多问题时的总体说明/标题",
+                },
+                "options": {
+                    "type": "array",
+                    "description": "单个问题的选项列表（简单模式）。当使用 questions 数组时，选项放在各问题中。",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "选项唯一标识（会作为用户回复内容）",
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "选项显示文本",
+                            },
+                        },
+                        "required": ["id", "label"],
+                    },
+                },
+                "allow_multiple": {
+                    "type": "boolean",
+                    "description": "单个问题的选项是否允许多选（默认 false = 单选）。使用 questions 数组时在各问题中设置。",
+                    "default": False,
+                },
+                "questions": {
+                    "type": "array",
+                    "description": "多个问题列表。用于一次性问多个相关问题，每个问题可以有自己的选项和单选/多选设置。",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "问题唯一标识（用于匹配用户回复）",
+                            },
+                            "prompt": {
+                                "type": "string",
+                                "description": "问题文本",
+                            },
+                            "options": {
+                                "type": "array",
+                                "description": "此问题的选项列表",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {
+                                            "type": "string",
+                                            "description": "选项唯一标识",
+                                        },
+                                        "label": {
+                                            "type": "string",
+                                            "description": "选项显示文本",
+                                        },
+                                    },
+                                    "required": ["id", "label"],
+                                },
+                            },
+                            "allow_multiple": {
+                                "type": "boolean",
+                                "description": "是否允许多选（默认 false = 单选）",
+                                "default": False,
+                            },
+                        },
+                        "required": ["id", "prompt"],
+                    },
                 },
             },
             "required": ["question"],

@@ -67,6 +67,37 @@ async def update_skill_config(request: Request):
     return {"status": "ok", "skill": skill_name, "config": config}
 
 
+@router.post("/api/skills/install")
+async def install_skill(request: Request):
+    """安装技能（远程模式替代 Tauri openakita_install_skill 命令）。
+
+    POST body: { "url": "github:user/repo/skill" }
+    """
+    import asyncio
+
+    body = await request.json()
+    url = body.get("url", "").strip()
+    if not url:
+        return {"error": "url is required"}
+
+    try:
+        from openakita.config import settings
+
+        workspace_dir = str(settings.project_root)
+    except Exception:
+        workspace_dir = str(__import__("pathlib").Path.cwd())
+
+    try:
+        from openakita.setup_center.bridge import install_skill as _install_skill
+
+        # install_skill 是同步函数（可能执行 git clone），放到线程中避免阻塞事件循环
+        await asyncio.to_thread(_install_skill, workspace_dir, url)
+        return {"status": "ok", "url": url}
+    except Exception as e:
+        logger.error(f"Skill install failed: {e}")
+        return {"error": str(e)}
+
+
 @router.get("/api/skills/marketplace")
 async def search_marketplace(q: str = "agent"):
     """Proxy to skills.sh search API (bypasses CORS for desktop app)."""

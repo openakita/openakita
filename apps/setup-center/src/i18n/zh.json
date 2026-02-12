@@ -220,6 +220,7 @@
     "imCallbackPort": "回调端口",
     "imDoc": "文档",
     "imSaved": "已保存 IM 配置",
+    "llmSaved": "已保存 LLM 配置",
     "applyRestart": "应用并重启",
     "applyRestartHint": "保存配置后重启服务使其生效",
     "restarting": "正在重启服务...",

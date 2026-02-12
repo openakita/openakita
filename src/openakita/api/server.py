@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import chat, chat_models, config, files, health, im, skills, upload
+from .routes import chat, chat_models, config, files, health, im, logs, skills, upload
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ def create_app(agent: Any = None, shutdown_event: asyncio.Event | None = None, s
     app.include_router(files.router)
     app.include_router(health.router)
     app.include_router(im.router)
+    app.include_router(logs.router)
     app.include_router(skills.router)
     app.include_router(upload.router)
 

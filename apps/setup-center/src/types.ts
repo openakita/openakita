@@ -173,9 +173,19 @@ export type ChatPlanStep = {
   result?: string | null;
 };
 
+export type ChatAskQuestion = {
+  id: string;
+  prompt: string;
+  options?: { id: string; label: string }[];
+  allow_multiple?: boolean; // true = multi-select, false = single-select (default)
+};
+
 export type ChatAskUser = {
+  /** Simple single question (backward compat, used when questions is empty) */
   question: string;
   options?: { id: string; label: string }[];
+  /** Structured multi-question support */
+  questions?: ChatAskQuestion[];
   answered?: boolean;
   answer?: string;
 };

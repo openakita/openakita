@@ -1158,14 +1158,12 @@ export function App() {
     setSelectedModelId(""); // clear search / selection
     setBusy("拉取模型列表...");
     try {
-      const raw = await invoke<string>("openakita_list_models", {
-        venvDir,
+      const parsed = await fetchModelListUnified({
         apiType,
         baseUrl,
         providerSlug: selectedProvider?.slug ?? null,
         apiKey: apiKeyValue,
       });
-      const parsed = JSON.parse(raw) as ListedModel[];
       setModels(parsed);
       // 不要默认选中/填入任何模型，避免“自动出现一个搜索结果”造成误导
       setSelectedModelId("");
@@ -1174,6 +1172,46 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /**
+   * 通用模型列表拉取：远程模式走 HTTP API，本地模式走 Tauri invoke。
+   */
+  async function fetchModelListUnified(params: {
+    apiType: string; baseUrl: string; providerSlug: string | null; apiKey: string;
+  }): Promise<ListedModel[]> {
+    const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    // 优先走 HTTP API（远程模式或服务运行中）
+    if (dataMode === "remote" || serviceStatus?.running) {
+      try {
+        const res = await safeFetch(`${effectiveBase}/api/config/list-models`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_type: params.apiType,
+            base_url: params.baseUrl,
+            provider_slug: params.providerSlug || null,
+            api_key: params.apiKey,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        return Array.isArray(data.models) ? data.models : data;
+      } catch (e) {
+        if (dataMode === "remote") throw e;
+        // 本地模式：HTTP 失败，回退到 Tauri
+      }
+    }
+    // 回退：Tauri invoke（本地模式）
+    const raw = await invoke<string>("openakita_list_models", {
+      venvDir,
+      apiType: params.apiType,
+      baseUrl: params.baseUrl,
+      providerSlug: params.providerSlug,
+      apiKey: params.apiKey,
+    });
+    return JSON.parse(raw) as ListedModel[];
   }
 
   // When selected model changes, default capabilities from fetched model unless user manually edited.
@@ -1466,14 +1504,12 @@ export function App() {
     setCompilerModels([]);
     setBusy("拉取编译端点模型列表...");
     try {
-      const raw = await invoke<string>("openakita_list_models", {
-        venvDir,
+      const parsed = await fetchModelListUnified({
         apiType: compilerApiType,
         baseUrl: compilerBaseUrl,
         providerSlug: compilerProviderSlug || null,
         apiKey: compilerApiKeyValue,
       });
-      const parsed = JSON.parse(raw) as ListedModel[];
       setCompilerModels(parsed);
       setCompilerModel("");
       setNotice(`编译端点拉取到模型：${parsed.length} 个`);
@@ -1700,14 +1736,12 @@ export function App() {
     setError(null);
     setBusy("拉取模型列表...");
     try {
-      const raw = await invoke<string>("openakita_list_models", {
-        venvDir,
+      const parsed = await fetchModelListUnified({
         apiType: editDraft.apiType,
         baseUrl: editDraft.baseUrl,
         providerSlug: editDraft.providerSlug || null,
         apiKey: key,
       });
-      const parsed = JSON.parse(raw) as ListedModel[];
       setEditModels(parsed);
       setNotice(`拉取到模型：${parsed.length} 个`);
     } catch (e: any) {
@@ -2108,6 +2142,27 @@ export function App() {
     }
   }
 
+  /** 返回当前步骤对应的 footer 保存按钮配置，无需按钮时返回 null */
+  function getFooterSaveConfig(): { keys: string[]; savedMsg: string } | null {
+    switch (stepId) {
+      case "llm": {
+        const keysLLM = [
+          ...savedEndpoints.map((e) => e.api_key_env),
+          ...savedCompilerEndpoints.map((e) => e.api_key_env),
+        ].filter(Boolean);
+        return { keys: keysLLM, savedMsg: t("config.llmSaved") };
+      }
+      case "im":
+        return { keys: getAutoSaveKeysForStep("im"), savedMsg: t("config.imSaved") };
+      case "tools":
+        return { keys: getAutoSaveKeysForStep("tools"), savedMsg: t("config.toolsSaved") };
+      case "agent":
+        return { keys: getAutoSaveKeysForStep("agent"), savedMsg: t("config.agentSaved") };
+      default:
+        return null;
+    }
+  }
+
   function goPrev() {
     setNotice(null);
     setError(null);
@@ -2308,8 +2363,8 @@ export function App() {
             );
           }
         } catch {
-          // Fall back to Tauri for skills
-          if (currentWorkspaceId) {
+          // Fall back to Tauri for skills (local mode only)
+          if (effectiveDataMode !== "remote" && currentWorkspaceId) {
             try {
               const skillsRaw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
               const skillsParsed = JSON.parse(skillsRaw) as { count: number; skills: any[] };
@@ -2763,10 +2818,30 @@ export function App() {
 
   async function refreshServiceLog(workspaceId: string) {
     try {
-      const chunk = await invoke<{ path: string; content: string; truncated: boolean }>("openakita_service_log", {
-        workspaceId,
-        tailBytes: 60000,
-      });
+      let chunk: { path: string; content: string; truncated: boolean };
+      if (dataMode === "remote") {
+        // 远程模式：通过 HTTP API 获取远程服务日志
+        const res = await safeFetch(`${apiBaseUrl}/api/logs/service?tail_bytes=60000`);
+        chunk = await res.json();
+      } else if (serviceStatus?.running) {
+        // 本地模式且服务运行中：优先通过 HTTP API 获取（日志内容更实时）
+        try {
+          const res = await safeFetch("http://127.0.0.1:18900/api/logs/service?tail_bytes=60000");
+          chunk = await res.json();
+        } catch {
+          // HTTP API 不可达，回退到 Tauri 本地文件读取
+          chunk = await invoke<{ path: string; content: string; truncated: boolean }>("openakita_service_log", {
+            workspaceId,
+            tailBytes: 60000,
+          });
+        }
+      } else {
+        // 本地模式且服务未运行：直接读本地日志文件
+        chunk = await invoke<{ path: string; content: string; truncated: boolean }>("openakita_service_log", {
+          workspaceId,
+          tailBytes: 60000,
+        });
+      }
       setServiceLog(chunk);
       setServiceLogError(null);
     } catch (e) {
@@ -2775,24 +2850,25 @@ export function App() {
     }
   }
 
-  // 状态面板：服务运行时自动刷新日志
+  // 状态面板：服务运行时自动刷新日志（远程模式下用 "__remote__" 作为 workspaceId 占位）
   useEffect(() => {
     if (view !== "status") return;
-    if (!currentWorkspaceId) return;
     if (!serviceStatus?.running) return;
+    const wsId = currentWorkspaceId || (dataMode === "remote" ? "__remote__" : null);
+    if (!wsId) return;
     let cancelled = false;
     void (async () => {
-      if (!cancelled) await refreshServiceLog(currentWorkspaceId);
+      if (!cancelled) await refreshServiceLog(wsId);
     })();
     const t = window.setInterval(() => {
       if (cancelled) return;
-      void refreshServiceLog(currentWorkspaceId);
+      void refreshServiceLog(wsId);
     }, 2000);
     return () => {
       cancelled = true;
       window.clearInterval(t);
     };
-  }, [view, currentWorkspaceId, serviceStatus?.running]);
+  }, [view, currentWorkspaceId, serviceStatus?.running, dataMode]);
 
   // Skills selection default sync (only when user hasn't changed it)
   useEffect(() => {
@@ -2811,30 +2887,46 @@ export function App() {
   useEffect(() => {
     if (view !== "wizard") return;
     if (stepId !== "tools") return;
-    if (!currentWorkspaceId) return;
+    if (!currentWorkspaceId && dataMode !== "remote") return;
     if (!!busy) return;
     if (skillsDetail) return;
-    if (!openakitaInstalled) return;
+    if (!openakitaInstalled && dataMode !== "remote") return;
     void doRefreshSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, stepId, currentWorkspaceId, openakitaInstalled, skillsDetail]);
+  }, [view, stepId, currentWorkspaceId, openakitaInstalled, skillsDetail, dataMode]);
 
   async function doRefreshSkills() {
-    if (!currentWorkspaceId) {
+    if (!currentWorkspaceId && dataMode !== "remote") {
       setError("请先设置当前工作区");
       return;
     }
     setError(null);
     setBusy("读取 skills...");
     try {
-      const skillsRaw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
-      const skillsParsed = JSON.parse(skillsRaw) as { count: number; skills: any[] };
-      const skills = Array.isArray(skillsParsed.skills) ? skillsParsed.skills : [];
-      const systemCount = skills.filter((s) => !!s.system).length;
-      const externalCount = skills.length - systemCount;
-      setSkillSummary({ count: skills.length, systemCount, externalCount });
+      let skillsList: any[] = [];
+      const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+      // 优先走 HTTP API（远程模式或服务运行中）
+      if (dataMode === "remote" || serviceStatus?.running) {
+        try {
+          const res = await safeFetch(`${effectiveBase}/api/skills`, { signal: AbortSignal.timeout(5000) });
+          const data = await res.json();
+          skillsList = Array.isArray(data?.skills) ? data.skills : [];
+        } catch (e) {
+          if (dataMode === "remote") throw e;
+          // 本地模式 HTTP 失败，回退到 Tauri
+        }
+      }
+      // 回退：Tauri invoke（本地模式）
+      if (skillsList.length === 0 && dataMode !== "remote" && currentWorkspaceId) {
+        const skillsRaw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
+        const skillsParsed = JSON.parse(skillsRaw) as { count: number; skills: any[] };
+        skillsList = Array.isArray(skillsParsed.skills) ? skillsParsed.skills : [];
+      }
+      const systemCount = skillsList.filter((s: any) => !!s.system).length;
+      const externalCount = skillsList.length - systemCount;
+      setSkillSummary({ count: skillsList.length, systemCount, externalCount });
       setSkillsDetail(
-        skills.map((s) => ({
+        skillsList.map((s: any) => ({
           name: String(s?.name || ""),
           description: String(s?.description || ""),
           system: !!s?.system,
@@ -3143,7 +3235,7 @@ export function App() {
           <div className="card" style={{ marginTop: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
               <span className="statusCardLabel">{t("status.log")}</span>
-              <button className="btnSmall" onClick={() => { if (effectiveWsId) refreshServiceLog(effectiveWsId); }}>{t("topbar.refresh")}</button>
+              <button className="btnSmall" onClick={() => { const wsId = effectiveWsId || (dataMode === "remote" ? "__remote__" : null); if (wsId) refreshServiceLog(wsId); }}>{t("topbar.refresh")}</button>
             </div>
             <pre className="logPre">{(serviceLog?.content || "").trim() || t("status.noLog")}</pre>
           </div>
@@ -4070,19 +4162,6 @@ export function App() {
             );
           })}
 
-          <div className="btnRow" style={{ marginTop: 14, gap: 8 }}>
-            <button className="btnPrimary"
-              onClick={() => renderIntegrationsSave(keysIM, t("config.imSaved"))}
-              disabled={!currentWorkspaceId || !!busy}>
-              {t("config.imSave")}
-            </button>
-            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
-              onClick={() => applyAndRestart(keysIM)}
-              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
-              title={t("config.applyRestartHint")}>
-              {t("config.applyRestart")}
-            </button>
-          </div>
         </div>
       </>
     );
@@ -4290,20 +4369,6 @@ export function App() {
             </div>
           </details>
 
-          <div className="divider" />
-          <div className="btnRow" style={{ gap: 8 }}>
-            <button className="btnPrimary"
-              onClick={() => renderIntegrationsSave(keysTools, t("config.toolsSaved"))}
-              disabled={!currentWorkspaceId || !!busy}>
-              {t("config.saveEnv")}
-            </button>
-            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
-              onClick={() => applyAndRestart(keysTools)}
-              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
-              title={t("config.applyRestartHint")}>
-              {t("config.applyRestart")}
-            </button>
-          </div>
         </div>
       </>
     );
@@ -4490,20 +4555,6 @@ export function App() {
             </div>
           </details>
 
-          <div className="divider" />
-          <div className="btnRow" style={{ gap: 8 }}>
-            <button className="btnPrimary"
-              onClick={() => renderIntegrationsSave(keysAgent, t("config.agentSaved"))}
-              disabled={!currentWorkspaceId || !!busy}>
-              {t("config.saveEnv")}
-            </button>
-            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
-              onClick={() => applyAndRestart(keysAgent)}
-              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
-              title={t("config.applyRestartHint")}>
-              {t("config.applyRestart")}
-            </button>
-          </div>
         </div>
       </>
     );
@@ -4971,7 +5022,7 @@ export function App() {
             >
               一键写入工作区 .env（全覆盖）
             </button>
-            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
+            <button className="btnApplyRestart"
               onClick={() => applyAndRestart(keysCore)}
               disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
               title={t("config.applyRestartHint")}>
@@ -5147,6 +5198,7 @@ export function App() {
           onSaveEnvKeys={saveEnvKeysExternal}
           apiBaseUrl={apiBaseUrl}
           serviceRunning={!!serviceStatus?.running}
+          dataMode={dataMode}
         />
       );
     }
@@ -5543,30 +5595,50 @@ export function App() {
           </div>
         )}
 
-        {view === "wizard" ? (
-          <div className="footer">
-            <div className="statusLine">{t("config.configuring")}</div>
-            <div className="btnRow">
-              <button onClick={goPrev} disabled={isFirst || !!busy}>{t("config.prev")}</button>
-              {stepId === "finish" ? (
-                <button
-                  className="btnPrimary"
-                  onClick={async () => {
-                    const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
-                    if (!effectiveWsId) { setError(t("common.error")); return; }
-                    setError(null);
-                    setView("status");
-                    await startLocalServiceWithConflictCheck(effectiveWsId);
-                    try { await refreshServiceLog(effectiveWsId); } catch { /* ignore */ }
-                  }}
-                  disabled={!!busy}
-                >{t("config.finish")}</button>
-              ) : (
-                <button className="btnPrimary" onClick={goNext} disabled={isLast || !!busy}>{t("config.next")}</button>
-              )}
+        {view === "wizard" ? (() => {
+          const saveConfig = getFooterSaveConfig();
+          return (
+            <div className="footer">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div className="statusLine">{t("config.configuring")}</div>
+                {saveConfig && (
+                  <>
+                    <button className="btnPrimary"
+                      onClick={() => renderIntegrationsSave(saveConfig.keys, saveConfig.savedMsg)}
+                      disabled={!currentWorkspaceId || !!busy}>
+                      {t("config.saveEnv")}
+                    </button>
+                    <button className="btnApplyRestart"
+                      onClick={() => applyAndRestart(saveConfig.keys)}
+                      disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
+                      title={t("config.applyRestartHint")}>
+                      {t("config.applyRestart")}
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="btnRow">
+                <button onClick={goPrev} disabled={isFirst || !!busy}>{t("config.prev")}</button>
+                {stepId === "finish" ? (
+                  <button
+                    className="btnPrimary"
+                    onClick={async () => {
+                      const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
+                      if (!effectiveWsId) { setError(t("common.error")); return; }
+                      setError(null);
+                      setView("status");
+                      await startLocalServiceWithConflictCheck(effectiveWsId);
+                      try { await refreshServiceLog(effectiveWsId); } catch { /* ignore */ }
+                    }}
+                    disabled={!!busy}
+                  >{t("config.finish")}</button>
+                ) : (
+                  <button className="btnPrimary" onClick={goNext} disabled={isLast || !!busy}>{t("config.next")}</button>
+                )}
+              </div>
             </div>
-          </div>
-        ) : null}
+          );
+        })() : null}
       </main>
     </div>
   );

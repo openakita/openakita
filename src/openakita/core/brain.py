@@ -602,7 +602,7 @@ class Brain:
             request_id = uuid.uuid4().hex[:8]
             debug_file = debug_dir / f"llm_request_{timestamp}_{request_id}.json"
 
-            # 转换 messages 为可序列化格式
+            # ── 1. 序列化 messages ──
             serializable_messages = []
             for msg in messages:
                 if hasattr(msg, "to_dict"):
@@ -614,55 +614,72 @@ class Brain:
                 else:
                     serializable_messages.append(str(msg))
 
-            # 提取工具名称
-            tool_names = []
+            # ── 2. 序列化完整工具定义（和发给 LLM API 的 tools 参数一模一样）──
+            full_tools = []
             for t in tools or []:
                 if hasattr(t, "name"):
-                    tool_names.append(t.name)
+                    # Tool / NamedTuple / dataclass 对象
+                    full_tools.append({
+                        "name": t.name,
+                        "description": getattr(t, "description", ""),
+                        "input_schema": getattr(t, "input_schema", {}),
+                    })
                 elif isinstance(t, dict):
-                    tool_names.append(t.get("name", str(t)))
+                    full_tools.append({
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "input_schema": t.get("input_schema", {}),
+                    })
                 else:
-                    tool_names.append(str(t))
+                    full_tools.append({"raw": str(t)})
 
-            # 估算 token 数量（中文约 1.5 字符/token，英文约 4 字符/token，取平均 2 字符/token）
+            # ── 3. Token 估算 ──
             system_length = len(system) if system else 0
             estimated_system_tokens = int(system_length / 2)
-
-            # 估算 messages 的 token
             messages_text = json.dumps(serializable_messages, ensure_ascii=False)
             estimated_messages_tokens = int(len(messages_text) / 2)
+            tools_text = json.dumps(full_tools, ensure_ascii=False)
+            estimated_tools_tokens = int(len(tools_text) / 2)
+            total_estimated_tokens = estimated_system_tokens + estimated_messages_tokens + estimated_tools_tokens
 
-            total_estimated_tokens = estimated_system_tokens + estimated_messages_tokens
-
+            # ── 4. 构建完整 debug 数据（和发给 LLM 的请求结构一致）──
             debug_data = {
                 "timestamp": datetime.now().isoformat(),
                 "caller": caller,
-                "system_prompt": system,
-                "system_prompt_length": system_length,
-                "system_prompt_estimated_tokens": estimated_system_tokens,
-                "messages": serializable_messages,
-                "messages_count": len(messages),
-                "messages_estimated_tokens": estimated_messages_tokens,
-                "total_estimated_tokens": total_estimated_tokens,
-                "tools": tool_names,
-                "tools_count": len(tools) if tools else 0,
+                # === 发给 LLM 的完整请求 ===
+                "llm_request": {
+                    "system": system,
+                    "messages": serializable_messages,
+                    "tools": full_tools,
+                },
+                # === 统计信息 ===
+                "stats": {
+                    "system_prompt_length": system_length,
+                    "system_prompt_tokens": estimated_system_tokens,
+                    "messages_count": len(messages),
+                    "messages_tokens": estimated_messages_tokens,
+                    "tools_count": len(full_tools),
+                    "tools_tokens": estimated_tools_tokens,
+                    "total_estimated_tokens": total_estimated_tokens,
+                },
             }
 
             with open(debug_file, "w", encoding="utf-8") as f:
                 json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
 
             # 记录日志并在 token 数量过大时发出警告
+            token_detail = f"system={estimated_system_tokens}, messages={estimated_messages_tokens}, tools={estimated_tools_tokens}"
             if total_estimated_tokens > 50000:
                 logger.warning(
-                    f"[LLM DEBUG] ⚠️ Very large context! Estimated {total_estimated_tokens} tokens (system: {estimated_system_tokens}, messages: {estimated_messages_tokens})"
+                    f"[LLM DEBUG] ⚠️ Very large context! Estimated {total_estimated_tokens} tokens ({token_detail})"
                 )
             elif total_estimated_tokens > 30000:
                 logger.warning(
-                    f"[LLM DEBUG] Large context: {total_estimated_tokens} tokens (system: {estimated_system_tokens}, messages: {estimated_messages_tokens})"
+                    f"[LLM DEBUG] Large context: {total_estimated_tokens} tokens ({token_detail})"
                 )
             else:
                 logger.info(
-                    f"[LLM DEBUG] Request saved: {total_estimated_tokens} tokens (system: {estimated_system_tokens}, messages: {estimated_messages_tokens})"
+                    f"[LLM DEBUG] Request saved: {total_estimated_tokens} tokens ({token_detail})"
                 )
 
             # 清理超过 3 天的旧调试文件

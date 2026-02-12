@@ -15,6 +15,7 @@ import type {
   ChatPlan,
   ChatPlanStep,
   ChatAskUser,
+  ChatAskQuestion,
   ChatAttachment,
   ChatArtifact,
   SlashCommand,
@@ -41,7 +42,7 @@ type StreamEvent =
   | { type: "tool_call_end"; tool: string; result: string; id?: string }
   | { type: "plan_created"; plan: ChatPlan }
   | { type: "plan_step_updated"; stepIdx: number; status: string }
-  | { type: "ask_user"; question: string; options?: { id: string; label: string }[] }
+  | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
   | { type: "error"; message: string }
@@ -200,44 +201,271 @@ function PlanStepItem({ step, idx }: { step: ChatPlanStep; idx: number }) {
   );
 }
 
+/** 单个问题选择器（单选/多选/纯输入） */
+function AskQuestionItem({
+  question,
+  selected,
+  onSelect,
+  otherText,
+  onOtherText,
+  showOther,
+  onToggleOther,
+  letterOffset,
+}: {
+  question: ChatAskQuestion;
+  selected: Set<string>;
+  onSelect: (optId: string) => void;
+  otherText: string;
+  onOtherText: (v: string) => void;
+  showOther: boolean;
+  onToggleOther: () => void;
+  letterOffset?: number;
+}) {
+  const { t } = useTranslation();
+  const optionLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const hasOptions = question.options && question.options.length > 0;
+  const isMulti = question.allow_multiple === true;
+
+  return (
+    <div style={{ marginBottom: 4 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--fg, #333)" }}>
+        {question.prompt}
+        {isMulti && <span style={{ fontWeight: 400, fontSize: 12, opacity: 0.55, marginLeft: 6 }}>({t("chat.multiSelect", "可多选")})</span>}
+      </div>
+      {hasOptions ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          {question.options!.map((opt, idx) => {
+            const isSelected = selected.has(opt.id);
+            return (
+              <button
+                key={opt.id}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "7px 14px", borderRadius: 8,
+                  border: isSelected ? "1.5px solid rgba(124,58,237,0.55)" : "1px solid rgba(124,58,237,0.18)",
+                  background: isSelected ? "rgba(124,58,237,0.10)" : "rgba(255,255,255,0.7)",
+                  cursor: "pointer", fontSize: 13, textAlign: "left",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={(e) => { if (!isSelected) { e.currentTarget.style.background = "rgba(124,58,237,0.06)"; e.currentTarget.style.borderColor = "rgba(124,58,237,0.35)"; } }}
+                onMouseLeave={(e) => { if (!isSelected) { e.currentTarget.style.background = "rgba(255,255,255,0.7)"; e.currentTarget.style.borderColor = "rgba(124,58,237,0.18)"; } }}
+                onClick={() => onSelect(opt.id)}
+              >
+                <span style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 22, height: 22, borderRadius: isMulti ? 4 : 11, flexShrink: 0,
+                  background: isSelected ? "rgba(124,58,237,0.85)" : "rgba(124,58,237,0.10)",
+                  color: isSelected ? "#fff" : "rgba(124,58,237,0.8)",
+                  fontSize: 11, fontWeight: 700, transition: "all 0.15s",
+                }}>
+                  {isSelected ? (isMulti ? "✓" : "●") : (optionLetters[(letterOffset || 0) + idx] || String(idx + 1))}
+                </span>
+                <span>{opt.label}</span>
+              </button>
+            );
+          })}
+          {/* OTHER / 手动输入 */}
+          {!showOther ? (
+            <button
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "7px 14px", borderRadius: 8,
+                border: "1px dashed rgba(124,58,237,0.18)",
+                background: "transparent",
+                cursor: "pointer", fontSize: 13, textAlign: "left",
+                transition: "all 0.15s", opacity: 0.55,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.borderColor = "rgba(124,58,237,0.4)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.55"; e.currentTarget.style.borderColor = "rgba(124,58,237,0.18)"; }}
+              onClick={onToggleOther}
+            >
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 22, height: 22, borderRadius: isMulti ? 4 : 11, flexShrink: 0,
+                background: "rgba(0,0,0,0.04)", color: "rgba(0,0,0,0.35)",
+                fontSize: 11, fontWeight: 700,
+              }}>…</span>
+              <span>{t("chat.otherOption", "其他（手动输入）")}</span>
+            </button>
+          ) : (
+            <input
+              autoFocus
+              value={otherText}
+              onChange={(e) => onOtherText(e.target.value)}
+              placeholder={t("chat.askPlaceholder")}
+              style={{ fontSize: 13, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(124,58,237,0.25)", outline: "none" }}
+              onKeyDown={(e) => { if (e.key === "Escape") onToggleOther(); }}
+            />
+          )}
+        </div>
+      ) : (
+        <input
+          value={otherText}
+          onChange={(e) => onOtherText(e.target.value)}
+          placeholder={t("chat.askPlaceholder")}
+          style={{ width: "100%", fontSize: 13, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(124,58,237,0.25)", outline: "none", boxSizing: "border-box" }}
+        />
+      )}
+    </div>
+  );
+}
+
 function AskUserBlock({ ask, onAnswer }: { ask: ChatAskUser; onAnswer: (answer: string) => void }) {
   const { t } = useTranslation();
-  const [input, setInput] = useState("");
+
+  // 将 ask 规范化为 questions 数组（兼容旧的单问题格式）
+  const normalizedQuestions: ChatAskQuestion[] = useMemo(() => {
+    if (ask.questions && ask.questions.length > 0) return ask.questions;
+    // 兼容旧格式：单问题 + 可选 options
+    return [{
+      id: "__single__",
+      prompt: ask.question,
+      options: ask.options,
+      allow_multiple: false,
+    }];
+  }, [ask]);
+
+  const isSingle = normalizedQuestions.length === 1;
+
+  // 每个问题的选中状态 { questionId -> Set<optionId> }
+  const [selections, setSelections] = useState<Record<string, Set<string>>>(() => {
+    const init: Record<string, Set<string>> = {};
+    normalizedQuestions.forEach((q) => { init[q.id] = new Set(); });
+    return init;
+  });
+  // 每个问题的"其他"文本
+  const [otherTexts, setOtherTexts] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    normalizedQuestions.forEach((q) => { init[q.id] = ""; });
+    return init;
+  });
+  // 是否展开"其他"输入
+  const [showOthers, setShowOthers] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    normalizedQuestions.forEach((q) => { init[q.id] = !(q.options && q.options.length > 0); });
+    return init;
+  });
+
+  const handleSelect = useCallback((qId: string, optId: string, isMulti: boolean) => {
+    setSelections((prev) => {
+      const s = new Set(prev[qId]);
+      if (isMulti) {
+        if (s.has(optId)) s.delete(optId); else s.add(optId);
+      } else {
+        // 单选：如果已选中当前项则取消，否则替换
+        if (s.has(optId)) {
+          s.clear();
+        } else {
+          s.clear();
+          s.add(optId);
+        }
+        // 单选 + 单问题：直接提交
+        if (isSingle && s.size > 0) {
+          onAnswer(optId);
+          return prev;
+        }
+      }
+      return { ...prev, [qId]: s };
+    });
+  }, [isSingle, onAnswer]);
+
+  const handleSubmit = useCallback(() => {
+    if (isSingle) {
+      const q = normalizedQuestions[0];
+      const sel = selections[q.id];
+      const other = otherTexts[q.id]?.trim();
+      if (sel && sel.size > 0) {
+        const arr = Array.from(sel);
+        if (other) arr.push(`OTHER:${other}`);
+        onAnswer(q.allow_multiple ? arr.join(",") : arr[0]);
+      } else if (other) {
+        onAnswer(other);
+      }
+      return;
+    }
+    // 多问题：返回 JSON
+    const result: Record<string, string | string[]> = {};
+    normalizedQuestions.forEach((q) => {
+      const sel = selections[q.id];
+      const other = otherTexts[q.id]?.trim();
+      const arr = sel ? Array.from(sel) : [];
+      if (other) arr.push(`OTHER:${other}`);
+      if (arr.length === 0 && !other) return;
+      result[q.id] = q.allow_multiple ? arr : (arr[0] || other || "");
+    });
+    onAnswer(JSON.stringify(result));
+  }, [isSingle, normalizedQuestions, selections, otherTexts, onAnswer]);
+
+  // ─── 已回答状态 ───
   if (ask.answered) {
+    const displayAnswer = (() => {
+      // 尝试解析 JSON（多问题）
+      try {
+        const parsed = JSON.parse(ask.answer || "");
+        if (typeof parsed === "object" && !Array.isArray(parsed)) {
+          return normalizedQuestions.map((q) => {
+            const val = parsed[q.id];
+            if (!val) return null;
+            const vals = Array.isArray(val) ? val : [val];
+            const labels = vals.map((v: string) => {
+              if (v.startsWith("OTHER:")) return v.slice(6);
+              const opt = q.options?.find((o) => o.id === v);
+              return opt ? opt.label : v;
+            });
+            return `${q.prompt}: ${labels.join(", ")}`;
+          }).filter(Boolean).join(" | ");
+        }
+      } catch { /* not JSON, fall through */ }
+      // 单问题：查找选项标签
+      const answeredOpt = ask.options?.find((o) => o.id === ask.answer);
+      return answeredOpt ? answeredOpt.label : ask.answer;
+    })();
     return (
       <div style={{ margin: "8px 0", padding: "10px 14px", borderRadius: 10, background: "rgba(14,165,233,0.06)", border: "1px solid rgba(14,165,233,0.15)" }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{ask.question}</div>
-        <div style={{ fontSize: 13, opacity: 0.7 }}>{t("chat.answered")}{ask.answer}</div>
+        <div style={{ fontSize: 13, opacity: 0.7 }}>{t("chat.answered")}{displayAnswer}</div>
       </div>
     );
   }
+
+  // ─── 未回答状态 ───
+  // 判断是否有任何内容可以提交
+  const canSubmit = normalizedQuestions.some((q) => {
+    const sel = selections[q.id];
+    const other = otherTexts[q.id]?.trim();
+    return (sel && sel.size > 0) || !!other;
+  });
+
   return (
-    <div style={{ margin: "8px 0", padding: "12px 14px", borderRadius: 12, background: "rgba(124,58,237,0.05)", border: "1px solid rgba(124,58,237,0.18)" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>{ask.question}</div>
-      {ask.options && ask.options.length > 0 ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {ask.options.map((opt) => (
-            <button
-              key={opt.id}
-              className="btnPrimary"
-              style={{ fontSize: 13, padding: "6px 16px" }}
-              onClick={() => onAnswer(opt.id)}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={t("chat.askPlaceholder")}
-            style={{ flex: 1, fontSize: 13 }}
-            onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) { onAnswer(input.trim()); setInput(""); } }}
+    <div style={{ margin: "8px 0", padding: "12px 14px", borderRadius: 12, background: "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.16)" }}>
+      {/* 总标题（多问题时显示，单问题时标题在 AskQuestionItem 里） */}
+      {!isSingle && (
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "var(--fg, #333)" }}>{ask.question}</div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {normalizedQuestions.map((q) => (
+          <AskQuestionItem
+            key={q.id}
+            question={q}
+            selected={selections[q.id] || new Set()}
+            onSelect={(optId) => handleSelect(q.id, optId, q.allow_multiple === true)}
+            otherText={otherTexts[q.id] || ""}
+            onOtherText={(v) => setOtherTexts((prev) => ({ ...prev, [q.id]: v }))}
+            showOther={showOthers[q.id] || false}
+            onToggleOther={() => setShowOthers((prev) => ({ ...prev, [q.id]: !prev[q.id] }))}
           />
-          <button className="btnPrimary" onClick={() => { if (input.trim()) { onAnswer(input.trim()); setInput(""); } }} style={{ fontSize: 13, padding: "6px 16px" }}>
-            {t("chat.submitAnswer")}
+        ))}
+      </div>
+      {/* 多问题或多选时需要提交按钮 */}
+      {(!isSingle || normalizedQuestions.some((q) => q.allow_multiple)) && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          <button
+            className="btnPrimary"
+            disabled={!canSubmit}
+            onClick={handleSubmit}
+            style={{ fontSize: 13, padding: "7px 22px", opacity: canSubmit ? 1 : 0.4, cursor: canSubmit ? "pointer" : "not-allowed" }}
+          >
+            {t("chat.submitAnswer", "提交")}
           </button>
         </div>
       )}
@@ -899,9 +1127,29 @@ export function ChatView({
                   currentPlan = { ...currentPlan, steps: newSteps } as ChatPlan;
                 }
                 break;
-              case "ask_user":
-                currentAsk = { question: event.question, options: event.options };
+              case "ask_user": {
+                const askQuestions = event.questions;
+                // 如果没有 questions 数组但有 allow_multiple，构造一个统一的 questions
+                if (!askQuestions && event.allow_multiple && event.options?.length) {
+                  currentAsk = {
+                    question: event.question,
+                    options: event.options,
+                    questions: [{
+                      id: "__single__",
+                      prompt: event.question,
+                      options: event.options,
+                      allow_multiple: true,
+                    }],
+                  };
+                } else {
+                  currentAsk = {
+                    question: event.question,
+                    options: event.options,
+                    questions: askQuestions,
+                  };
+                }
                 break;
+              }
               case "artifact":
                 currentArtifacts = [...currentArtifacts, {
                   artifact_type: event.artifact_type,
