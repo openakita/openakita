@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -144,6 +145,12 @@ async def write_env(body: EnvUpdateRequest):
         existing = env_path.read_text(encoding="utf-8")
     new_content = _update_env_content(existing, body.entries)
     env_path.write_text(new_content, encoding="utf-8")
+    # Sync into os.environ so the running process picks up new values immediately
+    for key, value in body.entries.items():
+        if value:
+            os.environ[key] = value
+        elif key in os.environ:
+            del os.environ[key]
     logger.info(f"[Config API] Updated .env with {len(body.entries)} entries")
     return {"status": "ok", "updated_keys": list(body.entries.keys())}
 

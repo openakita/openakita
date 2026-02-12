@@ -485,14 +485,17 @@ function MessageBubble({
                   background: "rgba(255,255,255,0.5)",
                   transition: "background 0.15s",
                 }}
-                  onClick={() => {
-                    // Trigger download via hidden <a> tag
-                    const a = document.createElement("a");
-                    a.href = fullUrl;
-                    a.download = art.name || "file";
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
+                  onClick={async () => {
+                    // Use Tauri command to download file (WebView2 doesn't support <a download>)
+                    try {
+                      const savedPath = await invoke<string>("download_file", {
+                        url: fullUrl,
+                        filename: art.name || "file",
+                      });
+                      console.log("文件已保存:", savedPath);
+                    } catch (err) {
+                      console.error("文件下载失败:", err);
+                    }
                   }}
                   onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(14,165,233,0.08)"; }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.5)"; }}

@@ -392,6 +392,131 @@ fn kill_openakita_orphans() -> Vec<u32> {
     killed
 }
 
+/// 扫描所有进程名含 python 且命令行包含 "openakita" 和 "serve" 的进程。
+/// 返回 OpenAkitaProcess 列表，供前端多进程检测使用。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OpenAkitaProcess {
+    pid: u32,
+    cmd: String,
+}
+
+#[tauri::command]
+fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
+    let mut out = Vec::new();
+    #[cfg(windows)]
+    {
+        // Step 1: 枚举所有进程，找到进程名含 python 的 PID
+        let snap = unsafe { win::CreateToolhelp32Snapshot(win::TH32CS_SNAPPROCESS, 0) };
+        if snap == win::INVALID_HANDLE_VALUE || snap.is_null() {
+            return out;
+        }
+        let mut pe: win::PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        pe.dw_size = std::mem::size_of::<win::PROCESSENTRY32W>() as u32;
+
+        let mut python_pids: Vec<u32> = Vec::new();
+
+        if unsafe { win::Process32FirstW(snap, &mut pe) } != 0 {
+            loop {
+                let name = String::from_utf16_lossy(
+                    &pe.sz_exe_file[..pe
+                        .sz_exe_file
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(260)],
+                );
+                let name_lower = name.to_ascii_lowercase();
+                if name_lower.contains("python") {
+                    python_pids.push(pe.th32_process_id);
+                }
+                if unsafe { win::Process32NextW(snap, &mut pe) } == 0 {
+                    break;
+                }
+            }
+        }
+        unsafe {
+            win::CloseHandle(snap);
+        }
+
+        // Step 2: 对每个 python 进程查命令行
+        for ppid in python_pids {
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!(
+                    "(Get-CimInstance Win32_Process -Filter 'ProcessId={}').CommandLine",
+                    ppid
+                ),
+            ]);
+            apply_no_window(&mut c);
+            if let Ok(cmd_out) = c.output() {
+                let s = String::from_utf8_lossy(&cmd_out.stdout).to_string();
+                let s_lower = s.to_lowercase();
+                if s_lower.contains("openakita") && s_lower.contains("serve") {
+                    if is_pid_running(ppid) {
+                        out.push(OpenAkitaProcess {
+                            pid: ppid,
+                            cmd: s.trim().to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // ps aux | grep openakita.*serve
+        if let Ok(ps_out) = Command::new("sh")
+            .args(["-c", "ps aux | grep '[o]penakita.*serve'"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&ps_out.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(pid) = parts[1].parse::<u32>() {
+                        if is_pid_running(pid) {
+                            out.push(OpenAkitaProcess {
+                                pid,
+                                cmd: parts[10..].join(" "),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 停止所有检测到的 OpenAkita serve 进程。
+/// 返回被停止的 PID 列表。
+#[tauri::command]
+fn openakita_stop_all_processes() -> Vec<u32> {
+    let mut stopped = Vec::new();
+
+    // 第 1 层：按 PID 文件逐一停止
+    let entries = list_service_pids();
+    for ent in &entries {
+        if is_pid_running(ent.pid) {
+            let _ = stop_service_pid_entry(ent);
+            stopped.push(ent.pid);
+        }
+    }
+
+    // 第 2 层：兜底扫描所有命令行含 openakita serve 的 python 进程并杀掉
+    let orphans = kill_openakita_orphans();
+    for pid in orphans {
+        if !stopped.contains(&pid) {
+            stopped.push(pid);
+        }
+    }
+
+    stopped
+}
+
 fn read_state_file() -> AppStateFile {
     let p = state_file_path();
     let Ok(content) = fs::read_to_string(&p) else {
@@ -593,7 +718,11 @@ fn main() {
             openakita_get_skill_config,
             fetch_pypi_versions,
             http_get_json,
-            read_file_base64
+            read_file_base64,
+            download_file,
+            open_external_url,
+            openakita_list_processes,
+            openakita_stop_all_processes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2064,4 +2193,80 @@ async fn read_file_base64(path: String) -> Result<String, String> {
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+/// Download a file from a URL and save it to the user's Downloads folder.
+/// Returns the saved file path on success.
+#[tauri::command]
+async fn download_file(url: String, filename: String) -> Result<String, String> {
+    // Determine downloads directory
+    let downloads_dir = dirs_next::download_dir()
+        .or_else(|| dirs_next::home_dir().map(|h| h.join("Downloads")))
+        .ok_or_else(|| "Cannot determine Downloads directory".to_string())?;
+    std::fs::create_dir_all(&downloads_dir)
+        .map_err(|e| format!("Cannot create Downloads dir: {e}"))?;
+
+    // Avoid overwriting: if file exists, append (1), (2), etc.
+    let stem = std::path::Path::new(&filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("download")
+        .to_string();
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| format!(".{s}"))
+        .unwrap_or_default();
+    let mut dest = downloads_dir.join(&filename);
+    let mut counter = 1u32;
+    while dest.exists() {
+        dest = downloads_dir.join(format!("{stem} ({counter}){ext}"));
+        counter += 1;
+    }
+
+    // Download
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Download request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Download failed with status {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+    std::fs::write(&dest, &bytes)
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(dest.to_string_lossy().to_string())
+}
+
+/// Open an external URL in the OS default browser.
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {e}"))?;
+    }
+    Ok(())
 }

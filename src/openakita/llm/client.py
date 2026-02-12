@@ -150,6 +150,13 @@ class LLMClient:
             logger.warning("reload() called but no config_path available")
             return False
         try:
+            # Re-read .env so newly written API keys are available in os.environ
+            from dotenv import load_dotenv as _reload_dotenv
+
+            env_path = self._config_path.parent.parent / ".env"
+            if env_path.exists():
+                _reload_dotenv(env_path, override=True)
+
             new_endpoints, _, new_settings = load_endpoints_config(self._config_path)
             self._endpoints = new_endpoints
             self._settings = new_settings
@@ -537,11 +544,13 @@ class LLMClient:
         Args:
             providers: 端点列表（按优先级排序）
             request: LLM 请求
-            allow_failover: 是否允许切换到其他端点
-                - True: 无工具上下文，可以安全切换（默认）
-                - False: 有工具上下文，禁止切换，失败后直接抛异常让上层处理
+            allow_failover: 控制端点切换策略
+                - True: 无工具上下文，快速切换（每个端点只试 1 次）
+                - False: 有工具上下文，先重试当前端点多次再切到下一个
 
         默认策略：有备选端点时快速切换，不重试同一个端点（提高响应速度）
+        工具上下文：每个端点重试 retry_count 次后才切到下一个（保持连续性）
+        所有端点都按优先级依次尝试，无论 allow_failover 值
         """
         from .providers.base import COOLDOWN_GLOBAL_FAILURE
 
@@ -552,16 +561,16 @@ class LLMClient:
         retry_same_first = self._settings.get("retry_same_endpoint_first", False)
 
         # 有备选时默认快速切换（除非配置了先重试或禁止 failover）
-        has_fallback = len(providers) > 1 and allow_failover
+        has_fallback = len(providers) > 1
         if retry_same_first or not allow_failover:
-            # 先重试当前端点（有工具上下文时强制此模式）
+            # 先重试当前端点（有工具上下文时强制此模式：多次重试后再切换）
             max_attempts = retry_count + 1
         else:
             # 有备选时每个端点只尝试一次，无备选时重试多次
-            max_attempts = 1 if has_fallback else (retry_count + 1)
+            max_attempts = 1 if (has_fallback and allow_failover) else (retry_count + 1)
 
-        # 如果禁止 failover，只尝试第一个端点
-        providers_to_try = providers if allow_failover else providers[:1]
+        # 始终尝试所有端点（工具上下文时每个端点多次重试后再切到下一个）
+        providers_to_try = providers
 
         for i, provider in enumerate(providers_to_try):
             for attempt in range(max_attempts):
@@ -635,15 +644,18 @@ class LLMClient:
                         failed_providers.append(provider)
                         break
 
-                    # 无备选时才重试（或禁止 failover 时）
-                    if (not has_fallback or not allow_failover) and attempt < max_attempts - 1:
+                    # 重试当前端点：
+                    # - 工具上下文/retry_same_first 时每个端点重试多次再切
+                    # - 无备选端点时也重试多次
+                    should_retry = attempt < max_attempts - 1
+                    if should_retry:
                         logger.info(
                             f"[LLM] endpoint={provider.name} retry={attempt + 1}/{max_attempts - 1}"
-                            + (" (tool_context, no_failover)" if not allow_failover else "")
+                            + (" (tool_context)" if not allow_failover else "")
                         )
                         await asyncio.sleep(retry_delay)
                     else:
-                        # 最后一次尝试也失败，设置冷静期（自动分类错误类型）
+                        # 当前端点重试全部失败，设置冷静期后切到下一个端点
                         provider.mark_unhealthy(error_str)
                         failed_providers.append(provider)
                         logger.warning(
@@ -664,11 +676,12 @@ class LLMClient:
                     )
                     break
 
-            # 切换到下一个端点（如果允许且有下一个）
-            if allow_failover and i < len(providers_to_try) - 1:
+            # 切换到下一个端点
+            if i < len(providers_to_try) - 1:
                 next_provider = providers_to_try[i + 1]
                 logger.warning(
                     f"[LLM] endpoint={provider.name} action=failover target={next_provider.name}"
+                    + (" (tool_context, retried same endpoint first)" if not allow_failover else "")
                 )
 
         # ── 全局故障检测 ──
@@ -690,11 +703,11 @@ class LLMClient:
                     if fp.error_category == "transient":
                         fp.shorten_cooldown(COOLDOWN_GLOBAL_FAILURE)
 
-        # 如果禁止 failover，给出明确的日志
+        # 工具上下文下所有端点都失败
         if not allow_failover:
             logger.warning(
-                "[LLM] Tool context detected, failover disabled. "
-                "Let upper layer (Agent/TaskMonitor) handle retry/switch."
+                "[LLM] Tool context detected. All endpoints exhausted (each retried before failover). "
+                "Upper layer (Agent/TaskMonitor) may restart with a different strategy."
             )
 
         # 持久化升级冷静期状态（如果有端点刚升级到 1 小时冷静期）

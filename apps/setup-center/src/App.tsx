@@ -591,6 +591,7 @@ export function App() {
   const [secretShown, setSecretShown] = useState<Record<string, boolean>>({});
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [serviceStatus, setServiceStatus] = useState<{ running: boolean; pid: number | null; pidFile: string } | null>(null);
+  const [detectedProcesses, setDetectedProcesses] = useState<Array<{ pid: number; cmd: string }>>([]);
   const [serviceLog, setServiceLog] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
   const [serviceLogError, setServiceLogError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string>("");
@@ -661,20 +662,21 @@ export function App() {
           } catch { /* venv not found or openakita not installed */ }
 
           try {
-            // Check if endpoints exist
-            const ws = await invoke<string | null>("get_current_workspace_id");
-            if (ws) {
-              const raw = await invoke<string>("workspace_read_file", { workspaceId: ws, relativePath: "data/llm_endpoints.json" });
-              const parsed = JSON.parse(raw);
-              const eps = Array.isArray(parsed?.endpoints) ? parsed.endpoints : [];
-              if (!cancelled && eps.length > 0) {
-                setSavedEndpoints(eps.map((e: any) => ({
-                  name: String(e?.name || ""), provider: String(e?.provider || ""),
-                  apiType: String(e?.api_type || ""), baseUrl: String(e?.base_url || ""),
-                  model: String(e?.model || ""), apiKeyEnv: String(e?.api_key_env || ""),
-                  priority: Number(e?.priority || 1),
-                })));
-              }
+            // Check if endpoints exist (use readWorkspaceFile which respects dataMode)
+            const raw = await readWorkspaceFile("data/llm_endpoints.json");
+            const parsed = JSON.parse(raw);
+            const eps = Array.isArray(parsed?.endpoints) ? parsed.endpoints : [];
+            if (!cancelled && eps.length > 0) {
+              setSavedEndpoints(eps.map((e: any) => ({
+                name: String(e?.name || ""), provider: String(e?.provider || ""),
+                api_type: String(e?.api_type || ""), base_url: String(e?.base_url || ""),
+                model: String(e?.model || ""), api_key_env: String(e?.api_key_env || ""),
+                priority: Number(e?.priority || 1),
+                max_tokens: Number(e?.max_tokens || 8192),
+                context_window: Number(e?.context_window || 150000),
+                timeout: Number(e?.timeout || 180),
+                capabilities: Array.isArray(e?.capabilities) ? e.capabilities.map((x: any) => String(x)) : [],
+              })));
             }
           } catch { /* ignore */ }
 
@@ -691,15 +693,12 @@ export function App() {
                 setApiBaseUrl(localUrl);
                 setServiceStatus({ running: true, pid: healthData.pid || null, pidFile: "" });
                 if (svcVersion) setBackendVersion(svcVersion);
-                // 从运行中的服务加载最新配置
+                // 加载完整状态（env + 端点列表 + 模型列表）
                 try {
-                  const envRes = await fetch(`${localUrl}/api/config/env`, { signal: AbortSignal.timeout(3000) });
-                  if (envRes.ok) {
-                    const envData = await envRes.json();
-                    const env = envData.env || {};
-                    setEnvDraft((prev) => ({ ...prev, ...env }));
-                  }
+                  await refreshStatus("local", localUrl, true);
                 } catch { /* ignore */ }
+                // 自动执行一次 LLM 端点健康检测（后台、不阻塞）
+                autoCheckEndpoints(localUrl);
                 // 版本不一致时触发已有的 mismatch 警告（延迟执行，等 desktopVersion 加载完）
                 if (svcVersion) {
                   setTimeout(() => checkVersionMismatch(svcVersion), 500);
@@ -864,20 +863,21 @@ export function App() {
 
   async function ensureEnvLoaded(workspaceId: string): Promise<EnvMap> {
     if (envLoadedForWs.current === workspaceId) return envDraft;
-    let parsed: EnvMap;
-    if (dataMode === "remote") {
-      // Remote mode: fetch from HTTP API
-      try {
-        const res = await safeFetch(`${apiBaseUrl}/api/config/env`);
-        const data = await res.json();
-        parsed = data.env || {};
-      } catch {
-        parsed = {};
+    let parsed: EnvMap = {};
+    // Always try HTTP API first — reads the backend's actual .env
+    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    try {
+      const res = await safeFetch(`${base}/api/config/env`);
+      const data = await res.json();
+      parsed = data.env || {};
+    } catch {
+      // Service unreachable — fall back to Tauri local read
+      if (dataMode !== "remote" && workspaceId) {
+        try {
+          const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
+          parsed = parseEnv(content);
+        } catch { parsed = {}; }
       }
-    } else {
-      // Local mode: read from workspace file
-      const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
-      parsed = parseEnv(content);
     }
     // Set sensible defaults for first-time setup
     const defaults: Record<string, string> = {
@@ -1271,25 +1271,7 @@ export function App() {
   }
 
   async function writeEndpointsJson(endpoints: any[], settings: any) {
-    if (dataMode === "remote") {
-      // Read existing content from remote to preserve extra fields
-      let existing: any = {};
-      try {
-        const res = await safeFetch(`${apiBaseUrl}/api/config/endpoints`);
-        const data = await res.json();
-        existing = data?.raw || {};
-      } catch { /* ignore */ }
-      const base = { ...existing, endpoints, settings: settings || {} };
-      await safeFetch(`${apiBaseUrl}/api/config/endpoints`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: base }),
-      });
-      // Hot-reload the running service (fire-and-forget)
-      triggerConfigReload().catch(() => {});
-      return;
-    }
-    if (!currentWorkspaceId) throw new Error("未设置当前工作区");
+    // readWorkspaceFile and writeWorkspaceFile already do HTTP-first internally
     let existing: any = {};
     try {
       const raw = await readWorkspaceFile("data/llm_endpoints.json");
@@ -1302,54 +1284,66 @@ export function App() {
 
   // ── Generic file read/write with remote mode support ──
   async function readWorkspaceFile(relativePath: string): Promise<string> {
-    if (dataMode === "remote") {
-      // For known paths, use dedicated APIs
+    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    // Always try HTTP API first — reads the backend's actual config
+    try {
       if (relativePath === "data/llm_endpoints.json") {
-        const res = await safeFetch(`${apiBaseUrl}/api/config/endpoints`);
+        const res = await safeFetch(`${base}/api/config/endpoints`);
         const data = await res.json();
         return JSON.stringify(data.raw || { endpoints: data.endpoints || [] });
       }
       if (relativePath === "data/skills.json") {
-        const res = await safeFetch(`${apiBaseUrl}/api/config/skills`);
+        const res = await safeFetch(`${base}/api/config/skills`);
         const data = await res.json();
         return JSON.stringify(data.skills || {});
       }
       if (relativePath === ".env") {
-        const res = await safeFetch(`${apiBaseUrl}/api/config/env`);
+        const res = await safeFetch(`${base}/api/config/env`);
         const data = await res.json();
         return data.raw || "";
       }
-      throw new Error(`Remote read not supported for: ${relativePath}`);
+    } catch {
+      // Service unreachable — fall through to Tauri
     }
-    return invoke<string>("workspace_read_file", { workspaceId: currentWorkspaceId, relativePath });
+    // Fallback: Tauri local read (service not running)
+    if (dataMode !== "remote" && currentWorkspaceId) {
+      return invoke<string>("workspace_read_file", { workspaceId: currentWorkspaceId, relativePath });
+    }
+    throw new Error(`读取配置失败：服务不可达 (${relativePath})`);
   }
 
   async function writeWorkspaceFile(relativePath: string, content: string): Promise<void> {
-    if (dataMode === "remote") {
-      if (relativePath === "data/llm_endpoints.json") {
-        await safeFetch(`${apiBaseUrl}/api/config/endpoints`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: JSON.parse(content) }),
-        });
-        // Hot-reload the running service (fire-and-forget)
-        triggerConfigReload().catch(() => {});
-        return;
-      }
-      if (relativePath === "data/skills.json") {
-        await safeFetch(`${apiBaseUrl}/api/config/skills`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: JSON.parse(content) }),
-        });
-        return;
-      }
-      throw new Error(`Remote write not supported for: ${relativePath}`);
-    }
-    await invoke("workspace_write_file", { workspaceId: currentWorkspaceId, relativePath, content });
-    // If we just wrote endpoints config locally, also try hot-reload
+    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    let httpOk = false;
+    // Always try HTTP API first
     if (relativePath === "data/llm_endpoints.json") {
-      triggerConfigReload().catch(() => {});
+      try {
+        await safeFetch(`${base}/api/config/endpoints`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: JSON.parse(content) }),
+        });
+        triggerConfigReload().catch(() => {});
+        httpOk = true;
+      } catch { /* service unreachable */ }
+    } else if (relativePath === "data/skills.json") {
+      try {
+        await safeFetch(`${base}/api/config/skills`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: JSON.parse(content) }),
+        });
+        httpOk = true;
+      } catch { /* service unreachable */ }
+    }
+    // In local mode, also persist to workspace dir for future service starts
+    if (dataMode !== "remote" && currentWorkspaceId) {
+      await invoke("workspace_write_file", { workspaceId: currentWorkspaceId, relativePath, content });
+      if (!httpOk && relativePath === "data/llm_endpoints.json") {
+        triggerConfigReload().catch(() => {});
+      }
+    } else if (!httpOk) {
+      throw new Error(`写入配置失败：服务不可达 (${relativePath})`);
     }
   }
 
@@ -1434,6 +1428,8 @@ export function App() {
         );
         // 刷新配置数据
         try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
+        // 重启后重新检测端点健康状态
+        autoCheckEndpoints(apiBaseUrl);
         setTimeout(() => {
           setRestartOverlay(null);
           setNotice(t("config.restartSuccess"));
@@ -1508,16 +1504,19 @@ export function App() {
     setBusy("写入编译端点...");
     setError(null);
     try {
-      // Write API key to .env
-      if (dataMode === "remote") {
-        try {
-          await safeFetch(`${apiBaseUrl}/api/config/env`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entries: { [compilerApiKeyEnv.trim()]: compilerApiKeyValue.trim() } }),
-          });
-        } catch { /* remote env write failed, continue anyway */ }
-      } else {
+      // Write API key to .env — always notify the running service via HTTP
+      const compilerEnvPayload = { entries: { [compilerApiKeyEnv.trim()]: compilerApiKeyValue.trim() } };
+      const compilerServiceBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+      try {
+        await safeFetch(`${compilerServiceBase}/api/config/env`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(compilerEnvPayload),
+        });
+      } catch {
+        // Service not reachable — fall through to local write
+      }
+      if (dataMode !== "remote" && currentWorkspaceId) {
         await invoke("workspace_update_env", {
           workspaceId: currentWorkspaceId,
           entries: [{ key: compilerApiKeyEnv.trim(), value: compilerApiKeyValue.trim() }],
@@ -1657,6 +1656,12 @@ export function App() {
   async function doStartEditEndpoint(name: string) {
     const ep = savedEndpoints.find((e) => e.name === name);
     if (!ep) return;
+    // Ensure env variables are loaded so API Key values are available in the edit modal
+    if (currentWorkspaceId) {
+      await ensureEnvLoaded(currentWorkspaceId);
+    } else if (dataMode === "remote") {
+      await ensureEnvLoaded("__remote__");
+    }
     setEditingOriginalName(name);
     setEditDraft({
       name: ep.name,
@@ -1678,6 +1683,7 @@ export function App() {
     setEditDraft(null);
     setEditModalOpen(false);
     setEditModels([]);
+    setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: false }));
   }
 
   async function doFetchEditModels() {
@@ -1736,10 +1742,26 @@ export function App() {
       if (editDraft.apiKeyValue.trim()) {
         await ensureEnvLoaded(currentWorkspaceId);
         setEnvDraft((e) => envSet(e, editDraft.apiKeyEnv.trim(), editDraft.apiKeyValue.trim()));
-        await invoke("workspace_update_env", {
-          workspaceId: currentWorkspaceId,
-          entries: [{ key: editDraft.apiKeyEnv.trim(), value: editDraft.apiKeyValue.trim() }],
-        });
+        const envPayload = { entries: { [editDraft.apiKeyEnv.trim()]: editDraft.apiKeyValue.trim() } };
+        // Always write to the running service's .env via HTTP API so the backend
+        // picks up new keys (also updates os.environ on the server side).
+        const serviceBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+        try {
+          await safeFetch(`${serviceBase}/api/config/env`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(envPayload),
+          });
+        } catch {
+          // Service not reachable — fall through to local write
+        }
+        // In local mode, also persist to workspace .env for future service starts.
+        if (dataMode !== "remote" && currentWorkspaceId) {
+          await invoke("workspace_update_env", {
+            workspaceId: currentWorkspaceId,
+            entries: [{ key: editDraft.apiKeyEnv.trim(), value: editDraft.apiKeyValue.trim() }],
+          });
+        }
       }
 
       const { endpoints, settings } = await readEndpointsJson();
@@ -1806,10 +1828,26 @@ export function App() {
     try {
       await ensureEnvLoaded(currentWorkspaceId);
       setEnvDraft((e) => envSet(e, apiKeyEnv.trim(), apiKeyValue.trim()));
-      await invoke("workspace_update_env", {
-        workspaceId: currentWorkspaceId,
-        entries: [{ key: apiKeyEnv.trim(), value: apiKeyValue.trim() }],
-      });
+      const envPayload = { entries: { [apiKeyEnv.trim()]: apiKeyValue.trim() } };
+      // Always write to the running service's .env via HTTP API so the backend
+      // picks up new keys (also updates os.environ on the server side).
+      const serviceBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+      try {
+        await safeFetch(`${serviceBase}/api/config/env`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(envPayload),
+        });
+      } catch {
+        // Service not reachable — fall through to local write
+      }
+      // In local mode, also persist to workspace .env for future service starts.
+      if (dataMode !== "remote" && currentWorkspaceId) {
+        await invoke("workspace_update_env", {
+          workspaceId: currentWorkspaceId,
+          entries: [{ key: apiKeyEnv.trim(), value: apiKeyValue.trim() }],
+        });
+      }
 
       // 读取现有 llm_endpoints.json
       let currentJson = "";
@@ -1920,26 +1958,30 @@ export function App() {
   }
 
   async function saveEnvKeys(keys: string[]) {
-    if (dataMode === "remote") {
-      const entries: Record<string, string> = {};
-      for (const k of keys) {
-        if (Object.prototype.hasOwnProperty.call(envDraft, k)) {
-          entries[k] = envDraft[k] ?? "";
-        }
+    const entries: Record<string, string> = {};
+    for (const k of keys) {
+      if (Object.prototype.hasOwnProperty.call(envDraft, k)) {
+        entries[k] = envDraft[k] ?? "";
       }
-      await safeFetch(`${apiBaseUrl}/api/config/env`, {
+    }
+    if (!Object.keys(entries).length) return;
+    // Always try HTTP API first (reaches the running backend's .env)
+    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    try {
+      await safeFetch(`${base}/api/config/env`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entries }),
       });
-      return;
+    } catch {
+      // Service unreachable — will fall through to Tauri local write
     }
-    if (!currentWorkspaceId) throw new Error("未设置当前工作区");
-    await ensureEnvLoaded(currentWorkspaceId);
-    const entries = keys
-      .filter((k) => Object.prototype.hasOwnProperty.call(envDraft, k))
-      .map((k) => ({ key: k, value: envDraft[k] ?? "" }));
-    await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries });
+    // In local mode, also persist to workspace .env for future service starts
+    if (dataMode !== "remote" && currentWorkspaceId) {
+      await ensureEnvLoaded(currentWorkspaceId);
+      const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
+      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
+    }
   }
 
   const providerApplyUrl = useMemo(() => {
@@ -2077,6 +2119,45 @@ export function App() {
     if (!currentWorkspaceId) return;
     ensureEnvLoaded(currentWorkspaceId).catch(() => {});
   }, [currentWorkspaceId]);
+
+  /**
+   * 后台自动检测所有 LLM 端点健康状态（fire-and-forget）。
+   * 连接成功后调用一次，不阻塞 UI。
+   */
+  function autoCheckEndpoints(baseUrl: string) {
+    (async () => {
+      try {
+        const res = await fetch(`${baseUrl}/api/health/check`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(60_000),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const results: Array<{
+          name: string; status: string; latency_ms: number | null;
+          error: string | null; error_category: string | null;
+          consecutive_failures: number; cooldown_remaining: number;
+          is_extended_cooldown: boolean; last_checked_at: string | null;
+        }> = data.results || [];
+        const h: Record<string, {
+          status: string; latencyMs: number | null; error: string | null;
+          errorCategory: string | null; consecutiveFailures: number;
+          cooldownRemaining: number; isExtendedCooldown: boolean; lastCheckedAt: string | null;
+        }> = {};
+        for (const r of results) {
+          h[r.name] = {
+            status: r.status, latencyMs: r.latency_ms, error: r.error,
+            errorCategory: r.error_category, consecutiveFailures: r.consecutive_failures,
+            cooldownRemaining: r.cooldown_remaining, isExtendedCooldown: r.is_extended_cooldown,
+            lastCheckedAt: r.last_checked_at,
+          };
+        }
+        setEndpointHealth(h);
+      } catch { /* 后台检测失败不影响用户 */ }
+    })();
+  }
 
   async function refreshStatus(overrideDataMode?: "local" | "remote", overrideApiBaseUrl?: string, forceAliveCheck?: boolean) {
     const effectiveDataMode = overrideDataMode || dataMode;
@@ -2350,6 +2431,17 @@ export function App() {
           }
         } catch { /* ignore - IM status is optional */ }
       }
+      // ── Multi-process detection (local mode only) ──
+      if (effectiveDataMode !== "remote") {
+        try {
+          const procs = await invoke<Array<{ pid: number; cmd: string }>>("openakita_list_processes");
+          setDetectedProcesses(procs);
+        } catch {
+          setDetectedProcesses([]);
+        }
+      } else {
+        setDetectedProcesses([]);
+      }
     } catch (e) {
       setStatusError(String(e));
     } finally {
@@ -2544,6 +2636,8 @@ export function App() {
         setNotice(t("connect.success"));
         // forceAliveCheck=true to bypass stale serviceStatus closure
         await refreshStatus("local", "http://127.0.0.1:18900", true);
+        // 自动检测 LLM 端点健康状态
+        autoCheckEndpoints("http://127.0.0.1:18900");
         // Check version after successful start
         try {
           const hRes = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(2000) });
@@ -2559,6 +2653,7 @@ export function App() {
         if (bgReady) {
           setNotice(t("connect.success"));
           await refreshStatus("local", "http://127.0.0.1:18900", true);
+          autoCheckEndpoints("http://127.0.0.1:18900");
           try {
             const hRes = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(2000) });
             if (hRes.ok) {
@@ -2595,6 +2690,7 @@ export function App() {
       // IMPORTANT: pass forceAliveCheck=true because setServiceStatus is async
       // and refreshStatus's closure still sees the old serviceStatus value
       await refreshStatus("local", "http://127.0.0.1:18900", true);
+      autoCheckEndpoints("http://127.0.0.1:18900");
       setNotice(t("connect.success"));
       // Check version mismatch using info from conflict detection (avoids extra request)
       if (ver && ver !== "unknown") checkVersionMismatch(ver);
@@ -2861,6 +2957,25 @@ export function App() {
                 }} disabled={!!busy}>{t("status.restart")}</button>
               </>)}
             </div>
+            {/* Multi-process warning */}
+            {detectedProcesses.length > 1 && (
+              <div style={{ marginTop: 8, padding: "6px 10px", background: "#fff3e0", borderRadius: 6, fontSize: 12, color: "#e65100", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 600 }}>⚠ 检测到 {detectedProcesses.length} 个 OpenAkita 进程正在运行</span>
+                <span style={{ color: "#bf360c", fontSize: 11 }}>
+                  ({detectedProcesses.map(p => `PID ${p.pid}`).join(", ")})
+                </span>
+                <button className="btnSmall btnSmallDanger" style={{ marginLeft: "auto", fontSize: 11 }} onClick={async () => {
+                  setBusy("正在停止所有进程..."); setError(null);
+                  try {
+                    const stopped = await invoke<number[]>("openakita_stop_all_processes");
+                    setDetectedProcesses([]);
+                    setNotice(`已停止 ${stopped.length} 个进程`);
+                    // Refresh status after stopping
+                    await refreshStatus();
+                  } catch (e) { setError(String(e)); } finally { setBusy(null); }
+                }} disabled={!!busy}>全部停止</button>
+              </div>
+            )}
           </div>
 
           {/* Workspace */}
@@ -2897,9 +3012,10 @@ export function App() {
               try {
                 let results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }>;
                 // Always use HTTP API when service is running (bridge has no health-check command)
-                const healthUrl = serviceStatus?.running ? apiBaseUrl : null;
+                const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+                const healthUrl = serviceStatus?.running ? effectiveBase : null;
                 if (healthUrl) {
-                  const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                  const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}), signal: AbortSignal.timeout(60_000) });
                   const data = await res.json();
                   results = data.results || [];
                 } else {
@@ -2945,9 +3061,10 @@ export function App() {
                       setHealthChecking(e.name);
                       try {
                         let r: any[];
-                        const healthUrl = serviceStatus?.running ? apiBaseUrl : null;
+                        const effectiveBase2 = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+                        const healthUrl = serviceStatus?.running ? effectiveBase2 : null;
                         if (healthUrl) {
-                          const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }) });
+                          const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }), signal: AbortSignal.timeout(60_000) });
                           const data = await res.json();
                           r = data.results || [];
                         } else {
@@ -2973,7 +3090,8 @@ export function App() {
               <button className="btnSmall" onClick={async () => {
                 setImChecking(true);
                 try {
-                  const healthUrl = serviceStatus?.running ? apiBaseUrl : null;
+                  const effectiveBase3 = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+                  const healthUrl = serviceStatus?.running ? effectiveBase3 : null;
                   if (healthUrl) {
                     const res = await safeFetch(`${healthUrl}/api/im/channels`);
                     const data = await res.json();
@@ -3578,7 +3696,12 @@ export function App() {
               </div>
               <div className="dialogSection">
                 <div className="dialogLabel">API Key</div>
-                <input value={envDraft[editDraft.apiKeyEnv || ""] || ""} onChange={(e) => { const k = editDraft.apiKeyEnv || ""; setEnvDraft((m) => ({ ...m, [k]: e.target.value })); }} type="password" />
+                <div style={{ position: "relative" }}>
+                  <input value={envDraft[editDraft.apiKeyEnv || ""] || ""} onChange={(e) => { const k = editDraft.apiKeyEnv || ""; const v = e.target.value; setEnvDraft((m) => ({ ...m, [k]: v })); setEditDraft((d) => d ? { ...d, apiKeyValue: v } : d); }} type={secretShown.__EDIT_EP_KEY ? "text" : "password"} style={{ paddingRight: 44, width: "100%" }} />
+                  <button type="button" className="btnEye" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? "隐藏" : "显示"}>
+                    {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                  </button>
+                </div>
               </div>
               </div>
               <div className="dialogFooter">
@@ -4985,12 +5108,28 @@ export function App() {
 
   // 保存 env keys 的辅助函数（供 SkillManager 使用）
   async function saveEnvKeysExternal(keys: string[]) {
-    if (!currentWorkspaceId) return;
-    const entries = keys
-      .filter((k) => Object.prototype.hasOwnProperty.call(envDraft, k))
-      .map((k) => ({ key: k, value: (envDraft[k] ?? "").trim() }));
-    if (entries.length > 0) {
-      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries });
+    const entries: Record<string, string> = {};
+    for (const k of keys) {
+      if (Object.prototype.hasOwnProperty.call(envDraft, k)) {
+        entries[k] = (envDraft[k] ?? "").trim();
+      }
+    }
+    if (!Object.keys(entries).length) return;
+    // Always try HTTP API first
+    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    try {
+      await safeFetch(`${base}/api/config/env`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries }),
+      });
+    } catch {
+      // Service unreachable — will fall through to Tauri local write
+    }
+    // In local mode, also persist to workspace .env
+    if (dataMode !== "remote" && currentWorkspaceId) {
+      const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
+      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
     }
   }
 
@@ -5258,6 +5397,7 @@ export function App() {
                       // Check version mismatch
                       if (data.version) checkVersionMismatch(data.version);
                       await refreshStatus("remote", url, true);
+                      autoCheckEndpoints(url);
                     } else {
                       setError(t("connect.fail"));
                     }
