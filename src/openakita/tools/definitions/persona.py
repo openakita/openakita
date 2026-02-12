@@ -12,7 +12,7 @@ PERSONA_TOOLS = [
     {
         "name": "switch_persona",
         "category": "Persona",
-        "description": "Switch the agent's persona preset (e.g., business, girlfriend, tech_expert). When user asks to change the agent's personality or communication style.",
+        "description": "切换人格预设角色。可用预设: default(默认助手), business(商务), tech_expert(技术专家), butler(管家), girlfriend(女友), boyfriend(男友), family(家人), jarvis(贾维斯)。当用户要求切换角色或沟通风格时使用。",
         "detail": """切换 Agent 的人格预设角色。
 
 **可用预设**：
