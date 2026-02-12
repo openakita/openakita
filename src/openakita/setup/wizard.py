@@ -26,17 +26,26 @@ class SetupWizard:
         self.project_dir = project_dir or Path.cwd()
         self.env_path = self.project_dir / ".env"
         self.config = {}
+        self._locale = "zh"           # 默认中文
+        self._defaults = {            # locale 推导的默认值，_choose_locale() 会覆盖
+            "MODEL_DOWNLOAD_SOURCE": "hf-mirror",
+            "EMBEDDING_MODEL": "shibing624/text2vec-base-chinese",
+            "WHISPER_LANGUAGE": "zh",
+            "SCHEDULER_TIMEZONE": "Asia/Shanghai",
+        }
 
     def run(self) -> bool:
         """运行完整的安装向导"""
         try:
             self._show_welcome()
             self._check_environment()
+            self._choose_locale()          # 先选语言/地区，影响后续所有默认值
             self._create_directories()
             self._configure_llm()
             self._configure_compiler()
             self._configure_im_channels()
             self._configure_memory()
+            self._configure_voice()        # 语音识别单独一步
             self._configure_advanced()
             self._write_env_file()
             self._test_connection()
@@ -129,6 +138,62 @@ Press Ctrl+C at any time to cancel.
 
         console.print("\n[green]Environment check passed![/green]\n")
 
+    # ------------------------------------------------------------------
+    # 语言 / 地区选择 — 影响后续所有默认值
+    # ------------------------------------------------------------------
+
+    def _detect_locale(self) -> str:
+        """尝试从系统 locale 探测语言（仅作为默认推荐）"""
+        import locale
+
+        try:
+            lang, _ = locale.getdefaultlocale()
+            if lang and lang.lower().startswith("zh"):
+                return "zh"
+        except Exception:
+            pass
+        return "en"
+
+    def _choose_locale(self):
+        """选择语言/地区，自动推导后续配置的合理默认值"""
+        console.print("[bold cyan]Language & Region[/bold cyan]\n")
+        console.print("This affects default settings for model downloads, voice recognition, etc.\n")
+
+        detected = self._detect_locale()
+        default_choice = "1" if detected == "zh" else "2"
+
+        console.print("  [1] 中文 / 中国大陆 (Chinese)")
+        console.print("  [2] English / International\n")
+
+        choice = Prompt.ask(
+            "Select language / region",
+            choices=["1", "2"],
+            default=default_choice,
+        )
+
+        if choice == "1":
+            self._locale = "zh"
+            # 国内默认值
+            self._defaults = {
+                "MODEL_DOWNLOAD_SOURCE": "hf-mirror",
+                "EMBEDDING_MODEL": "shibing624/text2vec-base-chinese",
+                "WHISPER_LANGUAGE": "zh",
+                "SCHEDULER_TIMEZONE": "Asia/Shanghai",
+            }
+            console.print("\n[green]已选择：中文 / 中国大陆[/green]")
+            console.print("[dim]模型将默认从国内镜像下载，语音识别默认中文[/dim]\n")
+        else:
+            self._locale = "en"
+            # 国际默认值
+            self._defaults = {
+                "MODEL_DOWNLOAD_SOURCE": "huggingface",
+                "EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2",
+                "WHISPER_LANGUAGE": "en",
+                "SCHEDULER_TIMEZONE": "UTC",
+            }
+            console.print("\n[green]Selected: English / International[/green]")
+            console.print("[dim]Models will download from HuggingFace, voice recognition defaults to English[/dim]\n")
+
     def _create_directories(self):
         """创建必要的目录结构"""
         console.print("[bold cyan]Step 2: Creating Directory Structure[/bold cyan]\n")
@@ -206,35 +271,6 @@ Press Ctrl+C at any time to cancel.
             )
             self.config["THINKING_MODE"] = "auto" if use_thinking else "never"
 
-        # FAST_MODEL（THINKING_MODE=auto 时使用）
-        if self.config.get("THINKING_MODE") == "auto":
-            console.print(
-                "\n[bold]Fast Model (for simple tasks when THINKING_MODE=auto):[/bold]\n"
-            )
-            console.print("  When THINKING_MODE=auto, simple tasks will use a faster model.\n")
-
-            fast_models = [
-                ("claude-sonnet-4-20250514", "Claude Sonnet 4 (default)"),
-                ("gpt-4o-mini", "GPT-4o Mini"),
-                ("qwen3-max", "Qwen3 Max"),
-                ("custom", "Enter custom model name"),
-            ]
-
-            for i, (_model, desc) in enumerate(fast_models, 1):
-                console.print(f"  [{i}] {desc}")
-
-            fast_choice = Prompt.ask(
-                "\nSelect fast model",
-                choices=[str(i) for i in range(1, len(fast_models) + 1)],
-                default="1",
-            )
-
-            fast_idx = int(fast_choice) - 1
-            if fast_models[fast_idx][0] == "custom":
-                self.config["FAST_MODEL"] = Prompt.ask("Enter fast model name")
-            else:
-                self.config["FAST_MODEL"] = fast_models[fast_idx][0]
-
         console.print("\n[green]LLM configuration complete![/green]\n")
 
     def _configure_anthropic(self):
@@ -263,7 +299,9 @@ Press Ctrl+C at any time to cancel.
         console.print("  - OpenAI: https://api.openai.com/v1")
         console.print("  - DashScope: https://dashscope.aliyuncs.com/compatible-mode/v1")
         console.print("  - DeepSeek: https://api.deepseek.com/v1")
-        console.print("  - Moonshot: https://api.moonshot.cn/v1\n")
+        console.print("  - Moonshot: https://api.moonshot.cn/v1")
+        console.print("  - 智谱 AI (国内): https://open.bigmodel.cn/api/paas/v4")
+        console.print("  - Zhipu AI (国际): https://api.z.ai/api/paas/v4\n")
 
         base_url = Prompt.ask("Enter API Base URL", default="https://api.openai.com/v1")
         self.config["ANTHROPIC_BASE_URL"] = base_url
@@ -610,26 +648,124 @@ Press Ctrl+C at any time to cancel.
 
         console.print("OpenAkita uses vector embeddings for semantic memory search.\n")
 
+        # 根据 locale 推导默认选项
+        defaults = getattr(self, "_defaults", {})
+        default_embed = defaults.get("EMBEDDING_MODEL", "shibing624/text2vec-base-chinese")
+        default_src = defaults.get("MODEL_DOWNLOAD_SOURCE", "auto")
+
         # Embedding 模型选择
+        models_list = [
+            ("1", "shibing624/text2vec-base-chinese", "Chinese optimized (~100MB)"),
+            ("2", "sentence-transformers/all-MiniLM-L6-v2", "English optimized (~90MB)"),
+            ("3", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", "Multilingual (~120MB)"),
+        ]
+        # 找到默认选项的序号
+        default_model_choice = "1"
+        for num, model_id, _ in models_list:
+            if model_id == default_embed:
+                default_model_choice = num
+                break
+
         console.print("Embedding model options:\n")
-        console.print("  [1] Chinese optimized (shibing624/text2vec-base-chinese) - ~100MB")
-        console.print("  [2] English optimized (all-MiniLM-L6-v2) - ~90MB")
-        console.print("  [3] Multilingual (paraphrase-multilingual-MiniLM-L12-v2) - ~120MB\n")
+        for num, model_id, desc in models_list:
+            marker = " ← recommended" if num == default_model_choice else ""
+            console.print(f"  [{num}] {desc}{marker}")
+        console.print()
 
-        choice = Prompt.ask("Select embedding model", choices=["1", "2", "3"], default="1")
-
-        models = {
-            "1": "shibing624/text2vec-base-chinese",
-            "2": "sentence-transformers/all-MiniLM-L6-v2",
-            "3": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        }
-        self.config["EMBEDDING_MODEL"] = models[choice]
+        choice = Prompt.ask(
+            "Select embedding model",
+            choices=["1", "2", "3"],
+            default=default_model_choice,
+        )
+        self.config["EMBEDDING_MODEL"] = {n: m for n, m, _ in models_list}[choice]
 
         # GPU 加速
         use_gpu = Confirm.ask("Use GPU for embeddings (requires CUDA)?", default=False)
         self.config["EMBEDDING_DEVICE"] = "cuda" if use_gpu else "cpu"
 
+        # 模型下载源
+        src_options = [
+            ("1", "auto", "Auto (自动选择最快的源)"),
+            ("2", "hf-mirror", "hf-mirror (HuggingFace 国内镜像)"),
+            ("3", "modelscope", "ModelScope (魔搭社区)"),
+            ("4", "huggingface", "HuggingFace (官方源)"),
+        ]
+        # 根据 locale 推导默认选项
+        _src_to_num = {s: n for n, s, _ in src_options}
+        default_src_choice = _src_to_num.get(default_src, "1")
+
+        console.print("\nModel download source:\n")
+        for num, _, desc in src_options:
+            marker = " ← recommended" if num == default_src_choice else ""
+            console.print(f"  [{num}] {desc}{marker}")
+        console.print()
+
+        src_choice = Prompt.ask(
+            "Select download source",
+            choices=["1", "2", "3", "4"],
+            default=default_src_choice,
+        )
+        self.config["MODEL_DOWNLOAD_SOURCE"] = {n: s for n, s, _ in src_options}[src_choice]
+
         console.print("\n[green]Memory configuration complete![/green]\n")
+
+    def _configure_voice(self):
+        """配置语音识别 (Whisper)"""
+        console.print("[bold cyan]Step 5b: Voice Recognition (Optional)[/bold cyan]\n")
+
+        use_voice = Confirm.ask("Enable local voice recognition (Whisper)?", default=True)
+        if not use_voice:
+            self.config.setdefault("WHISPER_MODEL", "base")
+            self.config.setdefault("WHISPER_LANGUAGE", getattr(self, "_defaults", {}).get("WHISPER_LANGUAGE", "zh"))
+            console.print("[dim]Voice will be configured with defaults, model downloads on first use.[/dim]\n")
+            return
+
+        defaults = getattr(self, "_defaults", {})
+        default_lang = defaults.get("WHISPER_LANGUAGE", "zh")
+
+        # 语言选择
+        console.print("Voice recognition language:\n")
+        lang_options = [
+            ("1", "zh", "中文 (Chinese)"),
+            ("2", "en", "English (uses smaller, faster .en model)"),
+            ("3", "auto", "Auto-detect language"),
+        ]
+        default_lang_choice = {"zh": "1", "en": "2", "auto": "3"}.get(default_lang, "1")
+
+        for num, _, desc in lang_options:
+            marker = " ← recommended" if num == default_lang_choice else ""
+            console.print(f"  [{num}] {desc}{marker}")
+        console.print()
+
+        lang_choice = Prompt.ask(
+            "Select voice language",
+            choices=["1", "2", "3"],
+            default=default_lang_choice,
+        )
+        whisper_lang = {n: code for n, code, _ in lang_options}[lang_choice]
+        self.config["WHISPER_LANGUAGE"] = whisper_lang
+
+        # 模型大小选择
+        console.print("\nWhisper model size:\n")
+        model_options = [
+            ("1", "tiny", "Tiny (~39MB)  - fastest, lower accuracy"),
+            ("2", "base", "Base (~74MB)  - recommended, balanced"),
+            ("3", "small", "Small (~244MB) - good accuracy"),
+            ("4", "medium", "Medium (~769MB) - high accuracy"),
+            ("5", "large", "Large (~1.5GB) - highest accuracy, resource-heavy"),
+        ]
+        # 英语时 .en 模型更小，提示用户
+        if whisper_lang == "en":
+            console.print("[dim]  Note: English .en models are auto-selected and are more efficient[/dim]\n")
+
+        model_choice = Prompt.ask(
+            "Select model size",
+            choices=["1", "2", "3", "4", "5"],
+            default="2",
+        )
+        self.config["WHISPER_MODEL"] = {n: m for n, m, _ in model_options}[model_choice]
+
+        console.print("\n[green]Voice configuration complete![/green]\n")
 
     def _configure_advanced(self):
         """高级配置"""
@@ -690,7 +826,8 @@ Press Ctrl+C at any time to cancel.
         use_scheduler = Confirm.ask("Enable task scheduler? (recommended)", default=True)
         self.config["SCHEDULER_ENABLED"] = "true" if use_scheduler else "false"
         if use_scheduler:
-            tz = Prompt.ask("  Timezone", default="Asia/Shanghai")
+            defaults = getattr(self, "_defaults", {})
+            tz = Prompt.ask("  Timezone", default=defaults.get("SCHEDULER_TIMEZONE", "Asia/Shanghai"))
             self.config["SCHEDULER_TIMEZONE"] = tz
 
         # Session (会话)
@@ -780,11 +917,6 @@ Press Ctrl+C at any time to cancel.
             f"THINKING_MODE={self.config.get('THINKING_MODE', 'auto')}",
         ]
 
-        if self.config.get("FAST_MODEL"):
-            lines.append(f"FAST_MODEL={self.config['FAST_MODEL']}")
-        else:
-            lines.append("# FAST_MODEL=claude-sonnet-4-20250514")
-
         lines.extend([
             "",
             "# ========== Agent Configuration ==========",
@@ -842,9 +974,11 @@ Press Ctrl+C at any time to cancel.
             ])
 
         # Whisper
+        whisper_lang = self.config.get("WHISPER_LANGUAGE", "zh")
         lines.extend([
             "# ========== Voice (optional) ==========",
-            "WHISPER_MODEL=base",
+            f"WHISPER_MODEL={self.config.get('WHISPER_MODEL', 'base')}",
+            f"WHISPER_LANGUAGE={whisper_lang}",
             "",
         ])
 
@@ -966,6 +1100,7 @@ Press Ctrl+C at any time to cancel.
             "# ========== Memory System ==========",
             f"EMBEDDING_MODEL={self.config.get('EMBEDDING_MODEL', 'shibing624/text2vec-base-chinese')}",
             f"EMBEDDING_DEVICE={self.config.get('EMBEDDING_DEVICE', 'cpu')}",
+            f"MODEL_DOWNLOAD_SOURCE={self.config.get('MODEL_DOWNLOAD_SOURCE', 'auto')}",
             "MEMORY_HISTORY_DAYS=30",
             "# MEMORY_MAX_HISTORY_FILES=1000",
             "# MEMORY_MAX_HISTORY_SIZE_MB=500",

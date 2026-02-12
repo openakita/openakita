@@ -14,6 +14,7 @@ from .openai import OpenAIRegistry
 from .openrouter import OpenRouterRegistry
 from .siliconflow import SiliconFlowInternationalRegistry, SiliconFlowRegistry
 from .volcengine import VolcEngineRegistry
+from .zhipu import ZhipuChinaRegistry, ZhipuInternationalRegistry
 
 # 所有注册表
 ALL_REGISTRIES = [
@@ -30,6 +31,8 @@ ALL_REGISTRIES = [
     SiliconFlowRegistry(),
     SiliconFlowInternationalRegistry(),
     VolcEngineRegistry(),
+    ZhipuChinaRegistry(),
+    ZhipuInternationalRegistry(),
 ]
 
 # 按 slug 索引
@@ -65,6 +68,8 @@ __all__ = [
     "SiliconFlowRegistry",
     "SiliconFlowInternationalRegistry",
     "VolcEngineRegistry",
+    "ZhipuChinaRegistry",
+    "ZhipuInternationalRegistry",
     "ALL_REGISTRIES",
     "get_registry",
     "list_providers",

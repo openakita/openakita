@@ -192,29 +192,48 @@ function SearchSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [hoverIdx, setHoverIdx] = useState(0);
+  const [search, setSearch] = useState(""); // 独立搜索词，与选中值分离
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const hasOptions = options.length > 0;
+
+  // 当有下拉选项时：显示文本 = 搜索词（正在搜索）或已选值
+  // 当无下拉选项时：直接使用 value 作为手动输入
+  const displayValue = hasOptions ? (search || value) : value;
+
   const filtered = useMemo(() => {
-    const q = (value || "").trim().toLowerCase();
+    if (!hasOptions) return [];
+    const q = search.trim().toLowerCase();
     const list = q ? options.filter((x) => x.toLowerCase().includes(q)) : options;
     return list.slice(0, 200);
-  }, [options, value]);
+  }, [options, search, hasOptions]);
 
   useEffect(() => {
     if (hoverIdx >= filtered.length) setHoverIdx(0);
   }, [filtered.length, hoverIdx]);
 
   return (
-    <div ref={rootRef} style={{ position: "relative", flex: "1 1 auto", minWidth: 520 }}>
+    <div ref={rootRef} style={{ position: "relative", flex: "1 1 auto", minWidth: 0 }}>
       <div style={{ position: "relative" }}>
         <input
-          value={value}
+          ref={inputRef}
+          value={displayValue}
           onChange={(e) => {
-            onChange(e.target.value);
-            setOpen(true);
+            if (hasOptions) {
+              setSearch(e.target.value);
+              setOpen(true);
+            } else {
+              onChange(e.target.value);
+            }
           }}
           placeholder={placeholder}
-          onFocus={() => setOpen(true)}
+          onFocus={() => { if (hasOptions) setOpen(true); }}
+          onBlur={() => {
+            // 延迟关闭，让 click 事件先触发
+            setTimeout(() => setOpen(false), 150);
+          }}
           onKeyDown={(e) => {
+            if (!hasOptions) return;
             if (e.key === "ArrowDown") {
               e.preventDefault();
               setOpen(true);
@@ -226,37 +245,77 @@ function SearchSelect({
               if (open && filtered[hoverIdx]) {
                 e.preventDefault();
                 onChange(filtered[hoverIdx]);
+                setSearch("");
                 setOpen(false);
               }
             } else if (e.key === "Escape") {
+              setSearch("");
               setOpen(false);
             }
           }}
           disabled={disabled}
-          style={{ paddingRight: 44 }}
+          style={{ paddingRight: hasOptions ? (value ? 72 : 44) : 12 }}
         />
-        <button
-          type="button"
-          className="btnSmall"
-          onClick={() => setOpen((v) => !v)}
-          disabled={disabled}
-          style={{
-            position: "absolute",
-            right: 8,
-            top: "50%",
-            transform: "translateY(-50%)",
-            width: 34,
-            height: 30,
-            padding: 0,
-            borderRadius: 10,
-            display: "grid",
-            placeItems: "center",
-          }}
-        >
-          ▾
-        </button>
+        {/* × 清空按钮：有选中值或搜索词时显示 */}
+        {hasOptions && (value || search) && !disabled && (
+          <button
+            type="button"
+            className="btnSmall"
+            onClick={() => {
+              setSearch("");
+              onChange("");
+              setOpen(true);
+              inputRef.current?.focus();
+            }}
+            style={{
+              position: "absolute",
+              right: 42,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 26,
+              height: 26,
+              padding: 0,
+              borderRadius: 8,
+              display: "grid",
+              placeItems: "center",
+              fontSize: 14,
+              color: "var(--muted)",
+              opacity: 0.7,
+            }}
+            title="清空"
+          >
+            ✕
+          </button>
+        )}
+        {/* ▾ 下拉按钮：仅在有选项时显示 */}
+        {hasOptions && (
+          <button
+            type="button"
+            className="btnSmall"
+            onClick={() => {
+              if (!open) { setSearch(""); }
+              setOpen((v) => !v);
+              inputRef.current?.focus();
+            }}
+            disabled={disabled}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 34,
+              height: 30,
+              padding: 0,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center",
+            }}
+          >
+            ▾
+          </button>
+        )}
       </div>
-      {open && !disabled ? (
+      {open && hasOptions && !disabled ? (
         <div
           style={{
             position: "absolute",
@@ -285,17 +344,22 @@ function SearchSelect({
                 onMouseEnter={() => setHoverIdx(idx)}
                 onClick={() => {
                   onChange(opt);
+                  setSearch("");
                   setOpen(false);
                 }}
                 style={{
                   padding: "10px 12px",
                   cursor: "pointer",
                   fontWeight: 650,
-                  background: idx === hoverIdx ? "rgba(14, 165, 233, 0.10)" : "transparent",
+                  background: opt === value
+                    ? "rgba(14, 165, 233, 0.16)"
+                    : idx === hoverIdx
+                      ? "rgba(14, 165, 233, 0.06)"
+                      : "transparent",
                   borderTop: idx === 0 ? "none" : "1px solid rgba(17,24,39,0.06)",
                 }}
               >
-                {opt}
+                {opt === value ? `✓ ${opt}` : opt}
               </div>
             ))
           )}
@@ -352,6 +416,9 @@ export function App() {
   function askConfirm(message: string, onConfirm: () => void) {
     setConfirmDialog({ message, onConfirm });
   }
+
+  // ── Restart overlay state ──
+  const [restartOverlay, setRestartOverlay] = useState<{ phase: "saving" | "restarting" | "waiting" | "done" | "fail" | "notRunning" } | null>(null);
 
   // ── Service conflict & version state ──
   const [conflictDialog, setConflictDialog] = useState<{ pid: number; version: string } | null>(null);
@@ -610,6 +677,36 @@ export function App() {
               }
             }
           } catch { /* ignore */ }
+
+          // ── Auto-connect to local running service ──
+          // 如果本地有 OpenAkita 服务在运行，自动连接并同步状态。
+          // 版本不一致时仍然连接，由 checkVersionMismatch 负责提示用户。
+          if (!cancelled) {
+            try {
+              const localUrl = "http://127.0.0.1:18900";
+              const healthRes = await fetch(`${localUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+              if (healthRes.ok && !cancelled) {
+                const healthData = await healthRes.json();
+                const svcVersion = healthData.version || "";
+                setApiBaseUrl(localUrl);
+                setServiceStatus({ running: true, pid: healthData.pid || null, pidFile: "" });
+                if (svcVersion) setBackendVersion(svcVersion);
+                // 从运行中的服务加载最新配置
+                try {
+                  const envRes = await fetch(`${localUrl}/api/config/env`, { signal: AbortSignal.timeout(3000) });
+                  if (envRes.ok) {
+                    const envData = await envRes.json();
+                    const env = envData.env || {};
+                    setEnvDraft((prev) => ({ ...prev, ...env }));
+                  }
+                } catch { /* ignore */ }
+                // 版本不一致时触发已有的 mismatch 警告（延迟执行，等 desktopVersion 加载完）
+                if (svcVersion) {
+                  setTimeout(() => checkVersionMismatch(svcVersion), 500);
+                }
+              }
+            } catch { /* 服务未运行，正常情况 */ }
+          }
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -1268,6 +1365,92 @@ export function App() {
     } catch { /* service not running or reload not supported — that's ok */ }
   }
 
+  /**
+   * 保存 .env 配置后触发服务重启，并轮询等待服务恢复。
+   * 如果服务未运行，仅保存不重启并提示。
+   */
+  async function applyAndRestart(keys: string[]): Promise<void> {
+    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    setError(null);
+    setRestartOverlay({ phase: "saving" });
+
+    try {
+      // Step 1: 保存配置
+      await saveEnvKeys(keys);
+
+      // Step 2: 检测服务是否运行
+      let alive = false;
+      try {
+        const ping = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
+        alive = ping.ok;
+      } catch { alive = false; }
+
+      if (!alive) {
+        // 服务未运行，仅保存
+        setRestartOverlay({ phase: "notRunning" });
+        setTimeout(() => {
+          setRestartOverlay(null);
+          setNotice(t("config.restartNotRunning"));
+        }, 2000);
+        return;
+      }
+
+      // Step 3: 触发重启
+      setRestartOverlay({ phase: "restarting" });
+      try {
+        await fetch(`${base}/api/config/restart`, { method: "POST", signal: AbortSignal.timeout(3000) });
+      } catch { /* 请求可能因服务关闭而失败，这是预期的 */ }
+
+      // Step 4: 等待服务关闭 (短暂延迟)
+      await new Promise((r) => setTimeout(r, 1500));
+
+      // Step 5: 轮询等待服务恢复
+      setRestartOverlay({ phase: "waiting" });
+      const maxWait = 30_000; // 最多等 30 秒
+      const pollInterval = 1000;
+      const startTime = Date.now();
+      let recovered = false;
+
+      while (Date.now() - startTime < maxWait) {
+        await new Promise((r) => setTimeout(r, pollInterval));
+        try {
+          const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
+          if (res.ok) {
+            recovered = true;
+            // 更新后端版本
+            try {
+              const data = await res.json();
+              if (data.version) setBackendVersion(data.version);
+            } catch { /* ignore */ }
+            break;
+          }
+        } catch { /* 还没恢复，继续等 */ }
+      }
+
+      if (recovered) {
+        setRestartOverlay({ phase: "done" });
+        setServiceStatus((prev) =>
+          prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
+        );
+        // 刷新配置数据
+        try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
+        setTimeout(() => {
+          setRestartOverlay(null);
+          setNotice(t("config.restartSuccess"));
+        }, 1200);
+      } else {
+        setRestartOverlay({ phase: "fail" });
+        setTimeout(() => {
+          setRestartOverlay(null);
+          setError(t("config.restartFail"));
+        }, 2500);
+      }
+    } catch (e) {
+      setRestartOverlay(null);
+      setError(String(e));
+    }
+  }
+
   function normalizePriority(n: any, fallback: number) {
     const x = Number(n);
     if (!Number.isFinite(x) || x <= 0) return fallback;
@@ -1775,6 +1958,10 @@ export function App() {
       deepseek: "https://platform.deepseek.com/",
       openrouter: "https://openrouter.ai/",
       siliconflow: "https://siliconflow.cn/",
+      volcengine: "https://console.volcengine.com/ark/",
+      zhipu: "https://open.bigmodel.cn/",
+      "zhipu-cn": "https://open.bigmodel.cn/usercenter/apikeys",
+      "zhipu-int": "https://z.ai/manage-apikey/apikey-list",
       yunwu: "https://yunwu.zeabur.app/",
     };
     return map[slug] || "";
@@ -1851,17 +2038,17 @@ export function App() {
           "DESKTOP_VISION_OCR_MODEL", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
           "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
           "DESKTOP_FAILSAFE", "DESKTOP_PAUSE", "DESKTOP_LOG_ACTIONS", "DESKTOP_LOG_SCREENSHOTS", "DESKTOP_LOG_DIR",
-          "WHISPER_MODEL", "GITHUB_TOKEN",
+          "WHISPER_MODEL", "WHISPER_LANGUAGE", "GITHUB_TOKEN",
         ];
       case "agent":
         return [
           "AGENT_NAME", "MAX_ITERATIONS", "AUTO_CONFIRM",
-          "THINKING_MODE", "FAST_MODEL",
+          "THINKING_MODE",
           "PROGRESS_TIMEOUT_SECONDS", "HARD_TIMEOUT_SECONDS",
           "DATABASE_PATH", "LOG_LEVEL",
           "LOG_DIR", "LOG_FILE_PREFIX", "LOG_MAX_SIZE_MB", "LOG_BACKUP_COUNT",
           "LOG_RETENTION_DAYS", "LOG_FORMAT", "LOG_TO_CONSOLE", "LOG_TO_FILE",
-          "EMBEDDING_MODEL", "EMBEDDING_DEVICE",
+          "EMBEDDING_MODEL", "EMBEDDING_DEVICE", "MODEL_DOWNLOAD_SOURCE",
           "MEMORY_HISTORY_DAYS", "MEMORY_MAX_HISTORY_FILES", "MEMORY_MAX_HISTORY_SIZE_MB",
           "PERSONA_NAME",
           "PROACTIVE_ENABLED", "PROACTIVE_MAX_DAILY_MESSAGES", "PROACTIVE_MIN_INTERVAL_MINUTES",
@@ -3262,89 +3449,95 @@ export function App() {
                 />
               </div>
 
-              {/* Fetch models */}
+              {/* Model name — always visible; fetch is optional */}
               <div className="dialogSection">
-                <button onClick={doFetchModels} className="btnPrimary" disabled={!apiKeyValue.trim() || !baseUrl.trim() || !!busy}
-                  style={{ width: "100%", padding: "10px 16px", borderRadius: 8 }}>
-                  {models.length > 0 ? t("llm.refetch") + ` (${models.length})` : t("llm.fetchModels")}
-                </button>
-              </div>
-
-              {/* Select model (shown after fetch) */}
-              {models.length > 0 && (
-                <>
-                  <div className="dialogSection">
-                    <div className="dialogLabel">{t("llm.selectModel")}</div>
-                    <SearchSelect
-                      value={selectedModelId}
-                      onChange={(v) => setSelectedModelId(v)}
-                      options={models.map((m) => m.id)}
-                      placeholder={t("llm.searchModel")}
-                      disabled={!!busy}
-                    />
-                  </div>
-
-                  <div className="dialogSection">
-                    <div className="dialogLabel">{t("llm.endpointName")}</div>
-                    <input
-                      value={endpointName}
-                      onChange={(e) => { setEndpointNameTouched(true); setEndpointName(e.target.value); }}
-                      placeholder="dashscope-qwen3-max"
-                    />
-                  </div>
-
-                  {/* Capabilities as chips */}
-                  <div className="dialogSection">
-                    <div className="dialogLabel">{t("llm.capabilities")}</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {[
-                        { k: "text", name: t("llm.capText") },
-                        { k: "thinking", name: t("llm.capThinking") },
-                        { k: "vision", name: t("llm.capVision") },
-                        { k: "video", name: t("llm.capVideo") },
-                        { k: "tools", name: t("llm.capTools") },
-                      ].map((c) => {
-                        const on = capSelected.includes(c.k);
-                        return (
-                          <span key={c.k} className={`capChip ${on ? "capChipActive" : ""}`}
-                            onClick={() => { setCapTouched(true); setCapSelected((prev) => { const set = new Set(prev); if (set.has(c.k)) set.delete(c.k); else set.add(c.k); const out = Array.from(set); return out.length ? out : ["text"]; }); }}
-                          >{on ? "\u2713 " : ""}{c.name}</span>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Advanced (collapsed) */}
-                  <details className="dialogDetails">
-                    <summary>{t("llm.advanced")}</summary>
-                    <div>
-                      <div style={{ marginBottom: 10 }}>
-                        <div className="dialogLabel">API Type</div>
-                        <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 140, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
-                          <option value="openai">openai</option>
-                          <option value="anthropic">anthropic</option>
-                        </select>
-                      </div>
-                      <div style={{ marginBottom: 10 }}>
-                        <div className="dialogLabel">Key Env Name</div>
-                        <input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                      </div>
-                      <div>
-                        <div className="dialogLabel">Priority</div>
-                        <input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                      </div>
-                    </div>
-                  </details>
-
-                  {/* Footer */}
-                  <div className="dialogFooter">
-                    <button className="btnSmall" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); }}>{t("common.cancel")}</button>
-                    <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEndpoint(); setAddEpDialogOpen(false); }} disabled={!selectedModelId || !currentWorkspaceId || !!busy}>
-                      {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
+                <div className="dialogLabel">{t("llm.selectModel")}</div>
+                <SearchSelect
+                  value={selectedModelId}
+                  onChange={(v) => setSelectedModelId(v)}
+                  options={models.map((m) => m.id)}
+                  placeholder={models.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")}
+                  disabled={!!busy}
+                />
+                {models.length === 0 && (
+                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ opacity: 0.7 }}>{t("llm.modelManualHint")}</span>
+                    <button onClick={doFetchModels} className="btnSmall" disabled={!apiKeyValue.trim() || !baseUrl.trim() || !!busy}
+                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
+                      {t("llm.fetchModels")}
                     </button>
                   </div>
-                </>
-              )}
+                )}
+                {models.length > 0 && (
+                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: models.length })}</span>
+                    <button onClick={doFetchModels} className="btnSmall" disabled={!apiKeyValue.trim() || !baseUrl.trim() || !!busy}
+                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
+                      {t("llm.refetch")}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="dialogSection">
+                <div className="dialogLabel">{t("llm.endpointName")}</div>
+                <input
+                  value={endpointName}
+                  onChange={(e) => { setEndpointNameTouched(true); setEndpointName(e.target.value); }}
+                  placeholder="dashscope-qwen3-max"
+                />
+              </div>
+
+              {/* Capabilities as chips */}
+              <div className="dialogSection">
+                <div className="dialogLabel">{t("llm.capabilities")}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {[
+                    { k: "text", name: t("llm.capText") },
+                    { k: "thinking", name: t("llm.capThinking") },
+                    { k: "vision", name: t("llm.capVision") },
+                    { k: "video", name: t("llm.capVideo") },
+                    { k: "tools", name: t("llm.capTools") },
+                  ].map((c) => {
+                    const on = capSelected.includes(c.k);
+                    return (
+                      <span key={c.k} className={`capChip ${on ? "capChipActive" : ""}`}
+                        onClick={() => { setCapTouched(true); setCapSelected((prev) => { const set = new Set(prev); if (set.has(c.k)) set.delete(c.k); else set.add(c.k); const out = Array.from(set); return out.length ? out : ["text"]; }); }}
+                      >{on ? "\u2713 " : ""}{c.name}</span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Advanced (collapsed) */}
+              <details className="dialogDetails">
+                <summary>{t("llm.advanced")}</summary>
+                <div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="dialogLabel">API Type</div>
+                    <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 140, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+                      <option value="openai">openai</option>
+                      <option value="anthropic">anthropic</option>
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="dialogLabel">Key Env Name</div>
+                    <input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  </div>
+                  <div>
+                    <div className="dialogLabel">Priority</div>
+                    <input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  </div>
+                </div>
+              </details>
+
+              {/* Footer */}
+              <div className="dialogFooter">
+                <button className="btnSmall" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); }}>{t("common.cancel")}</button>
+                <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEndpoint(); setAddEpDialogOpen(false); }} disabled={!selectedModelId.trim() || !apiKeyEnv.trim() || !apiKeyValue.trim() || !baseUrl.trim() || (!currentWorkspaceId && dataMode !== "remote") || !!busy}>
+                  {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -3424,30 +3617,39 @@ export function App() {
                 <div className="dialogLabel">API Key</div>
                 <input value={compilerApiKeyValue} onChange={(e) => setCompilerApiKeyValue(e.target.value)} placeholder="sk-..." type="password" />
               </div>
+              {/* Model name — always visible; fetch is optional */}
               <div className="dialogSection">
-                <button onClick={doFetchCompilerModels} className="btnPrimary" disabled={!compilerApiKeyValue.trim() || !compilerBaseUrl.trim() || !!busy}
-                  style={{ width: "100%", padding: "10px 16px", borderRadius: 8 }}>
-                  {compilerModels.length > 0 ? t("llm.refetch") + ` (${compilerModels.length})` : t("llm.fetchModels")}
-                </button>
-              </div>
-              {compilerModels.length > 0 && (
-                <>
-                  <div className="dialogSection">
-                    <div className="dialogLabel">{t("status.model")}</div>
-                    <SearchSelect value={compilerModel} onChange={(v) => setCompilerModel(v)} options={compilerModels.map((m) => m.id)} placeholder="qwen-turbo / gpt-4o-mini" disabled={!!busy} />
-                  </div>
-                  <div className="dialogSection">
-                    <div className="dialogLabel">{t("llm.endpointName")} <span style={{ color: "var(--muted)", fontSize: 11 }}>({t("common.optional")})</span></div>
-                    <input value={compilerEndpointName} onChange={(e) => setCompilerEndpointName(e.target.value)} placeholder={`compiler-${compilerProviderSlug || "custom"}-${compilerModel || "model"}`} />
-                  </div>
-                  <div className="dialogFooter">
-                    <button className="btnSmall" onClick={() => setAddCompDialogOpen(false)}>{t("common.cancel")}</button>
-                    <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveCompilerEndpoint(); setAddCompDialogOpen(false); }} disabled={!compilerModel.trim() || !compilerApiKeyEnv.trim() || !compilerApiKeyValue.trim() || (!currentWorkspaceId && dataMode !== "remote") || !!busy}>
-                      {t("llm.addEndpoint")}
+                <div className="dialogLabel">{t("status.model")}</div>
+                <SearchSelect value={compilerModel} onChange={(v) => setCompilerModel(v)} options={compilerModels.map((m) => m.id)} placeholder={compilerModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
+                {compilerModels.length === 0 && (
+                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ opacity: 0.7 }}>{t("llm.modelManualHint")}</span>
+                    <button onClick={doFetchCompilerModels} className="btnSmall" disabled={!compilerApiKeyValue.trim() || !compilerBaseUrl.trim() || !!busy}
+                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
+                      {t("llm.fetchModels")}
                     </button>
                   </div>
-                </>
-              )}
+                )}
+                {compilerModels.length > 0 && (
+                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: compilerModels.length })}</span>
+                    <button onClick={doFetchCompilerModels} className="btnSmall" disabled={!compilerApiKeyValue.trim() || !compilerBaseUrl.trim() || !!busy}
+                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
+                      {t("llm.refetch")}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="dialogSection">
+                <div className="dialogLabel">{t("llm.endpointName")} <span style={{ color: "var(--muted)", fontSize: 11 }}>({t("common.optional")})</span></div>
+                <input value={compilerEndpointName} onChange={(e) => setCompilerEndpointName(e.target.value)} placeholder={`compiler-${compilerProviderSlug || "custom"}-${compilerModel || "model"}`} />
+              </div>
+              <div className="dialogFooter">
+                <button className="btnSmall" onClick={() => setAddCompDialogOpen(false)}>{t("common.cancel")}</button>
+                <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveCompilerEndpoint(); setAddCompDialogOpen(false); }} disabled={!compilerModel.trim() || !compilerApiKeyEnv.trim() || !compilerApiKeyValue.trim() || (!currentWorkspaceId && dataMode !== "remote") || !!busy}>
+                  {t("llm.addEndpoint")}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -3491,8 +3693,8 @@ export function App() {
     );
   }
 
-  function FieldBool({ k, label, help }: { k: string; label: string; help?: string }) {
-    const v = envGet(envDraft, k, "false").toLowerCase() === "true";
+  function FieldBool({ k, label, help, defaultValue }: { k: string; label: string; help?: string; defaultValue?: boolean }) {
+    const v = envGet(envDraft, k, defaultValue ? "true" : "false").toLowerCase() === "true";
     return (
       <div className="field">
         <div className="labelRow">
@@ -3507,6 +3709,72 @@ export function App() {
             onChange={(e) => setEnvDraft((m) => envSet(m, k, String(e.target.checked)))} />
           {t("skills.enabled")}
         </label>
+      </div>
+    );
+  }
+
+  function FieldSelect({
+    k, label, options, help,
+  }: { k: string; label: string; options: { value: string; label: string }[]; help?: string; }) {
+    return (
+      <div className="field">
+        <div className="labelRow">
+          <div className="label">
+            {label}
+            {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
+          </div>
+          {k ? <div className="help">{k}</div> : null}
+        </div>
+        <select
+          value={envGet(envDraft, k)}
+          onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
+        >
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  function FieldCombo({
+    k, label, options, placeholder, help,
+  }: { k: string; label: string; options: { value: string; label: string }[]; placeholder?: string; help?: string; }) {
+    const currentVal = envGet(envDraft, k);
+    const isPreset = options.some((o) => o.value === currentVal);
+    return (
+      <div className="field">
+        <div className="labelRow">
+          <div className="label">
+            {label}
+            {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
+          </div>
+          {k ? <div className="help">{k}</div> : null}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select
+            style={{ flex: "0 0 auto", minWidth: 140 }}
+            value={isPreset ? currentVal : "__custom__"}
+            onChange={(e) => {
+              if (e.target.value !== "__custom__") {
+                setEnvDraft((m) => envSet(m, k, e.target.value));
+              }
+            }}
+          >
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+            <option value="__custom__">{t("common.custom") || "自定义..."}</option>
+          </select>
+          {(!isPreset || currentVal === "") && (
+            <input
+              style={{ flex: 1 }}
+              value={currentVal}
+              onChange={(e) => setEnvDraft((m) => envSet(m, k, e.target.value))}
+              placeholder={placeholder || t("common.custom") || "自定义输入..."}
+            />
+          )}
+        </div>
       </div>
     );
   }
@@ -3658,11 +3926,17 @@ export function App() {
             );
           })}
 
-          <div className="btnRow" style={{ marginTop: 14 }}>
+          <div className="btnRow" style={{ marginTop: 14, gap: 8 }}>
             <button className="btnPrimary"
               onClick={() => renderIntegrationsSave(keysIM, t("config.imSaved"))}
               disabled={!currentWorkspaceId || !!busy}>
               {t("config.imSave")}
+            </button>
+            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
+              onClick={() => applyAndRestart(keysIM)}
+              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
+              title={t("config.applyRestartHint")}>
+              {t("config.applyRestart")}
             </button>
           </div>
         </div>
@@ -3684,7 +3958,7 @@ export function App() {
       "DESKTOP_VISION_OCR_MODEL", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
       "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
       "DESKTOP_FAILSAFE", "DESKTOP_PAUSE", "DESKTOP_LOG_ACTIONS", "DESKTOP_LOG_SCREENSHOTS", "DESKTOP_LOG_DIR",
-      "WHISPER_MODEL", "GITHUB_TOKEN",
+      "WHISPER_MODEL", "WHISPER_LANGUAGE", "GITHUB_TOKEN",
     ];
 
     const list = skillsDetail || [];
@@ -3754,6 +4028,36 @@ export function App() {
             </div>
           </details>
 
+          {/* ── Model Downloads & Voice Recognition (prominent, open by default) ── */}
+          <details className="configDetails" open>
+            <summary>{t("config.toolsDownloadVoice")}</summary>
+            <div className="configDetailsBody">
+              <div className="grid2">
+                <FieldSelect k="MODEL_DOWNLOAD_SOURCE" label={t("config.agentDownloadSource")} options={[
+                  { value: "auto", label: "Auto (自动选择最快源)" },
+                  { value: "hf-mirror", label: "hf-mirror (国内镜像 🇨🇳)" },
+                  { value: "modelscope", label: "ModelScope (魔搭社区 🇨🇳)" },
+                  { value: "huggingface", label: "HuggingFace (官方)" },
+                ]} />
+                <FieldSelect k="WHISPER_LANGUAGE" label={t("config.toolsWhisperLang")} options={[
+                  { value: "zh", label: "中文 (zh)" },
+                  { value: "en", label: "English (en, .en model)" },
+                  { value: "auto", label: "Auto (自动检测)" },
+                ]} />
+              </div>
+              <div className="grid2">
+                <FieldCombo k="WHISPER_MODEL" label={t("config.toolsWhisperModel")} help={t("config.toolsWhisperHelp")} options={[
+                  { value: "tiny", label: "tiny (~39MB)" },
+                  { value: "base", label: "base (~74MB)" },
+                  { value: "small", label: "small (~244MB)" },
+                  { value: "medium", label: "medium (~769MB)" },
+                  { value: "large", label: "large (~1.5GB)" },
+                ]} placeholder="base" />
+                <FieldText k="GITHUB_TOKEN" label="GitHub Token" placeholder="" type="password" help={t("config.toolsGithubHelp")} />
+              </div>
+            </div>
+          </details>
+
           {/* ── Network & Proxy ── */}
           <details className="configDetails">
             <summary>{t("config.toolsNetwork")}</summary>
@@ -3763,10 +4067,9 @@ export function App() {
                 <FieldText k="HTTPS_PROXY" label="HTTPS_PROXY" placeholder="http://127.0.0.1:7890" />
                 <FieldText k="ALL_PROXY" label="ALL_PROXY" placeholder="socks5://..." />
               </div>
-              <div className="grid3">
+              <div className="grid2">
                 <FieldBool k="FORCE_IPV4" label={t("config.toolsForceIPv4")} help={t("config.toolsForceIPv4Help")} />
                 <FieldText k="TOOL_MAX_PARALLEL" label={t("config.toolsParallel")} placeholder="1" help={t("config.toolsParallelHelp")} />
-                <FieldText k="WHISPER_MODEL" label="Whisper" placeholder="base" help={t("config.toolsWhisperHelp")} />
               </div>
             </div>
           </details>
@@ -3776,7 +4079,6 @@ export function App() {
             <summary>{t("config.toolsOther")}</summary>
             <div className="configDetailsBody">
               <div className="grid2">
-                <FieldText k="GITHUB_TOKEN" label="GITHUB_TOKEN" type="password" help={t("config.toolsGithubHelp")} />
                 <FieldText k="FORCE_TOOL_CALL_MAX_RETRIES" label={t("config.toolsForceRetry")} placeholder="1" />
               </div>
             </div>
@@ -3845,11 +4147,17 @@ export function App() {
           </details>
 
           <div className="divider" />
-          <div className="btnRow">
+          <div className="btnRow" style={{ gap: 8 }}>
             <button className="btnPrimary"
               onClick={() => renderIntegrationsSave(keysTools, t("config.toolsSaved"))}
               disabled={!currentWorkspaceId || !!busy}>
               {t("config.saveEnv")}
+            </button>
+            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
+              onClick={() => applyAndRestart(keysTools)}
+              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
+              title={t("config.applyRestartHint")}>
+              {t("config.applyRestart")}
             </button>
           </div>
         </div>
@@ -3860,12 +4168,12 @@ export function App() {
   function renderAgentSystem() {
     const keysAgent = [
       "AGENT_NAME", "MAX_ITERATIONS", "AUTO_CONFIRM",
-      "THINKING_MODE", "FAST_MODEL",
+      "THINKING_MODE",
       "PROGRESS_TIMEOUT_SECONDS", "HARD_TIMEOUT_SECONDS",
       "DATABASE_PATH", "LOG_LEVEL", "LOG_DIR", "LOG_FILE_PREFIX",
       "LOG_MAX_SIZE_MB", "LOG_BACKUP_COUNT", "LOG_RETENTION_DAYS",
       "LOG_FORMAT", "LOG_TO_CONSOLE", "LOG_TO_FILE",
-      "EMBEDDING_MODEL", "EMBEDDING_DEVICE",
+      "EMBEDDING_MODEL", "EMBEDDING_DEVICE", "MODEL_DOWNLOAD_SOURCE",
       "MEMORY_HISTORY_DAYS", "MEMORY_MAX_HISTORY_FILES", "MEMORY_MAX_HISTORY_SIZE_MB",
       "PERSONA_NAME",
       "PROACTIVE_ENABLED", "PROACTIVE_MAX_DAILY_MESSAGES", "PROACTIVE_MIN_INTERVAL_MINUTES",
@@ -3924,10 +4232,13 @@ export function App() {
           <div className="grid3" style={{ marginTop: 4 }}>
             <FieldText k="AGENT_NAME" label={t("config.agentName")} placeholder="OpenAkita" />
             <FieldText k="MAX_ITERATIONS" label={t("config.agentMaxIter")} placeholder="300" help={t("config.agentMaxIterHelp")} />
-            <FieldText k="THINKING_MODE" label={t("config.agentThinking")} placeholder="auto" help={t("config.agentThinkingHelp")} />
+            <FieldSelect k="THINKING_MODE" label={t("config.agentThinking")} options={[
+              { value: "auto", label: "auto (自动判断)" },
+              { value: "always", label: "always (始终思考)" },
+              { value: "never", label: "never (从不思考)" },
+            ]} />
           </div>
-          <div className="grid2" style={{ marginTop: 8 }}>
-            <FieldText k="FAST_MODEL" label={t("config.agentFastModel")} placeholder="claude-sonnet-4-20250514" help={t("config.agentFastModelHelp")} />
+          <div style={{ marginTop: 8 }}>
             <FieldBool k="AUTO_CONFIRM" label={t("config.agentAutoConfirm")} help={t("config.agentAutoConfirmHelp")} />
           </div>
 
@@ -3952,7 +4263,7 @@ export function App() {
           {/* ── Scheduler ── */}
           <div className="label">{t("config.agentScheduler")}</div>
           <div className="grid3" style={{ marginTop: 4 }}>
-            <FieldBool k="SCHEDULER_ENABLED" label={t("config.agentSchedulerEnable")} help={t("config.agentSchedulerEnableHelp")} />
+            <FieldBool k="SCHEDULER_ENABLED" label={t("config.agentSchedulerEnable")} help={t("config.agentSchedulerEnableHelp")} defaultValue={true} />
             <FieldText k="SCHEDULER_TIMEZONE" label={t("config.agentTimezone")} placeholder="Asia/Shanghai" />
             <FieldText k="SCHEDULER_MAX_CONCURRENT" label={t("config.agentMaxConcurrent")} placeholder="5" help={t("config.agentMaxConcurrentHelp")} />
           </div>
@@ -3966,7 +4277,12 @@ export function App() {
               {/* Logging */}
               <div className="label" style={{ fontSize: 13, opacity: 0.7 }}>{t("config.agentLogSection")}</div>
               <div className="grid3">
-                <FieldText k="LOG_LEVEL" label={t("config.agentLogLevel")} placeholder="INFO" />
+                <FieldSelect k="LOG_LEVEL" label={t("config.agentLogLevel")} options={[
+                  { value: "DEBUG", label: "DEBUG" },
+                  { value: "INFO", label: "INFO" },
+                  { value: "WARNING", label: "WARNING" },
+                  { value: "ERROR", label: "ERROR" },
+                ]} />
                 <FieldText k="LOG_DIR" label={t("config.agentLogDir")} placeholder="logs" />
                 <FieldText k="DATABASE_PATH" label={t("config.agentDbPath")} placeholder="data/agent.db" />
               </div>
@@ -3983,9 +4299,15 @@ export function App() {
               <div className="divider" />
               {/* Memory & Embedding */}
               <div className="label" style={{ fontSize: 13, opacity: 0.7 }}>{t("config.agentMemorySection")}</div>
-              <div className="grid2">
+              <div className="grid3">
                 <FieldText k="EMBEDDING_MODEL" label={t("config.agentEmbedModel")} placeholder="shibing624/text2vec-base-chinese" />
                 <FieldText k="EMBEDDING_DEVICE" label={t("config.agentEmbedDevice")} placeholder="cpu" />
+                <FieldSelect k="MODEL_DOWNLOAD_SOURCE" label={t("config.agentDownloadSource")} options={[
+                  { value: "auto", label: "Auto (自动选择)" },
+                  { value: "hf-mirror", label: "hf-mirror (国内镜像)" },
+                  { value: "modelscope", label: "ModelScope (魔搭)" },
+                  { value: "huggingface", label: "HuggingFace (官方)" },
+                ]} />
               </div>
               <div className="grid3">
                 <FieldText k="MEMORY_HISTORY_DAYS" label={t("config.agentMemDays")} placeholder="30" />
@@ -4025,11 +4347,17 @@ export function App() {
           </details>
 
           <div className="divider" />
-          <div className="btnRow">
+          <div className="btnRow" style={{ gap: 8 }}>
             <button className="btnPrimary"
               onClick={() => renderIntegrationsSave(keysAgent, t("config.agentSaved"))}
               disabled={!currentWorkspaceId || !!busy}>
               {t("config.saveEnv")}
+            </button>
+            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
+              onClick={() => applyAndRestart(keysAgent)}
+              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
+              title={t("config.applyRestartHint")}>
+              {t("config.applyRestart")}
             </button>
           </div>
         </div>
@@ -4049,7 +4377,6 @@ export function App() {
       "MAX_ITERATIONS",
       "AUTO_CONFIRM",
       "THINKING_MODE",
-      "FAST_MODEL",
       "TOOL_MAX_PARALLEL",
       "FORCE_TOOL_CALL_MAX_RETRIES",
       "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
@@ -4070,9 +4397,11 @@ export function App() {
       // github/whisper
       "GITHUB_TOKEN",
       "WHISPER_MODEL",
+      "WHISPER_LANGUAGE",
       // memory / embedding
       "EMBEDDING_MODEL",
       "EMBEDDING_DEVICE",
+      "MODEL_DOWNLOAD_SOURCE",
       "MEMORY_HISTORY_DAYS",
       "MEMORY_MAX_HISTORY_FILES",
       "MEMORY_MAX_HISTORY_SIZE_MB",
@@ -4367,7 +4696,18 @@ export function App() {
 
             <div className="divider" />
             <div className="grid3">
-              <FieldText k="WHISPER_MODEL" label="WHISPER_MODEL" placeholder="base" help="tiny/base/small/medium/large" />
+              <FieldCombo k="WHISPER_MODEL" label="WHISPER_MODEL" help="tiny/base/small/medium/large" options={[
+                { value: "tiny", label: "tiny (~39MB)" },
+                { value: "base", label: "base (~74MB)" },
+                { value: "small", label: "small (~244MB)" },
+                { value: "medium", label: "medium (~769MB)" },
+                { value: "large", label: "large (~1.5GB)" },
+              ]} placeholder="base" />
+              <FieldSelect k="WHISPER_LANGUAGE" label="WHISPER_LANGUAGE" options={[
+                { value: "zh", label: "中文 (zh)" },
+                { value: "en", label: "English (en)" },
+                { value: "auto", label: "Auto (自动检测)" },
+              ]} />
               <FieldText k="GITHUB_TOKEN" label="GITHUB_TOKEN" placeholder="" type="password" help="用于搜索/下载技能" />
               <FieldText k="DATABASE_PATH" label="DATABASE_PATH" placeholder="data/agent.db" />
             </div>
@@ -4388,10 +4728,18 @@ export function App() {
                 <FieldText k="AGENT_NAME" label="Agent 名称" placeholder="OpenAkita" />
                 <FieldText k="MAX_ITERATIONS" label="最大迭代次数" placeholder="300" />
                 <FieldBool k="AUTO_CONFIRM" label="自动确认（慎用）" help="打开后会减少交互确认，建议只在可信环境中使用" />
-                <FieldText k="THINKING_MODE" label="Thinking 模式" placeholder="auto" help="auto=自动判断 / always=始终思考 / never=从不思考" />
-                <FieldText k="FAST_MODEL" label="快速模型（Thinking auto 时用）" placeholder="claude-sonnet-4-20250514" help="THINKING_MODE=auto 时，简单任务会切到此模型" />
+                <FieldSelect k="THINKING_MODE" label="Thinking 模式" options={[
+                  { value: "auto", label: "auto (自动判断)" },
+                  { value: "always", label: "always (始终思考)" },
+                  { value: "never", label: "never (从不思考)" },
+                ]} />
                 <FieldText k="DATABASE_PATH" label="数据库路径" placeholder="data/agent.db" />
-                <FieldText k="LOG_LEVEL" label="日志级别" placeholder="INFO" help="DEBUG/INFO/WARNING/ERROR" />
+                <FieldSelect k="LOG_LEVEL" label="日志级别" options={[
+                  { value: "DEBUG", label: "DEBUG" },
+                  { value: "INFO", label: "INFO" },
+                  { value: "WARNING", label: "WARNING" },
+                  { value: "ERROR", label: "ERROR" },
+                ]} />
               </div>
             </details>
 
@@ -4416,6 +4764,12 @@ export function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 <FieldText k="EMBEDDING_MODEL" label="Embedding 模型" placeholder="shibing624/text2vec-base-chinese" />
                 <FieldText k="EMBEDDING_DEVICE" label="Embedding 设备" placeholder="cpu / cuda" />
+                <FieldSelect k="MODEL_DOWNLOAD_SOURCE" label="模型下载源" options={[
+                  { value: "auto", label: "Auto (自动选择)" },
+                  { value: "hf-mirror", label: "hf-mirror (国内镜像)" },
+                  { value: "modelscope", label: "ModelScope (魔搭)" },
+                  { value: "huggingface", label: "HuggingFace (官方)" },
+                ]} />
                 <FieldText k="MEMORY_HISTORY_DAYS" label="历史保留天数" placeholder="30" />
                 <FieldText k="MEMORY_MAX_HISTORY_FILES" label="最大历史文件数" placeholder="1000" />
                 <FieldText k="MEMORY_MAX_HISTORY_SIZE_MB" label="最大历史大小（MB）" placeholder="500" />
@@ -4465,13 +4819,19 @@ export function App() {
             </details>
           </div>
 
-          <div className="btnRow">
+          <div className="btnRow" style={{ gap: 8 }}>
             <button
               className="btnPrimary"
               onClick={() => renderIntegrationsSave(keysCore, "已写入工作区 .env（工具/IM/MCP/桌面/高级配置）")}
               disabled={!currentWorkspaceId || !!busy}
             >
               一键写入工作区 .env（全覆盖）
+            </button>
+            <button className="btnSmall" style={{ background: "#0e7490", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 8, fontSize: 13 }}
+              onClick={() => applyAndRestart(keysCore)}
+              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
+              title={t("config.applyRestartHint")}>
+              {t("config.applyRestart")}
             </button>
           </div>
           
@@ -4888,6 +5248,50 @@ export function App() {
             </div>
           </div>
         )}
+
+        {/* ── Restart overlay ── */}
+        {restartOverlay && (
+          <div className="modalOverlay" style={{ zIndex: 10000, background: "rgba(0,0,0,0.5)" }}>
+            <div className="modalContent" style={{ maxWidth: 360, padding: "32px 28px", textAlign: "center", borderRadius: 16 }} onClick={(e) => e.stopPropagation()}>
+              {(restartOverlay.phase === "saving" || restartOverlay.phase === "restarting" || restartOverlay.phase === "waiting") && (
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <svg width="40" height="40" viewBox="0 0 40 40" style={{ animation: "spin 1s linear infinite" }}>
+                      <circle cx="20" cy="20" r="16" fill="none" stroke="#0ea5e9" strokeWidth="3" strokeDasharray="80" strokeDashoffset="20" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "#0e7490" }}>
+                    {restartOverlay.phase === "saving" && t("common.loading")}
+                    {restartOverlay.phase === "restarting" && t("config.restarting")}
+                    {restartOverlay.phase === "waiting" && t("config.restartWaiting")}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
+                    {t("config.applyRestartHint")}
+                  </div>
+                </>
+              )}
+              {restartOverlay.phase === "done" && (
+                <>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}><IconCheckCircle size={40} /></div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "#059669" }}>{t("config.restartSuccess")}</div>
+                </>
+              )}
+              {restartOverlay.phase === "fail" && (
+                <>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}><IconXCircle size={40} /></div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "#dc2626" }}>{t("config.restartFail")}</div>
+                </>
+              )}
+              {restartOverlay.phase === "notRunning" && (
+                <>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}><IconInfo size={40} /></div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: "#64748b" }}>{t("config.restartNotRunning")}</div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
         {/* ── Service conflict dialog ── */}
         {conflictDialog && (

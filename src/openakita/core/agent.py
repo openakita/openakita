@@ -255,6 +255,9 @@ class Agent:
             data_dir=settings.project_root / "data" / "memory",
             memory_md_path=settings.memory_path,
             brain=self.brain,
+            embedding_model=settings.embedding_model,
+            embedding_device=settings.embedding_device,
+            model_download_source=settings.model_download_source,
         )
 
         # 用户档案管理器

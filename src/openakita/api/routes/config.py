@@ -213,6 +213,27 @@ async def reload_config(request: Request):
         return {"status": "error", "reloaded": False, "reason": str(e)}
 
 
+@router.post("/api/config/restart")
+async def restart_service(request: Request):
+    """触发服务优雅重启。
+
+    流程：设置重启标志 → 触发 shutdown_event → serve() 主循环检测标志后重新初始化。
+    前端应在调用后轮询 /api/health 直到服务恢复。
+    """
+    from openakita import config as cfg
+
+    cfg._restart_requested = True
+    shutdown_event = getattr(request.app.state, "shutdown_event", None)
+    if shutdown_event is not None:
+        logger.info("[Config API] Restart requested, triggering graceful shutdown for restart")
+        shutdown_event.set()
+        return {"status": "restarting"}
+    else:
+        logger.warning("[Config API] Restart requested but no shutdown_event available")
+        cfg._restart_requested = False
+        return {"status": "error", "message": "restart not available in this mode"}
+
+
 @router.get("/api/config/skills")
 async def read_skills_config():
     """Read data/skills.json (skill selection/allowlist)."""

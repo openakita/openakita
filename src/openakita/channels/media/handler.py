@@ -28,20 +28,30 @@ class MediaHandler:
     - 文档内容提取
     """
 
+    # 支持 .en 专用模型的 Whisper 尺寸（large 无 .en 变体）
+    _EN_MODEL_SIZES = {"tiny", "base", "small", "medium"}
+
     def __init__(
         self,
         brain: Any | None = None,
         whisper_model: str = "medium",
+        whisper_language: str = "zh",
         enable_ocr: bool = True,
     ):
         """
         Args:
             brain: Brain 实例（用于图片理解）
             whisper_model: Whisper 模型大小 (tiny, base, small, medium, large)
+            whisper_language: 语音识别语言 (zh/en/auto/其他语言代码)
             enable_ocr: 是否启用 OCR
         """
         self.brain = brain
-        self.whisper_model = whisper_model
+        self.whisper_language = whisper_language.lower().strip()
+        # 英语且模型尺寸有 .en 变体时，自动切换到更小更快的 .en 模型
+        if self.whisper_language == "en" and whisper_model in self._EN_MODEL_SIZES:
+            self.whisper_model = f"{whisper_model}.en"
+        else:
+            self.whisper_model = whisper_model
         self.enable_ocr = enable_ocr
 
         # 延迟加载的模型
@@ -162,9 +172,14 @@ class MediaHandler:
             )
 
         # 在线程池中执行（避免阻塞）
+        # auto 模式不传 language，让 Whisper 自动检测
+        kwargs: dict = {}
+        if self.whisper_language and self.whisper_language != "auto":
+            kwargs["language"] = self.whisper_language
+
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, lambda: self._whisper.transcribe(audio_path, language="zh")
+            None, lambda: self._whisper.transcribe(audio_path, **kwargs)
         )
 
         return result["text"]

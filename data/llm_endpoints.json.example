@@ -2,7 +2,7 @@
   "_doc": "OpenAkita LLM 端点配置文件 - 复制为 llm_endpoints.json 后使用",
   "_doc_fields": {
     "name":         "端点名称（唯一标识）",
-    "provider":     "供应商标识：anthropic / openai / dashscope / dashscope-intl / kimi-cn / kimi-int / minimax-cn / minimax-int / deepseek / openrouter / siliconflow / siliconflow-intl / volcengine 等",
+    "provider":     "供应商标识：anthropic / openai / dashscope / dashscope-intl / kimi-cn / kimi-int / minimax-cn / minimax-int / deepseek / openrouter / siliconflow / siliconflow-intl / volcengine / zhipu-cn / zhipu-int 等",
     "api_type":     "API 协议类型：anthropic 或 openai（OpenAI 兼容格式）",
     "base_url":     "API 基地址",
     "api_key_env":  "API Key 对应的环境变量名（在 .env 中配置实际值）",
@@ -41,6 +41,32 @@
       "timeout": 180,
       "capabilities": ["text", "tools", "thinking"],
       "extra_params": {"enable_thinking": true}
+    },
+    {
+      "_doc": "示例 3: 智谱 AI 国内区（GLM-5 旗舰模型）",
+      "name": "zhipu-cn-glm5",
+      "provider": "zhipu-cn",
+      "api_type": "openai",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "ZHIPU_API_KEY",
+      "model": "glm-5",
+      "priority": 3,
+      "max_tokens": 8192,
+      "timeout": 180,
+      "capabilities": ["text", "tools", "thinking"]
+    },
+    {
+      "_doc": "示例 4: 智谱 AI 国际区 (Z.AI)",
+      "name": "zhipu-int-glm5",
+      "provider": "zhipu-int",
+      "api_type": "openai",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "api_key_env": "ZHIPU_API_KEY",
+      "model": "glm-5",
+      "priority": 4,
+      "max_tokens": 8192,
+      "timeout": 180,
+      "capabilities": ["text", "tools", "thinking"]
     }
   ],
 

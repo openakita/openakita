@@ -141,6 +141,7 @@ async def start_im_channels(agent_or_master):
         session_manager=_session_manager,
         agent_handler=None,  # 稍后设置
         whisper_model=settings.whisper_model,  # 从配置读取 Whisper 模型
+        whisper_language=settings.whisper_language,  # 语音识别语言
     )
 
     # 注册启用的适配器
@@ -976,15 +977,27 @@ def prompt_debug(
 
 
 @app.command()
+def _reset_globals():
+    """重置全局组件引用，用于重启时清除旧实例。"""
+    global _agent, _master_agent, _message_gateway, _session_manager
+    _agent = None
+    _master_agent = None
+    _message_gateway = None
+    _session_manager = None
+
+
 def serve():
     """
     启动服务模式 (无 CLI，只运行 IM 通道)
 
     用于后台运行，只处理 IM 消息。
     支持单 Agent 和多 Agent 协同模式。
+    支持通过 /api/config/restart 触发优雅重启。
     """
     import signal
     import warnings
+
+    from openakita import config as cfg
 
     # 压制 Windows asyncio 关闭时的 ResourceWarning
     warnings.filterwarnings("ignore", category=ResourceWarning, module="asyncio")
@@ -997,6 +1010,7 @@ def serve():
     async def _serve():
         nonlocal shutdown_event, agent_or_master, shutdown_triggered
         shutdown_event = asyncio.Event()
+        shutdown_triggered = False
 
         mode_text = "多 Agent 协同模式" if is_orchestration_enabled() else "单 Agent 模式"
         console.print(
@@ -1066,7 +1080,11 @@ def serve():
         finally:
             if not shutdown_triggered:
                 shutdown_triggered = True
-                console.print("\n[yellow]正在停止服务...[/yellow]")
+                is_restart = cfg._restart_requested
+                if is_restart:
+                    console.print("\n[yellow]正在重启服务...[/yellow]")
+                else:
+                    console.print("\n[yellow]正在停止服务...[/yellow]")
                 try:
                     # 停止 HTTP API 服务器
                     if api_task is not None:
@@ -1084,13 +1102,19 @@ def serve():
                 except Exception as e:
                     # 忽略停止过程中的异常（常见于 Windows asyncio）
                     logger.debug(f"Exception during shutdown (ignored): {e}")
-                console.print("[green]✓[/green] 服务已停止")
+
+                if is_restart:
+                    console.print("[cyan]✓[/cyan] 服务已停止，准备重启...")
+                else:
+                    console.print("[green]✓[/green] 服务已停止")
 
     def signal_handler(signum, frame):
         """信号处理器，用于优雅关闭"""
         nonlocal shutdown_triggered
         if shutdown_event and not shutdown_triggered:
             shutdown_triggered = True
+            # 信号触发的是真正的关闭，不是重启
+            cfg._restart_requested = False
             console.print("\n[yellow]收到停止信号，正在优雅关闭...[/yellow]")
             # 使用 call_soon_threadsafe 确保线程安全
             try:
@@ -1103,26 +1127,49 @@ def serve():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    try:
-        asyncio.run(_serve())
-    except KeyboardInterrupt:
-        if not shutdown_triggered:
-            console.print("\n[yellow]服务已停止[/yellow]")
-    except (ConnectionResetError, OSError) as e:
-        # 忽略 Windows asyncio 关闭时的已知问题
-        # WinError 995: 由于线程退出或应用程序请求，已中止 I/O 操作
-        if "995" in str(e):
+    # ── 主循环：支持重启 ──
+    # 首次进入时 _restart_requested 为 False，正常启动。
+    # 当 /api/config/restart 设置 _restart_requested=True 并触发 shutdown 后，
+    # 循环会重新加载配置、重置全局状态并重新初始化所有组件。
+    first_run = True
+    while first_run or cfg._restart_requested:
+        first_run = False
+        if cfg._restart_requested:
+            console.print("\n[bold cyan]═══ 服务重启中 ═══[/bold cyan]")
+            cfg._restart_requested = False
+            _reset_globals()
+            settings.reload()  # 重新读取 .env 配置
+
+        # 检查重启准备期间是否收到 Ctrl+C（信号处理器可能在 reload 期间触发）
+        if shutdown_triggered:
+            console.print("\n[yellow]服务已停止（重启被取消）[/yellow]")
+            break
+
+        try:
+            asyncio.run(_serve())
+        except KeyboardInterrupt:
             if not shutdown_triggered:
                 console.print("\n[yellow]服务已停止[/yellow]")
-        else:
-            raise
-    except Exception as e:
-        # 捕获其他异常，检查是否是 InvalidStateError
-        if "InvalidState" in str(type(e).__name__) or "invalid state" in str(e).lower():
-            if not shutdown_triggered:
-                console.print("\n[yellow]服务已停止[/yellow]")
-        else:
-            raise
+            break
+        except (ConnectionResetError, OSError) as e:
+            # 忽略 Windows asyncio 关闭时的已知问题
+            # WinError 995: 由于线程退出或应用程序请求，已中止 I/O 操作
+            if "995" in str(e):
+                if not shutdown_triggered:
+                    console.print("\n[yellow]服务已停止[/yellow]")
+            else:
+                raise
+        except Exception as e:
+            # 捕获其他异常，检查是否是 InvalidStateError
+            if "InvalidState" in str(type(e).__name__) or "invalid state" in str(e).lower():
+                if not shutdown_triggered:
+                    console.print("\n[yellow]服务已停止[/yellow]")
+            else:
+                raise
+
+        # 如果不是重启请求，跳出循环
+        if not cfg._restart_requested:
+            break
 
 
 if __name__ == "__main__":

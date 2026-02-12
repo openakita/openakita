@@ -463,17 +463,22 @@ class MessageGateway:
     - 将回复发送回通道
     """
 
+    # 支持 .en 专用模型的 Whisper 尺寸（large 无 .en 变体）
+    _EN_MODEL_SIZES = {"tiny", "base", "small", "medium"}
+
     def __init__(
         self,
         session_manager: SessionManager,
         agent_handler: AgentHandler | None = None,
         whisper_model: str = "base",
+        whisper_language: str = "zh",
     ):
         """
         Args:
             session_manager: 会话管理器
             agent_handler: Agent 处理函数 (session, message) -> response
             whisper_model: Whisper 模型大小 (tiny, base, small, medium, large)，默认 base
+            whisper_language: 语音识别语言 (zh/en/auto/其他语言代码)
         """
         self.session_manager = session_manager
         self.agent_handler = agent_handler
@@ -493,7 +498,16 @@ class MessageGateway:
         self._post_process_hooks: list[Callable[[UnifiedMessage, str], Awaitable[str]]] = []
 
         # Whisper 语音识别模型（延迟加载或启动时预加载）
-        self._whisper_model_name = whisper_model
+        self._whisper_language = whisper_language.lower().strip()
+        # 英语且模型尺寸有 .en 变体时，自动切换到更小更快的 .en 模型
+        if self._whisper_language == "en" and whisper_model in self._EN_MODEL_SIZES:
+            self._whisper_model_name = f"{whisper_model}.en"
+            logger.info(
+                f"Whisper language=en → auto-selected English-only model: "
+                f"{self._whisper_model_name}"
+            )
+        else:
+            self._whisper_model_name = whisper_model
         self._whisper = None
         self._whisper_loaded = False
 
@@ -1061,8 +1075,14 @@ class MessageGateway:
                 return None
 
             # 在线程池中运行转写（避免阻塞事件循环）
+            whisper_lang = self._whisper_language
+
             def transcribe():
-                result = self._whisper.transcribe(audio_path, language="zh")  # 默认中文
+                # auto 模式不传 language，让 Whisper 自动检测
+                kwargs = {}
+                if whisper_lang and whisper_lang != "auto":
+                    kwargs["language"] = whisper_lang
+                result = self._whisper.transcribe(audio_path, **kwargs)
                 return result["text"].strip()
 
             # 异步执行

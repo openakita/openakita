@@ -101,9 +101,6 @@ class Settings(BaseSettings):
         ],
         description="触发 thinking 模式的关键词",
     )
-    fast_model: str = Field(
-        default="claude-sonnet-4-20250514", description="快速模型（不使用 thinking）"
-    )
 
     # 路径配置
     project_root: Path = Field(
@@ -128,6 +125,14 @@ class Settings(BaseSettings):
     whisper_model: str = Field(
         default="base", description="Whisper 模型 (tiny/base/small/medium/large)"
     )
+    whisper_language: str = Field(
+        default="zh",
+        description=(
+            "Whisper 语音识别语言: "
+            "zh(中文) | en(英文，自动使用更小更快的 .en 模型) | "
+            "auto(自动检测语言) | 其他语言代码"
+        ),
+    )
 
     # === 全局代理配置 ===
     # 用于 LLM API 请求的代理（如果透明代理不生效）
@@ -139,6 +144,24 @@ class Settings(BaseSettings):
     # 某些 VPN（如 LetsTAP）不支持 IPv6，启用此选项强制使用 IPv4
     force_ipv4: bool = Field(
         default=False, description="强制使用 IPv4（解决某些 VPN 的 IPv6 兼容性问题）"
+    )
+
+    # === 模型下载源配置 ===
+    # 本地 embedding 模型从 HuggingFace 下载，国内可能很慢
+    # 支持: auto(自动选择) | huggingface(官方) | hf-mirror(国内镜像) | modelscope(魔搭社区)
+    model_download_source: str = Field(
+        default="auto",
+        description="模型下载源: auto(自动选择最快源) | huggingface | hf-mirror | modelscope",
+    )
+
+    # === Embedding 模型配置 ===
+    embedding_model: str = Field(
+        default="shibing624/text2vec-base-chinese",
+        description="Embedding 模型名称 (如 shibing624/text2vec-base-chinese)",
+    )
+    embedding_device: str = Field(
+        default="cpu",
+        description="Embedding 模型运行设备 (cpu 或 cuda)",
     )
 
     # GitHub
@@ -268,6 +291,26 @@ class Settings(BaseSettings):
         # 否则 pydantic 会尝试把 "" 解析成 int/bool，导致启动失败。
         "env_ignore_empty": True,
     }
+
+    def reload(self) -> list[str]:
+        """从 .env 文件重新加载配置，返回发生变更的字段名列表。
+
+        创建一个新的 Settings 实例（会重新读取 .env），
+        然后把所有字段值拷贝回当前单例。
+        """
+        fresh = Settings()
+        changed: list[str] = []
+        for field_name in self.model_fields:
+            old_val = getattr(self, field_name)
+            new_val = getattr(fresh, field_name)
+            if old_val != new_val:
+                setattr(self, field_name, new_val)
+                changed.append(field_name)
+        if changed:
+            logger.info(f"[Settings] Reloaded from .env, changed: {changed}")
+        else:
+            logger.info("[Settings] Reloaded from .env, no changes detected")
+        return changed
 
     @property
     def identity_path(self) -> Path:
@@ -419,3 +462,9 @@ settings = Settings()
 
 # 全局运行时状态管理器
 runtime_state = RuntimeState()
+
+# ---------------------------------------------------------------------------
+# 重启信号标志
+# ---------------------------------------------------------------------------
+# 由 /api/config/restart 端点设置，main.py serve() 循环检测此标志决定是否重启。
+_restart_requested: bool = False

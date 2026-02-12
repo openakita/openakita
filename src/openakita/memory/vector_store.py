@@ -5,6 +5,7 @@
 - 记忆向量化存储
 - 语义相似度搜索
 - 支持按类型过滤
+- 支持多源下载 (HuggingFace / hf-mirror / ModelScope)
 """
 
 import asyncio
@@ -15,22 +16,26 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # 延迟导入，避免未安装依赖时报错
-_sentence_transformer = None
+_sentence_transformers_available = None
 _chromadb = None
 
 
 def _lazy_import():
     """延迟导入依赖"""
-    global _sentence_transformer, _chromadb
+    global _sentence_transformers_available, _chromadb
 
-    if _sentence_transformer is None:
+    if _sentence_transformers_available is None:
         try:
-            from sentence_transformers import SentenceTransformer
+            import sentence_transformers  # noqa: F401
 
-            _sentence_transformer = SentenceTransformer
+            _sentence_transformers_available = True
         except ImportError:
             logger.warning("sentence-transformers not installed, vector search disabled")
+            _sentence_transformers_available = False
             return False
+
+    if not _sentence_transformers_available:
+        return False
 
     if _chromadb is None:
         try:
@@ -48,7 +53,8 @@ class VectorStore:
     """
     向量存储 - 基于 ChromaDB
 
-    使用本地 embedding 模型，无需 API 调用
+    使用本地 embedding 模型，无需 API 调用。
+    支持多下载源 (HuggingFace / hf-mirror / ModelScope)。
     """
 
     # 默认使用中文优化的 embedding 模型
@@ -59,6 +65,7 @@ class VectorStore:
         data_dir: Path,
         model_name: str | None = None,
         device: str = "cpu",
+        download_source: str = "auto",
     ):
         """
         初始化向量存储
@@ -67,10 +74,12 @@ class VectorStore:
             data_dir: 数据目录
             model_name: embedding 模型名称 (默认 shibing624/text2vec-base-chinese)
             device: 设备 (cpu 或 cuda)
+            download_source: 下载源 ("auto" | "huggingface" | "hf-mirror" | "modelscope")
         """
         self.data_dir = Path(data_dir)
         self.model_name = model_name or self.DEFAULT_MODEL
         self.device = device
+        self.download_source = download_source
 
         self._model = None
         self._client = None
@@ -94,10 +103,16 @@ class VectorStore:
                 return False
 
             try:
-                # 初始化 embedding 模型
-                logger.info(f"Loading embedding model: {self.model_name}")
-                self._model = _sentence_transformer(
-                    self.model_name,
+                # 初始化 embedding 模型（支持多源下载）
+                from .model_hub import load_embedding_model
+
+                logger.info(
+                    f"Loading embedding model: {self.model_name} "
+                    f"(source={self.download_source})"
+                )
+                self._model = load_embedding_model(
+                    model_name=self.model_name,
+                    source=self.download_source,
                     device=self.device,
                 )
 

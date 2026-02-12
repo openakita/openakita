@@ -408,14 +408,31 @@ MODEL_CAPABILITIES = {
         },
     },
     "zhipu": {
-        # 智谱 AI 官方 (AutoGLM & GLM)
-        "autoglm-phone": {
+        # 智谱 AI 官方 (Z.AI / BigModel)
+        # ── GLM-5 系列（最新旗舰） ──
+        "glm-5": {
             "text": True,
-            "vision": True,
+            "vision": False,
             "video": False,
             "tools": True,
-            "thinking": False,
+            "thinking": True,
         },
+        "glm-5-plus": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
+        # ── GLM-4.7 系列 ──
+        "glm-4.7": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
+        # ── GLM-4.6 系列 ──
         "glm-4.6v": {
             "text": True,
             "vision": True,
@@ -423,13 +440,15 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": False,
         },
-        "glm-4.7": {
+        # ── GLM-4.5 系列 ──
+        "glm-4.5v": {
             "text": True,
-            "vision": False,
+            "vision": True,
             "video": False,
             "tools": True,
             "thinking": False,
         },
+        # ── GLM-4 系列 ──
         "glm-4": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
         "glm-4-plus": {
             "text": True,
@@ -445,12 +464,62 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": False,
         },
+        "glm-4-airx": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
+        "glm-4-long": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
+        "glm-4-flash": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
+        "glm-4-flashx": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
         "glm-4v": {"text": True, "vision": True, "video": False, "tools": True, "thinking": False},
         "glm-4v-plus": {
             "text": True,
             "vision": True,
             "video": False,
             "tools": True,
+            "thinking": False,
+        },
+        "glm-4-32b-0414-128k": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
+        # ── 特殊模型 ──
+        "autoglm-phone": {
+            "text": True,
+            "vision": True,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
+        "glm-ocr": {
+            "text": True,
+            "vision": True,
+            "video": False,
+            "tools": False,
             "thinking": False,
         },
     },
@@ -558,6 +627,8 @@ URL_TO_PROVIDER = {
     "api.moonshot.cn": "moonshot",
     "api.minimax.chat": "minimax",
     "open.bigmodel.cn": "zhipu",
+    "bigmodel.cn": "zhipu",
+    "api.z.ai": "zhipu",
     "generativelanguage.googleapis.com": "google",
     "openrouter.ai": "openrouter",
     "api.siliconflow.cn": "siliconflow",

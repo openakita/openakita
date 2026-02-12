@@ -50,7 +50,10 @@ def migrate_to_vector_store(memories: list[dict], data_dir: Path) -> int:
         return 0
     
     print("\n📦 初始化向量存储...")
-    vector_store = VectorStore(data_dir=data_dir)
+    # 支持通过环境变量配置下载源
+    import os
+    download_source = os.environ.get("MODEL_DOWNLOAD_SOURCE", "auto")
+    vector_store = VectorStore(data_dir=data_dir, download_source=download_source)
     
     if not vector_store.enabled:
         print("❌ 向量存储初始化失败")

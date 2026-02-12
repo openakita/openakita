@@ -343,23 +343,48 @@ install_whisper_model() {
         *) model_name="base" ;;
     esac
     
+    # 询问语言（英语时自动使用 .en 模型，更小更快）
+    echo ""
+    print_info "语音识别语言选项:"
+    echo "  1. zh   - 中文（使用多语言模型）"
+    echo "  2. en   - 英文（自动切换为更小更快的 .en 专用模型）"
+    echo "  3. auto - 自动检测语言"
+    echo ""
+    read -p "请选择语言 (默认 1-zh): " lang_choice
+    lang_choice=${lang_choice:-1}
+
+    local whisper_lang
+    case $lang_choice in
+        1) whisper_lang="zh" ;;
+        2) whisper_lang="en" ;;
+        3) whisper_lang="auto" ;;
+        *) whisper_lang="zh" ;;
+    esac
+
+    # 英语且模型有 .en 变体时，切换到 .en 模型
+    local actual_model="$model_name"
+    if [[ "$whisper_lang" == "en" ]] && [[ "$model_name" != "large" ]]; then
+        actual_model="${model_name}.en"
+        print_info "英语模式 → 使用 $actual_model 专用模型（更小更快）"
+    fi
+
     # 检查模型是否已存在
     local cache_dir="$HOME/.cache/whisper"
-    local model_file="$cache_dir/${model_name}.pt"
+    local model_file="$cache_dir/${actual_model}.pt"
     
     if [[ -f "$model_file" ]] && [[ $(stat -f%z "$model_file" 2>/dev/null || stat -c%s "$model_file" 2>/dev/null) -gt 1000000 ]]; then
-        print_info "Whisper $model_name 模型已存在，跳过下载"
+        print_info "Whisper $actual_model 模型已存在，跳过下载"
         return 0
     fi
     
-    print_info "下载 Whisper $model_name 模型..."
+    print_info "下载 Whisper $actual_model 模型..."
     
     $VENV_PYTHON -c "
 import whisper
 print('正在下载...')
-whisper.load_model('$model_name')
+whisper.load_model('$actual_model')
 print('完成!')
-" && print_success "Whisper $model_name 模型下载成功" || print_warning "Whisper 模型下载失败，语音识别功能将在首次使用时下载"
+" && print_success "Whisper $actual_model 模型下载成功" || print_warning "Whisper 模型下载失败，语音识别功能将在首次使用时下载"
 }
 
 # 初始化配置
@@ -449,7 +474,6 @@ AUTO_CONFIRM=false
 
 # Thinking 模式（auto/always/never）
 # THINKING_MODE=auto
-# FAST_MODEL=claude-sonnet-4-20250514
 
 # 数据库 & 日志
 DATABASE_PATH=data/agent.db
@@ -491,6 +515,8 @@ ORCHESTRATION_ENABLED=false
 # 记忆
 EMBEDDING_MODEL=shibing624/text2vec-base-chinese
 EMBEDDING_DEVICE=cpu
+# 模型下载源: auto | huggingface | hf-mirror | modelscope
+MODEL_DOWNLOAD_SOURCE=auto
 
 # 会话
 # SESSION_TIMEOUT_MINUTES=30
@@ -502,6 +528,8 @@ EMBEDDING_DEVICE=cpu
 
 # 语音
 WHISPER_MODEL=base
+# 语音识别语言: zh(中文) | en(英文,自动使用.en模型) | auto(自动检测)
+WHISPER_LANGUAGE=zh
 
 # GitHub
 # GITHUB_TOKEN=

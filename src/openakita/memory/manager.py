@@ -39,6 +39,7 @@ class MemoryManager:
         brain=None,
         embedding_model: str = None,
         embedding_device: str = "cpu",
+        model_download_source: str = "auto",
     ):
         """
         Args:
@@ -47,6 +48,7 @@ class MemoryManager:
             brain: LLM 大脑实例
             embedding_model: embedding 模型名称（可选）
             embedding_device: 设备 (cpu 或 cuda)
+            model_download_source: 模型下载源 ("auto" | "huggingface" | "hf-mirror" | "modelscope")
         """
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -61,11 +63,12 @@ class MemoryManager:
         self.extractor = MemoryExtractor(brain)
         self.consolidator = MemoryConsolidator(data_dir, brain, self.extractor)
 
-        # 向量存储（延迟初始化）
+        # 向量存储（延迟初始化，支持多源下载）
         self.vector_store = VectorStore(
             data_dir=self.data_dir,
             model_name=embedding_model,
             device=embedding_device,
+            download_source=model_download_source,
         )
 
         # 记忆存储
