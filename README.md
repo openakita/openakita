@@ -254,11 +254,13 @@ Channels ─── CLI · Telegram · Feishu · WeCom · DingTalk · QQ
 | Document | Content |
 |----------|---------|
 | [Configuration Guide](docs/configuration-guide.md) | Desktop Quick Setup & Full Setup walkthrough |
+| ⭐ [LLM Provider Setup](docs/llm-provider-setup-tutorial.md) | **API Key registration + endpoint config + multi-endpoint Failover** |
+| ⭐ [IM Channel Setup](docs/im-channel-setup-tutorial.md) | **Telegram / Feishu / DingTalk / WeCom / QQ step-by-step tutorial** |
 | [Quick Start](docs/getting-started.md) | Installation and basics |
 | [Architecture](docs/architecture.md) | System design and components |
 | [Configuration](docs/configuration.md) | All config options |
 | [Deployment](docs/deploy.md) | Production deployment (systemd / Docker) |
-| [IM Channels](docs/im-channels.md) | Telegram / Feishu / DingTalk setup |
+| [IM Channels Reference](docs/im-channels.md) | IM channels technical reference (media matrix / architecture) |
 | [MCP Integration](docs/mcp-integration.md) | Connecting external services |
 | [Skill System](docs/skills.md) | Creating and using skills |
 

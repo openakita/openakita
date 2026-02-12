@@ -265,11 +265,13 @@ OpenAkita **生于中国，服务全球**——国内用户开箱即用：
 | 文档 | 内容 |
 |------|------|
 | [配置指南](docs/configuration-guide.md) | 桌面端快速配置 & 完整配置图文教程 |
+| ⭐ [LLM 服务商配置教程](docs/llm-provider-setup-tutorial.md) | **各大 LLM 服务商 API Key 申请 + 端点配置 + 多端点 Failover** |
+| ⭐ [IM 通道配置教程](docs/im-channel-setup-tutorial.md) | **Telegram / 飞书 / 钉钉 / 企业微信 / QQ 完整接入教程** |
 | [快速开始](docs/getting-started.md) | 安装和入门 |
 | [架构设计](docs/architecture.md) | 系统设计和组件 |
 | [配置说明](docs/configuration.md) | 全部配置选项 |
 | [部署指南](docs/deploy.md) | 生产环境部署（systemd / Docker） |
-| [IM 通道](docs/im-channels.md) | Telegram / 飞书 / 钉钉接入 |
+| [IM 通道集成指南](docs/im-channels.md) | IM 通道技术参考（媒体矩阵 / 架构） |
 | [MCP 集成](docs/mcp-integration.md) | 连接外部服务 |
 | [技能系统](docs/skills.md) | 创建和使用技能 |
 
