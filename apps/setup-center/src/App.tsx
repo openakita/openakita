@@ -2265,7 +2265,7 @@ export function App() {
           "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
           "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
           "ONEBOT_ENABLED", "ONEBOT_WS_URL", "ONEBOT_ACCESS_TOKEN",
-          "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX",
+          "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX", "QQBOT_MODE", "QQBOT_WEBHOOK_PORT", "QQBOT_WEBHOOK_PATH",
         ];
       case "tools":
         return [
@@ -3713,7 +3713,7 @@ export function App() {
             "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
             "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
             "ONEBOT_ENABLED", "ONEBOT_WS_URL", "ONEBOT_ACCESS_TOKEN",
-            "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX",
+            "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX", "QQBOT_MODE", "QQBOT_WEBHOOK_PORT", "QQBOT_WEBHOOK_PATH",
           ];
           const imEntries = imKeys
             .filter((k) => envDraft[k] !== undefined && envDraft[k] !== "")
@@ -4627,7 +4627,7 @@ export function App() {
       "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
       "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
       "ONEBOT_ENABLED", "ONEBOT_WS_URL", "ONEBOT_ACCESS_TOKEN",
-      "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX",
+      "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX", "QQBOT_MODE", "QQBOT_WEBHOOK_PORT", "QQBOT_WEBHOOK_PATH",
     ];
 
     const channels = [
@@ -4697,7 +4697,7 @@ export function App() {
       },
       {
         title: "QQ 机器人",
-        appType: t("config.imTypeQQBot"),
+        appType: `${t("config.imTypeQQBot")} (${(envDraft["QQBOT_MODE"] || "websocket") === "webhook" ? "Webhook" : "WebSocket"})`,
         logo: <LogoQQ size={22} />,
         enabledKey: "QQBOT_ENABLED",
         docUrl: "https://bot.q.qq.com/wiki/develop/api-v2/",
@@ -4707,6 +4707,26 @@ export function App() {
             <FieldText k="QQBOT_APP_ID" label="AppID" placeholder="q.qq.com 开发设置" />
             <FieldText k="QQBOT_APP_SECRET" label="AppSecret" type="password" placeholder="q.qq.com 开发设置" />
             <FieldBool k="QQBOT_SANDBOX" label={t("config.imQQBotSandbox")} />
+            <div style={{ marginTop: 8 }}>
+              <div className="label">{t("config.imQQBotMode")}</div>
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                {["websocket", "webhook"].map((m) => (
+                  <button key={m} className={(envDraft["QQBOT_MODE"] || "websocket") === m ? "capChipActive" : "capChip"}
+                    onClick={() => setEnvDraft((d) => ({ ...d, QQBOT_MODE: m }))}>{m === "websocket" ? "WebSocket" : "Webhook"}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+                {(envDraft["QQBOT_MODE"] || "websocket") === "websocket"
+                  ? t("config.imQQBotModeWsHint")
+                  : t("config.imQQBotModeWhHint")}
+              </div>
+            </div>
+            {(envDraft["QQBOT_MODE"] === "webhook") && (
+              <>
+                <FieldText k="QQBOT_WEBHOOK_PORT" label={t("config.imQQBotWebhookPort")} placeholder="9890" />
+                <FieldText k="QQBOT_WEBHOOK_PATH" label={t("config.imQQBotWebhookPath")} placeholder="/qqbot/callback" />
+              </>
+            )}
           </>
         ),
       },
@@ -5266,6 +5286,10 @@ export function App() {
       "QQBOT_ENABLED",
       "QQBOT_APP_ID",
       "QQBOT_APP_SECRET",
+      "QQBOT_SANDBOX",
+      "QQBOT_MODE",
+      "QQBOT_WEBHOOK_PORT",
+      "QQBOT_WEBHOOK_PATH",
       // MCP (docs/mcp-integration.md)
       "MCP_ENABLED",
       "MCP_TIMEOUT",
@@ -5415,6 +5439,26 @@ export function App() {
                     <FieldText k="QQBOT_APP_ID" label="AppID" placeholder="q.qq.com 开发设置" />
                     <FieldText k="QQBOT_APP_SECRET" label="AppSecret" type="password" placeholder="q.qq.com 开发设置" />
                     <FieldBool k="QQBOT_SANDBOX" label={t("config.imQQBotSandbox")} />
+                    <div style={{ marginTop: 8 }}>
+                      <div className="label">{t("config.imQQBotMode")}</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                        {["websocket", "webhook"].map((m) => (
+                          <button key={m} className={(envDraft["QQBOT_MODE"] || "websocket") === m ? "capChipActive" : "capChip"}
+                            onClick={() => setEnvDraft((d) => ({ ...d, QQBOT_MODE: m }))}>{m === "websocket" ? "WebSocket" : "Webhook"}</button>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+                        {(envDraft["QQBOT_MODE"] || "websocket") === "websocket"
+                          ? t("config.imQQBotModeWsHint")
+                          : t("config.imQQBotModeWhHint")}
+                      </div>
+                    </div>
+                    {(envDraft["QQBOT_MODE"] === "webhook") && (
+                      <>
+                        <FieldText k="QQBOT_WEBHOOK_PORT" label={t("config.imQQBotWebhookPort")} placeholder="9890" />
+                        <FieldText k="QQBOT_WEBHOOK_PATH" label={t("config.imQQBotWebhookPath")} placeholder="/qqbot/callback" />
+                      </>
+                    )}
                   </>
                 ),
               },

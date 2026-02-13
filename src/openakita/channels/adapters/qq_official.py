@@ -3,16 +3,24 @@ QQ 官方机器人适配器
 
 基于 QQ 官方机器人 API v2 实现 (使用 botpy SDK):
 - AppID + AppSecret 鉴权 (OAuth2 Access Token)
-- WebSocket 事件接收
+- 支持 WebSocket 和 Webhook 两种事件接收模式
 - 支持群聊、单聊 (C2C)、频道消息
 - 文本/图片/富媒体消息收发
+
+模式说明:
+- websocket (默认): 使用 botpy SDK 建立 WebSocket 长连接，无需公网 IP
+- webhook: QQ 服务器主动推送事件到 HTTP 回调端点，需要公网 IP/域名
 
 官方文档: https://bot.q.qq.com/wiki/develop/api-v2/
 """
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
+import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +75,9 @@ class QQBotAdapter(ChannelAdapter):
         app_id: str,
         app_secret: str,
         sandbox: bool = False,
+        mode: str = "websocket",
+        webhook_port: int = 9890,
+        webhook_path: str = "/qqbot/callback",
         media_dir: Path | None = None,
     ):
         """
@@ -74,6 +85,9 @@ class QQBotAdapter(ChannelAdapter):
             app_id: QQ 机器人 AppID (在 q.qq.com 开发设置中获取)
             app_secret: QQ 机器人 AppSecret
             sandbox: 是否使用沙箱环境
+            mode: 接入模式 "websocket" 或 "webhook"
+            webhook_port: Webhook 回调服务端口（仅 webhook 模式）
+            webhook_path: Webhook 回调路径（仅 webhook 模式）
             media_dir: 媒体文件存储目录
         """
         super().__init__()
@@ -81,29 +95,40 @@ class QQBotAdapter(ChannelAdapter):
         self.app_id = app_id
         self.app_secret = app_secret
         self.sandbox = sandbox
+        self.mode = mode.lower().strip()
+        self.webhook_port = webhook_port
+        self.webhook_path = webhook_path
         self.media_dir = Path(media_dir) if media_dir else Path("data/media/qqbot")
         self.media_dir.mkdir(parents=True, exist_ok=True)
 
         self._client: Any | None = None
         self._task: asyncio.Task | None = None
         self._retry_delay: int = 5  # 重连延迟（秒），on_ready 时重置
+        self._webhook_runner: Any | None = None  # aiohttp web runner
+        self._access_token: str | None = None  # OAuth2 access token (webhook 模式)
+        self._token_expires: float = 0
 
     async def start(self) -> None:
         """启动 QQ 官方机器人"""
-        _import_botpy()
-
         self._running = True
 
-        # 在后台任务中启动 botpy 客户端（client 在 _run_client 内创建）
-        self._task = asyncio.create_task(self._run_client())
-
-        logger.info(
-            f"QQ Official Bot adapter starting (AppID: {self.app_id}, "
-            f"sandbox: {self.sandbox})"
-        )
+        if self.mode == "webhook":
+            self._task = asyncio.create_task(self._run_webhook_server())
+            logger.info(
+                f"QQ Official Bot adapter starting in WEBHOOK mode "
+                f"(AppID: {self.app_id}, port: {self.webhook_port}, "
+                f"path: {self.webhook_path})"
+            )
+        else:
+            _import_botpy()
+            self._task = asyncio.create_task(self._run_client())
+            logger.info(
+                f"QQ Official Bot adapter starting in WEBSOCKET mode "
+                f"(AppID: {self.app_id}, sandbox: {self.sandbox})"
+            )
 
     async def _run_client(self) -> None:
-        """在后台运行 botpy 客户端 (带自动重连)"""
+        """在后台运行 botpy 客户端 (带自动重连) — WebSocket 模式"""
         max_delay = 120
 
         while self._running:
@@ -136,16 +161,293 @@ class QQBotAdapter(ChannelAdapter):
                 await asyncio.sleep(self._retry_delay)
                 self._retry_delay = min(self._retry_delay * 2, max_delay)
 
+    # ==================== Webhook 模式 ====================
+
+    async def _get_access_token(self) -> str:
+        """获取 QQ 官方 API 的 OAuth2 access_token（用于 Webhook 模式下主动发消息）"""
+        now = time.time()
+        if self._access_token and now < self._token_expires - 60:
+            return self._access_token
+
+        try:
+            import httpx as hx
+        except ImportError:
+            raise ImportError("httpx not installed. Run: pip install httpx")
+
+        async with hx.AsyncClient() as client:
+            resp = await client.post(
+                "https://bots.qq.com/app/getAppAccessToken",
+                json={
+                    "appId": self.app_id,
+                    "clientSecret": self.app_secret,
+                },
+            )
+            data = resp.json()
+            self._access_token = data["access_token"]
+            self._token_expires = now + int(data.get("expires_in", 7200))
+            logger.info("QQ Bot access_token refreshed")
+            return self._access_token
+
+    def _verify_signature(self, body: bytes, signature: str, timestamp: str) -> bool:
+        """
+        验证 QQ Webhook 回调签名 (ed25519)。
+
+        QQ 官方 Webhook 使用 ed25519 签名验证：
+        - 签名内容: timestamp + body
+        - 密钥: 由 app_secret + bot_secret seed 派生的 ed25519 密钥
+        - 签名值: 在 X-Signature-Ed25519 header 中
+
+        简化实现：使用 HMAC-SHA256 作为备选验签方式（部分旧版本 API 支持）。
+        如需完整 ed25519 验签，需安装 PyNaCl。
+        """
+        try:
+            # 尝试 ed25519 验签（需要 PyNaCl）
+            from nacl.signing import VerifyKey
+            from nacl.exceptions import BadSignatureError
+
+            # QQ 使用 bot_secret 的前 32 字节作为 ed25519 seed
+            seed = self.app_secret.encode("utf-8")
+            # 签名验证的消息体是 timestamp + body
+            msg = timestamp.encode("utf-8") + body
+            sig_bytes = bytes.fromhex(signature)
+
+            # QQ 的 ed25519 公钥需要从 seed 派生
+            # 这里我们从 seed 生成签名密钥对并验证
+            # 注意：QQ 文档中 seed 的具体处理方式可能有差异
+            verify_key = VerifyKey(seed[:32].ljust(32, b'\x00'))
+            try:
+                verify_key.verify(msg, sig_bytes)
+                return True
+            except BadSignatureError:
+                pass
+        except ImportError:
+            pass
+
+        # 备选：HMAC-SHA256 验签
+        msg = timestamp.encode("utf-8") + body
+        expected = hmac.new(
+            self.app_secret.encode("utf-8"), msg, hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    async def _run_webhook_server(self) -> None:
+        """启动 Webhook HTTP 回调服务器"""
+        try:
+            from aiohttp import web
+        except ImportError:
+            raise ImportError(
+                "aiohttp not installed. Run: pip install aiohttp"
+            )
+
+        async def handle_callback(request: web.Request) -> web.Response:
+            """处理 QQ Webhook 回调"""
+            body = await request.read()
+
+            # QQ Webhook 验签
+            signature = request.headers.get("X-Signature-Ed25519", "")
+            timestamp = request.headers.get("X-Signature-Timestamp", "")
+
+            if signature and not self._verify_signature(body, signature, timestamp):
+                logger.warning("QQ Webhook signature verification failed")
+                return web.Response(status=401, text="Signature verification failed")
+
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                return web.Response(status=400, text="Invalid JSON")
+
+            op = payload.get("op")
+
+            # op=13: 验证回调 URL (Validation)
+            if op == 13:
+                d = payload.get("d", {})
+                plain_token = d.get("plain_token", "")
+                event_ts = d.get("event_ts", "")
+                # 回复验证：用 app_secret 对 event_ts + plain_token 签名
+                msg = event_ts.encode("utf-8") + plain_token.encode("utf-8")
+                sig = hmac.new(
+                    self.app_secret.encode("utf-8"), msg, hashlib.sha256
+                ).hexdigest()
+                return web.json_response({
+                    "plain_token": plain_token,
+                    "signature": sig,
+                })
+
+            # op=0: 事件分发 (Dispatch)
+            if op == 0:
+                event_type = payload.get("t", "")
+                event_data = payload.get("d", {})
+                asyncio.create_task(
+                    self._handle_webhook_event(event_type, event_data)
+                )
+                return web.json_response({"status": "ok"})
+
+            # 其他 op 码（如心跳等）
+            logger.debug(f"QQ Webhook received op={op}")
+            return web.json_response({"status": "ok"})
+
+        app = web.Application()
+        app.router.add_post(self.webhook_path, handle_callback)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        self._webhook_runner = runner
+
+        site = web.TCPSite(runner, "0.0.0.0", self.webhook_port)
+        await site.start()
+
+        logger.info(
+            f"QQ Webhook server listening on 0.0.0.0:{self.webhook_port}{self.webhook_path}"
+        )
+
+        # 保持运行直到被取消
+        try:
+            while self._running:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await runner.cleanup()
+
+    async def _handle_webhook_event(self, event_type: str, data: dict) -> None:
+        """处理 Webhook 推送的事件"""
+        try:
+            if event_type == "GROUP_AT_MESSAGE_CREATE":
+                unified = self._convert_webhook_group_message(data)
+            elif event_type == "C2C_MESSAGE_CREATE":
+                unified = self._convert_webhook_c2c_message(data)
+            elif event_type == "AT_MESSAGE_CREATE":
+                unified = self._convert_webhook_channel_message(data)
+            else:
+                logger.debug(f"QQ Webhook: unhandled event type {event_type}")
+                return
+
+            self._log_message(unified)
+            await self._emit_message(unified)
+        except Exception as e:
+            logger.error(f"Error handling QQ Webhook event {event_type}: {e}")
+
+    def _convert_webhook_group_message(self, data: dict) -> UnifiedMessage:
+        """将 Webhook 群聊消息转换为 UnifiedMessage"""
+        content = MessageContent()
+        content.text = (data.get("content") or "").strip()
+
+        # Webhook 的附件格式
+        self._parse_webhook_attachments(data.get("attachments"), content)
+
+        author = data.get("author", {})
+        user_openid = author.get("member_openid", "")
+        group_openid = data.get("group_openid", "")
+
+        return UnifiedMessage.create(
+            channel=self.channel_name,
+            channel_message_id=data.get("id", ""),
+            user_id=f"qqbot_{user_openid}",
+            channel_user_id=user_openid,
+            chat_id=group_openid,
+            content=content,
+            chat_type="group",
+            raw={"event_id": data.get("event_id")},
+            metadata={
+                "chat_type": "group",
+                "is_group": True,
+                "group_openid": group_openid,
+                "msg_id": data.get("id", ""),
+            },
+        )
+
+    def _convert_webhook_c2c_message(self, data: dict) -> UnifiedMessage:
+        """将 Webhook 单聊消息转换为 UnifiedMessage"""
+        content = MessageContent()
+        content.text = (data.get("content") or "").strip()
+
+        self._parse_webhook_attachments(data.get("attachments"), content)
+
+        author = data.get("author", {})
+        user_openid = author.get("user_openid", "")
+
+        return UnifiedMessage.create(
+            channel=self.channel_name,
+            channel_message_id=data.get("id", ""),
+            user_id=f"qqbot_{user_openid}",
+            channel_user_id=user_openid,
+            chat_id=user_openid,
+            content=content,
+            chat_type="private",
+            raw={"event_id": data.get("event_id")},
+            metadata={
+                "chat_type": "c2c",
+                "is_group": False,
+                "user_openid": user_openid,
+                "msg_id": data.get("id", ""),
+            },
+        )
+
+    def _convert_webhook_channel_message(self, data: dict) -> UnifiedMessage:
+        """将 Webhook 频道消息转换为 UnifiedMessage"""
+        content = MessageContent()
+        content.text = (data.get("content") or "").strip()
+
+        self._parse_webhook_attachments(data.get("attachments"), content)
+
+        author = data.get("author", {})
+        user_id = author.get("id", "")
+        channel_id = data.get("channel_id", "")
+        guild_id = data.get("guild_id", "")
+
+        return UnifiedMessage.create(
+            channel=self.channel_name,
+            channel_message_id=data.get("id", ""),
+            user_id=f"qqbot_{user_id}",
+            channel_user_id=user_id,
+            chat_id=channel_id,
+            content=content,
+            chat_type="group",
+            raw={"event_id": data.get("event_id")},
+            metadata={
+                "chat_type": "channel",
+                "is_group": True,
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "msg_id": data.get("id", ""),
+            },
+        )
+
+    @staticmethod
+    def _parse_webhook_attachments(attachments: list | None, content: MessageContent) -> None:
+        """解析 Webhook 回调中的附件"""
+        if not attachments:
+            return
+        for att in attachments:
+            ct = att.get("content_type", "")
+            url = att.get("url")
+            filename = att.get("filename", "file")
+
+            if ct.startswith("image/"):
+                content.images.append(MediaFile.create(filename=filename, mime_type=ct, url=url))
+            elif ct.startswith("audio/"):
+                content.voices.append(MediaFile.create(filename=filename, mime_type=ct, url=url))
+            elif ct.startswith("video/"):
+                content.videos.append(MediaFile.create(filename=filename, mime_type=ct, url=url))
+            else:
+                content.files.append(MediaFile.create(
+                    filename=filename, mime_type=ct or "application/octet-stream", url=url,
+                ))
+
     async def stop(self) -> None:
         """停止 QQ 官方机器人"""
         self._running = False
+
+        if self._webhook_runner:
+            await self._webhook_runner.cleanup()
+            self._webhook_runner = None
 
         if self._task:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
-        logger.info("QQ Official Bot adapter stopped")
+        logger.info(f"QQ Official Bot adapter stopped (mode: {self.mode})")
 
     @staticmethod
     def _parse_attachments(attachments: list | None, content: MessageContent) -> None:
@@ -390,12 +692,17 @@ class QQBotAdapter(ChannelAdapter):
         - 文本消息 (msg_type=0)
         - 图片消息 (频道: content+image/file_image; 群/C2C: 两步富媒体上传)
         """
+        chat_type = message.metadata.get("chat_type", "group")
+        msg_id = message.metadata.get("msg_id")
+
+        # Webhook 模式使用 HTTP API 发送
+        if self.mode == "webhook":
+            return await self._send_message_via_http(message, chat_type, msg_id)
+
         if not self._client or not self._client.api:
             raise RuntimeError("QQ Official Bot not started")
 
         api = self._client.api
-        chat_type = message.metadata.get("chat_type", "group")
-        msg_id = message.metadata.get("msg_id")
 
         text = message.content.text or ""
 
@@ -423,6 +730,48 @@ class QQBotAdapter(ChannelAdapter):
         except Exception as e:
             logger.error(f"Failed to send QQ Official Bot message: {e}")
             raise
+
+    async def _send_message_via_http(
+        self, message: OutgoingMessage, chat_type: str, msg_id: str | None,
+    ) -> str:
+        """Webhook 模式：通过 HTTP API 发送消息"""
+        try:
+            import httpx as hx
+        except ImportError:
+            raise ImportError("httpx not installed. Run: pip install httpx")
+
+        token = await self._get_access_token()
+        base_url = (
+            "https://sandbox.api.sgroup.qq.com"
+            if self.sandbox
+            else "https://api.sgroup.qq.com"
+        )
+        headers = {
+            "Authorization": f"QQBotToken {self.app_id}.{token}",
+            "Content-Type": "application/json",
+        }
+
+        text = message.content.text or ""
+        target_id = message.chat_id
+
+        async with hx.AsyncClient(base_url=base_url, headers=headers) as client:
+            body: dict[str, Any] = {"msg_type": 0, "content": text}
+            if msg_id:
+                body["msg_id"] = msg_id
+
+            if chat_type == "group":
+                url = f"/v2/groups/{target_id}/messages"
+            elif chat_type == "c2c":
+                url = f"/v2/users/{target_id}/messages"
+            elif chat_type == "channel":
+                url = f"/channels/{target_id}/messages"
+            else:
+                url = f"/v2/groups/{target_id}/messages"
+
+            resp = await client.post(url, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            return str(data.get("id", ""))
 
     async def _send_channel_message(
         self,

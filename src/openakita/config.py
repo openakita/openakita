@@ -241,6 +241,12 @@ class Settings(BaseSettings):
     qqbot_app_id: str = Field(default="", description="QQ 机器人 AppID")
     qqbot_app_secret: str = Field(default="", description="QQ 机器人 AppSecret")
     qqbot_sandbox: bool = Field(default=False, description="是否使用沙箱环境")
+    qqbot_mode: str = Field(
+        default="websocket",
+        description="QQ 机器人接入模式: websocket (默认，无需公网) 或 webhook (需要公网IP/域名)",
+    )
+    qqbot_webhook_port: int = Field(default=9890, description="QQ Webhook 回调服务端口")
+    qqbot_webhook_path: str = Field(default="/qqbot/callback", description="QQ Webhook 回调路径")
 
     # === 会话配置 ===
     session_timeout_minutes: int = Field(default=30, description="会话超时时间（分钟）")

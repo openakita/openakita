@@ -238,6 +238,9 @@ async def start_im_channels(agent_or_master):
                 app_id=settings.qqbot_app_id,
                 app_secret=settings.qqbot_app_secret,
                 sandbox=settings.qqbot_sandbox,
+                mode=settings.qqbot_mode,
+                webhook_port=settings.qqbot_webhook_port,
+                webhook_path=settings.qqbot_webhook_path,
             )
             await _message_gateway.register_adapter(qqbot)
             adapters_started.append("qqbot")
