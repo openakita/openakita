@@ -1,9 +1,9 @@
 """
-QQ 适配器
+OneBot 适配器
 
-基于 OneBot 协议实现:
-- 支持 go-cqhttp, NapCat 等实现
-- WebSocket 连接
+基于 OneBot v11 协议实现，可对接任何兼容 OneBot 的实现:
+- NapCat, Lagrange, go-cqhttp 等
+- WebSocket 正向连接
 - 文本/图片/语音/文件收发
 """
 
@@ -43,16 +43,18 @@ def _import_websockets():
 
 
 @dataclass
-class QQConfig:
-    """QQ 配置"""
+class OneBotConfig:
+    """OneBot 配置"""
 
     ws_url: str = "ws://127.0.0.1:8080"
     access_token: str | None = None
 
 
-class QQAdapter(ChannelAdapter):
+class OneBotAdapter(ChannelAdapter):
     """
-    QQ 适配器 (OneBot 协议)
+    OneBot 适配器 (OneBot v11 协议)
+
+    通用机器人协议适配器，可对接任何兼容 OneBot v11 的实现。
 
     支持:
     - WebSocket 正向连接
@@ -60,7 +62,7 @@ class QQAdapter(ChannelAdapter):
     - 群聊/私聊
     """
 
-    channel_name = "qq"
+    channel_name = "onebot"
 
     def __init__(
         self,
@@ -70,17 +72,17 @@ class QQAdapter(ChannelAdapter):
     ):
         """
         Args:
-            ws_url: WebSocket 地址
+            ws_url: OneBot WebSocket 地址
             access_token: 访问令牌（可选）
             media_dir: 媒体文件存储目录
         """
         super().__init__()
 
-        self.config = QQConfig(
+        self.config = OneBotConfig(
             ws_url=ws_url,
             access_token=access_token,
         )
-        self.media_dir = Path(media_dir) if media_dir else Path("data/media/qq")
+        self.media_dir = Path(media_dir) if media_dir else Path("data/media/onebot")
         self.media_dir.mkdir(parents=True, exist_ok=True)
 
         self._ws: Any | None = None
@@ -88,7 +90,7 @@ class QQAdapter(ChannelAdapter):
         self._receive_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """启动 QQ 客户端"""
+        """启动 OneBot 客户端"""
         _import_websockets()
 
         self._running = True
@@ -96,7 +98,7 @@ class QQAdapter(ChannelAdapter):
         # 启动带自动重连的消息接收循环
         self._receive_task = asyncio.create_task(self._receive_loop_with_reconnect())
 
-        logger.info(f"QQ adapter starting, will connect to {self.config.ws_url}")
+        logger.info(f"OneBot adapter starting, will connect to {self.config.ws_url}")
 
     async def _connect_ws(self) -> bool:
         """建立 WebSocket 连接，成功返回 True"""
@@ -109,14 +111,14 @@ class QQAdapter(ChannelAdapter):
                 self.config.ws_url,
                 extra_headers=headers,
             )
-            logger.info(f"QQ adapter connected to {self.config.ws_url}")
+            logger.info(f"OneBot adapter connected to {self.config.ws_url}")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to OneBot: {e}")
             return False
 
     async def stop(self) -> None:
-        """停止 QQ 客户端"""
+        """停止 OneBot 客户端"""
         self._running = False
 
         if self._receive_task:
@@ -127,7 +129,7 @@ class QQAdapter(ChannelAdapter):
         if self._ws:
             await self._ws.close()
 
-        logger.info("QQ adapter stopped")
+        logger.info("OneBot adapter stopped")
 
     async def _receive_loop_with_reconnect(self) -> None:
         """带自动重连的 WebSocket 消息接收循环"""
@@ -137,7 +139,7 @@ class QQAdapter(ChannelAdapter):
         while self._running:
             if not await self._connect_ws():
                 logger.warning(
-                    f"QQ adapter: reconnect in {retry_delay}s..."
+                    f"OneBot adapter: reconnect in {retry_delay}s..."
                 )
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, max_delay)
@@ -156,14 +158,14 @@ class QQAdapter(ChannelAdapter):
                     except Exception as e:
                         logger.error(f"Error handling event: {e}")
             except websockets.ConnectionClosed:
-                logger.warning("QQ WebSocket connection closed, will reconnect...")
+                logger.warning("OneBot WebSocket connection closed, will reconnect...")
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                logger.error(f"QQ WebSocket error: {e}")
+                logger.error(f"OneBot WebSocket error: {e}")
 
             if self._running:
-                logger.info(f"QQ adapter: reconnecting in {retry_delay}s...")
+                logger.info(f"OneBot adapter: reconnecting in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, max_delay)
 
@@ -216,7 +218,7 @@ class QQAdapter(ChannelAdapter):
         unified = UnifiedMessage.create(
             channel=self.channel_name,
             channel_message_id=str(data.get("message_id", "")),
-            user_id=f"qq_{user_id}",
+            user_id=f"onebot_{user_id}",
             channel_user_id=user_id,
             chat_id=chat_id,
             content=content,
@@ -316,7 +318,7 @@ class QQAdapter(ChannelAdapter):
                 content.files.append(media)
 
             elif seg_type == "at":
-                text_parts.append(f"@{data.get('qq', '')}")
+                text_parts.append(f"@{data.get('qq', data.get('id', ''))}")
 
             elif seg_type == "face":
                 text_parts.append(f"[表情:{data.get('id', '')}]")
@@ -374,7 +376,6 @@ class QQAdapter(ChannelAdapter):
                 )
 
         # 判断是群消息还是私聊
-        # 这里简化处理，假设 chat_id 是数字
         chat_id = int(message.chat_id)
 
         # 发送（默认发送私聊，群聊需要额外判断）
@@ -518,8 +519,6 @@ class QQAdapter(ChannelAdapter):
         if caption:
             text_msg = [{"type": "text", "data": {"text": caption}}]
             try:
-                # 检查最近的消息 metadata 判断群聊/私聊
-                # 默认先尝试群聊（QQ 文件发送常见于群聊）
                 await self._call_api(
                     "send_group_msg",
                     {"group_id": chat_id_int, "message": text_msg},

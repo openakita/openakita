@@ -1,0 +1,14 @@
+{
+    "name": "navigate_page",
+    "description": "Navigate to a URL in the browser. Opens the specified URL in the current page.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The URL to navigate to"
+            }
+        },
+        "required": ["url"]
+    }
+}

@@ -268,8 +268,13 @@ ANTHROPIC_API_KEY=sk-your-api-key-here
 | `DINGTALK_ENABLED` | | `false` | Enable DingTalk |
 | `DINGTALK_CLIENT_ID` | | - | DingTalk Client ID (formerly App Key) |
 | `DINGTALK_CLIENT_SECRET` | | - | DingTalk Client Secret (formerly App Secret) |
-| `QQ_ENABLED` | | `false` | Enable QQ |
-| `QQ_ONEBOT_URL` | | `ws://127.0.0.1:8080` | OneBot WebSocket URL |
+| `QQBOT_ENABLED` | | `false` | Enable QQ Official Bot |
+| `QQBOT_APP_ID` | | - | QQ Open Platform AppID |
+| `QQBOT_APP_SECRET` | | - | QQ Open Platform AppSecret |
+| `QQBOT_SANDBOX` | | `false` | Sandbox mode |
+| `ONEBOT_ENABLED` | | `false` | Enable OneBot |
+| `ONEBOT_WS_URL` | | `ws://127.0.0.1:8080` | OneBot WebSocket URL |
+| `ONEBOT_ACCESS_TOKEN` | | - | OneBot Access Token (optional) |
 | **Memory System** | | | |
 | `EMBEDDING_MODEL` | | `shibing624/text2vec-base-chinese` | Embedding model |
 | `EMBEDDING_DEVICE` | | `cpu` | Compute device (cpu/cuda) |
@@ -482,7 +487,8 @@ OpenAkita supports 5 major IM platforms, all enabled via `.env`:
 | Feishu (Lark) | ✅ Stable | WebSocket | `pip install openakita[feishu]` |
 | WeCom (WeWork) | ✅ Stable | HTTP API | None |
 | DingTalk | ✅ Stable | HTTP API | None |
-| QQ | 🧪 Beta | OneBot WS | Requires OneBot server |
+| QQ Official Bot | ✅ Stable | QQ Open Platform API | `pip install openakita[qqbot]` |
+| OneBot | ✅ Stable | OneBot WS | Requires OneBot server + `pip install openakita[onebot]` |
 
 #### Telegram
 
@@ -531,12 +537,23 @@ DINGTALK_CLIENT_ID=dingxxxxx
 DINGTALK_CLIENT_SECRET=xxxxx
 ```
 
-#### QQ (OneBot)
+#### QQ Official Bot
+
+Create a bot at [QQ Open Platform](https://q.qq.com) and get credentials:
+```ini
+QQBOT_ENABLED=true
+QQBOT_APP_ID=your-app-id
+QQBOT_APP_SECRET=your-app-secret
+QQBOT_SANDBOX=false
+```
+
+#### OneBot (Universal Protocol)
 
 Requires a running OneBot implementation (e.g. [NapCat](https://github.com/NapNeko/NapCatQQ)):
 ```ini
-QQ_ENABLED=true
-QQ_ONEBOT_URL=ws://127.0.0.1:8080
+ONEBOT_ENABLED=true
+ONEBOT_WS_URL=ws://127.0.0.1:8080
+ONEBOT_ACCESS_TOKEN=
 ```
 
 #### Running Modes

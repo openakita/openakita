@@ -1,0 +1,8 @@
+{
+    "name": "take_snapshot",
+    "description": "Take an accessibility snapshot of the current page. Returns the page structure as text, useful for understanding page layout and finding elements.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {}
+    }
+}

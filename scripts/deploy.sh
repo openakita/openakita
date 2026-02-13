@@ -499,8 +499,12 @@ DINGTALK_ENABLED=false
 # DINGTALK_CLIENT_ID=
 # DINGTALK_CLIENT_SECRET=
 
-QQ_ENABLED=false
-# QQ_ONEBOT_URL=ws://127.0.0.1:8080
+ONEBOT_ENABLED=false
+# ONEBOT_WS_URL=ws://127.0.0.1:8080
+
+QQBOT_ENABLED=false
+# QQBOT_APP_ID=
+# QQBOT_APP_SECRET=
 
 # =====================================================
 # 功能开关（可选）

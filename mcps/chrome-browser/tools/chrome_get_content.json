@@ -1,0 +1,13 @@
+{
+    "name": "chrome_get_content",
+    "description": "Get the text content of the current page or a specific element.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "selector": {
+                "type": "string",
+                "description": "Optional CSS selector to get content from a specific element"
+            }
+        }
+    }
+}

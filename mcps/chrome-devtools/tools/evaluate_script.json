@@ -1,0 +1,14 @@
+{
+    "name": "evaluate_script",
+    "description": "Execute JavaScript code in the browser page context. Returns the result of the expression.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "expression": {
+                "type": "string",
+                "description": "JavaScript expression to evaluate"
+            }
+        },
+        "required": ["expression"]
+    }
+}

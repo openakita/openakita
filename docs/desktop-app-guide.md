@@ -157,7 +157,8 @@ IM 通道页面用于查看和管理所有已配置的即时通讯通道。
 | 飞书 (Feishu) | 企业应用 | WebSocket 长连接 |
 | 企业微信 (WeCom) | 智能机器人 | Webhook 回调 |
 | 钉钉 (DingTalk) | 智能机器人 | Stream 模式 |
-| QQ (OneBot) | Bot | OneBot v11 协议 |
+| QQ 官方机器人 | Bot | QQ 开放平台 API |
+| OneBot | Bot | OneBot v11 协议 |
 
 ### 2.2 通道状态
 
@@ -248,7 +249,7 @@ IM 通道页面用于查看和管理所有已配置的即时通讯通道。
 
 ### 4.3 IM 通道健康检测
 
-- **通道列表**：Telegram、飞书、企业微信、钉钉、QQ
+- **通道列表**：Telegram、飞书、企业微信、钉钉、QQ 官方机器人、OneBot
 - **状态**：在线 / 离线 / 未配置 / Key 缺失
 - **独立检测**：IM 检测与 LLM 检测完全解耦，互不影响
 
@@ -307,7 +308,7 @@ IM 通道页面用于查看和管理所有已配置的即时通讯通道。
 
 ### 步骤 6：IM 通道
 
-- 支持 5 个通道：Telegram、飞书、企业微信、钉钉、QQ
+- 支持 6 个通道：Telegram、飞书、企业微信、钉钉、QQ 官方机器人、OneBot
 - 每个通道：
   - 启用/禁用开关
   - 凭证配置（Bot Token、App ID/Secret、Webhook 等）

@@ -1,0 +1,14 @@
+{
+    "name": "chrome_click",
+    "description": "Click an element on the page. Supports CSS selectors and text matching.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "selector": {
+                "type": "string",
+                "description": "CSS selector or text content of the element to click"
+            }
+        },
+        "required": ["selector"]
+    }
+}

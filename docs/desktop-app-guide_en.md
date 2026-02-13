@@ -157,7 +157,8 @@ The IM page provides viewing and management of all configured instant messaging 
 | Feishu (Lark) | Enterprise App | WebSocket long connection |
 | WeCom (WeChat Work) | Smart Robot | Webhook callback |
 | DingTalk | Smart Robot | Stream mode |
-| QQ (OneBot) | Bot | OneBot v11 protocol |
+| QQ Official Bot | Bot | QQ Open Platform API |
+| OneBot | Bot | OneBot v11 protocol |
 
 ### 2.2 Channel Status
 
@@ -248,7 +249,7 @@ The Status panel provides a comprehensive view of system health.
 
 ### 4.3 IM Channel Health Check
 
-- **Channel list**: Telegram, Feishu, WeCom, DingTalk, QQ
+- **Channel list**: Telegram, Feishu, WeCom, DingTalk, QQ Official Bot, OneBot
 - **Status**: Online / Offline / Not configured / Key missing
 - **Independent check**: IM and LLM health checks are fully decoupled
 
@@ -307,7 +308,7 @@ The wizard has 9 steps to guide users from zero to running. Completed steps are 
 
 ### Step 6: IM Channels
 
-- 5 channels: Telegram, Feishu, WeCom, DingTalk, QQ
+- 6 channels: Telegram, Feishu, WeCom, DingTalk, QQ Official Bot, OneBot
 - Each channel:
   - Enable/disable toggle
   - Credential configuration (Bot Token, App ID/Secret, Webhook, etc.)

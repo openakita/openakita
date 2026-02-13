@@ -1,0 +1,14 @@
+{
+    "name": "click",
+    "description": "Click on an element in the page. Supports CSS selectors, text content matching, and ARIA labels.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "selector": {
+                "type": "string",
+                "description": "CSS selector, text content, or ARIA label to identify the element to click"
+            }
+        },
+        "required": ["selector"]
+    }
+}

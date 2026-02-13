@@ -15,7 +15,7 @@ Welcome to the OpenAkita documentation.
 | Tutorial | Description |
 |----------|-------------|
 | ⭐ [LLM Provider Setup](llm-provider-setup-tutorial.md) | API Key registration, endpoint config, multi-endpoint Failover for all major providers |
-| ⭐ [IM Channel Setup](im-channel-setup-tutorial.md) | Step-by-step tutorial for Telegram, Feishu, DingTalk, WeCom, QQ |
+| ⭐ [IM Channel Setup](im-channel-setup-tutorial.md) | Step-by-step tutorial for Telegram, Feishu, DingTalk, WeCom, QQ Official Bot, OneBot |
 | [Configuration Guide](configuration-guide.md) | Desktop app quick setup & full setup walkthrough |
 
 ## Guides

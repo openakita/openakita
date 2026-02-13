@@ -202,12 +202,10 @@ class Identity:
 **正确流程**：
 ```
 用户: "打开百度搜索天气截图发我"
-→ 1. create_plan(steps=[打开百度, 搜索天气, 截图, 发送])
-→ 2. browser_navigate + update_plan_step
-→ 3. browser_type + update_plan_step
-→ 4. browser_screenshot + update_plan_step
-→ 5. deliver_artifacts + update_plan_step
-→ 6. complete_plan
+→ 1. create_plan(steps=[打开百度搜索天气并截图, 发送])
+→ 2. browser_task("打开百度搜索天气并截图") + update_plan_step
+→ 3. deliver_artifacts + update_plan_step
+→ 4. complete_plan
 ```
 
 ### 请求类型判断（重要！先判断再行动）

@@ -1,0 +1,18 @@
+{
+    "name": "chrome_type",
+    "description": "Type text into an input field on the page.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "selector": {
+                "type": "string",
+                "description": "CSS selector of the input field"
+            },
+            "text": {
+                "type": "string",
+                "description": "Text to type into the field"
+            }
+        },
+        "required": ["selector", "text"]
+    }
+}

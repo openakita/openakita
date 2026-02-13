@@ -268,8 +268,13 @@ ANTHROPIC_API_KEY=sk-your-api-key-here
 | `DINGTALK_ENABLED` | | `false` | 启用钉钉 |
 | `DINGTALK_CLIENT_ID` | | - | 钉钉 Client ID（原 App Key） |
 | `DINGTALK_CLIENT_SECRET` | | - | 钉钉 Client Secret（原 App Secret） |
-| `QQ_ENABLED` | | `false` | 启用 QQ |
-| `QQ_ONEBOT_URL` | | `ws://127.0.0.1:8080` | OneBot WebSocket URL |
+| `QQBOT_ENABLED` | | `false` | 启用 QQ 官方机器人 |
+| `QQBOT_APP_ID` | | - | QQ 开放平台 AppID |
+| `QQBOT_APP_SECRET` | | - | QQ 开放平台 AppSecret |
+| `QQBOT_SANDBOX` | | `false` | 沙箱模式 |
+| `ONEBOT_ENABLED` | | `false` | 启用 OneBot |
+| `ONEBOT_WS_URL` | | `ws://127.0.0.1:8080` | OneBot WebSocket URL |
+| `ONEBOT_ACCESS_TOKEN` | | - | OneBot 访问令牌（可选） |
 | **记忆系统** | | | |
 | `EMBEDDING_MODEL` | | `shibing624/text2vec-base-chinese` | Embedding 模型 |
 | `EMBEDDING_DEVICE` | | `cpu` | 计算设备（cpu/cuda） |
@@ -482,7 +487,8 @@ OpenAkita 支持 5 大 IM 平台，统一通过 `.env` 启用：
 | 飞书 | ✅ 稳定 | WebSocket | `pip install openakita[feishu]` |
 | 企业微信 | ✅ 稳定 | HTTP API | 无 |
 | 钉钉 | ✅ 稳定 | HTTP API | 无 |
-| QQ | 🧪 Beta | OneBot WS | 需 OneBot 服务 |
+| QQ 官方机器人 | ✅ 稳定 | QQ 开放平台 API | `pip install openakita[qqbot]` |
+| OneBot | ✅ 稳定 | OneBot WS | 需 OneBot 服务 + `pip install openakita[onebot]` |
 
 #### Telegram
 
@@ -531,12 +537,23 @@ DINGTALK_CLIENT_ID=dingxxxxx
 DINGTALK_CLIENT_SECRET=xxxxx
 ```
 
-#### QQ (OneBot)
+#### QQ 官方机器人
+
+在 [QQ 开放平台](https://q.qq.com) 创建机器人并获取凭证：
+```ini
+QQBOT_ENABLED=true
+QQBOT_APP_ID=your-app-id
+QQBOT_APP_SECRET=your-app-secret
+QQBOT_SANDBOX=false
+```
+
+#### OneBot（通用协议）
 
 需要先部署 OneBot 实现（如 [NapCat](https://github.com/NapNeko/NapCatQQ)）：
 ```ini
-QQ_ENABLED=true
-QQ_ONEBOT_URL=ws://127.0.0.1:8080
+ONEBOT_ENABLED=true
+ONEBOT_WS_URL=ws://127.0.0.1:8080
+ONEBOT_ACCESS_TOKEN=
 ```
 
 #### 启动方式

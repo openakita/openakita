@@ -2,9 +2,12 @@
 浏览器处理器
 
 处理浏览器相关的系统技能：
-- browser_open, browser_status, browser_navigate, browser_click,
-- browser_type, browser_get_content, browser_screenshot,
-- browser_list_tabs, browser_switch_tab, browser_new_tab
+- browser_task: 【推荐优先使用】智能浏览器任务
+- browser_open: 启动浏览器 + 状态查询
+- browser_navigate: 导航到 URL
+- browser_get_content: 获取页面内容
+- browser_screenshot: 截取页面截图
+- browser_close: 关闭浏览器
 """
 
 import logging
@@ -26,16 +29,11 @@ class BrowserHandler:
 
     TOOLS = [
         "browser_task",  # 【推荐优先使用】智能浏览器任务，放在最前面以表示优先级
-        "browser_open",
-        "browser_status",
+        "browser_open",  # 启动浏览器 + 状态查询（合并了原 browser_status）
         "browser_navigate",
-        "browser_click",
-        "browser_type",
         "browser_get_content",
         "browser_screenshot",
-        "browser_list_tabs",
-        "browser_switch_tab",
-        "browser_new_tab",
+        "browser_close",
     ]
 
     def __init__(self, agent: "Agent"):

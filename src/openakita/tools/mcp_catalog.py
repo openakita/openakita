@@ -38,6 +38,8 @@ class MCPServerInfo:
     command: str | None = None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    transport: str = "stdio"  # "stdio" | "streamable_http"
+    url: str = ""  # streamable_http 模式使用
 
 
 class MCPCatalog:
@@ -172,6 +174,11 @@ Use `call_mcp_tool(server, tool_name, arguments)` to call an MCP tool when neede
             command = metadata.get("command")
             args = metadata.get("args") or []
             env = metadata.get("env") or {}
+            # 传输协议：支持 "transport": "streamable_http" 或 "type": "streamableHttp"
+            transport = metadata.get("transport", "stdio")
+            if metadata.get("type") == "streamableHttp":
+                transport = "streamable_http"
+            url = metadata.get("url", "")
 
             # 加载工具
             tools = []
@@ -196,6 +203,8 @@ Use `call_mcp_tool(server, tool_name, arguments)` to call an MCP tool when neede
                 command=command,
                 args=args,
                 env=env,
+                transport=transport,
+                url=url,
             )
 
         except Exception as e:
@@ -206,11 +215,13 @@ Use `call_mcp_tool(server, tool_name, arguments)` to call an MCP tool when neede
         """加载单个工具配置"""
         try:
             data = json.loads(tool_file.read_text(encoding="utf-8"))
+            # 兼容两种字段名：inputSchema（MCP 规范）和 arguments（旧格式）
+            arguments = data.get("inputSchema") or data.get("arguments", {})
             return MCPToolInfo(
                 name=data.get("name", tool_file.stem),
                 description=data.get("description", ""),
                 server=server_id,
-                arguments=data.get("arguments", {}),
+                arguments=arguments,
             )
         except Exception as e:
             logger.error(f"Failed to load MCP tool {tool_file}: {e}")

@@ -7,7 +7,11 @@ Licensed under MIT License
 
 功能:
 - browser_task: 智能任务执行（推荐优先使用）
-- 细粒度工具: 打开网页、点击、输入、截图、提取内容等
+- 细粒度工具: 打开网页、截图、提取内容等
+
+外部浏览器后端（通过 MCP 集成）:
+- Chrome DevTools MCP (Google 官方): 连接用户真实 Chrome，保留登录态
+- mcp-chrome 扩展: 通过 Chrome 扩展直接操作用户浏览器
 
 随 OpenAkita 系统一起启动
 """
@@ -16,6 +20,7 @@ import asyncio
 import logging
 import os
 import platform
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -179,6 +184,76 @@ def sync_chrome_cookies(src_user_data: str, dst_profile: str) -> bool:
     return copied > 0
 
 
+def detect_chrome_devtools_mcp() -> dict:
+    """
+    检测 Chrome DevTools MCP 是否可用
+
+    Returns:
+        {
+            "available": bool,
+            "npx_available": bool,
+            "chrome_available": bool,
+            "suggestion": str,  # 用户引导建议
+        }
+    """
+    result = {
+        "available": False,
+        "npx_available": False,
+        "chrome_available": False,
+        "suggestion": "",
+    }
+
+    # 检查 npx 是否可用
+    npx_path = shutil.which("npx")
+    result["npx_available"] = npx_path is not None
+
+    # 检查 Chrome 是否存在
+    chrome_path, _ = detect_chrome_installation()
+    result["chrome_available"] = chrome_path is not None
+
+    if result["npx_available"] and result["chrome_available"]:
+        result["available"] = True
+        result["suggestion"] = (
+            "Chrome DevTools MCP 可用。建议在 Chrome 中访问 chrome://inspect/#remote-debugging "
+            "开启远程调试，以便 AI Agent 连接到您的浏览器（保留登录状态和密码管理器）。"
+        )
+    elif not result["npx_available"]:
+        result["suggestion"] = (
+            "Chrome DevTools MCP 需要 Node.js。请安装 Node.js v20.19+ 以启用此功能。"
+        )
+    elif not result["chrome_available"]:
+        result["suggestion"] = (
+            "未检测到 Chrome 浏览器。请安装 Chrome 以使用 Chrome DevTools MCP。"
+        )
+
+    return result
+
+
+async def check_mcp_chrome_extension(port: int = 12306, timeout: float = 2.0) -> bool:
+    """
+    检测 mcp-chrome 扩展是否正在运行
+
+    Args:
+        port: mcp-chrome 默认端口
+        timeout: 超时时间（秒）
+
+    Returns:
+        是否可达
+    """
+    try:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://127.0.0.1:{port}/mcp",
+                timeout=timeout,
+            )
+            # 即使返回非 200 也说明端口在监听
+            return True
+    except Exception:
+        return False
+
+
 @dataclass
 class BrowserTool:
     """浏览器工具定义"""
@@ -195,23 +270,37 @@ class BrowserMCP:
     基于 Playwright 的浏览器自动化服务
     """
 
-    # 工具定义
+    # 暴露给 LLM 的工具定义（精简后的 6 个）
     TOOLS = [
         BrowserTool(
+            name="browser_task",
+            description="【推荐优先使用】智能浏览器任务 - 描述你想完成的任务，browser-use Agent 会自动规划和执行所有步骤。适用于多步骤操作、复杂网页交互（点击/输入/表单等）、不确定具体步骤的场景。",
+            arguments={
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "要完成的任务描述，例如：'打开百度搜索福建福州并截图'",
+                    },
+                    "max_steps": {
+                        "type": "integer",
+                        "description": "最大执行步骤数",
+                        "default": 15,
+                    },
+                },
+                "required": ["task"],
+            },
+        ),
+        BrowserTool(
             name="browser_open",
-            description="启动浏览器。如果需要用户观看操作过程或调试，设置 visible=True；如果只是后台自动化任务，设置 visible=False",
+            description="启动浏览器或检查状态。始终返回当前状态（is_open, url, title, tab_count）。已运行则直接返回状态不重复启动。",
             arguments={
                 "type": "object",
                 "properties": {
                     "visible": {
                         "type": "boolean",
                         "description": "是否显示浏览器窗口。True=用户可见(调试/演示), False=后台运行(自动化)",
-                        "default": False,
-                    },
-                    "ask_user": {
-                        "type": "boolean",
-                        "description": "是否先询问用户偏好。如果为 True，会返回提示让你询问用户",
-                        "default": False,
+                        "default": True,
                     },
                 },
             },
@@ -226,27 +315,17 @@ class BrowserMCP:
             },
         ),
         BrowserTool(
-            name="browser_click",
-            description="点击页面上的元素 (通过选择器或文本)",
+            name="browser_get_content",
+            description="获取页面内容 (文本或 HTML)",
             arguments={
                 "type": "object",
                 "properties": {
-                    "selector": {"type": "string", "description": "CSS 选择器或 XPath"},
-                    "text": {"type": "string", "description": "元素文本 (可选，用于模糊匹配)"},
+                    "selector": {
+                        "type": "string",
+                        "description": "元素选择器 (可选，默认整个页面)",
+                    },
+                    "format": {"type": "string", "enum": ["text", "html"], "default": "text"},
                 },
-            },
-        ),
-        BrowserTool(
-            name="browser_type",
-            description="在输入框中输入文本",
-            arguments={
-                "type": "object",
-                "properties": {
-                    "selector": {"type": "string", "description": "输入框选择器"},
-                    "text": {"type": "string", "description": "要输入的文本"},
-                    "clear": {"type": "boolean", "description": "是否先清空", "default": True},
-                },
-                "required": ["selector", "text"],
             },
         ),
         BrowserTool(
@@ -265,108 +344,17 @@ class BrowserMCP:
             },
         ),
         BrowserTool(
-            name="browser_get_content",
-            description="获取页面内容 (文本或 HTML)",
-            arguments={
-                "type": "object",
-                "properties": {
-                    "selector": {
-                        "type": "string",
-                        "description": "元素选择器 (可选，默认整个页面)",
-                    },
-                    "format": {"type": "string", "enum": ["text", "html"], "default": "text"},
-                },
-            },
-        ),
-        BrowserTool(
-            name="browser_wait",
-            description="等待元素出现或指定时间",
-            arguments={
-                "type": "object",
-                "properties": {
-                    "selector": {"type": "string", "description": "等待的元素选择器"},
-                    "timeout": {
-                        "type": "number",
-                        "description": "超时时间(毫秒)",
-                        "default": 30000,
-                    },
-                },
-            },
-        ),
-        BrowserTool(
-            name="browser_scroll",
-            description="滚动页面",
-            arguments={
-                "type": "object",
-                "properties": {
-                    "direction": {"type": "string", "enum": ["up", "down"], "default": "down"},
-                    "amount": {"type": "number", "description": "滚动像素", "default": 500},
-                },
-            },
-        ),
-        BrowserTool(
-            name="browser_execute_js",
-            description="执行 JavaScript 代码",
-            arguments={
-                "type": "object",
-                "properties": {"script": {"type": "string", "description": "JavaScript 代码"}},
-                "required": ["script"],
-            },
-        ),
-        BrowserTool(
             name="browser_close",
-            description="关闭浏览器",
+            description="关闭浏览器，释放资源",
             arguments={"type": "object", "properties": {}},
         ),
-        BrowserTool(
-            name="browser_status",
-            description="获取浏览器当前状态。返回: 是否打开、当前页面 URL 和标题、打开的 tab 数量。在操作浏览器前建议先调用此工具了解当前状态。",
-            arguments={"type": "object", "properties": {}},
-        ),
-        BrowserTool(
-            name="browser_list_tabs",
-            description="列出所有打开的标签页(tabs)。返回每个 tab 的 URL 和标题。",
-            arguments={"type": "object", "properties": {}},
-        ),
-        BrowserTool(
-            name="browser_switch_tab",
-            description="切换到指定的标签页",
-            arguments={
-                "type": "object",
-                "properties": {
-                    "index": {"type": "number", "description": "标签页索引 (从 0 开始)"}
-                },
-                "required": ["index"],
-            },
-        ),
-        BrowserTool(
-            name="browser_new_tab",
-            description="打开新标签页并导航到指定 URL",
-            arguments={
-                "type": "object",
-                "properties": {"url": {"type": "string", "description": "要访问的 URL"}},
-                "required": ["url"],
-            },
-        ),
-        BrowserTool(
-            name="browser_task",
-            description="【推荐优先使用】智能浏览器任务 - 描述你想完成的任务，browser-use Agent 会自动规划和执行所有步骤。适用于多步骤操作、复杂网页交互、不确定具体步骤的场景。",
-            arguments={
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "要完成的任务描述，例如：'打开百度搜索福建福州并截图'",
-                    },
-                    "max_steps": {
-                        "type": "integer",
-                        "description": "最大执行步骤数",
-                        "default": 15,
-                    },
-                },
-                "required": ["task"],
-            },
-        ),
+    ]
+
+    # 内部保留的工具（不暴露给 LLM，但 call_tool 仍可路由到它们，供内部使用）
+    _INTERNAL_TOOLS = [
+        "browser_click", "browser_type", "browser_wait", "browser_scroll",
+        "browser_execute_js", "browser_status", "browser_list_tabs",
+        "browser_switch_tab", "browser_new_tab",
     ]
 
     def __init__(self, headless: bool = False, cdp_port: int = 9222, use_user_chrome: bool = True):
@@ -645,10 +633,10 @@ class BrowserMCP:
         Returns:
             {"success": bool, "result": Any, "error": str}
         """
-        # browser_open 是特殊的，需要先处理
+        # browser_open 是特殊的，需要先处理（合并了 browser_status 功能）
         if tool_name == "browser_open":
             return await self._open_browser(
-                arguments.get("visible", False), arguments.get("ask_user", False)
+                visible=arguments.get("visible", True),
             )
 
         if not self._started:
@@ -697,6 +685,7 @@ class BrowserMCP:
                 return {"success": True, "result": "Browser closed"}
 
             elif tool_name == "browser_status":
+                # 向后兼容：内部调用重定向到 _get_status，对外已合并到 browser_open
                 return await self._get_status()
 
             elif tool_name == "browser_list_tabs":
@@ -746,70 +735,112 @@ class BrowserMCP:
         self._cdp_url = None
         logger.info("[Browser] State reset")
 
-    async def _open_browser(self, visible: bool, ask_user: bool) -> dict:
+    async def _open_browser(self, visible: bool = True) -> dict:
         """
-        启动浏览器
+        启动浏览器或检查状态（合并了原 browser_status 功能）
+
+        始终返回当前浏览器状态。如果已运行则直接返回状态，不重复启动。
 
         Args:
             visible: 是否显示浏览器窗口
-            ask_user: 是否询问用户
         """
-        if ask_user:
-            # 返回提示，让 agent 询问用户
-            return {
-                "success": True,
-                "result": {
-                    "action": "ask_user",
-                    "message": "请询问用户是否希望看到浏览器操作过程：\n"
-                    "- 选择「是」：打开可见的浏览器窗口，可以看到自动化操作过程\n"
-                    "- 选择「否」：后台静默运行，速度更快但看不到过程",
-                    "options": ["visible", "headless"],
-                },
-            }
+        # 如果已启动，验证连接是否有效并返回状态
+        if self._started and self._context and self._page:
+            try:
+                current_url = self._page.url
+                current_title = await self._page.title()
+                all_pages = self._context.pages
 
-        # 如果已启动且模式相同，检查浏览器是否真的还在运行
-        if self._started and self._visible == visible:
-            # 验证浏览器是否真的还活着
-            # 注意：persistent context 模式下 _browser 是 None，但 _context 有值
-            if self._context and self._page:
-                try:
-                    # 尝试访问页面属性来验证连接是否有效
-                    _ = self._page.url
-                    # 额外验证：尝试获取页面标题
-                    _ = await self._page.title()
+                # 如果请求的可见模式与当前不同，需要重启
+                if visible != self._visible:
+                    logger.info(f"Browser mode change requested: visible={visible}, restarting...")
+                    await self.stop()
+                    # 继续到下面的启动逻辑
+                else:
                     return {
                         "success": True,
                         "result": {
+                            "is_open": True,
                             "status": "already_running",
                             "visible": self._visible,
-                            "message": f"浏览器已在{'可见' if self._visible else '后台'}模式运行",
+                            "tab_count": len(all_pages),
+                            "current_tab": {"url": current_url, "title": current_title},
+                            "using_user_chrome": self._using_user_chrome,
+                            "message": f"浏览器已在{'可见' if self._visible else '后台'}模式运行，共 {len(all_pages)} 个标签页",
                         },
                     }
-                except Exception as e:
-                    # 浏览器已断开，重置状态
-                    logger.warning(f"[Browser] Browser connection lost: {e}, resetting state")
-                    await self._reset_state()
-            else:
-                # 状态不完整，重置
-                logger.warning("[Browser] Incomplete browser state, resetting")
+            except Exception as e:
+                # 浏览器已断开，重置状态
+                logger.warning(f"[Browser] Browser connection lost: {e}, resetting state")
                 await self._reset_state()
+        elif self._started:
+            # 状态不完整，重置
+            logger.warning("[Browser] Incomplete browser state, resetting")
+            await self._reset_state()
 
         # 启动浏览器
         success = await self.start(visible=visible)
 
         if success:
-            return {
-                "success": True,
-                "result": {
-                    "status": "started",
-                    "visible": self._visible,
-                    "message": f"浏览器已启动 ({'可见模式 - 用户可以看到操作' if self._visible else '后台模式 - 静默运行'})",
-                },
+            # 启动成功，返回状态信息
+            current_url = self._page.url if self._page else None
+            current_title = None
+            tab_count = 0
+            try:
+                if self._page:
+                    current_title = await self._page.title()
+                if self._context:
+                    tab_count = len(self._context.pages)
+            except Exception:
+                pass
+
+            result_data = {
+                "is_open": True,
+                "status": "started",
+                "visible": self._visible,
+                "tab_count": tab_count,
+                "current_tab": {"url": current_url, "title": current_title},
+                "using_user_chrome": self._using_user_chrome,
+                "message": f"浏览器已启动 ({'可见模式' if self._visible else '后台模式'})",
             }
+
+            # 检测外部浏览器后端可用性（非阻塞提示）
+            try:
+                devtools_info = detect_chrome_devtools_mcp()
+                if devtools_info["available"] and not self._using_user_chrome:
+                    result_data["hint"] = (
+                        "提示：检测到 Chrome DevTools MCP 可用。如需保留登录状态，"
+                        "可使用 call_mcp_tool('chrome-devtools', ...) 调用。"
+                    )
+            except Exception:
+                pass
+
+            return {"success": True, "result": result_data}
         else:
+            # 启动失败，检查外部后端作为备选
+            hints = []
+            try:
+                devtools_info = detect_chrome_devtools_mcp()
+                if devtools_info["available"]:
+                    hints.append(
+                        "备选方案：Chrome DevTools MCP 可用，可通过 call_mcp_tool('chrome-devtools', 'navigate_page', {url: '...'}) 操作浏览器。"
+                    )
+                mcp_chrome_available = await check_mcp_chrome_extension()
+                if mcp_chrome_available:
+                    hints.append(
+                        "备选方案：mcp-chrome 扩展已运行，可通过 call_mcp_tool('chrome-browser', ...) 操作浏览器。"
+                    )
+            except Exception:
+                pass
+
+            error_msg = "无法启动浏览器。请确保已安装 playwright: pip install playwright && playwright install chromium"
+            if hints:
+                error_msg += "\n\n" + "\n".join(hints)
+
             return {
                 "success": False,
-                "error": "无法启动浏览器。请确保已安装 playwright: pip install playwright && playwright install chromium",
+                "result": {"is_open": False, "status": "failed"},
+                "error": error_msg,
             }
 
     async def _navigate(self, url: str) -> dict:

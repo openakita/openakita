@@ -211,9 +211,8 @@ class PromptAssembler:
             ],
             "Memory Management": ["add_memory", "search_memory", "get_memory_stats"],
             "Browser Automation": [
-                "browser_task", "browser_open", "browser_status", "browser_list_tabs",
-                "browser_navigate", "browser_new_tab", "browser_switch_tab",
-                "browser_click", "browser_type", "browser_get_content", "browser_screenshot",
+                "browser_task", "browser_open", "browser_navigate",
+                "browser_get_content", "browser_screenshot", "browser_close",
             ],
             "Scheduled Tasks": [
                 "schedule_task", "list_scheduled_tasks",
@@ -263,7 +262,7 @@ class PromptAssembler:
 
 | 状态 | 重启后 | 正确做法 |
 |------|--------|----------|
-| 浏览器 | **已关闭** | 必须先调用 `browser_status` 确认 |
+| 浏览器 | **已关闭** | 必须先调用 `browser_open` 确认状态 |
 | 变量/内存数据 | **已清空** | 通过工具重新获取 |
 | 临时文件 | **可能清除** | 重新检查文件是否存在 |
 | 网络连接 | **已断开** | 需要重新建立连接 |"""

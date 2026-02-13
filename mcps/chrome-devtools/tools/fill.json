@@ -1,0 +1,18 @@
+{
+    "name": "fill",
+    "description": "Fill a form field with the specified value. Clears existing content first.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "selector": {
+                "type": "string",
+                "description": "CSS selector of the input field"
+            },
+            "value": {
+                "type": "string",
+                "description": "Value to fill in the field"
+            }
+        },
+        "required": ["selector", "value"]
+    }
+}

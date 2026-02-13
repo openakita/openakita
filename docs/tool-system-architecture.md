@@ -83,7 +83,7 @@ tool_name(param="value")""",
 | 类别 | 工具 | 用途 |
 |-----|-----|-----|
 | File System | run_shell, read_file, write_file, list_directory | 文件和命令操作 |
-| Browser | browser_open, browser_navigate, browser_click, ... | 网页自动化 |
+| Browser | browser_task, browser_open, browser_navigate, browser_get_content, browser_screenshot, browser_close | 网页自动化 |
 | Memory | add_memory, search_memory, get_memory_stats | 长期记忆 |
 | Scheduled Tasks | schedule_task, list_scheduled_tasks, ... | 定时任务和提醒 |
 | IM Channel | deliver_artifacts, get_voice_file, get_image_file, ... | IM 消息处理（附件交付以回执为证据） |

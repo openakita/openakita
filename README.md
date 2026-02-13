@@ -62,7 +62,7 @@ OpenAkita provides a cross-platform **Desktop Terminal** (built with Tauri + Rea
 - **Bilingual (CN/EN)** — Auto-detects system language, one-click switch, fully internationalized
 - **Localization & i18n** — First-class support for Chinese and international ecosystems, PyPI mirrors, IM channels
 - **LLM Endpoint Manager** — Multi-provider, multi-endpoint, auto-failover, online model list fetching
-- **IM Channel Setup** — Telegram, Feishu, WeCom, DingTalk, QQ — all in one place
+- **IM Channel Setup** — Telegram, Feishu, WeCom, DingTalk, QQ Official Bot, OneBot — all in one place
 - **Persona & Living Presence** — 8 role presets, proactive greetings, memory recall, learns your preferences
 - **Skill Marketplace** — Browse, download, configure skills in one place
 - **Status Monitor** — Compact dashboard: service/LLM/IM health at a glance
@@ -136,7 +136,7 @@ Workspace → Python → Install → LLM Endpoints
 | **4** | **Plan Mode** | Complex tasks auto-decomposed into multi-step plans, real-time tracking, Plan → Act → Verify loop until done |
 | **5** | **Dynamic Multi-LLM** | 9+ providers hot-swappable, priority routing + auto-failover, one goes down, next picks up seamlessly |
 | **6** | **Skill + MCP Standards** | Agent Skills / MCP open standards, one-click GitHub skill install, plug-and-play ecosystem |
-| **7** | **6 IM Platforms** | Telegram / Feishu / WeCom / DingTalk / QQ / CLI — wherever you are, it's there |
+| **7** | **7 IM Platforms** | Telegram / Feishu / WeCom / DingTalk / QQ Official Bot / OneBot / CLI — wherever you are, it's there |
 | **8** | **AI That Sends Memes** | Probably the first AI Agent that "meme-battles" — 5700+ stickers, mood-aware, persona-matched (powered by [ChineseBQB](https://github.com/zhaoolee/ChineseBQB)) |
 
 ---
@@ -238,7 +238,7 @@ Tools    ─── Shell · File · Web · Browser · Desktop · MCP · Skills
 Evolution ── SelfCheck · Generator · Installer · LogAnalyzer
     │        DailyConsolidator
     │
-Channels ─── CLI · Telegram · Feishu · WeCom · DingTalk · QQ
+Channels ─── CLI · Telegram · Feishu · WeCom · DingTalk · QQ Official · OneBot
 ```
 
 > See [Architecture Doc](docs/architecture.md) for full details.
@@ -251,7 +251,7 @@ Channels ─── CLI · Telegram · Feishu · WeCom · DingTalk · QQ
 |----------|---------|
 | [Configuration Guide](docs/configuration-guide.md) | Desktop Quick Setup & Full Setup walkthrough |
 | ⭐ [LLM Provider Setup](docs/llm-provider-setup-tutorial.md) | **API Key registration + endpoint config + multi-endpoint Failover** |
-| ⭐ [IM Channel Setup](docs/im-channel-setup-tutorial.md) | **Telegram / Feishu / DingTalk / WeCom / QQ step-by-step tutorial** |
+| ⭐ [IM Channel Setup](docs/im-channel-setup-tutorial.md) | **Telegram / Feishu / DingTalk / WeCom / QQ Official Bot / OneBot step-by-step tutorial** |
 | [Quick Start](docs/getting-started.md) | Installation and basics |
 | [Architecture](docs/architecture.md) | System design and components |
 | [Configuration](docs/configuration.md) | All config options |

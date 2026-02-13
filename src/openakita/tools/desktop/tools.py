@@ -113,7 +113,7 @@ DESKTOP_TOOLS = [
     {
         "name": "desktop_click",
         "category": "Desktop",
-        "description": "Click desktop elements or coordinates. When you need to: (1) Click buttons/icons in applications, (2) Select menu items, (3) Interact with desktop UI. Supports: element description ('save button'), name: prefix, coordinates ('100,200'). Left/right/middle button and double-click supported. For browser webpage elements, use browser_click instead.",
+        "description": "Click desktop elements or coordinates. When you need to: (1) Click buttons/icons in applications, (2) Select menu items, (3) Interact with desktop UI. Supports: element description ('save button'), name: prefix, coordinates ('100,200'). Left/right/middle button and double-click supported. For browser webpage elements, use browser_task instead.",
         "detail": """点击桌面上的 UI 元素或指定坐标。
 
 **支持的目标格式**：
@@ -129,7 +129,7 @@ DESKTOP_TOOLS = [
 - uia: 只用 UIAutomation
 - vision: 只用视觉识别
 
-**注意**：如果点击的是浏览器内的网页元素，请使用 browser_click 工具。""",
+**注意**：如果点击的是浏览器内的网页元素，请使用 browser_task 工具。""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -157,7 +157,7 @@ DESKTOP_TOOLS = [
     {
         "name": "desktop_type",
         "category": "Desktop",
-        "description": "Type text at current cursor position in desktop applications. When you need to: (1) Enter text in application dialogs, (2) Fill input fields, (3) Type in text editors. Supports Chinese input. Use clear_first=true to replace existing text. For browser webpage forms, use browser_type instead.",
+        "description": "Type text at current cursor position in desktop applications. When you need to: (1) Enter text in application dialogs, (2) Fill input fields, (3) Type in text editors. Supports Chinese input. Use clear_first=true to replace existing text. For browser webpage forms, use browser_task instead.",
         "detail": """在当前焦点位置输入文本。
 
 **功能特点**：
@@ -172,7 +172,7 @@ DESKTOP_TOOLS = [
 - 先点击目标输入框获得焦点
 - 再调用此工具输入
 
-**注意**：如果输入的是浏览器内的网页表单，请使用 browser_type 工具。""",
+**注意**：如果输入的是浏览器内的网页表单，请使用 browser_task 工具。""",
         "input_schema": {
             "type": "object",
             "properties": {

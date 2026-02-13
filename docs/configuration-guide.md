@@ -116,7 +116,8 @@
 | **飞书** | 自建应用 | 否 | App ID、App Secret |
 | **企业微信** | 智能机器人 | 是 | Corp ID、Token、AES Key |
 | **钉钉** | 企业内部应用 | 否 | Client ID、Client Secret |
-| **QQ** | OneBot 协议 | 否 | OneBot WebSocket URL |
+| **QQ 官方机器人** | QQ 开放平台 API | 否 | AppID、AppSecret |
+| **OneBot** | OneBot v11 协议 | 否 | WebSocket URL |
 
 > 各 IM 通道的详细接入教程请参考 [IM 通道接入文档](https://github.com/anthropic-lab/openakita/blob/main/docs/im-channels.md)。
 
@@ -250,7 +251,8 @@ OpenAkita 需要 Python 3.11+ 运行环境。你有两种选择：
 | `feishu` | 飞书 IM 接入 |
 | `dingtalk` | 钉钉 IM 接入 |
 | `wework` | 企业微信 IM 接入 |
-| `qq` | QQ（OneBot）IM 接入 |
+| `onebot` | OneBot 协议 IM 接入（NapCat / Lagrange 等） |
+| `qqbot` | QQ 官方机器人接入（qq-botpy SDK） |
 
 安装过程中会显示实时日志和进度条：
 
@@ -385,14 +387,26 @@ IM 通道让你可以通过即时通讯工具与 OpenAkita 对话。所有通道
 
 > **接入方式**：企业内部应用，无需公网 IP。在[钉钉开放平台](https://open.dingtalk.com/)创建应用。
 
-#### QQ（OneBot）
+#### QQ 官方机器人
 
 | 字段 | 说明 |
 |------|------|
-| **启用** | 勾选以启用 QQ 通道 |
-| **OneBot WebSocket URL** | OneBot 11 协议的 WebSocket 地址，如 `ws://127.0.0.1:8080` |
+| **启用** | 勾选以启用 QQ 官方机器人通道 |
+| **AppID** | 在 [QQ 开放平台](https://q.qq.com) 创建机器人后获取的 AppID |
+| **AppSecret** | 对应的 AppSecret |
+| **沙箱模式** | 开启后连接沙箱环境，用于开发调试 |
 
-> **接入方式**：OneBot 11 协议，需要先部署 OneBot 实现端（如 go-cqhttp、NapCat 等）。
+> **接入方式**：通过 QQ 官方开放平台 API（botpy SDK），支持群聊、单聊、频道消息。需要在 [q.qq.com](https://q.qq.com) 注册并创建机器人。
+
+#### OneBot（通用协议）
+
+| 字段 | 说明 |
+|------|------|
+| **启用** | 勾选以启用 OneBot 通道 |
+| **WebSocket URL** | OneBot v11 协议的 WebSocket 地址，如 `ws://127.0.0.1:8080` |
+| **Access Token** | 访问令牌（可选，用于连接鉴权） |
+
+> **接入方式**：OneBot v11 协议，可对接任何兼容 OneBot 的实现端（如 NapCat、Lagrange 等）。
 
 ---
 
@@ -690,7 +704,8 @@ OpenAkita 内置多种预设角色人格：
 | FEISHU_ENABLED | `false` |
 | WEWORK_ENABLED | `false` |
 | DINGTALK_ENABLED | `false` |
-| QQ_ENABLED | `false` |
+| QQBOT_ENABLED | `false` |
+| ONEBOT_ENABLED | `false` |
 
 ---
 

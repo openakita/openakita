@@ -106,7 +106,7 @@ class ReasoningEngine:
 
         # 浏览器"读页面状态"工具
         self._browser_page_read_tools = frozenset({
-            "browser_get_content", "browser_screenshot", "browser_list_tabs",
+            "browser_get_content", "browser_screenshot",
         })
 
     # ==================== ask_user 等待用户回复 ====================

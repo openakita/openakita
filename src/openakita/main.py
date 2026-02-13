@@ -117,7 +117,8 @@ async def start_im_channels(agent_or_master):
         or settings.feishu_enabled
         or settings.wework_enabled
         or settings.dingtalk_enabled
-        or settings.qq_enabled
+        or settings.onebot_enabled
+        or settings.qqbot_enabled
     )
 
     if not any_enabled:
@@ -213,19 +214,36 @@ async def start_im_channels(agent_or_master):
         except Exception as e:
             logger.error(f"Failed to start DingTalk adapter: {e}")
 
-    # QQ
-    if settings.qq_enabled and settings.qq_onebot_url:
+    # OneBot (通用协议)
+    if settings.onebot_enabled and settings.onebot_ws_url:
         try:
-            from .channels.adapters import QQAdapter
+            from .channels.adapters import OneBotAdapter
 
-            qq = QQAdapter(
-                ws_url=settings.qq_onebot_url,
+            onebot = OneBotAdapter(
+                ws_url=settings.onebot_ws_url,
+                access_token=settings.onebot_access_token or None,
             )
-            await _message_gateway.register_adapter(qq)
-            adapters_started.append("qq")
-            logger.info("QQ adapter registered")
+            await _message_gateway.register_adapter(onebot)
+            adapters_started.append("onebot")
+            logger.info("OneBot adapter registered")
         except Exception as e:
-            logger.error(f"Failed to start QQ adapter: {e}")
+            logger.error(f"Failed to start OneBot adapter: {e}")
+
+    # QQ 官方机器人
+    if settings.qqbot_enabled and settings.qqbot_app_id:
+        try:
+            from .channels.adapters import QQBotAdapter
+
+            qqbot = QQBotAdapter(
+                app_id=settings.qqbot_app_id,
+                app_secret=settings.qqbot_app_secret,
+                sandbox=settings.qqbot_sandbox,
+            )
+            await _message_gateway.register_adapter(qqbot)
+            adapters_started.append("qqbot")
+            logger.info("QQ Official Bot adapter registered")
+        except Exception as e:
+            logger.error(f"Failed to start QQ Official Bot adapter: {e}")
 
     # 设置 Agent 处理函数
     # 根据是否启用协同模式选择不同的处理方式
@@ -445,7 +463,8 @@ def show_channels():
         ("飞书", settings.feishu_enabled, settings.feishu_app_id),
         ("企业微信", settings.wework_enabled, settings.wework_corp_id),
         ("钉钉", settings.dingtalk_enabled, settings.dingtalk_client_id),
-        ("QQ", settings.qq_enabled, settings.qq_onebot_url),
+        ("OneBot", settings.onebot_enabled, settings.onebot_ws_url),
+        ("QQ 官方机器人", settings.qqbot_enabled, settings.qqbot_app_id),
     ]
 
     for name, enabled, token in channels:

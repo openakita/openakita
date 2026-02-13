@@ -1,0 +1,7 @@
+{
+    "serverIdentifier": "chrome-browser",
+    "serverName": "Chrome Browser (mcp-chrome Extension)",
+    "serverDescription": "通过 mcp-chrome Chrome 扩展连接用户真实浏览器。天然继承所有登录态、Cookie 和浏览器扩展（包括密码管理器）。需要先安装 mcp-chrome 扩展。",
+    "transport": "streamable_http",
+    "url": "http://127.0.0.1:12306/mcp"
+}

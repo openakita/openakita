@@ -1,6 +1,6 @@
 # IM 通道配置教程
 
-> 本教程详细介绍如何为 OpenAkita 配置各 IM 通道（Telegram、飞书、钉钉、企业微信、QQ），包含平台端完整的申请流程和配置步骤。
+> 本教程详细介绍如何为 OpenAkita 配置各 IM 通道（Telegram、飞书、钉钉、企业微信、QQ 官方机器人、OneBot），包含平台端完整的申请流程和配置步骤。
 
 ---
 
@@ -12,9 +12,10 @@
 - [二、飞书（Lark）配置教程](#二飞书lark配置教程)
 - [三、钉钉配置教程](#三钉钉配置教程)
 - [四、企业微信配置教程](#四企业微信配置教程)
-- [五、QQ（OneBot）配置教程](#五qqonebot配置教程)
-- [六、语音识别（Whisper）配置](#六语音识别whisper配置)
-- [七、常见问题汇总](#七常见问题汇总)
+- [五、QQ 官方机器人配置教程](#五qq-官方机器人配置教程)
+- [六、OneBot（通用协议）配置教程](#六onebot通用协议配置教程)
+- [七、语音识别（Whisper）配置](#七语音识别whisper配置)
+- [八、常见问题汇总](#八常见问题汇总)
 
 ---
 
@@ -26,31 +27,34 @@
 | 飞书 | ✅ 稳定 | WebSocket 长连接 | ❌ 不需要 | `pip install openakita[feishu]` | ⭐⭐ 简单 |
 | 钉钉 | ✅ 稳定 | Stream 模式 (WebSocket) | ❌ 不需要 | `pip install openakita[dingtalk]` | ⭐⭐ 简单 |
 | 企业微信 | ✅ 稳定 | HTTP 回调（智能机器人） | ⚠️ 需要公网 IP | `pip install openakita[wework]` | ⭐⭐⭐ 中等 |
-| QQ | 🧪 Beta | OneBot WebSocket | ❌ 不需要 | `pip install openakita[qq]` | ⭐⭐⭐ 中等 |
+| QQ 官方机器人 | ✅ 稳定 | QQ 开放平台 API (WebSocket) | ❌ 不需要 | `pip install openakita[qqbot]` | ⭐⭐ 简单 |
+| OneBot | ✅ 稳定 | OneBot v11 (WebSocket) | ❌ 不需要 | `pip install openakita[onebot]` | ⭐⭐⭐ 中等 |
 
 ### 媒体类型支持一览
 
 **接收消息（用户 → 机器人）**
 
-| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ |
-|------|----------|------|------|---------|-----|
-| 文字 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 图片 | ✅ | ✅ | ✅ | ⚠️ 仅单聊 | ✅ |
-| 语音 | ✅ (Whisper转写) | ✅ (Whisper转写) | ✅ (Whisper转写) | ❌ 不支持 | ✅ (Whisper转写) |
-| 文件 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ |
-| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ |
+| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ 官方机器人 | OneBot |
+|------|----------|------|------|---------|-------------|--------|
+| 文字 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 图片 | ✅ | ✅ | ✅ | ⚠️ 仅单聊 | ✅ | ✅ |
+| 语音 | ✅ (Whisper转写) | ✅ (Whisper转写) | ✅ (Whisper转写) | ❌ 不支持 | ✅ | ✅ (Whisper转写) |
+| 文件 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
+| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
 
 **发送消息（机器人 → 用户）**
 
-| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ |
-|------|----------|------|------|---------|-----|
-| 文字 | ✅ | ✅ | ✅ | ✅ (stream 被动回复) | ✅ |
-| 图片 | ✅ | ✅ | ✅ | ✅ (stream msg_item) | ✅ |
-| 语音 | ✅ | ✅ | ⚠️ 降级为文件 | ❌ 不支持 | ✅ |
-| 文件 | ✅ | ✅ | ⚠️ 降级为链接 | ❌ 降级为文本 | ✅ |
-| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ |
+| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ 官方机器人 | OneBot |
+|------|----------|------|------|---------|-------------|--------|
+| 文字 | ✅ | ✅ | ✅ | ✅ (stream 被动回复) | ✅ | ✅ |
+| 图片 | ✅ | ✅ | ✅ | ✅ (stream msg_item) | ✅ (需公网URL) | ✅ |
+| 语音 | ✅ | ✅ | ⚠️ 降级为文件 | ❌ 不支持 | ⚠️ 仅silk+URL | ✅ |
+| 文件 | ✅ | ✅ | ⚠️ 降级为链接 | ❌ 降级为文本 | ❌ 暂未开放 | ✅ |
+| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ⚠️ 需公网URL | ✅ |
 
 > **企业微信限制说明**：智能机器人通过 stream 流式被动回复发送文本和图片（JPG/PNG，≤10MB，单条最多 10 张）。**不支持语音、文件和视频的收发**。接收端仅支持文字、图文混排和图片（图片仅单聊）。
+>
+> **QQ 官方机器人限制说明**：群聊和单聊的富媒体发送（图片/语音/视频）需要先将文件上传到 QQ 服务器获取 `file_info`，且**仅支持公网 URL 上传**（`file_data` 本地文件上传暂未开放）。语音需要 silk 格式。文件发送（`file_type=4`）暂未开放。频道消息限制较少，支持直接图片 URL。
 
 ### 快速安装
 
@@ -64,11 +68,12 @@ pip install openakita[all]
 pip install openakita[feishu]      # 飞书
 pip install openakita[dingtalk]    # 钉钉
 pip install openakita[wework]      # 企业微信
-pip install openakita[qq]          # QQ
+pip install openakita[qqbot]       # QQ 官方机器人
+pip install openakita[onebot]      # OneBot（通用协议）
 pip install openakita[whisper]     # 语音识别
 
 # 组合安装
-pip install openakita[feishu,dingtalk,whisper]
+pip install openakita[feishu,dingtalk,qqbot,whisper]
 ```
 
 ---
@@ -131,10 +136,11 @@ Available channels:
   [2] Feishu (Lark)
   [3] WeCom (企业微信)
   [4] DingTalk (钉钉)
-  [5] QQ (OneBot)
-  [6] Skip
+  [5] QQ 官方机器人
+  [6] OneBot（通用协议）
+  [7] Skip
 
-Select channel [6]:
+Select channel [7]:
 ```
 
 向导完成后自动生成 `.env` 文件。
@@ -977,18 +983,135 @@ WEWORK_CALLBACK_PORT=9880                 # 回调监听端口，默认 9880
 
 ---
 
-## 五、QQ（OneBot）配置教程
+## 五、QQ 官方机器人配置教程
 
-> QQ 通过 OneBot v11 协议接入，需要先部署 OneBot 服务器（如 NapCat），然后 OpenAkita 通过 WebSocket 连接。目前为 Beta 状态。
+> QQ 官方机器人通过 [QQ 开放平台](https://q.qq.com) 接入，使用官方 botpy SDK，支持频道、群聊和单聊消息。
 
 ### 5.1 前置条件
 
-- 一个 **QQ 账号**（用于登录 OneBot 服务器）
+- 一个 QQ 开放平台账号（需前往 [q.qq.com](https://q.qq.com) 注册）
+- 已创建的机器人应用，获取 **AppID** 和 **AppSecret**
+
+### 5.2 在 QQ 开放平台创建机器人
+
+1. 访问 [QQ 开放平台](https://q.qq.com)，登录并进入控制台
+2. 点击 **「创建机器人」**，填写机器人名称、描述等基本信息
+3. 创建成功后，在 **「开发设置」** 页面获取：
+   - **AppID** — 机器人的唯一标识
+   - **AppSecret** — 用于身份鉴权（注意保密）
+
+<!-- 📸 配图：QQ 开放平台控制台 — 创建机器人 -->
+> **[配图位]** QQ 开放平台控制台 — 机器人管理页面
+
+4. 在 **「功能配置」** 中配置机器人的事件订阅（如消息接收等）
+5. 如果需要群聊和单聊功能，需要在 **「沙箱配置」** 或上线审核后才能生效
+
+> **沙箱模式**：开发调试阶段建议先开启沙箱模式。沙箱环境仅限沙箱频道内可用，不会影响正式环境。
+
+### 5.3 OpenAkita 配置
+
+先安装 QQ 官方机器人依赖（OpenAkita Desktop 用户可跳过，依赖会自动安装）：
+
+```bash
+pip install openakita[qqbot]
+```
+
+然后通过以下任一方式配置：
+
+#### 方式 A：OpenAkita Desktop 桌面程序（推荐）
+
+1. 打开 OpenAkita Desktop
+2. 进入 **「IM 通道」** 配置步骤
+3. 在 **QQ 官方机器人** 区域：
+   - 将 `QQBOT_ENABLED` 开关打开
+   - 填写 `QQBOT_APP_ID`（AppID）
+   - 填写 `QQBOT_APP_SECRET`（AppSecret）
+   - 如需沙箱测试，勾选 `QQBOT_SANDBOX`
+4. 点击 **「保存」**
+
+<!-- 📸 配图：OpenAkita Desktop 中 QQ 官方机器人配置表单的截图 -->
+> **[配图位]** OpenAkita Desktop — QQ 官方机器人配置表单
+
+#### 方式 B：CLI 交互式向导
+
+```bash
+openakita setup
+```
+
+在 Step 4（IM Channels）中选择 `[5] QQ 官方机器人`，按提示输入：
+
+```
+QQ Official Bot Configuration
+
+请前往 https://q.qq.com 创建机器人并获取凭证
+
+Enter AppID: 12345678
+Enter AppSecret: ********
+Enable sandbox mode? [y/N]: n
+```
+
+#### 方式 C：手动编辑 .env 文件
+
+在 `.env` 文件中添加：
+
+```bash
+# --- QQ 官方机器人 ---
+QQBOT_ENABLED=true
+QQBOT_APP_ID=你的AppID
+QQBOT_APP_SECRET=你的AppSecret
+QQBOT_SANDBOX=false          # 设为 true 开启沙箱模式
+```
+
+### 5.4 验证与测试
+
+1. 启动 OpenAkita，日志应显示：
+   ```
+   QQ Official Bot ready (user: 你的机器人名称)
+   ```
+2. 在 QQ 中 @机器人 发送消息（频道或群聊）
+3. 观察日志和机器人回复
+
+<!-- 📸 配图：QQ 频道中与机器人对话的效果截图 -->
+> **[配图位]** QQ 官方机器人正常回复消息的效果展示
+
+### 5.5 富媒体发送说明
+
+QQ 官方 API 在不同聊天场景下的富媒体支持有差异：
+
+| 场景 | 文字 | 图片 | 语音 | 文件 | 视频 |
+|------|------|------|------|------|------|
+| 频道 | ✅ | ✅ 直接 URL | ❌ | ❌ | ❌ |
+| 群聊 | ✅ | ✅ 需公网 URL 上传 | ⚠️ 需 silk + 公网 URL | ❌ 暂未开放 | ⚠️ 需公网 URL |
+| 单聊 | ✅ | ✅ 需公网 URL 上传 | ⚠️ 需 silk + 公网 URL | ❌ 暂未开放 | ⚠️ 需公网 URL |
+
+> **注意**：群聊和单聊的图片/语音/视频发送需要两步操作：先通过富媒体 API 上传文件获取 `file_info`，再发送消息。**仅支持公网 URL**（`file_data` 本地文件上传暂未开放）。
+
+### 5.6 常见问题
+
+| 问题 | 解决方案 |
+|------|---------|
+| 鉴权失败 | 确认 AppID 和 AppSecret 正确，检查是否在开放平台开启了对应的事件订阅 |
+| 频繁断线重连 | 适配器支持自动重连（指数退避，初始 5 秒，最大 120 秒），连接成功后重置 |
+| 群聊收不到消息 | 确认机器人已上线审核通过或在沙箱环境中配置了测试群 |
+| 图片发不出去 | 群聊/单聊需要公网 URL，本地文件上传暂不支持 |
+| 语音发不出去 | 需要 silk 格式 + 公网 URL，目前 OpenAkita 会降级为文本提示 |
+| 文件发不出去 | QQ 官方 API `file_type=4` 暂未开放，OpenAkita 会降级为文本提示 |
+| 沙箱模式下无法群聊 | 沙箱仅限频道测试，群聊需要正式上线 |
+
+---
+
+## 六、OneBot（通用协议）配置教程
+
+> OneBot 是一种通用的聊天机器人协议（v11），可对接任何兼容 OneBot 标准的实现端（如 NapCat、Lagrange 等），不限于 QQ 平台。
+
+### 6.1 前置条件
+
+- 一个 **QQ 账号**（或其他 OneBot 兼容平台的账号）
 - 一台部署 OneBot 服务的机器（可以和 OpenAkita 在同一台）
 
-### 5.2 部署 OneBot 服务器
+### 6.2 部署 OneBot 服务器
 
-OpenAkita 不直接连接 QQ 服务器，而是通过 OneBot v11 协议与中间层通信。你需要先部署一个 OneBot 实现。
+OpenAkita 通过 OneBot v11 协议的 WebSocket 与中间层通信。你需要先部署一个 OneBot 实现。
 
 #### 方案一：NapCat（推荐）
 
@@ -1008,7 +1131,8 @@ NapCat 是目前比较活跃的 QQ OneBot 实现。
 1. 启动 NapCat，按照引导完成 QQ 账号登录（通常需要扫码）
 2. 进入 NapCat 配置页面
 3. 启用 **「正向 WebSocket」**，设置地址为 `ws://127.0.0.1:8080`
-4. 保存配置并重启 NapCat
+4. （可选）设置 Access Token 用于连接鉴权
+5. 保存配置并重启 NapCat
 
 <!-- 📸 配图：NapCat 配置正向 WebSocket 的界面截图 -->
 > **[配图位]** NapCat 配置正向 WebSocket
@@ -1024,12 +1148,12 @@ Lagrange 是另一个 OneBot 实现，使用 .NET 开发。
 <!-- 📸 配图：Lagrange 配置页面截图 -->
 > **[配图位]** Lagrange.OneBot 配置界面
 
-### 5.3 OpenAkita 配置
+### 6.3 OpenAkita 配置
 
-先安装 QQ 依赖（OpenAkita Desktop 用户可跳过，依赖会自动安装）：
+先安装 OneBot 依赖（OpenAkita Desktop 用户可跳过，依赖会自动安装）：
 
 ```bash
-pip install openakita[qq]
+pip install openakita[onebot]
 ```
 
 然后通过以下任一方式配置：
@@ -1038,16 +1162,14 @@ pip install openakita[qq]
 
 1. 打开 OpenAkita Desktop
 2. 进入 **「IM 通道」** 配置步骤
-3. 在 **QQ** 区域：
-   - 将 `QQ_ENABLED` 开关打开
-   - 在 `QQ_ONEBOT_URL` 中填写 OneBot WebSocket 地址（默认 `ws://127.0.0.1:8080`）
+3. 在 **OneBot** 区域：
+   - 将 `ONEBOT_ENABLED` 开关打开
+   - 在 `ONEBOT_WS_URL` 中填写 OneBot WebSocket 地址（默认 `ws://127.0.0.1:8080`）
+   - （可选）在 `ONEBOT_ACCESS_TOKEN` 中填写访问令牌
 4. 点击 **「保存」**
 
-<!-- 📸 配图：OpenAkita Desktop 中 QQ 配置表单的截图 -->
-> **[配图位]** OpenAkita Desktop — QQ (OneBot) 配置表单
-
-<!-- 📸 配图：OpenAkita Desktop 状态页面显示 QQ 通道在线状态 -->
-> **[配图位]** OpenAkita Desktop — 保存后状态页面显示 QQ 在线 🟢
+<!-- 📸 配图：OpenAkita Desktop 中 OneBot 配置表单的截图 -->
+> **[配图位]** OpenAkita Desktop — OneBot 配置表单
 
 #### 方式 B：CLI 交互式向导
 
@@ -1055,16 +1177,17 @@ pip install openakita[qq]
 openakita setup
 ```
 
-在 Step 4（IM Channels）中选择 `[5] QQ (OneBot)`，按提示输入：
+在 Step 4（IM Channels）中选择 `[6] OneBot（通用协议）`，按提示输入：
 
 ```
-QQ (OneBot) Configuration
+OneBot Configuration
 
-QQ 通道需要先部署 NapCat 或 Lagrange 作为 OneBot 服务端
+OneBot 通道需要先部署 NapCat 或 Lagrange 作为 OneBot 服务端
 
 参考: https://github.com/botuniverse/onebot-11
 
 Enter OneBot WebSocket URL [ws://127.0.0.1:8080]:
+Enter Access Token (optional, press Enter to skip):
 ```
 
 #### 方式 C：手动编辑 .env 文件
@@ -1072,38 +1195,40 @@ Enter OneBot WebSocket URL [ws://127.0.0.1:8080]:
 在 `.env` 文件中添加：
 
 ```bash
-# --- QQ ---
-QQ_ENABLED=true
-QQ_ONEBOT_URL=ws://127.0.0.1:8080   # OneBot WebSocket 地址
+# --- OneBot（通用协议）---
+ONEBOT_ENABLED=true
+ONEBOT_WS_URL=ws://127.0.0.1:8080     # OneBot WebSocket 地址
+ONEBOT_ACCESS_TOKEN=                    # 可选，用于连接鉴权
 ```
 
 > 如果 OneBot 服务和 OpenAkita 不在同一台机器上，请将 `127.0.0.1` 替换为 OneBot 服务器的实际 IP。
 
-### 5.4 验证与测试
+### 6.4 验证与测试
 
 1. **先启动 OneBot 服务器**（如 NapCat），确认 WebSocket 监听正常
 2. 启动 OpenAkita，日志应显示：
    ```
-   QQ adapter connected to ws://127.0.0.1:8080
+   OneBot adapter connected to ws://127.0.0.1:8080
    ```
 3. 使用另一个 QQ 号给机器人 QQ 号发消息（私聊或群聊 @机器人）
 4. 观察日志和回复
 
 <!-- 📸 配图：QQ 中与机器人对话的效果截图 -->
-> **[配图位]** QQ 机器人正常回复消息的效果展示
+> **[配图位]** OneBot 机器人正常回复消息的效果展示
 
-### 5.5 常见问题
+### 6.5 常见问题
 
 | 问题 | 解决方案 |
 |------|---------|
 | 连接失败 | 确认 OneBot 服务器已启动且 WebSocket 地址正确 |
+| 鉴权失败 | 检查 `ONEBOT_ACCESS_TOKEN` 是否与 OneBot 服务端配置的 Token 一致 |
 | 频繁断线 | 适配器支持自动重连（指数退避策略，初始 1 秒，最大 60 秒） |
 | 群/私聊消息混乱 | 适配器会自动判断，无需特别处理 |
-| 文件发送失败 | QQ 文件发送使用专用 API（`upload_group_file` / `upload_private_file`），确认 OneBot 实现支持 |
+| 文件发送失败 | 文件发送使用专用 API（`upload_group_file` / `upload_private_file`），确认 OneBot 实现支持 |
 
 ---
 
-## 六、语音识别（Whisper）配置
+## 七、语音识别（Whisper）配置
 
 > 所有 IM 通道的语音消息都会经过统一的 Whisper 语音转文字处理。
 
@@ -1152,7 +1277,7 @@ WHISPER_LANGUAGE=zh
 
 ---
 
-## 七、常见问题汇总
+## 八、常见问题汇总
 
 ### Q1：如何同时启用多个 IM 通道？
 
@@ -1198,7 +1323,8 @@ Agent 回复 ← Adapter (发送) ← OutgoingMessage ← Gateway (路由)
 | 飞书 | 国内访问无需代理 |
 | 钉钉 | 国内访问无需代理 |
 | 企业微信 | 国内访问无需代理 |
-| QQ | 本地 OneBot 连接，无需代理 |
+| QQ 官方机器人 | 国内访问无需代理 |
+| OneBot | 本地 OneBot 连接，无需代理 |
 
 ### Q7：有桌面安装中心吗？
 
@@ -1249,9 +1375,16 @@ WEWORK_TOKEN=
 WEWORK_ENCODING_AES_KEY=
 # WEWORK_CALLBACK_PORT=9880
 
-# --- QQ（需要 openakita[qq] + NapCat/Lagrange）---
-QQ_ENABLED=false
-QQ_ONEBOT_URL=ws://127.0.0.1:8080
+# --- QQ 官方机器人（需要 openakita[qqbot]）---
+QQBOT_ENABLED=false
+QQBOT_APP_ID=
+QQBOT_APP_SECRET=
+QQBOT_SANDBOX=false
+
+# --- OneBot（需要 openakita[onebot] + NapCat/Lagrange）---
+ONEBOT_ENABLED=false
+ONEBOT_WS_URL=ws://127.0.0.1:8080
+ONEBOT_ACCESS_TOKEN=
 
 # --- 语音识别 ---
 WHISPER_MODEL=base

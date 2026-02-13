@@ -235,10 +235,16 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
             "required_keys": ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"],
         },
         {
-            "id": "qq",
-            "name": "QQ (OneBot)",
-            "enabled_key": "QQ_ENABLED",
-            "required_keys": ["QQ_ONEBOT_WS_URL"],
+            "id": "onebot",
+            "name": "OneBot",
+            "enabled_key": "ONEBOT_ENABLED",
+            "required_keys": ["ONEBOT_WS_URL"],
+        },
+        {
+            "id": "qqbot",
+            "name": "QQ 官方机器人",
+            "enabled_key": "QQBOT_ENABLED",
+            "required_keys": ["QQBOT_APP_ID", "QQBOT_APP_SECRET"],
         },
     ]
 
@@ -321,15 +327,27 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     data = resp.json()
                     if not data.get("accessToken"):
                         raise Exception(data.get("message", "钉钉验证失败"))
-                elif ch["id"] == "qq":
-                    # OneBot WebSocket: 仅验证 URL 格式，不实际连接
-                    ws_url = env.get("QQ_ONEBOT_WS_URL", "")
+                elif ch["id"] == "onebot":
+                    # OneBot WebSocket: 验证 URL 格式并尝试连接
+                    ws_url = env.get("ONEBOT_WS_URL", "")
                     if not ws_url.startswith(("ws://", "wss://")):
                         raise Exception(f"无效的 WebSocket URL: {ws_url}")
                     # 尝试 HTTP 连接到 OneBot
                     http_url = ws_url.replace("ws://", "http://").replace("wss://", "https://")
                     resp = await client.get(http_url, timeout=5)
                     # OneBot 即使返回非 200 也算可达
+                elif ch["id"] == "qqbot":
+                    # QQ 官方机器人：验证 AppID/AppSecret 能获取 Access Token
+                    app_id = env["QQBOT_APP_ID"]
+                    app_secret = env["QQBOT_APP_SECRET"]
+                    resp = await client.post(
+                        "https://bots.qq.com/app/getAppAccessToken",
+                        json={"appId": app_id, "clientSecret": app_secret},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if not data.get("access_token"):
+                        raise Exception(data.get("message", "QQ 机器人验证失败"))
 
             results.append({
                 "channel": ch["id"],

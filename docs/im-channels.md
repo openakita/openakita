@@ -10,28 +10,29 @@ OpenAkita 支持多个即时通讯平台，每个平台通过独立的适配器 
 | 飞书 | ✅ 稳定 | WebSocket 长连接 | ❌ 不需要 | `pip install openakita[feishu]` |
 | 钉钉 | ✅ 稳定 | Stream 模式 (WebSocket) | ❌ 不需要 | `pip install openakita[dingtalk]` |
 | 企业微信 | ✅ 稳定 | HTTP 回调（智能机器人） | ⚠️ 需要公网 IP | `pip install openakita[wework]` |
-| QQ | 🧪 Beta | OneBot WebSocket | ❌ 不需要 | `pip install openakita[qq]` |
+| QQ 官方机器人 | ✅ 稳定 | QQ 开放平台 API (WebSocket) | ❌ 不需要 | `pip install openakita[qqbot]` |
+| OneBot | ✅ 稳定 | OneBot v11 (WebSocket) | ❌ 不需要 | `pip install openakita[onebot]` |
 
 ## 媒体类型支持矩阵
 
 ### 接收消息 (平台 → OpenAkita)
 
-| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ |
-|------|----------|------|------|---------|-----|
-| 文字 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 图片 | ✅ | ✅ | ✅ | ⚠️ 仅单聊 | ✅ |
-| 语音 | ✅ (Whisper转写) | ✅ (Whisper转写) | ✅ (Whisper转写) | ❌ 不支持 | ✅ (Whisper转写) |
-| 文件 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ |
-| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ |
+| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ 官方机器人 | OneBot |
+|------|----------|------|------|---------|-------------|--------|
+| 文字 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 图片 | ✅ | ✅ | ✅ | ⚠️ 仅单聊 | ✅ | ✅ |
+| 语音 | ✅ (Whisper转写) | ✅ (Whisper转写) | ✅ (Whisper转写) | ❌ 不支持 | ✅ | ✅ (Whisper转写) |
+| 文件 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
+| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
 
 ### 发送消息 (OpenAkita → 平台)
 
-| 方法 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ |
-|------|----------|------|------|---------|-----|
-| send_text | ✅ | ✅ | ✅ | ✅ (stream 被动回复) | ✅ |
-| send_image | ✅ | ✅ | ✅ | ✅ (stream msg_item, base64+md5) | ✅ |
-| send_file | ✅ | ✅ | ✅ (降级为链接) | ❌ 降级为文本 | ✅ (upload_file API) |
-| send_voice | ✅ | ✅ | ✅ (降级为文件) | ❌ 不支持 | ✅ (record) |
+| 方法 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ 官方机器人 | OneBot |
+|------|----------|------|------|---------|-------------|--------|
+| send_text | ✅ | ✅ | ✅ | ✅ (stream 被动回复) | ✅ | ✅ |
+| send_image | ✅ | ✅ | ✅ | ✅ (stream msg_item, base64+md5) | ✅ (需公网URL) | ✅ |
+| send_file | ✅ | ✅ | ✅ (降级为链接) | ❌ 降级为文本 | ❌ 暂未开放 | ✅ (upload_file API) |
+| send_voice | ✅ | ✅ | ✅ (降级为文件) | ❌ 不支持 | ⚠️ 需silk+URL | ✅ (record) |
 
 > **企业微信限制说明**：智能机器人通过 stream 流式被动回复发送文本和图片（JPG/PNG，≤10MB，单条最多 10 张）。**不支持语音、文件和视频的收发**。接收端仅支持文字、图文混排和图片（图片仅单聊）。response_url 作为 stream 不可用时的降级方案（仅文本）。
 
@@ -354,16 +355,71 @@ cpolar http 9880
 
 ---
 
-## QQ (OneBot 协议)
+## QQ 官方机器人
 
 ### 前置条件
 
-- 一个 QQ 账号
+- 一个 [QQ 开放平台](https://q.qq.com) 账号
+- 已创建机器人应用，获取 AppID 和 AppSecret
+
+### OpenAkita 配置
+
+```bash
+# 安装 QQ 官方机器人依赖
+pip install openakita[qqbot]
+
+# .env
+QQBOT_ENABLED=true
+QQBOT_APP_ID=your-app-id
+QQBOT_APP_SECRET=your-app-secret
+QQBOT_SANDBOX=false          # 开发调试时设为 true
+```
+
+### 连接方式
+
+- **WebSocket 长连接**: 使用 botpy SDK 自动管理 WebSocket 连接和分片
+- 支持自动断线重连（指数退避策略，初始 5 秒，最大 120 秒）
+- 支持频道、群聊和单聊消息
+
+### 富媒体说明
+
+QQ 官方 API 在群聊/单聊场景下发送图片、语音、视频需要两步操作：
+1. 通过富媒体 API 上传文件获取 `file_info`（仅支持公网 URL，`file_data` 暂未开放）
+2. 发送消息时附带 `file_info`
+
+| 媒体类型 | 频道 | 群聊/单聊 |
+|---------|------|----------|
+| 图片 | ✅ 直接 URL | ✅ 需公网 URL 上传 |
+| 语音 | ❌ | ⚠️ 需 silk 格式 + 公网 URL |
+| 文件 | ❌ | ❌ 暂未开放 (file_type=4) |
+| 视频 | ❌ | ⚠️ 需公网 URL |
+
+### 验证方法
+
+1. 启动 OpenAkita，日志应显示 `QQ Official Bot ready (user: 你的机器人名称)`
+2. 在 QQ 频道或群聊中 @机器人 发送消息
+3. 观察日志和机器人回复
+
+### 常见问题
+
+- **鉴权失败**: 确认 AppID 和 AppSecret 正确，检查事件订阅是否已开启
+- **群聊收不到消息**: 确认机器人已上线审核通过或在沙箱环境中配置了测试群
+- **图片发不出去**: 群聊/单聊需要公网 URL，本地文件上传暂不支持
+- **文件发不出去**: QQ 官方 API `file_type=4` 暂未开放
+- **断线重连**: 适配器支持自动重连，连接成功后自动重置退避计时
+
+---
+
+## OneBot（通用协议）
+
+### 前置条件
+
+- 一个 QQ 账号（或其他 OneBot 兼容平台账号）
 - 部署 OneBot v11 实现（如 NapCat、Lagrange.OneBot）
 
 ### 部署 OneBot 服务器
 
-OpenAkita 通过 OneBot v11 协议与 QQ 通信，需要先部署一个 OneBot 实现：
+OpenAkita 通过 OneBot v11 协议与中间层通信。你需要先部署一个 OneBot 实现：
 
 #### NapCat（推荐）
 
@@ -383,29 +439,30 @@ OpenAkita 通过 OneBot v11 协议与 QQ 通信，需要先部署一个 OneBot �
 ### OpenAkita 配置
 
 ```bash
-# 安装 QQ 依赖
-pip install openakita[qq]
+# 安装 OneBot 依赖
+pip install openakita[onebot]
 
 # .env
-QQ_ENABLED=true
-QQ_ONEBOT_URL=ws://127.0.0.1:8080
+ONEBOT_ENABLED=true
+ONEBOT_WS_URL=ws://127.0.0.1:8080
+ONEBOT_ACCESS_TOKEN=               # 可选，用于连接鉴权
 ```
 
 ### 部署模式
 
 - **WebSocket 正向连接**: OpenAkita 连接到本地 OneBot 服务器，无需公网 IP
-- 支持自动断线重连（指数退避策略）
+- 支持自动断线重连（指数退避策略，初始 1 秒，最大 60 秒）
 
 ### 验证方法
 
 1. 先启动 OneBot 服务器（如 NapCat），确认 WebSocket 监听正常
-2. 启动 OpenAkita，日志应显示 `QQ adapter connected to ws://127.0.0.1:8080`
+2. 启动 OpenAkita，日志应显示 `OneBot adapter connected to ws://127.0.0.1:8080`
 3. 在 QQ 中给机器人发消息（私聊或群聊 @机器人）
 4. 观察日志和回复
 
 ### 文件发送说明
 
-QQ（OneBot v11）的文件发送不支持 CQ 码，必须使用专用 API：
+OneBot v11 的文件发送不支持 CQ 码，必须使用专用 API：
 - 群文件: `upload_group_file`
 - 私聊文件: `upload_private_file`
 
@@ -414,6 +471,7 @@ QQ（OneBot v11）的文件发送不支持 CQ 码，必须使用专用 API：
 ### 常见问题
 
 - **连接失败**: 确认 OneBot 服务器已启动且 WebSocket 地址正确
+- **鉴权失败**: 检查 `ONEBOT_ACCESS_TOKEN` 是否与服务端配置一致
 - **断线重连**: 适配器支持自动重连，初始延迟 1 秒，最大延迟 60 秒
 - **群/私聊判断**: 适配器会根据消息来源自动判断群聊或私聊
 
@@ -476,11 +534,12 @@ pip install openakita[all]
 pip install openakita[feishu]      # 飞书
 pip install openakita[dingtalk]    # 钉钉
 pip install openakita[wework]      # 企业微信
-pip install openakita[qq]          # QQ
+pip install openakita[qqbot]       # QQ 官方机器人
+pip install openakita[onebot]      # OneBot（通用协议）
 pip install openakita[whisper]     # 语音识别（含 ffmpeg）
 
 # 组合安装
-pip install openakita[feishu,dingtalk,whisper]
+pip install openakita[feishu,dingtalk,qqbot,whisper]
 ```
 
 ---

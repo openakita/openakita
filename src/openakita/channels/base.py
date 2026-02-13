@@ -31,7 +31,8 @@ class ChannelAdapter(ABC):
     - 飞书
     - 企业微信
     - 钉钉
-    - QQ
+    - OneBot (通用协议)
+    - QQ 官方机器人
     """
 
     # 通道名称（子类必须覆盖）

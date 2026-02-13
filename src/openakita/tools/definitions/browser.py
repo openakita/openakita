@@ -3,16 +3,11 @@ Browser 工具定义
 
 包含浏览器自动化相关的工具（遵循 tool-definition-spec.md 规范）：
 - browser_task: 【推荐优先使用】智能浏览器任务
-- browser_open: 启动浏览器
-- browser_status: 获取浏览器状态
+- browser_open: 启动浏览器 + 状态查询
 - browser_navigate: 导航到 URL
-- browser_click: 点击元素
-- browser_type: 输入文本
 - browser_get_content: 获取页面内容
 - browser_screenshot: 截取页面截图
-- browser_list_tabs: 列出标签页
-- browser_switch_tab: 切换标签页
-- browser_new_tab: 新建标签页
+- browser_close: 关闭浏览器
 """
 
 from .base import build_detail
@@ -24,7 +19,7 @@ BROWSER_TOOLS = [
     {
         "name": "browser_task",
         "category": "Browser",
-        "description": "【推荐优先使用】Intelligent browser task - describe what you want to accomplish and browser-use Agent will automatically plan and execute all steps. Best for: (1) Multi-step operations like search + filter + sort, (2) Complex web interactions, (3) Tasks where you're unsure of exact steps. For simple single operations, you can use specific tools like browser_navigate/click/type.",
+        "description": "【推荐优先使用】Intelligent browser task - describe what you want to accomplish and browser-use Agent will automatically plan and execute all steps. Best for: (1) Multi-step operations like search + filter + sort, (2) Complex web interactions including clicking, typing, form filling, (3) Tasks where you're unsure of exact steps, (4) Any task requiring element interaction (clicks, inputs, tab management). For simple URL opening only, use browser_navigate.",
         "detail": build_detail(
             summary="智能浏览器任务 - 描述你想完成的任务，browser-use Agent 会自动规划和执行所有步骤。",
             scenarios=[
@@ -32,6 +27,7 @@ BROWSER_TOOLS = [
                 "复杂网页交互（如：登录 → 填表 → 提交）",
                 "不确定具体步骤的任务",
                 "需要智能判断和处理的场景",
+                "点击按钮、输入文本、管理标签页等所有页面交互",
             ],
             params_desc={
                 "task": "要完成的任务描述，越详细越好。例如：'打开淘宝搜索机械键盘，筛选价格200-500元，按销量排序'",
@@ -46,6 +42,7 @@ BROWSER_TOOLS = [
             ],
             notes=[
                 "✅ 推荐用于多步骤、复杂的浏览器任务",
+                "✅ 推荐用于所有需要点击、输入、表单填写的操作",
                 "自动继承系统 LLM 配置，无需额外设置 API Key",
                 "通过 CDP 复用已启动的浏览器",
                 "任务描述要清晰具体，避免歧义",
@@ -57,6 +54,8 @@ BROWSER_TOOLS = [
             "When task involves multiple steps (search, filter, sort, etc.)",
             "When exact steps are unclear",
             "When task description is high-level like '帮我在淘宝上找...'",
+            "When clicking buttons, filling forms, or interacting with page elements",
+            "When managing multiple tabs or switching between pages",
         ],
         "prerequisites": [],
         "warnings": [
@@ -84,8 +83,6 @@ BROWSER_TOOLS = [
         ],
         "related_tools": [
             {"name": "browser_navigate", "relation": "alternative for simple URL opening"},
-            {"name": "browser_click", "relation": "alternative for single click"},
-            {"name": "browser_type", "relation": "alternative for single text input"},
             {
                 "name": "browser_screenshot",
                 "relation": "can be used after task for manual screenshot",
@@ -107,98 +104,58 @@ BROWSER_TOOLS = [
             "required": ["task"],
         },
     },
-    # ---------- browser_status ----------
-    {
-        "name": "browser_status",
-        "category": "Browser",
-        "description": "Check browser current state including: open status, current URL, page title, tab count. IMPORTANT: Must call before any browser task - never assume browser is open from conversation history. Browser state resets on service restart.",
-        "detail": build_detail(
-            summary="获取浏览器当前状态：是否打开、当前页面 URL 和标题、打开的 tab 数量。",
-            scenarios=[
-                "开始浏览器任务前确认状态",
-                "检查当前打开的页面",
-                "验证浏览器是否正常运行",
-            ],
-            notes=[
-                "⚠️ 每次浏览器相关任务必须先调用此工具确认当前状态",
-                "不能假设浏览器已打开",
-                "不能依赖历史记录，服务重启后浏览器会关闭",
-            ],
-        ),
-        "triggers": [
-            "Before any browser operation",
-            "When starting web automation task",
-            "When checking if browser is running",
-        ],
-        "prerequisites": [],
-        "warnings": [
-            "Must call before any browser task - never assume browser is open",
-            "Browser state resets on service restart",
-        ],
-        "examples": [
-            {
-                "scenario": "开始浏览器任务前检查状态",
-                "params": {},
-                "expected": "Returns {is_open: true/false, url: '...', title: '...', tab_count: N}",
-            },
-        ],
-        "related_tools": [
-            {"name": "browser_open", "relation": "call if status shows not running"},
-            {"name": "browser_navigate", "relation": "commonly used after status check"},
-        ],
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-    # ---------- browser_open ----------
+    # ---------- browser_open ---------- (合并了 browser_status)
     {
         "name": "browser_open",
         "category": "Browser",
-        "description": "Launch and initialize browser for web automation. When you need to: (1) Start web automation tasks, (2) Begin page interaction. IMPORTANT: Must check browser_status first - browser closes on service restart, never assume it's open from history.",
+        "description": "Launch browser OR check browser status. Always returns current state (is_open, url, title, tab_count). If browser is already running, returns status without restarting. If not running, starts it. Call this before any browser operation to ensure browser is ready. Browser state resets on service restart.",
         "detail": build_detail(
-            summary="启动浏览器。",
+            summary="启动浏览器或检查浏览器状态。始终返回当前状态（是否打开、URL、标题、tab 数）。",
             scenarios=[
-                "开始 Web 自动化任务",
-                "需要打开网页进行交互",
+                "开始 Web 自动化任务前确认浏览器状态",
+                "启动浏览器",
+                "检查浏览器是否正常运行",
             ],
             params_desc={
                 "visible": "True=显示浏览器窗口（用户可见），False=后台运行（不可见）",
-                "ask_user": "是否先询问用户偏好",
             },
             notes=[
-                "⚠️ 服务重启后浏览器会关闭",
-                "⚠️ 必须先用 browser_status 检查状态",
-                "不能依赖历史记录假设浏览器已打开",
+                "⚠️ 每次浏览器任务前建议调用此工具确认状态",
+                "如果浏览器已在运行，直接返回当前状态，不会重复启动",
+                "服务重启后浏览器会关闭，不能假设已打开",
                 "默认显示浏览器窗口",
             ],
         ),
         "triggers": [
-            "When browser_status shows browser not running",
+            "Before any browser operation",
             "When starting web automation tasks",
+            "When checking if browser is running",
         ],
-        "prerequisites": [
-            "Should check browser_status first to avoid opening duplicate browsers",
-        ],
+        "prerequisites": [],
         "warnings": [
-            "Must check browser_status first - browser closes on service restart",
-            "Never assume browser is open from conversation history",
+            "Browser state resets on service restart - never assume it's open from history",
         ],
         "examples": [
             {
+                "scenario": "检查浏览器状态并启动",
+                "params": {},
+                "expected": "Returns {is_open: true/false, url: '...', title: '...', tab_count: N}. Starts browser if not running.",
+            },
+            {
                 "scenario": "启动可见浏览器",
                 "params": {"visible": True},
-                "expected": "Browser window opens and is visible to user",
+                "expected": "Browser window opens and is visible to user, returns status",
             },
             {
                 "scenario": "后台模式启动",
                 "params": {"visible": False},
-                "expected": "Browser runs in background without visible window",
+                "expected": "Browser runs in background without visible window, returns status",
             },
         ],
         "related_tools": [
-            {"name": "browser_status", "relation": "should check before opening"},
             {"name": "browser_navigate", "relation": "commonly used after opening"},
+            {"name": "browser_task", "relation": "recommended for complex tasks"},
+            {"name": "browser_close", "relation": "close browser when done"},
         ],
         "input_schema": {
             "type": "object",
@@ -208,11 +165,6 @@ BROWSER_TOOLS = [
                     "description": "True=显示浏览器窗口, False=后台运行。默认 True",
                     "default": True,
                 },
-                "ask_user": {
-                    "type": "boolean",
-                    "description": "是否先询问用户偏好",
-                    "default": False,
-                },
             },
         },
     },
@@ -220,11 +172,11 @@ BROWSER_TOOLS = [
     {
         "name": "browser_navigate",
         "category": "Browser",
-        "description": "Navigate browser to specified URL to open a webpage. For simple URL opening only. For multi-step tasks (search + filter + sort), use browser_task instead. PREREQUISITE: Must call before browser_click/type operations. Auto-starts browser if not running.",
+        "description": "Navigate browser to specified URL to open a webpage. For simple URL opening only. For multi-step tasks (search + click + type), use browser_task instead. Auto-starts browser if not running.",
         "detail": build_detail(
             summary="导航到指定 URL。",
             scenarios=[
-                "打开网页开始交互",
+                "打开网页查看内容",
                 "Web 自动化任务的第一步",
                 "切换到新页面",
             ],
@@ -234,23 +186,20 @@ BROWSER_TOOLS = [
             workflow_steps=[
                 "调用此工具导航到目标页面",
                 "等待页面加载",
-                "使用 browser_click/browser_type 与页面交互",
+                "使用 browser_get_content 获取内容 或 browser_screenshot 截图",
             ],
             notes=[
-                "⚠️ 必须在 browser_click/browser_type 之前调用此工具",
                 "如果浏览器未启动会自动启动",
                 "URL 必须包含协议（http:// 或 https://）",
+                "如需与页面交互（点击、输入），请改用 browser_task",
             ],
         ),
         "triggers": [
             "When user asks to open a webpage",
-            "When starting web automation task",
-            "Before any browser interaction (click/type)",
+            "When starting web automation task with a known URL",
         ],
         "prerequisites": [],
-        "warnings": [
-            "Must call before browser_click/type operations",
-        ],
+        "warnings": [],
         "examples": [
             {
                 "scenario": "打开搜索引擎",
@@ -264,11 +213,9 @@ BROWSER_TOOLS = [
             },
         ],
         "related_tools": [
-            {"name": "browser_task", "relation": "recommended for multi-step tasks"},
-            {"name": "browser_status", "relation": "check before for reliability"},
-            {"name": "browser_click", "relation": "commonly used after"},
-            {"name": "browser_type", "relation": "commonly used after"},
-            {"name": "browser_new_tab", "relation": "alternative - opens in new tab"},
+            {"name": "browser_task", "relation": "recommended for multi-step tasks or page interaction"},
+            {"name": "browser_get_content", "relation": "extract content after navigation"},
+            {"name": "browser_screenshot", "relation": "capture page after navigation"},
         ],
         "input_schema": {
             "type": "object",
@@ -276,121 +223,6 @@ BROWSER_TOOLS = [
                 "url": {"type": "string", "description": "要访问的 URL（必须包含协议）"},
             },
             "required": ["url"],
-        },
-    },
-    # ---------- browser_click ----------
-    {
-        "name": "browser_click",
-        "category": "Browser",
-        "description": "Click page elements by CSS selector or text content. For single click only. For multi-step tasks (search + filter + sort), use browser_task instead. PREREQUISITE: Must use browser_navigate to open target page first.",
-        "detail": build_detail(
-            summary="点击页面上的元素。",
-            scenarios=[
-                "点击按钮和链接",
-                "选择下拉选项",
-                "触发页面操作",
-            ],
-            params_desc={
-                "selector": "CSS 选择器，如 '#btn-submit', '.button-class'",
-                "text": "元素文本，如 '提交', 'Submit'",
-            },
-            notes=[
-                "⚠️ 前提条件：必须先用 browser_navigate 打开目标页面",
-                "可以用 CSS 选择器或元素文本定位",
-                "如果两个参数都提供，优先使用 selector",
-            ],
-        ),
-        "triggers": [
-            "When user asks to click a button or link",
-            "When selecting options in a form",
-            "When triggering page actions",
-        ],
-        "prerequisites": [
-            "Must use browser_navigate to open target page first",
-        ],
-        "warnings": [],
-        "examples": [
-            {
-                "scenario": "点击提交按钮（CSS 选择器）",
-                "params": {"selector": "#submit-btn"},
-                "expected": "Clicks the submit button",
-            },
-            {
-                "scenario": "点击按钮（文本匹配）",
-                "params": {"text": "提交"},
-                "expected": "Clicks button with text '提交'",
-            },
-        ],
-        "related_tools": [
-            {"name": "browser_task", "relation": "recommended for multi-step tasks"},
-            {"name": "browser_navigate", "relation": "must call before clicking"},
-            {"name": "browser_type", "relation": "commonly used together for forms"},
-            {"name": "desktop_click", "relation": "alternative for desktop apps"},
-        ],
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "selector": {"type": "string", "description": "CSS 选择器"},
-                "text": {"type": "string", "description": "元素文本（可选）"},
-            },
-        },
-    },
-    # ---------- browser_type ----------
-    {
-        "name": "browser_type",
-        "category": "Browser",
-        "description": "Type text into input fields on webpage. For single text input only. For multi-step tasks (search + filter + sort), use browser_task instead. PREREQUISITE: Must use browser_navigate to open target page first. Click field first if needed for focus.",
-        "detail": build_detail(
-            summary="在输入框中输入文本。",
-            scenarios=[
-                "填写表单",
-                "输入搜索词",
-                "输入数据",
-            ],
-            params_desc={
-                "selector": "输入框的 CSS 选择器",
-                "text": "要输入的文本",
-            },
-            notes=[
-                "⚠️ 前提条件：必须先用 browser_navigate 打开目标页面",
-                "如果输入框没有焦点，可能需要先点击",
-                "支持中文输入",
-            ],
-        ),
-        "triggers": [
-            "When filling forms on webpage",
-            "When entering search queries",
-            "When inputting data into text fields",
-        ],
-        "prerequisites": [
-            "Must use browser_navigate to open target page first",
-        ],
-        "warnings": [],
-        "examples": [
-            {
-                "scenario": "在搜索框输入",
-                "params": {"selector": "input[name='q']", "text": "OpenAkita"},
-                "expected": "Types 'OpenAkita' into search input",
-            },
-            {
-                "scenario": "填写用户名",
-                "params": {"selector": "#username", "text": "admin"},
-                "expected": "Types 'admin' into username field",
-            },
-        ],
-        "related_tools": [
-            {"name": "browser_task", "relation": "recommended for multi-step tasks"},
-            {"name": "browser_navigate", "relation": "must call before typing"},
-            {"name": "browser_click", "relation": "may need to click field first"},
-            {"name": "desktop_type", "relation": "alternative for desktop apps"},
-        ],
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "selector": {"type": "string", "description": "输入框选择器"},
-                "text": {"type": "string", "description": "要输入的文本"},
-            },
-            "required": ["selector", "text"],
         },
     },
     # ---------- browser_get_content ----------
@@ -420,7 +252,7 @@ BROWSER_TOOLS = [
             "When verifying page content after navigation",
         ],
         "prerequisites": [
-            "Page must be loaded (browser_navigate called)",
+            "Page must be loaded (browser_navigate called or browser_task completed)",
         ],
         "warnings": [],
         "examples": [
@@ -436,7 +268,7 @@ BROWSER_TOOLS = [
             },
         ],
         "related_tools": [
-            {"name": "browser_navigate", "relation": "must call before getting content"},
+            {"name": "browser_navigate", "relation": "load page before getting content"},
             {"name": "browser_screenshot", "relation": "alternative - visual capture"},
         ],
         "input_schema": {
@@ -475,7 +307,7 @@ BROWSER_TOOLS = [
             "When debugging page display issues",
         ],
         "prerequisites": [
-            "Page must be loaded (browser_navigate called)",
+            "Page must be loaded (browser_navigate called or browser_task completed)",
         ],
         "warnings": [],
         "examples": [
@@ -504,147 +336,45 @@ BROWSER_TOOLS = [
             },
         },
     },
-    # ---------- browser_list_tabs ----------
+    # ---------- browser_close ----------
     {
-        "name": "browser_list_tabs",
+        "name": "browser_close",
         "category": "Browser",
-        "description": "List all open browser tabs with their index, URL and title. When you need to: (1) Check what pages are open, (2) Manage multiple tabs, (3) Find a specific tab to switch to.",
+        "description": "Close the browser and release resources. Call when browser automation is complete and no longer needed. This frees memory and system resources.",
         "detail": build_detail(
-            summary="列出所有打开的标签页(tabs)，返回每个 tab 的索引、URL 和标题。",
+            summary="关闭浏览器，释放资源。",
             scenarios=[
-                "查看打开的页面",
-                "管理多个标签页",
-                "查找特定标签页",
+                "浏览器任务全部完成后",
+                "需要释放系统资源",
+                "需要重新启动浏览器（先关闭再打开）",
             ],
             notes=[
-                "标签页索引从 0 开始",
-                "返回信息包括：索引、URL、页面标题",
+                "关闭后需要再次调用 browser_open 才能使用浏览器",
+                "所有标签页都会关闭",
             ],
         ),
         "triggers": [
-            "When checking what pages are open",
-            "When managing multiple browser tabs",
-            "Before switching to a specific tab",
+            "When browser automation tasks are completed",
+            "When user explicitly asks to close browser",
+            "When freeing system resources",
         ],
-        "prerequisites": [
-            "Browser must be running",
+        "prerequisites": [],
+        "warnings": [
+            "All open tabs and pages will be closed",
         ],
-        "warnings": [],
         "examples": [
             {
-                "scenario": "列出所有标签页",
+                "scenario": "任务完成后关闭浏览器",
                 "params": {},
-                "expected": "Returns list of {index, url, title} for each tab",
+                "expected": "Browser closes and resources are freed",
             },
         ],
         "related_tools": [
-            {"name": "browser_switch_tab", "relation": "commonly used after to switch"},
-            {"name": "browser_new_tab", "relation": "add new tab"},
+            {"name": "browser_open", "relation": "reopen browser after closing"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {},
-        },
-    },
-    # ---------- browser_switch_tab ----------
-    {
-        "name": "browser_switch_tab",
-        "category": "Browser",
-        "description": "Switch to a specific browser tab by index. When you need to: (1) Work with a different tab, (2) Return to previous page. Use browser_list_tabs to get tab indices.",
-        "detail": build_detail(
-            summary="切换到指定的标签页。",
-            scenarios=[
-                "切换到其他打开的页面",
-                "返回之前的页面",
-            ],
-            params_desc={
-                "index": "标签页索引（从 0 开始）",
-            },
-            workflow_steps=[
-                "先用 browser_list_tabs 获取所有标签页",
-                "使用返回的索引切换",
-            ],
-        ),
-        "triggers": [
-            "When working with multiple tabs",
-            "When returning to a previously opened page",
-        ],
-        "prerequisites": [
-            "Browser must have multiple tabs open",
-            "Use browser_list_tabs to get tab indices first",
-        ],
-        "warnings": [],
-        "examples": [
-            {
-                "scenario": "切换到第一个标签页",
-                "params": {"index": 0},
-                "expected": "Switches to first tab",
-            },
-            {
-                "scenario": "切换到第三个标签页",
-                "params": {"index": 2},
-                "expected": "Switches to third tab",
-            },
-        ],
-        "related_tools": [
-            {"name": "browser_list_tabs", "relation": "use first to get indices"},
-            {"name": "browser_new_tab", "relation": "add new tab instead"},
-        ],
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "index": {"type": "number", "description": "标签页索引（从 0 开始）"},
-            },
-            "required": ["index"],
-        },
-    },
-    # ---------- browser_new_tab ----------
-    {
-        "name": "browser_new_tab",
-        "category": "Browser",
-        "description": "Open new browser tab and navigate to URL (keeps current page open). When you need to: (1) Open additional page without closing current, (2) Multi-task across pages. PREREQUISITE: Must confirm browser is running first with browser_status.",
-        "detail": build_detail(
-            summary="打开新标签页并导航到指定 URL。",
-            scenarios=[
-                "保留当前页面的同时打开新页面",
-                "多页面同时操作",
-            ],
-            params_desc={
-                "url": "要在新标签页打开的 URL",
-            },
-            notes=[
-                "不会覆盖当前页面，在新标签页打开",
-                "⚠️ 必须先确认浏览器已启动（用 browser_status 检查）",
-            ],
-        ),
-        "triggers": [
-            "When opening additional page without closing current",
-            "When multitasking across multiple pages",
-        ],
-        "prerequisites": [
-            "Browser must be running (check with browser_status)",
-        ],
-        "warnings": [
-            "Must confirm browser is running first with browser_status",
-        ],
-        "examples": [
-            {
-                "scenario": "在新标签页打开文档",
-                "params": {"url": "https://docs.example.com"},
-                "expected": "Opens documentation in new tab, keeps current page",
-            },
-        ],
-        "related_tools": [
-            {"name": "browser_status", "relation": "check before opening new tab"},
-            {"name": "browser_navigate", "relation": "alternative - replaces current page"},
-            {"name": "browser_switch_tab", "relation": "switch between tabs"},
-        ],
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "要访问的 URL"},
-            },
-            "required": ["url"],
         },
     },
 ]

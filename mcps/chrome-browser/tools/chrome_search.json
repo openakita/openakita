@@ -1,0 +1,14 @@
+{
+    "name": "chrome_search",
+    "description": "Search for content on the current page using semantic matching. Returns relevant elements and their locations.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query to find elements on the page"
+            }
+        },
+        "required": ["query"]
+    }
+}

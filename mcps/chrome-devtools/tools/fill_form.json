@@ -1,0 +1,28 @@
+{
+    "name": "fill_form",
+    "description": "Fill multiple form fields at once. Useful for login forms, registration, etc.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "fields": {
+                "type": "array",
+                "description": "Array of field definitions to fill",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "selector": {
+                            "type": "string",
+                            "description": "CSS selector of the input field"
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Value to fill in"
+                        }
+                    },
+                    "required": ["selector", "value"]
+                }
+            }
+        },
+        "required": ["fields"]
+    }
+}

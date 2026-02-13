@@ -680,15 +680,10 @@ class Agent:
             [
                 "browser_task",
                 "browser_open",
-                "browser_status",
-                "browser_list_tabs",
                 "browser_navigate",
-                "browser_new_tab",
-                "browser_switch_tab",
-                "browser_click",
-                "browser_type",
                 "browser_get_content",
                 "browser_screenshot",
+                "browser_close",
             ],
         )
 
@@ -1202,18 +1197,24 @@ class Agent:
             from ..tools.mcp import MCPServerConfig
 
             for server in getattr(self.mcp_catalog, "_servers", []) or []:
-                # server 是 MCPServerInfo，包含 command/args/env（来自 SERVER_METADATA.json）
+                # server 是 MCPServerInfo，包含 command/args/env/transport/url（来自 SERVER_METADATA.json）
                 if not getattr(server, "identifier", None):
                     continue
-                if not getattr(server, "command", None):
+                transport = getattr(server, "transport", "stdio") or "stdio"
+                # stdio 模式需要 command；streamable_http 模式需要 url
+                if transport == "stdio" and not getattr(server, "command", None):
+                    continue
+                if transport == "streamable_http" and not getattr(server, "url", None):
                     continue
                 self.mcp_client.add_server(
                     MCPServerConfig(
                         name=server.identifier,
-                        command=server.command,
+                        command=getattr(server, "command", "") or "",
                         args=list(getattr(server, "args", []) or []),
                         env=dict(getattr(server, "env", {}) or {}),
                         description=getattr(server, "name", "") or "",
+                        transport=transport,
+                        url=getattr(server, "url", "") or "",
                     )
                 )
         except Exception as e:
@@ -1443,7 +1444,7 @@ class Agent:
 
 | 状态 | 重启后 | 正确做法 |
 |------|--------|----------|
-| 浏览器 | **已关闭** | 必须先调用 `browser_status` 确认，不能假设已打开 |
+| 浏览器 | **已关闭** | 必须先调用 `browser_open` 确认状态，不能假设已打开 |
 | 变量/内存数据 | **已清空** | 通过工具重新获取，不能依赖历史 |
 | 临时文件 | **可能清除** | 重新检查文件是否存在 |
 | 网络连接 | **已断开** | 需要重新建立连接 |
@@ -1612,7 +1613,7 @@ search_github → install_skill → 使用
 
 **示例**：
 用户："打开百度搜索天气并截图发我"
-→ create_plan → browser_navigate + update_plan_step → browser_type + update_plan_step → ... → complete_plan
+→ create_plan → browser_task("打开百度搜索天气并截图") + update_plan_step → deliver_artifacts + complete_plan
 
 ### 工具调用
 - 工具直接使用工具名调用，不需要任何前缀
@@ -1791,15 +1792,10 @@ search_github → install_skill → 使用
             "Browser Automation": [
                 "browser_task",
                 "browser_open",
-                "browser_status",
-                "browser_list_tabs",
                 "browser_navigate",
-                "browser_new_tab",
-                "browser_switch_tab",
-                "browser_click",
-                "browser_type",
                 "browser_get_content",
                 "browser_screenshot",
+                "browser_close",
             ],
             "Scheduled Tasks": [
                 "schedule_task",
@@ -3222,7 +3218,7 @@ search_github → install_skill → 使用
 
 ### 任务类消息
 - 如果已执行 write_file 工具，说明文件已保存，保存任务完成
-- 如果已执行 browser_navigate/browser_click 等浏览器工具，说明浏览器操作已执行
+- 如果已执行 browser_task/browser_navigate 等浏览器工具，说明浏览器操作已执行
 - 工具执行成功即表示该操作完成，不要求响应文本中包含文件内容
 - 如果响应只是说"现在开始..."、"让我..."且没有工具执行，说明任务还在进行中
 - 如果响应包含明确的操作确认（如"已完成"、"已发送"、"已保存"），任务完成
@@ -3437,7 +3433,7 @@ NEXT: 建议的下一步（如有）"""
 
         # 浏览器"读页面状态"工具：参数可能为空但页面不同，需要额外区分
         _browser_page_read_tools = frozenset({
-            "browser_get_content", "browser_screenshot", "browser_list_tabs",
+            "browser_get_content", "browser_screenshot",
         })
 
         def _make_tool_signature(tc: dict) -> str:
@@ -3577,7 +3573,7 @@ NEXT: 建议的下一步（如有）"""
                             "role": "user",
                             "content": (
                                 "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
-                                "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_status；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
+                                "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
                                 "请从头开始处理上面的用户请求。"
                             ),
                         }
@@ -3652,7 +3648,7 @@ NEXT: 建议的下一步（如有）"""
                                 "role": "user",
                                 "content": (
                                     "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
-                                    "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_status；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
+                                    "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
                                     "请从头开始处理上面的用户请求。"
                                 ),
                             }
@@ -4507,7 +4503,7 @@ NEXT: 建议的下一步（如有）"""
                             "role": "user",
                             "content": (
                                 "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
-                                "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_status；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
+                                "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
                                 "请从头开始处理上面的任务请求。"
                             ),
                         }
@@ -4583,7 +4579,7 @@ NEXT: 建议的下一步（如有）"""
                                 "role": "user",
                                 "content": (
                                     "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
-                                    "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_status；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
+                                    "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
                                     "请从头开始处理上面的任务请求。"
                                 ),
                             }

@@ -176,7 +176,13 @@ pip install python-telegram-bot>=21.0
 
 这些平台使用 `httpx` 作为 HTTP 客户端，已包含在核心依赖中，无需额外安装。
 
-### QQ (OneBot)
+### QQ 官方机器人
+
+```bash
+pip install qq-botpy>=1.0
+```
+
+### OneBot（通用协议）
 
 如果使用 WebSocket 协议：
 ```bash

@@ -1,0 +1,8 @@
+{
+    "name": "list_pages",
+    "description": "List all open browser pages/tabs with their URLs and titles.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {}
+    }
+}

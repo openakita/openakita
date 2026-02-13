@@ -1,0 +1,14 @@
+{
+    "name": "chrome_navigate",
+    "description": "Navigate the browser to a specified URL. Uses the user's real Chrome browser with all login sessions preserved.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The URL to navigate to"
+            }
+        },
+        "required": ["url"]
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "serverIdentifier": "chrome-devtools",
+    "serverName": "Chrome DevTools MCP (Google)",
+    "serverDescription": "Google 官方 Chrome DevTools MCP - 连接用户真实 Chrome 浏览器进行自动化、调试和性能分析。支持保留登录状态和密码管理器。需要 Node.js v20.19+ 和 Chrome 浏览器。",
+    "command": "npx",
+    "args": ["-y", "chrome-devtools-mcp@latest", "--autoConnect"],
+    "env": {}
+}

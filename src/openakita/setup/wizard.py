@@ -541,10 +541,11 @@ Press Ctrl+C at any time to cancel.
         console.print("  [2] Feishu (Lark)")
         console.print("  [3] WeCom (企业微信)")
         console.print("  [4] DingTalk (钉钉)")
-        console.print("  [5] QQ (OneBot)")
-        console.print("  [6] Skip\n")
+        console.print("  [5] OneBot (NapCat / Lagrange 等)")
+        console.print("  [6] QQ 官方机器人")
+        console.print("  [7] Skip\n")
 
-        choice = Prompt.ask("Select channel", choices=["1", "2", "3", "4", "5", "6"], default="6")
+        choice = Prompt.ask("Select channel", choices=["1", "2", "3", "4", "5", "6", "7"], default="7")
 
         if choice == "1":
             self._configure_telegram()
@@ -555,7 +556,9 @@ Press Ctrl+C at any time to cancel.
         elif choice == "4":
             self._configure_dingtalk()
         elif choice == "5":
-            self._configure_qq()
+            self._configure_onebot()
+        elif choice == "6":
+            self._configure_qqbot()
 
         console.print("\n[green]IM channel configuration complete![/green]\n")
 
@@ -628,10 +631,10 @@ Press Ctrl+C at any time to cancel.
         self.config["DINGTALK_CLIENT_ID"] = app_key
         self.config["DINGTALK_CLIENT_SECRET"] = app_secret
 
-    def _configure_qq(self):
-        """配置 QQ (OneBot)"""
-        console.print("\n[bold]QQ (OneBot) Configuration[/bold]\n")
-        console.print("QQ 通道需要先部署 NapCat 或 Lagrange 作为 OneBot 服务端\n")
+    def _configure_onebot(self):
+        """配置 OneBot 协议通道"""
+        console.print("\n[bold]OneBot Configuration[/bold]\n")
+        console.print("OneBot 通道需要先部署 NapCat / Lagrange 等 OneBot 实现端\n")
         console.print("参考: https://github.com/botuniverse/onebot-11\n")
 
         onebot_url = Prompt.ask(
@@ -639,8 +642,31 @@ Press Ctrl+C at any time to cancel.
             default="ws://127.0.0.1:8080",
         )
 
-        self.config["QQ_ENABLED"] = "true"
-        self.config["QQ_ONEBOT_URL"] = onebot_url
+        access_token = Prompt.ask(
+            "Enter Access Token (leave empty if not set)",
+            default="",
+            password=True,
+        )
+
+        self.config["ONEBOT_ENABLED"] = "true"
+        self.config["ONEBOT_WS_URL"] = onebot_url
+        if access_token:
+            self.config["ONEBOT_ACCESS_TOKEN"] = access_token
+
+    def _configure_qqbot(self):
+        """配置 QQ 官方机器人"""
+        console.print("\n[bold]QQ 官方机器人 Configuration[/bold]\n")
+        console.print("请前往 QQ 开放平台 (https://q.qq.com) 创建机器人并获取凭据\n")
+
+        app_id = Prompt.ask("Enter AppID")
+        app_secret = Prompt.ask("Enter AppSecret", password=True)
+
+        self.config["QQBOT_ENABLED"] = "true"
+        self.config["QQBOT_APP_ID"] = app_id
+        self.config["QQBOT_APP_SECRET"] = app_secret
+
+        use_sandbox = Confirm.ask("Enable sandbox mode (测试环境)?", default=True)
+        self.config["QQBOT_SANDBOX"] = "true" if use_sandbox else "false"
 
     def _configure_memory(self):
         """配置记忆系统"""
@@ -1049,15 +1075,33 @@ Press Ctrl+C at any time to cancel.
             ])
         lines.append("")
 
-        if self.config.get("QQ_ENABLED"):
+        if self.config.get("ONEBOT_ENABLED"):
             lines.extend([
-                f"QQ_ENABLED={self.config.get('QQ_ENABLED', 'false')}",
-                f"QQ_ONEBOT_URL={self.config.get('QQ_ONEBOT_URL', 'ws://127.0.0.1:8080')}",
+                f"ONEBOT_ENABLED={self.config.get('ONEBOT_ENABLED', 'false')}",
+                f"ONEBOT_WS_URL={self.config.get('ONEBOT_WS_URL', 'ws://127.0.0.1:8080')}",
+                f"ONEBOT_ACCESS_TOKEN={self.config.get('ONEBOT_ACCESS_TOKEN', '')}",
             ])
         else:
             lines.extend([
-                "QQ_ENABLED=false",
-                "# QQ_ONEBOT_URL=ws://127.0.0.1:8080",
+                "ONEBOT_ENABLED=false",
+                "# ONEBOT_WS_URL=ws://127.0.0.1:8080",
+                "# ONEBOT_ACCESS_TOKEN=",
+            ])
+        lines.append("")
+
+        if self.config.get("QQBOT_ENABLED"):
+            lines.extend([
+                f"QQBOT_ENABLED={self.config.get('QQBOT_ENABLED', 'false')}",
+                f"QQBOT_APP_ID={self.config.get('QQBOT_APP_ID', '')}",
+                f"QQBOT_APP_SECRET={self.config.get('QQBOT_APP_SECRET', '')}",
+                f"QQBOT_SANDBOX={self.config.get('QQBOT_SANDBOX', 'true')}",
+            ])
+        else:
+            lines.extend([
+                "QQBOT_ENABLED=false",
+                "# QQBOT_APP_ID=",
+                "# QQBOT_APP_SECRET=",
+                "# QQBOT_SANDBOX=true",
             ])
         lines.append("")
 

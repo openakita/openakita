@@ -113,11 +113,21 @@ WEWORK_AGENT_ID=your-agent-id
 WEWORK_SECRET=your-secret
 ```
 
-### QQ (OneBot)
+### QQ 官方机器人
 
 ```bash
-QQ_ENABLED=true
-QQ_ONEBOT_URL=ws://127.0.0.1:8080
+QQBOT_ENABLED=true
+QQBOT_APP_ID=your-app-id
+QQBOT_APP_SECRET=your-app-secret
+QQBOT_SANDBOX=false
+```
+
+### OneBot（通用协议）
+
+```bash
+ONEBOT_ENABLED=true
+ONEBOT_WS_URL=ws://127.0.0.1:8080
+ONEBOT_ACCESS_TOKEN=              # 可选
 ```
 
 ## Configuration File

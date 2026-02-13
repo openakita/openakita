@@ -90,9 +90,14 @@ wework = [
     "pycryptodome>=3.19.0",
 ]
 
-# QQ IM 通道 (OneBot 协议)
-qq = [
+# OneBot 协议通道 (NapCat/Lagrange 等)
+onebot = [
     "websockets>=12.0",
+]
+
+# QQ 官方机器人
+qqbot = [
+    "qq-botpy>=1.1.5",
 ]
 
 # 语音识别 (Whisper)
@@ -124,6 +129,7 @@ all = [
     "aiohttp>=3.9.0",
     "pycryptodome>=3.19.0",
     "websockets>=12.0",
+    "qq-botpy>=1.1.5",
     "openai-whisper>=20231117",
     "static-ffmpeg>=2.7",
     "browser-use>=0.11.8",
