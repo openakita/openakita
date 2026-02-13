@@ -115,6 +115,21 @@ class ScheduledHandler:
             chat_id = session.chat_id
             user_id = session.user_id
 
+        # 如果用户指定了 target_channel，尝试解析到已配置的通道
+        target_channel = params.get("target_channel")
+        if target_channel:
+            resolved = self._resolve_target_channel(target_channel)
+            if resolved:
+                channel_id, chat_id = resolved
+                logger.info(f"Using target_channel={target_channel}: {channel_id}/{chat_id}")
+            else:
+                # 通道未配置或无可用 session，给出明确提示
+                return (
+                    f"❌ 指定的通道 '{target_channel}' 未配置或暂无可用会话。\n"
+                    f"已配置的通道: {self._list_available_channels()}\n"
+                    f"请确认通道名称正确，且该通道至少有过一次聊天记录。"
+                )
+
         task = ScheduledTask.create(
             name=params["name"],
             description=params["description"],
@@ -165,8 +180,9 @@ class ScheduledHandler:
         for t in tasks:
             status = "✓" if t.enabled else "✗"
             next_run = t.next_run.strftime("%m-%d %H:%M") if t.next_run else "N/A"
+            channel_info = f"{t.channel_id}/{t.chat_id}" if t.channel_id else "无通道"
             output += f"[{status}] {t.name} ({t.id})\n"
-            output += f"    类型: {t.trigger_type.value}, 下次: {next_run}\n"
+            output += f"    类型: {t.trigger_type.value}, 下次: {next_run}, 推送: {channel_info}\n"
 
         return output
 
@@ -202,6 +218,19 @@ class ScheduledHandler:
                 task.disable()
                 changes.append("已暂停")
 
+        # 修改推送通道
+        if "target_channel" in params:
+            target_channel = params["target_channel"]
+            resolved = self._resolve_target_channel(target_channel)
+            if resolved:
+                task.channel_id, task.chat_id = resolved
+                changes.append(f"推送通道: {target_channel}")
+            else:
+                return (
+                    f"❌ 指定的通道 '{target_channel}' 未配置或暂无可用会话。\n"
+                    f"已配置的通道: {self._list_available_channels()}"
+                )
+
         self.agent.task_scheduler._save_tasks()
 
         if changes:
@@ -218,6 +247,111 @@ class ScheduledHandler:
             return f"✅ 任务已触发执行，状态: {status}\n结果: {execution.result or execution.error or 'N/A'}"
         else:
             return f"❌ 任务 {task_id} 不存在"
+
+    def _get_gateway(self):
+        """获取消息网关实例"""
+        # 优先从 executor 获取（executor 持有运行时的 gateway 引用）
+        executor = getattr(self.agent, "_task_executor", None)
+        if executor and getattr(executor, "gateway", None):
+            return executor.gateway
+
+        # fallback: 从 IM 上下文获取
+        from ...core.im_context import get_im_gateway
+
+        return get_im_gateway()
+
+    def _resolve_target_channel(self, target_channel: str) -> tuple[str, str] | None:
+        """
+        将用户指定的通道名解析为 (channel_id, chat_id)
+
+        策略:
+        1. 检查 gateway 中是否有该通道的适配器（即通道已配置并启动）
+        2. 从 session_manager 中找到该通道最近活跃的 session
+        3. 如果没有 session，尝试从持久化文件中查找
+
+        Args:
+            target_channel: 通道名（如 wework、telegram、dingtalk 等）
+
+        Returns:
+            (channel_id, chat_id) 或 None
+        """
+        gateway = self._get_gateway()
+        if not gateway:
+            logger.warning("No gateway available to resolve target_channel")
+            return None
+
+        # 1. 检查适配器是否存在
+        adapters = getattr(gateway, "_adapters", {})
+        if target_channel not in adapters:
+            logger.warning(f"Channel '{target_channel}' not found in gateway adapters")
+            return None
+
+        adapter = adapters[target_channel]
+        if not getattr(adapter, "is_running", False):
+            logger.warning(f"Channel '{target_channel}' adapter is not running")
+            return None
+
+        # 2. 从 session_manager 查找该通道的最近活跃 session
+        session_manager = getattr(gateway, "session_manager", None)
+        if session_manager:
+            sessions = session_manager.list_sessions(channel=target_channel)
+            if sessions:
+                # 按最近活跃排序
+                sessions.sort(
+                    key=lambda s: getattr(s, "last_active", datetime.min),
+                    reverse=True,
+                )
+                best = sessions[0]
+                return (best.channel, best.chat_id)
+
+        # 3. 从持久化文件中查找
+        if session_manager:
+            import json
+
+            sessions_file = getattr(session_manager, "storage_path", None)
+            if sessions_file:
+                sessions_file = sessions_file / "sessions.json"
+                if sessions_file.exists():
+                    try:
+                        with open(sessions_file, encoding="utf-8") as f:
+                            raw_sessions = json.load(f)
+                        # 过滤该通道的 session
+                        channel_sessions = [
+                            s for s in raw_sessions
+                            if s.get("channel") == target_channel and s.get("chat_id")
+                        ]
+                        if channel_sessions:
+                            channel_sessions.sort(
+                                key=lambda s: s.get("last_active", ""),
+                                reverse=True,
+                            )
+                            best = channel_sessions[0]
+                            return (best["channel"], best["chat_id"])
+                    except Exception as e:
+                        logger.error(f"Failed to read sessions file: {e}")
+
+        logger.warning(
+            f"Channel '{target_channel}' is configured but no session found. "
+            f"Please send at least one message through this channel first."
+        )
+        return None
+
+    def _list_available_channels(self) -> str:
+        """列出所有已配置且在运行的 IM 通道名"""
+        gateway = self._get_gateway()
+        if not gateway:
+            return "（无法获取通道信息）"
+
+        adapters = getattr(gateway, "_adapters", {})
+        if not adapters:
+            return "（无已配置的通道）"
+
+        running = []
+        for name, adapter in adapters.items():
+            status = "✓" if getattr(adapter, "is_running", False) else "✗"
+            running.append(f"{name}({status})")
+
+        return ", ".join(running) if running else "（无已配置的通道）"
 
 
 def create_handler(agent: "Agent"):

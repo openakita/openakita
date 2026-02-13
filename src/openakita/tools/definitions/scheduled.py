@@ -13,10 +13,16 @@ SCHEDULED_TOOLS = [
     {
         "name": "schedule_task",
         "category": "Scheduled",
-        "description": "Create scheduled task or reminder. IMPORTANT: Must actually call this tool to create task - just saying 'OK I will remind you' does NOT create the task! Task types: (1) reminder - sends message at scheduled time (default, 90%% of cases), (2) task - AI executes operations.",
+        "description": "Create scheduled task or reminder. IMPORTANT: Must actually call this tool to create task - just saying 'OK I will remind you' does NOT create the task! Task types: (1) reminder - sends message at scheduled time (default, 90%% of cases), (2) task - AI executes operations. NOTIFICATION CHANNEL: By default, reminders/results are automatically sent back to the CURRENT IM channel where the user is chatting (e.g. if user sends message via WeChat, reminder will be pushed to WeChat). NO Webhook URL or extra config needed! Only set target_channel if user explicitly asks to push to a DIFFERENT channel.",
         "detail": """创建定时任务或提醒。
 
 ⚠️ **重要: 必须调用此工具才能创建任务！只是说"好的我会提醒你"不会创建任务！**
+
+📢 **推送通道规则（非常重要）**：
+- **默认行为**: 提醒/结果会自动推送到用户 **当前正在聊天的 IM 通道**（例如用户在企业微信中发消息，提醒就自动推到企业微信）
+- **你不需要问用户要 Webhook URL 或任何通道配置信息！通道已由系统自动配置好！**
+- 只有当用户明确要求推送到 **另一个不同的通道** 时，才需要设置 target_channel
+- 绝大多数情况下，直接创建任务即可，不需要设置 target_channel
 
 **任务类型判断规则**：
 ✅ **reminder**（默认优先）: 所有只需要发送消息的提醒
@@ -33,7 +39,13 @@ SCHEDULED_TOOLS = [
 **触发类型**：
 - once: 一次性执行
 - interval: 间隔执行
-- cron: cron 表达式""",
+- cron: cron 表达式
+
+**推送通道（target_channel）- 通常不需要设置！**：
+- ⚠️ **默认不传此参数！** 系统会自动推送到用户当前的 IM 通道
+- 仅当用户明确要求推送到 **另一个** 通道时才设置（如用户在 Telegram 中说"推送到企业微信"）
+- 可用通道名: wework（企业微信）、telegram、dingtalk（钉钉）、feishu（飞书）、slack 等
+- ⚠️ **绝对不要问用户要 Webhook URL！** 通道已在系统中配置好，直接用通道名即可""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -61,6 +73,10 @@ SCHEDULED_TOOLS = [
                 "prompt": {
                     "type": "string",
                     "description": "执行时发送给 Agent 的提示（仅 task 类型需要）",
+                },
+                "target_channel": {
+                    "type": "string",
+                    "description": "指定推送到哪个已配置的 IM 通道（如 wework/telegram/dingtalk/feishu/slack）。不传则自动使用当前会话通道。⚠️ 不需要 Webhook URL，通道已在系统中配置好！",
                 },
                 "notify_on_start": {
                     "type": "boolean",
@@ -125,18 +141,21 @@ SCHEDULED_TOOLS = [
     {
         "name": "update_scheduled_task",
         "category": "Scheduled",
-        "description": "Modify scheduled task settings WITHOUT deleting. Can modify: notify_on_start, notify_on_complete, enabled. Common uses: (1) 'Turn off notification' → notify=false, (2) 'Pause task' → enabled=false, (3) 'Resume task' → enabled=true.",
+        "description": "Modify scheduled task settings WITHOUT deleting. Can modify: notify_on_start, notify_on_complete, enabled, target_channel. Common uses: (1) 'Turn off notification' → notify=false, (2) 'Pause task' → enabled=false, (3) 'Resume task' → enabled=true, (4) 'Push to WeChat' → target_channel='wework'. NO Webhook URL needed!",
         "detail": """修改定时任务设置【不删除任务】。
 
 **可修改项**：
 - notify_on_start: 开始时是否通知
 - notify_on_complete: 完成时是否通知
 - enabled: 是否启用
+- target_channel: 修改推送通道（如 wework/telegram/dingtalk/feishu/slack）
 
 **常见用法**：
 - "关闭提醒" → notify_on_start=false, notify_on_complete=false
 - "暂停任务" → enabled=false
-- "恢复任务" → enabled=true""",
+- "恢复任务" → enabled=true
+- "改推送到企业微信" → target_channel="wework"
+- ⚠️ 不需要 Webhook URL，通道已在系统中配置好！""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -147,6 +166,10 @@ SCHEDULED_TOOLS = [
                     "description": "完成时发通知？不传=不修改",
                 },
                 "enabled": {"type": "boolean", "description": "启用/暂停任务？不传=不修改"},
+                "target_channel": {
+                    "type": "string",
+                    "description": "修改推送通道（如 wework/telegram/dingtalk/feishu/slack）。不传=不修改。⚠️ 不需要 Webhook URL！",
+                },
             },
             "required": ["task_id"],
         },
