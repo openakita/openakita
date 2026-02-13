@@ -21,6 +21,9 @@ tar = "0.4.41"
 zip = "2.2.2"
 base64 = "0.22.1"
 
+once_cell = "1"
+
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"
+tauri-plugin-single-instance = "2"
 

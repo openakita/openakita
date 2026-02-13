@@ -13,7 +13,7 @@ import {
   IconRefresh, IconCheck, IconCheckCircle, IconX, IconXCircle,
   IconChevronDown, IconChevronRight, IconChevronUp, IconGlobe, IconLink, IconPower,
   IconEdit, IconTrash, IconEye, IconEyeOff, IconInfo, IconClipboard,
-  DotGreen, DotGray,
+  DotGreen, DotGray, DotYellow, DotRed,
   IconBook, IconZap, IconGear,
   LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ,
 } from "./icons";
@@ -399,6 +399,44 @@ async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
+// ── 故障排除面板组件 ──
+function TroubleshootPanel({ t }: { t: (k: string) => string }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const isWin = navigator.platform?.toLowerCase().includes("win");
+  const listCmd = isWin ? 'tasklist | findstr python' : 'ps aux | grep openakita';
+  const killCmd = isWin ? 'taskkill /F /PID <PID>' : 'kill -9 <PID>';
+
+  const copyText = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(id);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
+  return (
+    <div style={{ marginTop: 8, padding: "8px 12px", background: "#f5f5f5", borderRadius: 6, fontSize: 12, color: "#555" }}>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("status.troubleshootTitle")}</div>
+      <div style={{ marginBottom: 4 }}>{t("status.troubleshootTip")}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "#888", minWidth: 60 }}>{t("status.troubleshootListProcess")}:</span>
+          <code style={{ background: "#e8e8e8", padding: "1px 6px", borderRadius: 3, fontSize: 11, flex: 1 }}>{listCmd}</code>
+          <button className="btnSmall" style={{ fontSize: 10, padding: "1px 6px" }} onClick={() => copyText(listCmd, "list")}>
+            {copied === "list" ? t("status.troubleshootCopied") : t("status.troubleshootCopy")}
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "#888", minWidth: 60 }}>{t("status.troubleshootKillProcess")}:</span>
+          <code style={{ background: "#e8e8e8", padding: "1px 6px", borderRadius: 3, fontSize: 11, flex: 1 }}>{killCmd}</code>
+          <button className="btnSmall" style={{ fontSize: 10, padding: "1px 6px" }} onClick={() => copyText(killCmd, "kill")}>
+            {copied === "kill" ? t("status.troubleshootCopied") : t("status.troubleshootCopy")}
+          </button>
+        </div>
+      </div>
+      <div style={{ marginTop: 6, color: "#999", fontSize: 11 }}>{t("status.troubleshootRestart")}</div>
+    </div>
+  );
+}
+
 export function App() {
   const { t, i18n } = useTranslation();
   const [info, setInfo] = useState<PlatformInfo | null>(null);
@@ -612,7 +650,14 @@ export function App() {
   const [skillsTouched, setSkillsTouched] = useState(false);
   const [secretShown, setSecretShown] = useState<Record<string, boolean>>({});
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
+  // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
   const [serviceStatus, setServiceStatus] = useState<{ running: boolean; pid: number | null; pidFile: string } | null>(null);
+  // 心跳状态机: "alive" | "suspect" | "degraded" | "dead"
+  const [heartbeatState, setHeartbeatState] = useState<"alive" | "suspect" | "degraded" | "dead">("dead");
+  const heartbeatStateRef = useRef<"alive" | "suspect" | "degraded" | "dead">("dead");
+  const heartbeatFailCount = useRef(0);
+  const [pageVisible, setPageVisible] = useState(true);
+  const visibilityGraceRef = useRef(false); // 休眠恢复宽限期
   const [detectedProcesses, setDetectedProcesses] = useState<Array<{ pid: number; cmd: string }>>([]);
   const [serviceLog, setServiceLog] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
   const [serviceLogError, setServiceLogError] = useState<string | null>(null);
@@ -737,6 +782,99 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  // ── 页面可见性监听（休眠/睡眠恢复感知）──
+  useEffect(() => {
+    const handler = () => {
+      const visible = !document.hidden;
+      setPageVisible(visible);
+      if (visible) {
+        // 从 hidden 恢复：给 10 秒宽限期，前 2 次心跳失败不计
+        visibilityGraceRef.current = true;
+        heartbeatFailCount.current = 0;
+        setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
+  // ── 心跳轮询：三级状态机 + 防误判 ──
+  useEffect(() => {
+    // 只在有 workspace 且非配置向导中时启动心跳
+    if (!currentWorkspaceId) return;
+
+    const interval = pageVisible ? 5000 : 30000; // visible 5s, hidden 30s
+    const timer = setInterval(async () => {
+      // 自重启互锁：restartOverlay 期间暂停心跳
+      if (restartOverlay) return;
+
+      const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+      try {
+        const res = await fetch(`${effectiveBase}/api/health`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          heartbeatFailCount.current = 0;
+          if (heartbeatStateRef.current !== "alive") {
+            heartbeatStateRef.current = "alive";
+            setHeartbeatState("alive");
+            // 恢复时更新托盘状态
+            try { await invoke("set_tray_backend_status", { status: "alive" }); } catch { /* ignore */ }
+          }
+          setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+          // 提取后端版本
+          try {
+            const data = await res.json();
+            if (data.version) setBackendVersion(data.version);
+          } catch { /* ignore */ }
+        } else {
+          throw new Error("non-ok");
+        }
+      } catch {
+        // 宽限期内不计入
+        if (visibilityGraceRef.current) return;
+
+        heartbeatFailCount.current += 1;
+        if (heartbeatFailCount.current < 3) {
+          if (heartbeatStateRef.current !== "suspect") {
+            heartbeatStateRef.current = "suspect";
+            setHeartbeatState("suspect");
+          }
+          return;
+        }
+
+        // ── 二次确认：通过 Tauri 检查进程是否存活 ──
+        if (dataMode !== "remote") {
+          try {
+            const alive = await invoke<boolean>("openakita_check_pid_alive", { workspaceId: currentWorkspaceId });
+            if (alive) {
+              // HTTP 不可达但进程存活 → DEGRADED（黄灯）
+              if (heartbeatStateRef.current !== "degraded") {
+                heartbeatStateRef.current = "degraded";
+                setHeartbeatState("degraded");
+                try { await invoke("set_tray_backend_status", { status: "degraded" }); } catch { /* ignore */ }
+              }
+              setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+              return;
+            }
+          } catch { /* invoke 失败，视为不可用 */ }
+        }
+
+        // 进程确认已死 → DEAD
+        if (heartbeatStateRef.current !== "dead") {
+          heartbeatStateRef.current = "dead";
+          setHeartbeatState("dead");
+          // 仅在状态实际变化时通知 Rust（避免重复系统通知）
+          try { await invoke("set_tray_backend_status", { status: "dead" }); } catch { /* ignore */ }
+        }
+        setServiceStatus(prev => prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" });
+        setBackendVersion(null);
+        heartbeatFailCount.current = 0;
+      }
+    }, interval);
+
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWorkspaceId, dataMode, apiBaseUrl, pageVisible, restartOverlay]);
 
   const venvDir = useMemo(() => {
     if (!info) return "";
@@ -2126,7 +2264,8 @@ export function App() {
           "WEWORK_ENABLED", "WEWORK_CORP_ID",
           "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
           "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
-          "QQ_ENABLED", "QQ_ONEBOT_URL",
+          "ONEBOT_ENABLED", "ONEBOT_WS_URL", "ONEBOT_ACCESS_TOKEN",
+          "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX",
         ];
       case "tools":
         return [
@@ -2498,6 +2637,7 @@ export function App() {
       } catch {
         setAutostartEnabled(null);
       }
+      // autoStartBackend 已合并到开机自启，不再单独获取
 
       // Local mode (HTTP not reachable): check PID-based service status
       // This is the fallback when the HTTP API is not alive.
@@ -3063,7 +3203,8 @@ export function App() {
       { k: "FEISHU_ENABLED", name: t("status.feishu"), required: ["FEISHU_APP_ID", "FEISHU_APP_SECRET"] },
       { k: "WEWORK_ENABLED", name: t("status.wework"), required: ["WEWORK_CORP_ID", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"] },
       { k: "DINGTALK_ENABLED", name: t("status.dingtalk"), required: ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"] },
-      { k: "QQ_ENABLED", name: "QQ(OneBot)", required: ["QQ_ONEBOT_URL"] },
+      { k: "ONEBOT_ENABLED", name: "OneBot", required: ["ONEBOT_WS_URL"] },
+      { k: "QQBOT_ENABLED", name: "QQ 机器人", required: ["QQBOT_APP_ID", "QQBOT_APP_SECRET"] },
     ];
     const imStatus = im.map((c) => {
       const enabled = envGet(envDraft, c.k, "false").toLowerCase() === "true";
@@ -3079,10 +3220,10 @@ export function App() {
           <div className="statusCard">
             <div className="statusCardHead">
               <span className="statusCardLabel">{t("status.service")}</span>
-              {serviceStatus?.running ? <DotGreen /> : <DotGray />}
+              {heartbeatState === "alive" ? <DotGreen /> : heartbeatState === "degraded" ? <DotYellow /> : heartbeatState === "suspect" ? <DotYellow /> : serviceStatus?.running ? <DotGreen /> : <DotGray />}
             </div>
             <div className="statusCardValue">
-              {serviceStatus?.running ? t("topbar.running") : t("topbar.stopped")}
+              {heartbeatState === "degraded" ? t("status.unresponsive") : serviceStatus?.running ? t("topbar.running") : t("topbar.stopped")}
               {serviceStatus?.pid ? <span className="statusCardSub"> PID {serviceStatus.pid}</span> : null}
             </div>
             <div className="statusCardActions">
@@ -3127,6 +3268,17 @@ export function App() {
                 }} disabled={!!busy}>全部停止</button>
               </div>
             )}
+            {/* Degraded hint */}
+            {heartbeatState === "degraded" && (
+              <div style={{ marginTop: 8, padding: "6px 10px", background: "#fffde7", borderRadius: 6, fontSize: 12, color: "#f57f17", display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+                <DotYellow size={8} />
+                <span>{t("status.degradedHint")}</span>
+              </div>
+            )}
+            {/* Troubleshooting panel */}
+            {(heartbeatState === "dead" && !serviceStatus?.running) && (
+              <TroubleshootPanel t={t} />
+            )}
           </div>
 
           {/* Workspace */}
@@ -3138,13 +3290,14 @@ export function App() {
             <div className="statusCardSub">{ws?.path || ""}</div>
           </div>
 
-          {/* Autostart */}
+          {/* Autostart (= desktop autostart + backend auto-launch) */}
           <div className="statusCard">
             <div className="statusCardHead">
               <span className="statusCardLabel">{t("status.autostart")}</span>
               {autostartEnabled ? <DotGreen /> : <DotGray />}
             </div>
             <div className="statusCardValue">{autostartEnabled ? t("status.on") : t("status.off")}</div>
+            <div className="statusCardSub">{t("status.autostartHint")}</div>
             <div className="statusCardActions">
               <button className="btnSmall" onClick={async () => {
                 setBusy(t("common.loading")); setError(null);
@@ -3152,6 +3305,8 @@ export function App() {
               }} disabled={autostartEnabled === null || !!busy}>{autostartEnabled ? t("status.off") : t("status.on")}</button>
             </div>
           </div>
+
+          {/* Auto-start backend 已合并到"开机自启"中，不再单独展示 */}
         </div>
 
         {/* LLM Endpoints compact table */}
@@ -3470,7 +3625,8 @@ export function App() {
     FEISHU_ENABLED: "false",
     WEWORK_ENABLED: "false",
     DINGTALK_ENABLED: "false",
-    QQ_ENABLED: "false",
+    ONEBOT_ENABLED: "false",
+    QQBOT_ENABLED: "false",
   };
 
   // ── Quick auto-setup effect: MUST be at component top level (not inside renderQuickAutoSetup) ──
@@ -3556,7 +3712,8 @@ export function App() {
             "WEWORK_ENABLED", "WEWORK_CORP_ID",
             "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
             "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
-            "QQ_ENABLED", "QQ_ONEBOT_URL",
+            "ONEBOT_ENABLED", "ONEBOT_WS_URL", "ONEBOT_ACCESS_TOKEN",
+            "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX",
           ];
           const imEntries = imKeys
             .filter((k) => envDraft[k] !== undefined && envDraft[k] !== "")
@@ -3937,7 +4094,7 @@ export function App() {
           <div style={{ marginTop: 12 }}>
             <div className="label">extras</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-              {["all", "windows", "browser", "whisper", "feishu", "dingtalk", "wework", "qq"].map((x) => (
+              {["all", "windows", "browser", "whisper", "feishu", "dingtalk", "wework", "onebot", "qqbot"].map((x) => (
                 <button key={x} className={extras === x ? "capChipActive" : "capChip"}
                   onClick={() => setExtras(x)} disabled={!!busy}>{x}</button>
               ))}
@@ -4469,7 +4626,8 @@ export function App() {
       "WEWORK_ENABLED", "WEWORK_CORP_ID",
       "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY", "WEWORK_CALLBACK_PORT",
       "DINGTALK_ENABLED", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
-      "QQ_ENABLED", "QQ_ONEBOT_URL",
+      "ONEBOT_ENABLED", "ONEBOT_WS_URL", "ONEBOT_ACCESS_TOKEN",
+      "QQBOT_ENABLED", "QQBOT_APP_ID", "QQBOT_APP_SECRET", "QQBOT_SANDBOX",
     ];
 
     const channels = [
@@ -4538,13 +4696,33 @@ export function App() {
         ),
       },
       {
-        title: "QQ (OneBot)",
+        title: "QQ 机器人",
+        appType: t("config.imTypeQQBot"),
+        logo: <LogoQQ size={22} />,
+        enabledKey: "QQBOT_ENABLED",
+        docUrl: "https://bot.q.qq.com/wiki/develop/api-v2/",
+        needPublicIp: false,
+        body: (
+          <>
+            <FieldText k="QQBOT_APP_ID" label="AppID" placeholder="q.qq.com 开发设置" />
+            <FieldText k="QQBOT_APP_SECRET" label="AppSecret" type="password" placeholder="q.qq.com 开发设置" />
+            <FieldBool k="QQBOT_SANDBOX" label={t("config.imQQBotSandbox")} />
+          </>
+        ),
+      },
+      {
+        title: "OneBot",
         appType: t("config.imTypeOneBot"),
         logo: <LogoQQ size={22} />,
-        enabledKey: "QQ_ENABLED",
+        enabledKey: "ONEBOT_ENABLED",
         docUrl: "https://github.com/botuniverse/onebot-11",
         needPublicIp: false,
-        body: <FieldText k="QQ_ONEBOT_URL" label="OneBot WebSocket URL" placeholder="ws://127.0.0.1:8080" />,
+        body: (
+          <>
+            <FieldText k="ONEBOT_WS_URL" label="WebSocket URL" placeholder="ws://127.0.0.1:8080" />
+            <FieldText k="ONEBOT_ACCESS_TOKEN" label="Access Token" type="password" placeholder={t("config.imOneBotTokenHint")} />
+          </>
+        ),
       },
     ];
 
@@ -5082,8 +5260,12 @@ export function App() {
       "DINGTALK_ENABLED",
       "DINGTALK_CLIENT_ID",
       "DINGTALK_CLIENT_SECRET",
-      "QQ_ENABLED",
-      "QQ_ONEBOT_URL",
+      "ONEBOT_ENABLED",
+      "ONEBOT_WS_URL",
+      "ONEBOT_ACCESS_TOKEN",
+      "QQBOT_ENABLED",
+      "QQBOT_APP_ID",
+      "QQBOT_APP_SECRET",
       // MCP (docs/mcp-integration.md)
       "MCP_ENABLED",
       "MCP_TIMEOUT",
@@ -5225,10 +5407,27 @@ export function App() {
                 ),
               },
               {
-                title: "QQ（需要 openakita[qq] + NapCat/Lagrange）",
-                enabledKey: "QQ_ENABLED",
+                title: "QQ 官方机器人（需要 openakita[qqbot]）",
+                enabledKey: "QQBOT_ENABLED",
+                apply: "https://bot.q.qq.com/wiki/develop/api-v2/",
+                body: (
+                  <>
+                    <FieldText k="QQBOT_APP_ID" label="AppID" placeholder="q.qq.com 开发设置" />
+                    <FieldText k="QQBOT_APP_SECRET" label="AppSecret" type="password" placeholder="q.qq.com 开发设置" />
+                    <FieldBool k="QQBOT_SANDBOX" label={t("config.imQQBotSandbox")} />
+                  </>
+                ),
+              },
+              {
+                title: "OneBot（需要 openakita[onebot] + NapCat/Lagrange）",
+                enabledKey: "ONEBOT_ENABLED",
                 apply: "https://github.com/botuniverse/onebot-11",
-                body: <FieldText k="QQ_ONEBOT_URL" label="OneBot WebSocket URL" placeholder="ws://127.0.0.1:8080" />,
+                body: (
+                  <>
+                    <FieldText k="ONEBOT_WS_URL" label="WebSocket URL" placeholder="ws://127.0.0.1:8080" />
+                    <FieldText k="ONEBOT_ACCESS_TOKEN" label="Access Token" type="password" placeholder={t("config.imOneBotTokenHint")} />
+                  </>
+                ),
               },
             ].map((c) => {
               const enabled = envGet(envDraft, c.enabledKey, "false").toLowerCase() === "true";
@@ -5472,7 +5671,7 @@ export function App() {
   function renderQuickFinish() {
     const ws = workspaces.find((w) => w.id === currentWorkspaceId) || null;
     const epCount = savedEndpoints.length;
-    const imEnabled = ["TELEGRAM_ENABLED", "FEISHU_ENABLED", "WEWORK_ENABLED", "DINGTALK_ENABLED", "QQ_ENABLED"]
+    const imEnabled = ["TELEGRAM_ENABLED", "FEISHU_ENABLED", "WEWORK_ENABLED", "DINGTALK_ENABLED", "ONEBOT_ENABLED", "QQBOT_ENABLED"]
       .filter((k) => (envDraft[k] || "").toLowerCase() === "true");
     return (
       <>

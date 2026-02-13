@@ -2,11 +2,13 @@
 
 use base64::Engine as _;
 use dirs_next::home_dir;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::Emitter;
 use tauri::Manager;
@@ -14,6 +16,16 @@ use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 #[cfg(desktop)]
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
+
+// ── 全局管理的子进程 handle（仅追踪由 Tauri 自身 spawn 的进程） ──
+struct ManagedProcess {
+    child: std::process::Child,
+    workspace_id: String,
+    pid: u32,
+    started_at: u64,
+}
+
+static MANAGED_CHILD: Lazy<Mutex<Option<ManagedProcess>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +66,8 @@ struct WorkspaceSummary {
 struct AppStateFile {
     current_workspace_id: Option<String>,
     workspaces: Vec<WorkspaceMeta>,
+    #[serde(default)]
+    auto_start_backend: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -89,12 +103,71 @@ fn service_pid_file(workspace_id: &str) -> PathBuf {
     run_dir().join(format!("openakita-{}.pid", workspace_id))
 }
 
+// ── PID 文件 JSON 格式 ──
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct PidFileData {
+    pid: u32,
+    #[serde(default = "default_started_by")]
+    started_by: String, // "tauri" | "external"
+    #[serde(default)]
+    started_at: u64,    // unix epoch seconds
+}
+
+fn default_started_by() -> String {
+    "tauri".to_string()
+}
+
+fn now_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn write_pid_file(workspace_id: &str, pid: u32, started_by: &str) -> Result<(), String> {
+    let data = PidFileData {
+        pid,
+        started_by: started_by.to_string(),
+        started_at: now_epoch_secs(),
+    };
+    let json = serde_json::to_string_pretty(&data).map_err(|e| format!("serialize pid: {e}"))?;
+    let path = service_pid_file(workspace_id);
+    fs::write(&path, json).map_err(|e| format!("write pid file: {e}"))?;
+    Ok(())
+}
+
+/// 读取 PID 文件，兼容旧版纯数字格式
+fn read_pid_file(workspace_id: &str) -> Option<PidFileData> {
+    let path = service_pid_file(workspace_id);
+    let content = fs::read_to_string(&path).ok()?;
+    let trimmed = content.trim();
+    // 尝试 JSON 格式
+    if let Ok(data) = serde_json::from_str::<PidFileData>(trimmed) {
+        if data.pid > 0 {
+            return Some(data);
+        }
+    }
+    // 向后兼容：纯数字格式
+    if let Ok(pid) = trimmed.parse::<u32>() {
+        if pid > 0 {
+            return Some(PidFileData {
+                pid,
+                started_by: "tauri".to_string(),
+                started_at: 0,
+            });
+        }
+    }
+    None
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ServicePidEntry {
     workspace_id: String,
     pid: u32,
     pid_file: String,
+    #[serde(default)]
+    started_by: String,
 }
 
 fn list_service_pids() -> Vec<ServicePidEntry> {
@@ -115,29 +188,27 @@ fn list_service_pids() -> Vec<ServicePidEntry> {
             .trim_start_matches("openakita-")
             .trim_end_matches(".pid")
             .to_string();
-        let pid = fs::read_to_string(&p)
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
-            .unwrap_or(0);
-        if pid == 0 {
-            continue;
+        if let Some(data) = read_pid_file(&ws) {
+            out.push(ServicePidEntry {
+                workspace_id: ws,
+                pid: data.pid,
+                pid_file: p.to_string_lossy().to_string(),
+                started_by: data.started_by,
+            });
         }
-        out.push(ServicePidEntry {
-            workspace_id: ws,
-            pid,
-            pid_file: p.to_string_lossy().to_string(),
-        });
     }
     out
 }
 
 /// 尝试通过 HTTP API 优雅关闭 Python 服务（POST /api/shutdown），
 /// 然后等待进程退出。如果 API 调用失败或超时则回退到 kill。
-fn graceful_stop_pid(pid: u32) -> Result<(), String> {
+/// `port`: 可选端口号，默认 18900
+fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
     if !is_pid_running(pid) {
         return Ok(());
     }
 
+    let effective_port = port.unwrap_or(18900);
     // 第一步：尝试通过 HTTP API 触发优雅关闭
     let api_ok = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
@@ -145,7 +216,7 @@ fn graceful_stop_pid(pid: u32) -> Result<(), String> {
         .ok()
         .and_then(|client| {
             client
-                .post("http://127.0.0.1:18900/api/shutdown")
+                .post(format!("http://127.0.0.1:{}/api/shutdown", effective_port))
                 .send()
                 .ok()
         })
@@ -181,12 +252,129 @@ fn graceful_stop_pid(pid: u32) -> Result<(), String> {
     }
 }
 
-fn stop_service_pid_entry(ent: &ServicePidEntry) -> Result<(), String> {
+fn stop_service_pid_entry(ent: &ServicePidEntry, port: Option<u16>) -> Result<(), String> {
     if is_pid_running(ent.pid) {
-        graceful_stop_pid(ent.pid)?;
+        graceful_stop_pid(ent.pid, port)?;
     }
     let _ = fs::remove_file(PathBuf::from(&ent.pid_file));
     Ok(())
+}
+
+/// 启动锁文件路径
+fn service_lock_file(workspace_id: &str) -> PathBuf {
+    run_dir().join(format!("openakita-{}.lock", workspace_id))
+}
+
+/// 尝试获取启动锁（原子创建文件），成功返回 true
+fn try_acquire_start_lock(workspace_id: &str) -> bool {
+    let lock_path = service_lock_file(workspace_id);
+    let _ = fs::create_dir_all(lock_path.parent().unwrap_or(Path::new(".")));
+    // OpenOptions::create_new ensures atomicity
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .is_ok()
+}
+
+fn release_start_lock(workspace_id: &str) {
+    let _ = fs::remove_file(service_lock_file(workspace_id));
+}
+
+/// 获取进程创建时间（Unix epoch 秒）
+#[cfg(windows)]
+fn get_process_create_time(pid: u32) -> Option<u64> {
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct FILETIME {
+        dw_low_date_time: u32,
+        dw_high_date_time: u32,
+    }
+    extern "system" {
+        fn GetProcessTimes(
+            hProcess: *mut std::ffi::c_void,
+            lpCreationTime: *mut FILETIME,
+            lpExitTime: *mut FILETIME,
+            lpKernelTime: *mut FILETIME,
+            lpUserTime: *mut FILETIME,
+        ) -> i32;
+    }
+    unsafe {
+        let handle = win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut creation: FILETIME = std::mem::zeroed();
+        let mut exit: FILETIME = std::mem::zeroed();
+        let mut kernel: FILETIME = std::mem::zeroed();
+        let mut user: FILETIME = std::mem::zeroed();
+        let ok = GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user);
+        win::CloseHandle(handle);
+        if ok == 0 {
+            return None;
+        }
+        // Convert FILETIME (100-ns intervals since 1601-01-01) to Unix epoch seconds
+        let ft = ((creation.dw_high_date_time as u64) << 32) | (creation.dw_low_date_time as u64);
+        // 116444736000000000 = 100-ns intervals between 1601-01-01 and 1970-01-01
+        let unix_100ns = ft.checked_sub(116444736000000000)?;
+        Some(unix_100ns / 10_000_000)
+    }
+}
+
+#[cfg(not(windows))]
+fn get_process_create_time(pid: u32) -> Option<u64> {
+    // On Unix, read /proc/{pid}/stat field 22 (starttime in clock ticks)
+    // comm field (index 1) can contain spaces/parens, so we find the last ')' first
+    let stat = fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+    let after_comm = stat.rfind(')')? + 2; // skip ") "
+    if after_comm >= stat.len() {
+        return None;
+    }
+    // Fields after comm start at index 2; starttime is field 22 (index 20 after comm = 22-2)
+    let fields: Vec<&str> = stat[after_comm..].split_whitespace().collect();
+    let starttime = fields.get(19)?.parse::<u64>().ok()?; // field 22 → index 19 after comm
+    let clk_tck: u64 = 100; // typical default
+    // Read uptime to compute boot time
+    let uptime_str = fs::read_to_string("/proc/uptime").ok()?;
+    let uptime_secs: f64 = uptime_str.split_whitespace().next()?.parse().ok()?;
+    let now = now_epoch_secs();
+    let boot_time = now.saturating_sub(uptime_secs as u64);
+    Some(boot_time + starttime / clk_tck)
+}
+
+/// 验证 PID 文件中的 started_at 是否与实际进程创建时间匹配（允许 5 秒误差）
+fn is_pid_file_valid(data: &PidFileData) -> bool {
+    if !is_pid_running(data.pid) {
+        return false;
+    }
+    // 旧格式没有 started_at，跳过时间校验
+    if data.started_at == 0 {
+        return true;
+    }
+    if let Some(actual_create) = get_process_create_time(data.pid) {
+        let diff = if data.started_at > actual_create {
+            data.started_at - actual_create
+        } else {
+            actual_create - data.started_at
+        };
+        diff <= 5 // 5 秒内认为匹配
+    } else {
+        // 无法获取进程创建时间，退回到基本的 is_pid_running
+        true
+    }
+}
+
+/// 从 workspace .env 文件读取 API_PORT
+fn read_workspace_api_port(workspace_id: &str) -> Option<u16> {
+    let env_path = workspace_dir(workspace_id).join(".env");
+    let content = fs::read_to_string(&env_path).ok()?;
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(val) = t.strip_prefix("API_PORT=") {
+            return val.trim().parse::<u16>().ok();
+        }
+    }
+    None
 }
 
 // --- Windows 原生 API FFI（进程检测/杀死/枚举，不依赖 cmd/tasklist/taskkill，中文 Windows 零编码问题）---
@@ -354,7 +542,8 @@ fn kill_openakita_orphans() -> Vec<u32> {
             apply_no_window(&mut c);
             if let Ok(out) = c.output() {
                 let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
-                if s.contains("openakita") && s.contains("serve") {
+                // 精确匹配模块调用签名
+                if s.contains("openakita.main") && (s.contains(" serve") || s.ends_with("serve")) {
                     if is_pid_running(ppid) {
                         let _ = kill_pid(ppid);
                         killed.push(ppid);
@@ -365,21 +554,15 @@ fn kill_openakita_orphans() -> Vec<u32> {
     }
     #[cfg(not(windows))]
     {
-        // 优先使用 pkill（大多数 Linux 发行版和 macOS 都有）
-        let pkill_ok = Command::new("pkill")
-            .args(["-f", "openakita.*serve"])
-            .status()
-            .is_ok();
-
-        if !pkill_ok {
-            // pkill 不存在时的 fallback：使用 ps + grep + kill
-            if let Ok(out) = Command::new("sh")
-                .args(["-c", "ps aux | grep '[o]penakita.*serve' | awk '{print $2}'"])
-                .output()
-            {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                for line in stdout.lines() {
-                    if let Ok(pid) = line.trim().parse::<u32>() {
+        // 先列出匹配的 PID，然后逐个 kill，确保 killed 列表完整
+        if let Ok(out) = Command::new("sh")
+            .args(["-c", "ps aux | grep '[o]penakita\\.main.*serve' | awk '{print $2}'"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if let Ok(pid) = line.trim().parse::<u32>() {
+                    if is_pid_running(pid) {
                         let _ = Command::new("kill")
                             .args(["-TERM", &pid.to_string()])
                             .status();
@@ -454,7 +637,8 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
             if let Ok(cmd_out) = c.output() {
                 let s = String::from_utf8_lossy(&cmd_out.stdout).to_string();
                 let s_lower = s.to_lowercase();
-                if s_lower.contains("openakita") && s_lower.contains("serve") {
+                // 精确匹配模块调用签名，避免 venv 路径中 .openakita 误报
+                if s_lower.contains("openakita.main") && (s_lower.contains(" serve") || s_lower.ends_with("serve")) {
                     if is_pid_running(ppid) {
                         out.push(OpenAkitaProcess {
                             pid: ppid,
@@ -467,9 +651,9 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
     }
     #[cfg(not(windows))]
     {
-        // ps aux | grep openakita.*serve
+        // ps aux | grep openakita.main.*serve  —— 精确匹配模块调用
         if let Ok(ps_out) = Command::new("sh")
-            .args(["-c", "ps aux | grep '[o]penakita.*serve'"])
+            .args(["-c", "ps aux | grep '[o]penakita\\.main.*serve'"])
             .output()
         {
             let stdout = String::from_utf8_lossy(&ps_out.stdout);
@@ -501,7 +685,8 @@ fn openakita_stop_all_processes() -> Vec<u32> {
     let entries = list_service_pids();
     for ent in &entries {
         if is_pid_running(ent.pid) {
-            let _ = stop_service_pid_entry(ent);
+            let port = read_workspace_api_port(&ent.workspace_id);
+            let _ = stop_service_pid_entry(ent, port);
             stopped.push(ent.pid);
         }
     }
@@ -661,18 +846,84 @@ fn set_current_workspace(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 启动对账：清理残留锁文件和已死的 PID 文件
+fn startup_reconcile() {
+    let dir = run_dir();
+    if !dir.exists() {
+        return;
+    }
+
+    // 1. 清理残留 .lock 文件（上次崩溃可能遗留）
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if let Some(ext) = p.extension() {
+                if ext == "lock" {
+                    let _ = fs::remove_file(&p);
+                }
+            }
+        }
+    }
+
+    // 2. 扫描 PID 文件，清理已死进程的 stale 条目
+    let entries = list_service_pids();
+    for ent in &entries {
+        if let Some(data) = read_pid_file(&ent.workspace_id) {
+            if !is_pid_file_valid(&data) {
+                // 进程已死或 PID 被复用，清理
+                let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
+            }
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 第二个实例启动时，聚焦已有窗口并退出自身
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
         ))
         .setup(|app| {
+            // ── 启动对账：清理残留 .lock 和 stale PID 文件 ──
+            startup_reconcile();
+
             setup_tray(app)?;
-            // 自启动/后台启动时：不弹出主窗口，只保留托盘/菜单栏常驻
-            if std::env::args().any(|a| a == "--background") {
+
+            // 自启动/后台启动时：不弹出主窗口，只保留托盘/菜单栏常驻，并自动拉起后端
+            let is_background = std::env::args().any(|a| a == "--background");
+            if is_background {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
+                }
+
+                // ── 开机自启 = 桌面自启 + 后端自动拉起 ──
+                let state = read_state_file();
+                if let Some(ref ws_id) = state.current_workspace_id {
+                    // 检查后端是否已在运行（避免重复启动或与 CLI 后端冲突）
+                    let port = read_workspace_api_port(ws_id).unwrap_or(18900);
+                    let already_running = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(2))
+                        .build()
+                        .ok()
+                        .and_then(|c| c.get(format!("http://127.0.0.1:{}/api/health", port)).send().ok())
+                        .map(|r| r.status().is_success())
+                        .unwrap_or(false);
+                    if !already_running {
+                        let venv_dir = openakita_root_dir().join("venv").to_string_lossy().to_string();
+                        let ws_clone = ws_id.clone();
+                        // 在后台线程启动，不阻塞 setup()
+                        std::thread::spawn(move || {
+                            let _ = openakita_service_start(venv_dir, ws_clone);
+                        });
+                    }
                 }
             }
             Ok(())
@@ -706,6 +957,10 @@ fn main() {
             openakita_service_start,
             openakita_service_stop,
             openakita_service_log,
+            openakita_check_pid_alive,
+            set_tray_backend_status,
+            get_auto_start_backend,
+            set_auto_start_backend,
             openakita_list_skills,
             openakita_list_providers,
             openakita_list_models,
@@ -747,15 +1002,72 @@ struct ServiceLogChunk {
 #[tauri::command]
 fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, String> {
     let pid_file = service_pid_file(&workspace_id);
-    let pid = fs::read_to_string(&pid_file)
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok());
-    let running = pid.map(is_pid_running).unwrap_or(false);
+
+    // ── 1. 优先用 MANAGED_CHILD（精确 try_wait）──
+    {
+        let mut guard = MANAGED_CHILD.lock().unwrap();
+        if let Some(ref mut mp) = *guard {
+            if mp.workspace_id == workspace_id {
+                match mp.child.try_wait() {
+                    Ok(None) => {
+                        return Ok(ServiceStatus {
+                            running: true,
+                            pid: Some(mp.pid),
+                            pid_file: pid_file.to_string_lossy().to_string(),
+                        });
+                    }
+                    _ => {
+                        // 进程已退出，清理 handle 和 PID 文件
+                        *guard = None;
+                        let _ = fs::remove_file(&pid_file);
+                        return Ok(ServiceStatus {
+                            running: false,
+                            pid: None,
+                            pid_file: pid_file.to_string_lossy().to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 2. 回退到 PID 文件 ──
+    if let Some(data) = read_pid_file(&workspace_id) {
+        if is_pid_file_valid(&data) {
+            return Ok(ServiceStatus {
+                running: true,
+                pid: Some(data.pid),
+                pid_file: pid_file.to_string_lossy().to_string(),
+            });
+        } else {
+            // Stale PID，清理
+            let _ = fs::remove_file(&pid_file);
+        }
+    }
     Ok(ServiceStatus {
-        running,
-        pid: if running { pid } else { None },
+        running: false,
+        pid: None,
         pid_file: pid_file.to_string_lossy().to_string(),
     })
+}
+
+/// 新增命令：检查进程是否仍在运行（供前端心跳二次确认用）
+#[tauri::command]
+fn openakita_check_pid_alive(workspace_id: String) -> Result<bool, String> {
+    // 优先 MANAGED_CHILD
+    {
+        let mut guard = MANAGED_CHILD.lock().unwrap();
+        if let Some(ref mut mp) = *guard {
+            if mp.workspace_id == workspace_id {
+                return Ok(mp.child.try_wait().ok().flatten().is_none());
+            }
+        }
+    }
+    // 回退到 PID 文件
+    if let Some(data) = read_pid_file(&workspace_id) {
+        return Ok(is_pid_running(data.pid));
+    }
+    Ok(false)
 }
 
 #[cfg(windows)]
@@ -801,17 +1113,46 @@ fn read_env_kv(path: &Path) -> Vec<(String, String)> {
 fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<ServiceStatus, String> {
     fs::create_dir_all(run_dir()).map_err(|e| format!("create run dir failed: {e}"))?;
     let pid_file = service_pid_file(&workspace_id);
-    if let Ok(s) = fs::read_to_string(&pid_file) {
-        if let Ok(pid) = s.trim().parse::<u32>() {
-            if is_pid_running(pid) {
-                return Ok(ServiceStatus {
-                    running: true,
-                    pid: Some(pid),
-                    pid_file: pid_file.to_string_lossy().to_string(),
-                });
+
+    // ── 1. 检查是否已在运行（通过 MANAGED_CHILD 或 PID 文件）──
+    {
+        let mut guard = MANAGED_CHILD.lock().unwrap();
+        if let Some(ref mut mp) = *guard {
+            if mp.workspace_id == workspace_id {
+                match mp.child.try_wait() {
+                    Ok(None) => {
+                        return Ok(ServiceStatus {
+                            running: true,
+                            pid: Some(mp.pid),
+                            pid_file: pid_file.to_string_lossy().to_string(),
+                        });
+                    }
+                    _ => { *guard = None; }
+                }
             }
         }
     }
+    if let Some(data) = read_pid_file(&workspace_id) {
+        if is_pid_file_valid(&data) {
+            return Ok(ServiceStatus {
+                running: true,
+                pid: Some(data.pid),
+                pid_file: pid_file.to_string_lossy().to_string(),
+            });
+        } else {
+            let _ = fs::remove_file(&pid_file);
+        }
+    }
+
+    // ── 2. 获取启动锁（防止竞态双启动）──
+    if !try_acquire_start_lock(&workspace_id) {
+        return Err("另一个启动操作正在进行中，请稍候".to_string());
+    }
+    struct LockGuard(String);
+    impl Drop for LockGuard {
+        fn drop(&mut self) { release_start_lock(&self.0); }
+    }
+    let _lock_guard = LockGuard(workspace_id.clone());
 
     let ws_dir = workspace_dir(&workspace_id);
     ensure_workspace_scaffold(&ws_dir)?;
@@ -861,13 +1202,32 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 
     let child = cmd.spawn().map_err(|e| format!("spawn openakita serve failed: {e}"))?;
     let pid = child.id();
-    fs::write(&pid_file, pid.to_string()).map_err(|e| format!("write pid file failed: {e}"))?;
+    let started_at = now_epoch_secs();
+
+    // ── 3. 写 JSON PID 文件 ──
+    write_pid_file(&workspace_id, pid, "tauri")?;
+
+    // ── 4. 存入 MANAGED_CHILD ──
+    {
+        let mut guard = MANAGED_CHILD.lock().unwrap();
+        *guard = Some(ManagedProcess {
+            child,
+            workspace_id: workspace_id.clone(),
+            pid,
+            started_at,
+        });
+    }
 
     // Confirm the process is still alive shortly after spawning.
     std::thread::sleep(std::time::Duration::from_millis(500));
     if !is_pid_running(pid) {
+        {
+            let mut guard = MANAGED_CHILD.lock().unwrap();
+            if let Some(ref mp) = *guard {
+                if mp.pid == pid { *guard = None; }
+            }
+        }
         let _ = fs::remove_file(&pid_file);
-        // Best-effort log tail for debugging.
         let tail = fs::read_to_string(&log_path)
             .ok()
             .and_then(|s| {
@@ -895,12 +1255,35 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 #[tauri::command]
 fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String> {
     let pid_file = service_pid_file(&workspace_id);
-    let pid = fs::read_to_string(&pid_file)
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok());
+    let port = read_workspace_api_port(&workspace_id);
+
+    // ── 1. MANAGED_CHILD handle ──
+    {
+        let mut guard = MANAGED_CHILD.lock().unwrap();
+        if let Some(mut mp) = guard.take() {
+            if mp.workspace_id == workspace_id {
+                let _ = graceful_stop_pid(mp.pid, port);
+                if is_pid_running(mp.pid) {
+                    let _ = mp.child.kill();
+                    let _ = mp.child.wait();
+                }
+                let _ = fs::remove_file(&pid_file);
+                return Ok(ServiceStatus {
+                    running: false,
+                    pid: None,
+                    pid_file: pid_file.to_string_lossy().to_string(),
+                });
+            } else {
+                *guard = Some(mp);
+            }
+        }
+    }
+
+    // ── 2. PID 文件回退 ──
+    let pid = read_pid_file(&workspace_id).map(|d| d.pid);
     if let Some(pid) = pid {
         // 强制杀干净：如果杀不掉，要显式报错（避免 UI 显示“已停止”但后台仍残留）。
-        graceful_stop_pid(pid).map_err(|e| format!("failed to stop service: {e}"))?;
+        graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
     }
     let _ = fs::remove_file(&pid_file);
     Ok(ServiceStatus {
@@ -975,6 +1358,58 @@ fn autostart_set_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
     }
 }
 
+#[tauri::command]
+fn get_auto_start_backend() -> Result<bool, String> {
+    let state = read_state_file();
+    Ok(state.auto_start_backend.unwrap_or(false))
+}
+
+#[tauri::command]
+fn set_auto_start_backend(enabled: bool) -> Result<(), String> {
+    let mut state = read_state_file();
+    state.auto_start_backend = Some(enabled);
+    write_state_file(&state)
+}
+
+/// 前端心跳检测到后端状态变化时调用，更新托盘 tooltip
+/// status: "alive" | "degraded" | "dead"
+#[tauri::command]
+fn set_tray_backend_status(app: tauri::AppHandle, status: String) -> Result<(), String> {
+    let tooltip = match status.as_str() {
+        "alive" => "OpenAkita - Running",
+        "degraded" => "OpenAkita - Backend Unresponsive",
+        "dead" => "OpenAkita - Backend Stopped",
+        _ => "OpenAkita",
+    };
+    // 更新所有 tray icon 的 tooltip
+    if let Some(tray) = app.tray_by_id("main_tray") {
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+
+    // 后端死亡时发送系统通知
+    if status == "dead" {
+        #[cfg(windows)]
+        {
+            // 使用 Windows toast notification via PowerShell (简单可靠)
+            let mut cmd = Command::new("powershell");
+            cmd.args([
+                "-NoProfile", "-NonInteractive", "-Command",
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); $text = $xml.GetElementsByTagName('text'); $text[0].AppendChild($xml.CreateTextNode('OpenAkita')) | Out-Null; $text[1].AppendChild($xml.CreateTextNode('Backend service has stopped')) | Out-Null; $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('OpenAkita').Show($toast)"
+            ]);
+            apply_no_window(&mut cmd);
+            let _ = cmd.spawn();
+        }
+        #[cfg(not(windows))]
+        {
+            // macOS: use osascript
+            let _ = Command::new("osascript")
+                .args(["-e", "display notification \"Backend service has stopped\" with title \"OpenAkita\""])
+                .spawn();
+        }
+    }
+    Ok(())
+}
+
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -986,30 +1421,49 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let menu = Menu::with_items(app, &[&open_status, &show, &hide, &quit])?;
 
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id("main_tray")
         .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("OpenAkita")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "quit" => {
-                // 退出前先确保后台 OpenAkita serve 已停止（三层保障：PID文件杀→孤儿扫描→最终确认）
+                // ── 退出前根据所有权标记决定是否停止后端 ──
 
-                // 第 1 层：按 PID 文件逐一停止
-                let entries = list_service_pids();
-                for ent in &entries {
-                    let _ = stop_service_pid_entry(ent);
+                // 1. 先停 MANAGED_CHILD（Tauri 自己启动的进程）
+                {
+                    let mut guard = MANAGED_CHILD.lock().unwrap();
+                    if let Some(mut mp) = guard.take() {
+                        let port = read_workspace_api_port(&mp.workspace_id);
+                        let _ = graceful_stop_pid(mp.pid, port);
+                        if is_pid_running(mp.pid) {
+                            let _ = mp.child.kill();
+                            let _ = mp.child.wait();
+                        }
+                        let _ = fs::remove_file(service_pid_file(&mp.workspace_id));
+                    }
                 }
 
-                // 第 2 层：兜底扫描所有命令行含 openakita serve 的 python 进程并杀掉
+                // 2. 按 PID 文件逐一处理：tauri 启动的停掉，external 启动的跳过
+                let entries = list_service_pids();
+                for ent in &entries {
+                    if ent.started_by == "external" {
+                        // CLI 启动的后端，不停止
+                        continue;
+                    }
+                    let port = read_workspace_api_port(&ent.workspace_id);
+                    let _ = stop_service_pid_entry(ent, port);
+                }
+
+                // 3. 兜底扫描孤儿进程（精确匹配）
                 kill_openakita_orphans();
 
-                // 等一小段让进程退出
                 std::thread::sleep(std::time::Duration::from_millis(600));
 
-                // 第 3 层：最终确认——PID 文件里还有活的吗？再扫一次孤儿进程
+                // 4. 最终确认
                 let still_pid = list_service_pids()
                     .into_iter()
-                    .filter(|x| is_pid_running(x.pid))
+                    .filter(|x| x.started_by != "external" && is_pid_running(x.pid))
                     .collect::<Vec<_>>();
                 let still_orphans = kill_openakita_orphans();
 
