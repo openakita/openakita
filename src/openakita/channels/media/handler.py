@@ -171,6 +171,12 @@ class MediaHandler:
                 "Make sure openai-whisper is installed: pip install openai-whisper"
             )
 
+        # QQ/微信语音使用 SILK 编码（.amr 扩展名），ffmpeg 不支持
+        # 需要先转换为 WAV 才能被 Whisper 识别
+        from openakita.channels.media.audio_utils import ensure_whisper_compatible
+
+        compatible_path = ensure_whisper_compatible(audio_path)
+
         # 在线程池中执行（避免阻塞）
         # auto 模式不传 language，让 Whisper 自动检测
         kwargs: dict = {}
@@ -179,7 +185,7 @@ class MediaHandler:
 
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, lambda: self._whisper.transcribe(audio_path, **kwargs)
+            None, lambda: self._whisper.transcribe(compatible_path, **kwargs)
         )
 
         return result["text"]

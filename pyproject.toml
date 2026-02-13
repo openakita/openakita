@@ -98,6 +98,7 @@ onebot = [
 # QQ 官方机器人
 qqbot = [
     "qq-botpy>=1.1.5",
+    "pilk>=0.2.1",              # SILK 语音编解码（QQ 语音格式）
 ]
 
 # 语音识别 (Whisper)
@@ -130,6 +131,7 @@ all = [
     "pycryptodome>=3.19.0",
     "websockets>=12.0",
     "qq-botpy>=1.1.5",
+    "pilk>=0.2.1",
     "openai-whisper>=20231117",
     "static-ffmpeg>=2.7",
     "browser-use>=0.11.8",

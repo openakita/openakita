@@ -108,6 +108,44 @@ class QQBotAdapter(ChannelAdapter):
         self._access_token: str | None = None  # OAuth2 access token (webhook 模式)
         self._token_expires: float = 0
 
+        # ---- chat_id 路由表 ----
+        # QQ 的 send_text() 等便捷方法不带 metadata，需要根据 chat_id 反查 chat_type
+        # {chat_id: "group" | "c2c" | "channel"}
+        self._chat_type_map: dict[str, str] = {}
+        # {chat_id: 最近一条收到的 msg_id}（被动回复需要）
+        self._last_msg_id: dict[str, str] = {}
+
+    def _remember_chat(self, chat_id: str, chat_type: str, msg_id: str = "") -> None:
+        """记录 chat_id 的路由信息（收到消息时调用）"""
+        self._chat_type_map[chat_id] = chat_type
+        if msg_id:
+            self._last_msg_id[chat_id] = msg_id
+
+    def _resolve_chat_type(self, chat_id: str, metadata: dict | None = None) -> str:
+        """
+        解析 chat_type，优先级:
+        1. OutgoingMessage.metadata 中的 chat_type
+        2. 路由表 _chat_type_map（收消息时记录的）
+        3. 默认 "group"
+        """
+        if metadata:
+            ct = metadata.get("chat_type")
+            if ct:
+                return ct
+        return self._chat_type_map.get(chat_id, "group")
+
+    def _resolve_msg_id(self, chat_id: str, metadata: dict | None = None) -> str | None:
+        """
+        解析 msg_id（被动回复需要），优先级:
+        1. OutgoingMessage.metadata 中的 msg_id
+        2. 路由表 _last_msg_id（最近收到的消息 ID）
+        """
+        if metadata:
+            mid = metadata.get("msg_id")
+            if mid:
+                return mid
+        return self._last_msg_id.get(chat_id)
+
     async def start(self) -> None:
         """启动 QQ 官方机器人"""
         self._running = True
@@ -366,6 +404,8 @@ class QQBotAdapter(ChannelAdapter):
         user_openid = author.get("member_openid", "")
         group_openid = data.get("group_openid", "")
 
+        self._remember_chat(group_openid, "group", data.get("id", ""))
+
         return UnifiedMessage.create(
             channel=self.channel_name,
             channel_message_id=data.get("id", ""),
@@ -392,6 +432,8 @@ class QQBotAdapter(ChannelAdapter):
 
         author = data.get("author", {})
         user_openid = author.get("user_openid", "")
+
+        self._remember_chat(user_openid, "c2c", data.get("id", ""))
 
         return UnifiedMessage.create(
             channel=self.channel_name,
@@ -421,6 +463,8 @@ class QQBotAdapter(ChannelAdapter):
         user_id = author.get("id", "")
         channel_id = data.get("channel_id", "")
         guild_id = data.get("guild_id", "")
+
+        self._remember_chat(channel_id, "channel", data.get("id", ""))
 
         return UnifiedMessage.create(
             channel=self.channel_name,
@@ -476,6 +520,38 @@ class QQBotAdapter(ChannelAdapter):
 
         logger.info(f"QQ Official Bot adapter stopped (mode: {self.mode})")
 
+    # 文件扩展名 → 媒体类型的回退映射（QQ 附件 content_type 经常为空）
+    _EXT_AUDIO = {".amr", ".silk", ".slk", ".ogg", ".opus", ".mp3", ".wav", ".m4a", ".aac", ".flac"}
+    _EXT_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    _EXT_VIDEO = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
+
+    @staticmethod
+    def _guess_media_type(content_type: str, filename: str) -> str:
+        """
+        根据 content_type 和文件扩展名推断媒体类别。
+
+        QQ 附件的 content_type 经常为空或不标准，需要用扩展名兜底。
+        返回: "image" | "audio" | "video" | "file"
+        """
+        ct = content_type.lower()
+        if ct.startswith("image/"):
+            return "image"
+        if ct.startswith("audio/"):
+            return "audio"
+        if ct.startswith("video/"):
+            return "video"
+
+        # content_type 不可靠，用扩展名兜底
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in QQBotAdapter._EXT_AUDIO:
+            return "audio"
+        if ext in QQBotAdapter._EXT_IMAGE:
+            return "image"
+        if ext in QQBotAdapter._EXT_VIDEO:
+            return "video"
+
+        return "file"
+
     @staticmethod
     def _parse_attachments(attachments: list | None, content: MessageContent) -> None:
         """
@@ -483,6 +559,7 @@ class QQBotAdapter(ChannelAdapter):
 
         botpy 的附件是 _Attachments 对象（属性访问），不是 dict。
         支持图片、语音、视频、文件等多种类型。
+        QQ 附件的 content_type 经常为空，需要通过文件扩展名回退判断。
         """
         if not attachments:
             return
@@ -498,34 +575,27 @@ class QQBotAdapter(ChannelAdapter):
                 url = getattr(att, "url", None)
                 filename = getattr(att, "filename", "file") or "file"
 
-            if ct.startswith("image/"):
-                media = MediaFile.create(
-                    filename=filename,
-                    mime_type=ct,
-                    url=url,
-                )
+            media_type = QQBotAdapter._guess_media_type(ct, filename)
+
+            # 为缺失 content_type 的附件补全 MIME
+            if not ct:
+                mime_map = {
+                    "audio": "audio/amr",
+                    "image": "image/png",
+                    "video": "video/mp4",
+                    "file": "application/octet-stream",
+                }
+                ct = mime_map.get(media_type, "application/octet-stream")
+
+            media = MediaFile.create(filename=filename, mime_type=ct, url=url)
+
+            if media_type == "image":
                 content.images.append(media)
-            elif ct.startswith("audio/"):
-                media = MediaFile.create(
-                    filename=filename,
-                    mime_type=ct,
-                    url=url,
-                )
+            elif media_type == "audio":
                 content.voices.append(media)
-            elif ct.startswith("video/"):
-                media = MediaFile.create(
-                    filename=filename,
-                    mime_type=ct,
-                    url=url,
-                )
+            elif media_type == "video":
                 content.videos.append(media)
             else:
-                # 其他类型视为文件
-                media = MediaFile.create(
-                    filename=filename,
-                    mime_type=ct or "application/octet-stream",
-                    url=url,
-                )
                 content.files.append(media)
 
     def _convert_group_message(self, message: Any) -> UnifiedMessage:
@@ -541,6 +611,8 @@ class QQBotAdapter(ChannelAdapter):
 
         user_openid = getattr(message.author, "member_openid", "") or ""
         group_openid = getattr(message, "group_openid", "") or ""
+
+        self._remember_chat(group_openid, "group", message.id or "")
 
         return UnifiedMessage.create(
             channel=self.channel_name,
@@ -571,6 +643,8 @@ class QQBotAdapter(ChannelAdapter):
         )
 
         user_openid = getattr(message.author, "user_openid", "") or ""
+
+        self._remember_chat(user_openid, "c2c", message.id or "")
 
         return UnifiedMessage.create(
             channel=self.channel_name,
@@ -604,6 +678,8 @@ class QQBotAdapter(ChannelAdapter):
         user_id = getattr(author, "id", "") or ""
         channel_id = getattr(message, "channel_id", "") or ""
         guild_id = getattr(message, "guild_id", "") or ""
+
+        self._remember_chat(channel_id, "channel", message.id or "")
 
         return UnifiedMessage.create(
             channel=self.channel_name,
@@ -726,8 +802,8 @@ class QQBotAdapter(ChannelAdapter):
         - 文本消息 (msg_type=0)
         - 图片消息 (频道: content+image/file_image; 群/C2C: 两步富媒体上传)
         """
-        chat_type = message.metadata.get("chat_type", "group")
-        msg_id = message.metadata.get("msg_id")
+        chat_type = self._resolve_chat_type(message.chat_id, message.metadata)
+        msg_id = self._resolve_msg_id(message.chat_id, message.metadata)
 
         # Webhook 模式使用 HTTP API 发送
         if self.mode == "webhook":
@@ -916,12 +992,14 @@ class QQBotAdapter(ChannelAdapter):
 
         # Fallback: 发送文本提示
         if caption and self._client and self._client.api:
-            # 尝试获取当前 chat_type，默认 group
+            chat_type = self._resolve_chat_type(chat_id)
+            msg_id = self._resolve_msg_id(chat_id)
             try:
                 api = self._client.api
                 result = await self._send_to_target(
-                    api, "group", chat_id,
+                    api, chat_type, chat_id,
                     msg_type=0, content=f"{caption}\n[文件: {Path(file_path).name}]",
+                    msg_id=msg_id,
                 )
                 return str(getattr(result, "id", ""))
             except Exception as e:
@@ -950,11 +1028,14 @@ class QQBotAdapter(ChannelAdapter):
 
         # 如果有 caption，发送文本提示
         if caption and self._client and self._client.api:
+            chat_type = self._resolve_chat_type(chat_id)
+            msg_id = self._resolve_msg_id(chat_id)
             try:
                 api = self._client.api
                 result = await self._send_to_target(
-                    api, "group", chat_id,
+                    api, chat_type, chat_id,
                     msg_type=0, content=f"{caption}\n[语音消息]",
+                    msg_id=msg_id,
                 )
                 return str(getattr(result, "id", ""))
             except Exception as e:

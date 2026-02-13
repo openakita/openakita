@@ -113,7 +113,7 @@ _CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
     "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
     "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
     "onebot": [("websockets", "websockets")],
-    "qqbot": [("botpy", "qq-botpy")],
+    "qqbot": [("botpy", "qq-botpy"), ("pilk", "pilk")],
 }
 
 

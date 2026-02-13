@@ -393,7 +393,7 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
         "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
         "onebot": [("websockets", "websockets")],
-        "qqbot": [("botpy", "qq-botpy")],
+        "qqbot": [("botpy", "qq-botpy"), ("pilk", "pilk")],
     }
 
     enabled_key_map = {

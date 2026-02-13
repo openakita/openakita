@@ -88,6 +88,7 @@ websockets>=12.0          # OneBot WebSocket 支持
 
 # QQ 官方机器人
 qq-botpy>=1.1.5           # QQ 开放平台官方 Bot SDK
+pilk>=0.2.1               # SILK 语音编解码（QQ/微信语音格式）
 
 # === ffmpeg 自动安装 (Whisper 语音转写依赖) ===
 static-ffmpeg>=2.7        # ffmpeg 静态二进制自动下载

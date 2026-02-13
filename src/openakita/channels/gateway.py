@@ -1078,11 +1078,17 @@ class MessageGateway:
             whisper_lang = self._whisper_language
 
             def transcribe():
+                # QQ/微信语音使用 SILK 编码（.amr 扩展名），ffmpeg 不支持
+                # 需要先转换为 WAV 才能被 Whisper 识别
+                from openakita.channels.media.audio_utils import ensure_whisper_compatible
+
+                compatible_path = ensure_whisper_compatible(audio_path)
+
                 # auto 模式不传 language，让 Whisper 自动检测
                 kwargs = {}
                 if whisper_lang and whisper_lang != "auto":
                     kwargs["language"] = whisper_lang
-                result = self._whisper.transcribe(audio_path, **kwargs)
+                result = self._whisper.transcribe(compatible_path, **kwargs)
                 return result["text"].strip()
 
             # 异步执行
