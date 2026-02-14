@@ -133,6 +133,7 @@ TODO_LOCAL.md
 
 # Local docs directory (architecture analysis, not for GitHub)
 docs_local/
+docs/bug_doc/
 
 # OS
 .DS_Store

@@ -1,6 +1,6 @@
 [package]
 name = "openakita-setup-center"
-version = "1.20.0"
+version = "1.20.1"
 description = "OpenAkita Setup Center"
 authors = ["OpenAkita"]
 edition = "2021"
