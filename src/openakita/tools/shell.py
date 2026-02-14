@@ -289,7 +289,11 @@ class ShellTool:
         return result.success
 
     async def pip_install(self, package: str) -> CommandResult:
-        """使用 pip 安装包"""
+        """使用 pip 安装包（PyInstaller 兼容：使用 runtime_env 获取正确的 Python 解释器）"""
+        from openakita.runtime_env import get_python_executable
+        py = get_python_executable()
+        if py:
+            return await self.run(f'"{py}" -m pip install {package}')
         return await self.run(f"pip install {package}")
 
     async def npm_install(self, package: str, global_: bool = False) -> CommandResult:

@@ -64,10 +64,16 @@ struct WorkspaceSummary {
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct AppStateFile {
+    #[serde(default)]
     current_workspace_id: Option<String>,
+    #[serde(default)]
     workspaces: Vec<WorkspaceMeta>,
     #[serde(default)]
     auto_start_backend: Option<bool>,
+    #[serde(default)]
+    last_installed_version: Option<String>,
+    #[serde(default)]
+    install_mode: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -85,6 +91,602 @@ fn openakita_root_dir() -> PathBuf {
 
 fn run_dir() -> PathBuf {
     openakita_root_dir().join("run")
+}
+
+fn modules_dir() -> PathBuf {
+    openakita_root_dir().join("modules")
+}
+
+/// 获取内嵌 PyInstaller 打包后端的目录
+fn bundled_backend_dir() -> PathBuf {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    // macOS: exe 在 .app/Contents/MacOS/，resources 在 .app/Contents/Resources/
+    #[cfg(target_os = "macos")]
+    {
+        let macos_resource = exe_dir
+            .parent() // Contents/
+            .map(|p| p.join("Resources").join("openakita-server"))
+            .unwrap_or_else(|| exe_dir.join("resources").join("openakita-server"));
+        if macos_resource.exists() {
+            return macos_resource;
+        }
+    }
+
+    // Windows / Linux: resources 位于 exe 同级目录
+    exe_dir.join("resources").join("openakita-server")
+}
+
+/// 获取后端可执行文件及参数
+/// 优先使用内嵌的 PyInstaller 打包后端，降级到 venv python
+fn get_backend_executable(venv_dir: &str) -> (PathBuf, Vec<String>) {
+    // 1. 优先: 内嵌的 PyInstaller 打包后端
+    let bundled_exe = if cfg!(windows) {
+        bundled_backend_dir().join("openakita-server.exe")
+    } else {
+        bundled_backend_dir().join("openakita-server")
+    };
+    if bundled_exe.exists() {
+        return (bundled_exe, vec!["serve".to_string()]);
+    }
+    // 2. 降级: venv python（开发模式 / 旧安装）
+    let py = venv_pythonw_path(venv_dir);
+    (py, vec!["-m".into(), "openakita.main".into(), "serve".into()])
+}
+
+/// 构建模块 PYTHONPATH 环境变量（自动从 module_definitions 获取模块列表）
+fn build_modules_pythonpath() -> Option<String> {
+    let base = modules_dir();
+    if !base.exists() {
+        return None;
+    }
+    let mut paths = Vec::new();
+    for (module_id, _, _, _, _) in module_definitions() {
+        let sp = base.join(module_id).join("site-packages");
+        if sp.exists() {
+            paths.push(sp.to_string_lossy().to_string());
+        }
+    }
+    if paths.is_empty() {
+        return None;
+    }
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    Some(paths.join(sep))
+}
+
+/// 查找可用于 pip install 的 Python 可执行文件路径
+fn find_pip_python() -> Option<PathBuf> {
+    let root = openakita_root_dir();
+    // 1. venv python
+    let venv_py = if cfg!(windows) {
+        root.join("venv").join("Scripts").join("python.exe")
+    } else {
+        root.join("venv").join("bin").join("python")
+    };
+    if venv_py.exists() {
+        return Some(venv_py);
+    }
+    // 2. 打包内 python.exe（PyInstaller _internal 目录中，与 openakita-server.exe 同级）
+    //    这是构建时从系统 Python 复制进去的，自带 pip 模块
+    let bundled = bundled_backend_dir();
+    if bundled.exists() {
+        let internal_py = if cfg!(windows) {
+            bundled.join("_internal").join("python.exe")
+        } else {
+            bundled.join("_internal").join("python3")
+        };
+        if internal_py.exists() {
+            // 验证 pip 可用
+            if let Ok(output) = Command::new(&internal_py).args(["-m", "pip", "--version"]).output() {
+                if output.status.success() {
+                    return Some(internal_py);
+                }
+            }
+        }
+    }
+    // 3. embedded python (python-build-standalone)
+    let runtime_dir = root.join("runtime").join("python");
+    if runtime_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&runtime_dir) {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() { continue; }
+                if let Ok(sub_entries) = fs::read_dir(entry.path()) {
+                    for sub in sub_entries.flatten() {
+                        if !sub.path().is_dir() { continue; }
+                        let py = if cfg!(windows) {
+                            sub.path().join("python.exe")
+                        } else {
+                            sub.path().join("bin").join("python3")
+                        };
+                        if py.exists() { return Some(py); }
+                    }
+                }
+            }
+        }
+    }
+    // 4. PATH python（排除 Windows Store 假 Python 并验证可用性）
+    let candidates = if cfg!(windows) {
+        vec!["python.exe", "python3.exe"]
+    } else {
+        vec!["python3", "python"]
+    };
+    for name in candidates {
+        if let Ok(output) = Command::new(if cfg!(windows) { "where" } else { "which" })
+            .arg(name)
+            .output()
+        {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                // where 可能返回多个路径，逐一检查
+                for line in path_str.lines() {
+                    let line = line.trim();
+                    if line.is_empty() { continue; }
+                    let p = PathBuf::from(line);
+                    if !p.exists() { continue; }
+
+                    // 排除 Windows Store 假 Python（只是一个占位符，实际不能执行）
+                    // 路径如: C:\Users\xxx\AppData\Local\Microsoft\WindowsApps\python.exe
+                    let path_lower = p.to_string_lossy().to_lowercase();
+                    if path_lower.contains("windowsapps") || path_lower.contains("microsoft\\windowsapps") {
+                        continue;
+                    }
+
+                    // 验证 Python 实际可执行（避免其他假冒/损坏的 Python）
+                    if let Ok(ver) = Command::new(&p).arg("--version").output() {
+                        if ver.status.success() {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 检查是否有可用于 pip install 的 Python 解释器
+#[tauri::command]
+fn check_python_for_pip() -> Result<String, String> {
+    match find_pip_python() {
+        Some(p) => Ok(format!("Python 可用: {}", p.display())),
+        None => Err("未找到可用的 Python 解释器".into()),
+    }
+}
+
+// ── 模块管理 ──
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ModuleInfo {
+    id: String,
+    name: String,
+    description: String,
+    installed: bool,
+    bundled: bool,
+    size_mb: u32,
+}
+
+fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'static [&'static str], u32)> {
+    // (id, name, description, pip_packages, estimated_size_mb)
+    vec![
+        ("vector-memory", "向量记忆增强", "语义搜索与向量记忆 (sentence-transformers + chromadb)", &["sentence-transformers", "chromadb"], 500),
+        ("browser", "浏览器自动化", "Playwright 浏览器自动化", &["playwright"], 150),
+        ("whisper", "语音识别", "OpenAI Whisper 语音转文字", &["openai-whisper", "static-ffmpeg"], 300),
+        ("orchestration", "多Agent协同", "ZeroMQ 多 Agent 协同通信", &["pyzmq"], 10),
+    ]
+}
+
+fn is_module_installed(module_id: &str) -> bool {
+    let sp = modules_dir().join(module_id).join("site-packages");
+    if sp.exists() && sp.read_dir().map(|mut d| d.next().is_some()).unwrap_or(false) {
+        return true;
+    }
+    // Also check if bundled (PyInstaller full mode includes them)
+    let bundled = bundled_backend_dir();
+    if bundled.exists() {
+        // For full builds, check marker files
+        let marker = modules_dir().join(module_id).join(".installed");
+        if marker.exists() {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_module_bundled(module_id: &str) -> bool {
+    let bundled_modules = bundled_backend_dir()
+        .parent()
+        .map(|p| p.join("modules").join(module_id))
+        .unwrap_or_default();
+    bundled_modules.exists()
+}
+
+#[tauri::command]
+fn detect_modules() -> Vec<ModuleInfo> {
+    module_definitions()
+        .iter()
+        .map(|(id, name, desc, _pkgs, size)| ModuleInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: desc.to_string(),
+            installed: is_module_installed(id),
+            bundled: is_module_bundled(id),
+            size_mb: *size,
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn install_module(
+    app: tauri::AppHandle,
+    module_id: String,
+    mirror: Option<String>,
+) -> Result<String, String> {
+    // 从 module_definitions() 获取包列表（单一数据源，避免重复定义）
+    let defs = module_definitions();
+    let (_, _, _, packages, _) = defs
+        .iter()
+        .find(|(id, _, _, _, _)| *id == module_id.as_str())
+        .ok_or_else(|| format!("未知模块: {}", module_id))?;
+
+    let target_dir = modules_dir().join(&module_id).join("site-packages");
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("创建模块目录失败: {e}"))?;
+
+    // Check for bundled wheels first
+    let bundled_wheels = bundled_backend_dir()
+        .parent()
+        .map(|p| p.join("modules").join(&module_id).join("wheels"))
+        .unwrap_or_default();
+
+    let effective_mirror = mirror.clone().unwrap_or_else(|| {
+        "https://mirrors.aliyun.com/pypi/simple/".to_string()
+    });
+
+    // ── 查找 Python 解释器 ──
+    // 优先级：venv > 打包内 _internal/python.exe > embedded python > PATH > 自动下载
+    let python_exe = match find_pip_python() {
+        Some(p) => p,
+        None => {
+            let _ = app.emit("module-install-progress", serde_json::json!({
+                "moduleId": module_id,
+                "status": "installing",
+                "message": "未找到 Python 环境，正在自动下载嵌入式 Python...",
+            }));
+            let result = install_embedded_python_sync(None)?;
+            let p = PathBuf::from(&result.python_path);
+            if !p.exists() {
+                return Err(format!("自动安装嵌入式 Python 后仍找不到: {}", p.display()));
+            }
+            let _ = Command::new(&p).args(["-m", "ensurepip", "--upgrade"]).output();
+            p
+        }
+    };
+
+    // ── 执行 pip install（离线 vs 多源在线） ──
+    let run_pip_result = |output: std::process::Output, label: &str| -> Result<String, String> {
+        if output.status.success() {
+            let marker = modules_dir().join(&module_id).join(".installed");
+            let _ = fs::write(&marker, format!("installed_at={}", now_epoch_secs()));
+            let _ = app.emit("module-install-progress", serde_json::json!({
+                "moduleId": module_id, "status": "done",
+                "message": format!("{} 安装完成 ({})", module_id, label),
+            }));
+            Ok(format!("{} 安装成功", module_id))
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let combined = if stderr.trim().is_empty() { stdout.to_string() }
+                else if stdout.trim().is_empty() { stderr.to_string() }
+                else { format!("{}\n{}", stderr, stdout) };
+            let detail = &combined[..combined.len().min(800)];
+            let exit_code = output.status.code().unwrap_or(-1);
+            let err_msg = format!("[{}] pip 退出码 {}: {}", label, exit_code, detail);
+            Err(err_msg)
+        }
+    };
+
+    if bundled_wheels.exists() {
+        // ── 离线安装：从预打包的 wheels 安装 ──
+        let _ = app.emit("module-install-progress", serde_json::json!({
+            "moduleId": module_id, "status": "installing",
+            "message": format!("正在安装 {} (离线 wheels) ...", module_id),
+        }));
+        let mut c = Command::new(&python_exe);
+        c.args(["-m", "pip", "install", "--no-index", "--find-links"]);
+        c.arg(&bundled_wheels);
+        c.arg("--target").arg(&target_dir);
+        for pkg in *packages { c.arg(*pkg); }
+        let output = c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
+            .output().map_err(|e| format!("执行 pip 失败: {e}"))?;
+        let result = run_pip_result(output, "离线");
+        if let Err(ref e) = result {
+            let _ = app.emit("module-install-progress", serde_json::json!({
+                "moduleId": module_id, "status": "error", "message": &e[..e.len().min(800)],
+            }));
+        }
+        return result;
+    }
+
+    // ── 在线安装：多源自动切换 ──
+    // 镜像优先级列表：用户指定源 > 阿里云 > 清华 > 官方 PyPI
+    let user_host = effective_mirror.split("//").nth(1).unwrap_or("").split('/').next().unwrap_or("").to_string();
+    let mirror_list: Vec<(&str, String)> = if mirror.is_some() {
+        vec![
+            (effective_mirror.as_str(), user_host.clone()),
+            ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com".into()),
+            ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn".into()),
+            ("https://pypi.org/simple/", "pypi.org".into()),
+        ]
+    } else {
+        vec![
+            ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com".into()),
+            ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn".into()),
+            ("https://pypi.org/simple/", "pypi.org".into()),
+        ]
+    };
+
+    let mut last_err = String::from("所有镜像源均安装失败");
+    for (idx, (mirror_url, ref trusted_host)) in mirror_list.iter().enumerate() {
+        let _ = app.emit("module-install-progress", serde_json::json!({
+            "moduleId": module_id,
+            "status": "installing",
+            "message": if idx == 0 {
+                format!("正在安装 {} (源: {}) ...", module_id, trusted_host)
+            } else {
+                format!("切换镜像源: {} (第 {} 次重试) ...", trusted_host, idx)
+            },
+        }));
+
+        let mut c = Command::new(&python_exe);
+        c.args(["-m", "pip", "install", "--target"]);
+        c.arg(&target_dir);
+        c.args(["-i", mirror_url]);
+        c.args(["--trusted-host", trusted_host.as_str()]);
+        let timeout = if idx == 0 { "120" } else { "60" };
+        c.args(["--timeout", timeout]);
+        for pkg in *packages { c.arg(*pkg); }
+
+        match c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).output() {
+            Ok(output) => {
+                if output.status.success() {
+                    return run_pip_result(output, trusted_host);
+                }
+                // 安装失败 - 判断是否值得切换源
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let combined = format!("{}\n{}", stderr, stdout);
+                let exit_code = output.status.code().unwrap_or(-1);
+                last_err = format!("[{}] pip 退出码 {}: {}", trusted_host, exit_code, &combined[..combined.len().min(500)]);
+
+                let combined_lower = combined.to_lowercase();
+                if combined_lower.contains("no matching distribution")
+                    || combined_lower.contains("could not find a version")
+                    || combined_lower.contains("conflicting dependencies")
+                {
+                    break; // 逻辑错误，不是源的问题
+                }
+                let _ = app.emit("module-install-progress", serde_json::json!({
+                    "moduleId": module_id, "status": "retrying",
+                    "message": format!("源 {} 安装失败 (退出码 {})，尝试切换...", trusted_host, exit_code),
+                }));
+            }
+            Err(e) => {
+                last_err = format!("执行 pip 失败: {}", e);
+                break; // pip 本身执行失败
+            }
+        }
+    }
+
+    let _ = app.emit("module-install-progress", serde_json::json!({
+        "moduleId": module_id, "status": "error",
+        "message": &last_err[..last_err.len().min(800)],
+    }));
+    Err(last_err)
+}
+
+#[tauri::command]
+fn uninstall_module(module_id: String) -> Result<String, String> {
+    let module_path = modules_dir().join(&module_id);
+    if module_path.exists() {
+        fs::remove_dir_all(&module_path)
+            .map_err(|e| format!("删除模块目录失败: {e}"))?;
+    }
+    Ok(format!("{} 已卸载", module_id))
+}
+
+#[tauri::command]
+fn is_first_run() -> bool {
+    let state = read_state_file();
+    state.workspaces.is_empty()
+}
+
+// ── 环境检测 ──
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EnvironmentCheck {
+    has_old_venv: bool,
+    has_old_runtime: bool,
+    has_old_workspaces: bool,
+    old_version: Option<String>,
+    current_version: String,
+    running_processes: Vec<String>,
+    disk_usage_mb: u64,
+    conflicts: Vec<String>,
+}
+
+fn dir_size_bytes(path: &Path) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+    let mut total: u64 = 0;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                total += p.metadata().map(|m| m.len()).unwrap_or(0);
+            } else if p.is_dir() {
+                total += dir_size_bytes(&p);
+            }
+        }
+    }
+    total
+}
+
+#[tauri::command]
+fn check_environment() -> EnvironmentCheck {
+    let root = openakita_root_dir();
+    // 只有目录存在且非空才算有旧残留
+    let has_old_venv = root.join("venv").exists()
+        && root.join("venv").read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+    let has_old_runtime = root.join("runtime").exists()
+        && root.join("runtime").read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+    let has_old_workspaces = root.join("workspaces").exists()
+        && root.join("workspaces").read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+
+    // Read version from state.json
+    let state = read_state_file();
+    let old_version = state.last_installed_version.clone();
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+
+    // Check running processes (extract workspace_id from filename: openakita-{ws_id}.pid)
+    let mut running = Vec::new();
+    if let Ok(entries) = fs::read_dir(run_dir()) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("pid") {
+                let ws_id = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.strip_prefix("openakita-"))
+                    .unwrap_or("unknown");
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(data) = serde_json::from_str::<PidFileData>(&content) {
+                        if is_pid_running(data.pid) {
+                            running.push(format!("PID {} (workspace: {})", data.pid, ws_id));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Calculate disk usage
+    let disk_usage_mb = dir_size_bytes(&root) / (1024 * 1024);
+
+    // 如果内嵌后端存在，自动清理旧 venv/runtime（它们已经被打包替代，不再需要）
+    let bundled_exists = bundled_backend_dir().exists();
+    let mut auto_cleaned = Vec::new();
+    if has_old_venv && bundled_exists {
+        if force_remove_dir(&root.join("venv")).is_ok() {
+            auto_cleaned.push("venv");
+        }
+    }
+    if has_old_runtime && bundled_exists {
+        if force_remove_dir(&root.join("runtime")).is_ok() {
+            auto_cleaned.push("runtime");
+        }
+    }
+
+    // 重新检测清理后的状态
+    let has_old_venv = has_old_venv && root.join("venv").exists();
+    let has_old_runtime = has_old_runtime && root.join("runtime").exists();
+
+    // Generate conflict descriptions
+    let mut conflicts = Vec::new();
+    if !auto_cleaned.is_empty() {
+        conflicts.push(format!("已自动清理旧环境: {}", auto_cleaned.join(", ")));
+    }
+    if has_old_venv && bundled_exists {
+        conflicts.push("旧 Python 虚拟环境 (venv) 清理失败，请手动删除".to_string());
+    }
+    if has_old_runtime && bundled_exists {
+        conflicts.push("旧 Python 运行时 (runtime) 清理失败，请手动删除".to_string());
+    }
+    if !running.is_empty() {
+        conflicts.push(format!("检测到 {} 个正在运行的 OpenAkita 进程", running.len()));
+    }
+
+    // Recalculate disk usage after cleanup
+    let disk_usage_mb = dir_size_bytes(&root) / (1024 * 1024);
+
+    EnvironmentCheck {
+        has_old_venv,
+        has_old_runtime,
+        has_old_workspaces,
+        old_version,
+        current_version,
+        running_processes: running,
+        disk_usage_mb,
+        conflicts,
+    }
+}
+
+/// 强制删除目录：先尝试 Rust remove_dir_all，失败时在 Windows 上回退到 cmd /c rd /s /q
+fn force_remove_dir(path: &std::path::Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    // 第一次尝试：Rust 标准库
+    if fs::remove_dir_all(path).is_ok() {
+        return Ok(());
+    }
+    // 第二次尝试 (Windows)：使用 cmd /c rd /s /q 处理长路径和只读文件
+    #[cfg(target_os = "windows")]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "rd", "/s", "/q"])
+            .arg(path)
+            .status()
+            .map_err(|e| format!("执行 rd 命令失败: {e}"))?;
+        if status.success() || !path.exists() {
+            return Ok(());
+        }
+    }
+    // 最终检查
+    if path.exists() {
+        Err(format!("无法删除目录: {}", path.display()))
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn cleanup_old_environment(clean_venv: bool, clean_runtime: bool) -> Result<String, String> {
+    let root = openakita_root_dir();
+    let mut cleaned = Vec::new();
+
+    if clean_venv {
+        let venv_path = root.join("venv");
+        if venv_path.exists() {
+            force_remove_dir(&venv_path)
+                .map_err(|e| format!("清理 venv 失败: {e}"))?;
+            cleaned.push("venv");
+        }
+    }
+    if clean_runtime {
+        let runtime_path = root.join("runtime");
+        if runtime_path.exists() {
+            force_remove_dir(&runtime_path)
+                .map_err(|e| format!("清理 runtime 失败: {e}"))?;
+            cleaned.push("runtime");
+        }
+    }
+
+    if cleaned.is_empty() {
+        Ok("无需清理".to_string())
+    } else {
+        Ok(format!("已清理: {}", cleaned.join(", ")))
+    }
 }
 
 fn state_file_path() -> PathBuf {
@@ -503,6 +1105,7 @@ fn kill_openakita_orphans() -> Vec<u32> {
         pe.dw_size = std::mem::size_of::<win::PROCESSENTRY32W>() as u32;
 
         let mut python_pids: Vec<u32> = Vec::new();
+        let mut bundled_pids: Vec<u32> = Vec::new();
 
         if unsafe { win::Process32FirstW(snap, &mut pe) } != 0 {
             loop {
@@ -517,6 +1120,10 @@ fn kill_openakita_orphans() -> Vec<u32> {
                 if name_lower.contains("python") {
                     python_pids.push(pe.th32_process_id);
                 }
+                // PyInstaller 打包后端进程名为 openakita-server.exe
+                if name_lower.contains("openakita-server") {
+                    bundled_pids.push(pe.th32_process_id);
+                }
                 if unsafe { win::Process32NextW(snap, &mut pe) } == 0 {
                     break;
                 }
@@ -524,6 +1131,14 @@ fn kill_openakita_orphans() -> Vec<u32> {
         }
         unsafe {
             win::CloseHandle(snap);
+        }
+
+        // Step 1.5: 直接 kill 孤立的 openakita-server.exe (PyInstaller bundled backend)
+        for ppid in bundled_pids {
+            if is_pid_running(ppid) {
+                let _ = kill_pid(ppid);
+                killed.push(ppid);
+            }
         }
 
         // Step 2: 对每个 python 进程查命令行，判断是否是 openakita serve 进程
@@ -554,19 +1169,25 @@ fn kill_openakita_orphans() -> Vec<u32> {
     }
     #[cfg(not(windows))]
     {
-        // 先列出匹配的 PID，然后逐个 kill，确保 killed 列表完整
-        if let Ok(out) = Command::new("sh")
-            .args(["-c", "ps aux | grep '[o]penakita\\.main.*serve' | awk '{print $2}'"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines() {
-                if let Ok(pid) = line.trim().parse::<u32>() {
-                    if is_pid_running(pid) {
-                        let _ = Command::new("kill")
-                            .args(["-TERM", &pid.to_string()])
-                            .status();
-                        killed.push(pid);
+        // 搜索 openakita.main serve (venv 模式) 和 openakita-server (PyInstaller 模式)
+        let patterns = [
+            "ps aux | grep '[o]penakita\\.main.*serve' | awk '{print $2}'",
+            "ps aux | grep '[o]penakita-server' | awk '{print $2}'",
+        ];
+        for pattern in &patterns {
+            if let Ok(out) = Command::new("sh")
+                .args(["-c", pattern])
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    if let Ok(pid) = line.trim().parse::<u32>() {
+                        if is_pid_running(pid) && !killed.contains(&pid) {
+                            let _ = Command::new("kill")
+                                .args(["-TERM", &pid.to_string()])
+                                .status();
+                            killed.push(pid);
+                        }
                     }
                 }
             }
@@ -897,6 +1518,11 @@ fn main() {
 
             setup_tray(app)?;
 
+            // ── 首次运行检测 (NSIS 安装后自动启动时传入 --first-run) ──
+            let is_first_run_arg = std::env::args().any(|a| a == "--first-run");
+            let launch_mode = if is_first_run_arg { "first-run" } else { "normal" };
+            app.emit("app-launch-mode", launch_mode).ok();
+
             // 自启动/后台启动时：不弹出主窗口，只保留托盘/菜单栏常驻，并自动拉起后端
             let is_background = std::env::args().any(|a| a == "--background");
             if is_background {
@@ -946,6 +1572,7 @@ fn main() {
             workspace_write_file,
             workspace_update_env,
             detect_python,
+            check_python_for_pip,
             install_embedded_python,
             create_venv,
             pip_install,
@@ -974,11 +1601,21 @@ fn main() {
             openakita_get_skill_config,
             fetch_pypi_versions,
             http_get_json,
+            http_proxy_request,
             read_file_base64,
             download_file,
             open_external_url,
             openakita_list_processes,
-            openakita_stop_all_processes
+            openakita_stop_all_processes,
+            detect_modules,
+            install_module,
+            uninstall_module,
+            is_first_run,
+            check_environment,
+            cleanup_old_environment,
+            register_cli,
+            unregister_cli,
+            get_cli_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1157,10 +1794,11 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 
     let ws_dir = workspace_dir(&workspace_id);
     ensure_workspace_scaffold(&ws_dir)?;
-    // Prefer pythonw.exe on Windows to avoid showing any console window.
-    let py = venv_pythonw_path(&venv_dir);
-    if !py.exists() {
-        return Err(format!("venv python not found: {}", py.to_string_lossy()));
+
+    // 优先使用内嵌 PyInstaller 后端，降级到 venv python
+    let (backend_exe, backend_args) = get_backend_executable(&venv_dir);
+    if !backend_exe.exists() {
+        return Err(format!("后端可执行文件不存在: {}", backend_exe.to_string_lossy()));
     }
 
     let log_dir = ws_dir.join("logs");
@@ -1172,9 +1810,9 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
         .open(&log_path)
         .map_err(|e| format!("open log failed: {e}"))?;
 
-    let mut cmd = Command::new(&py);
+    let mut cmd = Command::new(&backend_exe);
     cmd.current_dir(&ws_dir);
-    cmd.args(["-m", "openakita.main", "serve"]);
+    cmd.args(&backend_args);
 
     // Force UTF-8 output on Windows and make logs clean & realtime.
     // Without this, Rich may try to write unicode symbols (e.g. ✓) using GBK and crash.
@@ -1189,6 +1827,19 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
         cmd.env(k, v);
     }
     cmd.env("LLM_ENDPOINTS_CONFIG", ws_dir.join("data").join("llm_endpoints.json"));
+
+    // 设置模块 PYTHONPATH (已安装的可选模块 site-packages)
+    if let Some(extra_path) = build_modules_pythonpath() {
+        // 追加到已有 PYTHONPATH
+        let existing = std::env::var("PYTHONPATH").unwrap_or_default();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let combined = if existing.is_empty() {
+            extra_path
+        } else {
+            format!("{}{}{}", extra_path, sep, existing)
+        };
+        cmd.env("PYTHONPATH", combined);
+    }
 
     // detach + redirect io
     cmd.stdin(std::process::Stdio::null())
@@ -1897,93 +2548,109 @@ fn find_python_executable(root: &Path) -> Option<PathBuf> {
     None
 }
 
+/// 带重试的 HTTP GET，依次尝试原始 URL 和镜像 URL
+fn get_with_mirrors(client: &reqwest::blocking::Client, urls: &[&str]) -> Result<reqwest::blocking::Response, String> {
+    let mut last_err = String::new();
+    for url in urls {
+        match client.get(*url).send() {
+            Ok(resp) => match resp.error_for_status() {
+                Ok(r) => return Ok(r),
+                Err(e) => { last_err = format!("{}", e); }
+            },
+            Err(e) => { last_err = format!("{}", e); }
+        }
+    }
+    Err(last_err)
+}
+
+/// 同步下载并安装嵌入式 Python（供 install_module 等内部函数调用）
+fn install_embedded_python_sync(python_series: Option<String>) -> Result<EmbeddedPythonInstallResult, String> {
+    let python_series = python_series.unwrap_or_else(|| "3.11".to_string());
+    let triple = target_triple_hint()?;
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("openakita-setup-center")
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("http client build failed: {e}"))?;
+
+    // GitHub 在中国大陆可能不可达，使用镜像回退
+    let latest_urls = [
+        "https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
+        "https://ghp.ci/https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
+        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
+    ];
+    let latest: LatestReleaseInfo = get_with_mirrors(&client, &latest_urls)
+        .map_err(|e| format!("fetch latest-release.json failed (all mirrors): {e}"))?
+        .json()
+        .map_err(|e| format!("parse latest-release.json failed: {e}"))?;
+
+    let gh_api_urls_str = [
+        format!("https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}", latest.tag),
+        format!("https://ghp.ci/https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}", latest.tag),
+    ];
+    let gh_api_urls: Vec<&str> = gh_api_urls_str.iter().map(|s| s.as_str()).collect();
+    let gh: GhRelease = get_with_mirrors(&client, &gh_api_urls)
+        .map_err(|e| format!("fetch github release failed (all mirrors): {e}"))?
+        .json()
+        .map_err(|e| format!("parse github release failed: {e}"))?;
+
+    let asset = pick_python_build_asset(&gh.assets, &python_series, triple)
+        .ok_or_else(|| "no matching python-build-standalone asset found".to_string())?;
+
+    let install_dir = embedded_python_root().join(&latest.tag).join(&asset.name);
+    if install_dir.exists() {
+        if let Some(py) = find_python_executable(&install_dir) {
+            return Ok(EmbeddedPythonInstallResult {
+                python_command: vec![py.to_string_lossy().to_string()],
+                python_path: py.to_string_lossy().to_string(),
+                install_dir: install_dir.to_string_lossy().to_string(),
+                asset_name: asset.name,
+                tag: latest.tag,
+            });
+        }
+    }
+
+    fs::create_dir_all(&install_dir).map_err(|e| format!("create install dir failed: {e}"))?;
+    let archive_path = runtime_dir().join("downloads").join(&latest.tag).join(&asset.name);
+    if let Some(parent) = archive_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create download dir failed: {e}"))?;
+    }
+
+    if !archive_path.exists() {
+        // 下载 Python 包，依次尝试原始 URL 和镜像
+        let dl_mirror = format!("https://ghp.ci/{}", &asset.browser_download_url);
+        let dl_urls = [asset.browser_download_url.as_str(), dl_mirror.as_str()];
+        let mut resp = get_with_mirrors(&client, &dl_urls)
+            .map_err(|e| format!("download failed (all mirrors): {e}"))?;
+        let mut out =
+            std::fs::File::create(&archive_path).map_err(|e| format!("create archive failed: {e}"))?;
+        std::io::copy(&mut resp, &mut out).map_err(|e| format!("write archive failed: {e}"))?;
+    }
+
+    // extract
+    if asset.name.ends_with(".zip") {
+        extract_zip(&archive_path, &install_dir)?;
+    } else if asset.name.ends_with(".tar.gz") {
+        extract_tar_gz(&archive_path, &install_dir)?;
+    } else {
+        return Err("unsupported archive type".into());
+    }
+
+    let py =
+        find_python_executable(&install_dir).ok_or_else(|| "python executable not found after extract".to_string())?;
+    Ok(EmbeddedPythonInstallResult {
+        python_command: vec![py.to_string_lossy().to_string()],
+        python_path: py.to_string_lossy().to_string(),
+        install_dir: install_dir.to_string_lossy().to_string(),
+        asset_name: asset.name,
+        tag: latest.tag,
+    })
+}
+
 #[tauri::command]
 async fn install_embedded_python(python_series: Option<String>) -> Result<EmbeddedPythonInstallResult, String> {
-    spawn_blocking_result(move || {
-        let python_series = python_series.unwrap_or_else(|| "3.11".to_string());
-        let triple = target_triple_hint()?;
-
-        let client = reqwest::blocking::Client::builder()
-            .user_agent("openakita-setup-center")
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| format!("http client build failed: {e}"))?;
-
-        let latest: LatestReleaseInfo = client
-            .get("https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json")
-            .send()
-            .map_err(|e| format!("fetch latest-release.json failed: {e}"))?
-            .error_for_status()
-            .map_err(|e| format!("fetch latest-release.json failed: {e}"))?
-            .json()
-            .map_err(|e| format!("parse latest-release.json failed: {e}"))?;
-
-        let gh: GhRelease = client
-            .get(format!(
-                "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}",
-                latest.tag
-            ))
-            .send()
-            .map_err(|e| format!("fetch github release failed: {e}"))?
-            .error_for_status()
-            .map_err(|e| format!("fetch github release failed: {e}"))?
-            .json()
-            .map_err(|e| format!("parse github release failed: {e}"))?;
-
-        let asset = pick_python_build_asset(&gh.assets, &python_series, triple)
-            .ok_or_else(|| "no matching python-build-standalone asset found".to_string())?;
-
-        let install_dir = embedded_python_root().join(&latest.tag).join(&asset.name);
-        if install_dir.exists() {
-            if let Some(py) = find_python_executable(&install_dir) {
-                return Ok(EmbeddedPythonInstallResult {
-                    python_command: vec![py.to_string_lossy().to_string()],
-                    python_path: py.to_string_lossy().to_string(),
-                    install_dir: install_dir.to_string_lossy().to_string(),
-                    asset_name: asset.name,
-                    tag: latest.tag,
-                });
-            }
-        }
-
-        fs::create_dir_all(&install_dir).map_err(|e| format!("create install dir failed: {e}"))?;
-        let archive_path = runtime_dir().join("downloads").join(&latest.tag).join(&asset.name);
-        if let Some(parent) = archive_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("create download dir failed: {e}"))?;
-        }
-
-        if !archive_path.exists() {
-            let mut resp = client
-                .get(&asset.browser_download_url)
-                .send()
-                .map_err(|e| format!("download failed: {e}"))?
-                .error_for_status()
-                .map_err(|e| format!("download failed: {e}"))?;
-            let mut out =
-                std::fs::File::create(&archive_path).map_err(|e| format!("create archive failed: {e}"))?;
-            std::io::copy(&mut resp, &mut out).map_err(|e| format!("write archive failed: {e}"))?;
-        }
-
-        // extract
-        if asset.name.ends_with(".zip") {
-            extract_zip(&archive_path, &install_dir)?;
-        } else if asset.name.ends_with(".tar.gz") {
-            extract_tar_gz(&archive_path, &install_dir)?;
-        } else {
-            return Err("unsupported archive type".into());
-        }
-
-        let py =
-            find_python_executable(&install_dir).ok_or_else(|| "python executable not found after extract".to_string())?;
-        Ok(EmbeddedPythonInstallResult {
-            python_command: vec![py.to_string_lossy().to_string()],
-            python_path: py.to_string_lossy().to_string(),
-            install_dir: install_dir.to_string_lossy().to_string(),
-            asset_name: asset.name,
-            tag: latest.tag,
-        })
-    })
-    .await
+    spawn_blocking_result(move || install_embedded_python_sync(python_series)).await
 }
 
 #[tauri::command]
@@ -2638,6 +3305,62 @@ async fn http_get_json(url: String) -> Result<String, String> {
     .await
 }
 
+/// Generic HTTP proxy – supports GET/POST with custom headers, bypasses CORS for the webview.
+/// `method`: "GET" | "POST"
+/// `headers`: JSON object of header key-value pairs, e.g. {"Authorization": "Bearer sk-xxx"}
+/// `body`: optional request body string (for POST)
+/// Returns `{ status, body }` as JSON string.
+#[tauri::command]
+async fn http_proxy_request(
+    url: String,
+    method: Option<String>,
+    headers: Option<std::collections::HashMap<String, String>>,
+    body: Option<String>,
+    timeout_secs: Option<u64>,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let timeout = timeout_secs.unwrap_or(30);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout))
+            .user_agent("openakita-desktop/1.0")
+            .build()
+            .map_err(|e| format!("HTTP client error: {e}"))?;
+
+        let m = method.as_deref().unwrap_or("GET").to_uppercase();
+        let mut req_builder = match m.as_str() {
+            "POST" => client.post(&url),
+            "PUT" => client.put(&url),
+            "DELETE" => client.delete(&url),
+            _ => client.get(&url),
+        };
+
+        if let Some(h) = headers {
+            for (k, v) in h {
+                req_builder = req_builder.header(&k, &v);
+            }
+        }
+        if let Some(b) = body {
+            req_builder = req_builder.body(b);
+        }
+
+        let resp = req_builder
+            .send()
+            .map_err(|e| format!("HTTP {} failed ({}): {}", m, url, e))?;
+
+        let status = resp.status().as_u16();
+        let resp_body = resp
+            .text()
+            .map_err(|e| format!("read response body failed: {e}"))?;
+
+        Ok(format!(
+            "{{\"status\":{},\"body\":{}}}",
+            status,
+            serde_json::to_string(&resp_body).unwrap_or_else(|_| "\"\"".to_string())
+        ))
+    })
+    .await
+}
+
 /// Read a file from disk and return its contents as a base64 data-URL.
 /// Used by the frontend to handle Tauri file-drop events (which provide paths, not File objects).
 #[tauri::command]
@@ -2744,4 +3467,576 @@ fn open_external_url(url: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to open URL: {e}"))?;
     }
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CLI 命令注册（跨平台）
+// ═══════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CliConfig {
+    commands: Vec<String>,
+    add_to_path: bool,
+    bin_dir: String,
+    installed_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CliStatus {
+    registered_commands: Vec<String>,
+    in_path: bool,
+    bin_dir: String,
+}
+
+/// 获取 CLI bin 目录路径
+fn cli_bin_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: 使用安装目录下的 bin/ 子目录
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        exe_dir.join("bin")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // macOS / Linux: 使用 ~/.openakita/bin/
+        openakita_root_dir().join("bin")
+    }
+}
+
+/// 获取后端可执行文件的绝对路径
+fn cli_backend_exe_path() -> Result<PathBuf, String> {
+    let exe = if cfg!(windows) {
+        bundled_backend_dir().join("openakita-server.exe")
+    } else {
+        bundled_backend_dir().join("openakita-server")
+    };
+    if exe.exists() {
+        return Ok(exe);
+    }
+    // 降级：尝试 venv 模式（开发环境）
+    let venv_py = if cfg!(windows) {
+        openakita_root_dir().join("venv").join("Scripts").join("python.exe")
+    } else {
+        openakita_root_dir().join("venv").join("bin").join("python3")
+    };
+    if venv_py.exists() {
+        return Ok(venv_py);
+    }
+    Err("未找到后端可执行文件（openakita-server 或 venv python）".into())
+}
+
+/// 读取 CLI 配置文件
+fn read_cli_config() -> Option<CliConfig> {
+    let path = openakita_root_dir().join("cli.json");
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// 写入 CLI 配置文件
+fn write_cli_config(config: &CliConfig) -> Result<(), String> {
+    let path = openakita_root_dir().join("cli.json");
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("序列化 CLI 配置失败: {e}"))?;
+    std::fs::write(&path, content)
+        .map_err(|e| format!("写入 cli.json 失败: {e}"))?;
+    Ok(())
+}
+
+/// 生成 wrapper 脚本内容
+fn generate_wrapper_content(backend_exe: &Path) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = backend_exe; // Windows 使用相对路径，不需要绝对路径
+        format!("@echo off\r\n\"%~dp0..\\resources\\openakita-server\\openakita-server.exe\" %*\r\n")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let exe_path = backend_exe.to_string_lossy();
+        format!(
+            "#!/bin/sh\n# OpenAkita CLI wrapper - managed by OpenAkita Desktop\nexec \"{}\" \"$@\"\n",
+            exe_path
+        )
+    }
+}
+
+/// 创建 wrapper 脚本文件
+fn create_wrapper_script(bin_dir: &Path, cmd_name: &str, backend_exe: &Path) -> Result<(), String> {
+    let content = generate_wrapper_content(backend_exe);
+
+    #[cfg(target_os = "windows")]
+    let file_path = bin_dir.join(format!("{}.cmd", cmd_name));
+    #[cfg(not(target_os = "windows"))]
+    let file_path = bin_dir.join(cmd_name);
+
+    std::fs::write(&file_path, &content)
+        .map_err(|e| format!("写入 {} 失败: {e}", file_path.display()))?;
+
+    // macOS / Linux: 设置可执行权限
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(&file_path, perms)
+            .map_err(|e| format!("chmod {} 失败: {e}", file_path.display()))?;
+    }
+
+    Ok(())
+}
+
+/// 删除 wrapper 脚本文件
+fn remove_wrapper_script(bin_dir: &Path, cmd_name: &str) {
+    #[cfg(target_os = "windows")]
+    let file_path = bin_dir.join(format!("{}.cmd", cmd_name));
+    #[cfg(not(target_os = "windows"))]
+    let file_path = bin_dir.join(cmd_name);
+
+    let _ = std::fs::remove_file(&file_path);
+}
+
+// ── PATH 操作：Windows ──
+
+#[cfg(target_os = "windows")]
+fn windows_add_to_path(bin_dir: &Path) -> Result<(), String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let bin_str = bin_dir.to_string_lossy().to_string();
+
+    // 尝试 HKLM (perMachine), 如果权限不够降级到 HKCU (currentUser)
+    let (hive, subkey) = {
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let sys_env = hklm.open_subkey_with_flags(
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            KEY_READ | KEY_WRITE,
+        );
+        if let Ok(key) = sys_env {
+            (key, "system")
+        } else {
+            let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+            let user_env = hkcu
+                .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
+                .map_err(|e| format!("无法打开用户环境变量注册表: {e}"))?;
+            (user_env, "user")
+        }
+    };
+
+    // 读取当前 PATH
+    let current_path: String = hive.get_value("Path").unwrap_or_default();
+
+    // 检查是否已存在
+    let separator = ";";
+    let paths: Vec<&str> = current_path.split(separator).collect();
+    if paths.iter().any(|p| p.eq_ignore_ascii_case(&bin_str)) {
+        return Ok(()); // 已存在，无需重复添加
+    }
+
+    // 检查 PATH 长度限制
+    let new_path = if current_path.is_empty() {
+        bin_str.clone()
+    } else {
+        format!("{}{}{}", current_path, separator, bin_str)
+    };
+    if new_path.len() > 2047 {
+        return Err("PATH 环境变量已接近长度限制 (2048)，无法追加".into());
+    }
+
+    // 写入注册表 (REG_EXPAND_SZ type to support %...% variables)
+    hive.set_value("Path", &new_path)
+        .map_err(|e| format!("写入 PATH 注册表失败 ({}): {e}", subkey))?;
+
+    // 广播 WM_SETTINGCHANGE
+    windows_broadcast_env_change();
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_remove_from_path(bin_dir: &Path) -> Result<(), String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let bin_str = bin_dir.to_string_lossy().to_string();
+    let separator = ";";
+
+    // 尝试系统和用户两个位置
+    for (hive_predef, subkey_path) in [
+        (HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (HKEY_CURRENT_USER, "Environment"),
+    ] {
+        let hive = RegKey::predef(hive_predef);
+        if let Ok(key) = hive.open_subkey_with_flags(subkey_path, KEY_READ | KEY_WRITE) {
+            let current_path: String = key.get_value("Path").unwrap_or_default();
+            let new_paths: Vec<&str> = current_path
+                .split(separator)
+                .filter(|p| !p.eq_ignore_ascii_case(&bin_str) && !p.is_empty())
+                .collect();
+            let new_path = new_paths.join(separator);
+            let _ = key.set_value("Path", &new_path);
+        }
+    }
+
+    windows_broadcast_env_change();
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_is_in_path(bin_dir: &Path) -> bool {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let bin_str = bin_dir.to_string_lossy().to_string();
+
+    for (hive_predef, subkey_path) in [
+        (HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (HKEY_CURRENT_USER, "Environment"),
+    ] {
+        let hive = RegKey::predef(hive_predef);
+        if let Ok(key) = hive.open_subkey_with_flags(subkey_path, KEY_READ) {
+            let current_path: String = key.get_value("Path").unwrap_or_default();
+            if current_path
+                .split(';')
+                .any(|p| p.eq_ignore_ascii_case(&bin_str))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn windows_broadcast_env_change() {
+    use std::ffi::CString;
+    // SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", ...)
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendMessageTimeoutA(
+            hwnd: isize,
+            msg: u32,
+            w_param: usize,
+            l_param: *const u8,
+            fu_flags: u32,
+            u_timeout: u32,
+            lpdw_result: *mut usize,
+        ) -> isize;
+    }
+    let env_str = CString::new("Environment").unwrap();
+    unsafe {
+        let mut result: usize = 0;
+        // HWND_BROADCAST = 0xFFFF, WM_SETTINGCHANGE = 0x001A, SMTO_ABORTIFHUNG = 0x0002
+        SendMessageTimeoutA(
+            0xFFFF_isize,
+            0x001A,
+            0,
+            env_str.as_ptr() as *const u8,
+            0x0002,
+            5000,
+            &mut result,
+        );
+    }
+}
+
+// ── PATH 操作：macOS / Linux ──
+
+#[cfg(not(target_os = "windows"))]
+fn unix_add_to_path(bin_dir: &Path) -> Result<(), String> {
+    let bin_str = bin_dir.to_string_lossy().to_string();
+    let marker_start = "# >>> openakita cli >>>";
+    let marker_end = "# <<< openakita cli <<<";
+    let block = format!(
+        "{}\nexport PATH=\"{}:$PATH\"\n{}\n",
+        marker_start, bin_str, marker_end
+    );
+
+    // 确定要写入的 shell profile 文件
+    let home = home_dir().ok_or("无法获取 HOME 目录")?;
+    let profiles = get_shell_profiles(&home);
+
+    for profile in &profiles {
+        // 读取现有内容，检查是否已存在标记
+        let existing = std::fs::read_to_string(profile).unwrap_or_default();
+        if existing.contains(marker_start) {
+            // 已有标记，替换旧的 block
+            let lines: Vec<&str> = existing.lines().collect();
+            let mut new_lines: Vec<&str> = Vec::new();
+            let mut in_block = false;
+            for line in &lines {
+                if line.contains(marker_start) {
+                    in_block = true;
+                    continue;
+                }
+                if line.contains(marker_end) {
+                    in_block = false;
+                    continue;
+                }
+                if !in_block {
+                    new_lines.push(line);
+                }
+            }
+            let mut content = new_lines.join("\n");
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(&block);
+            std::fs::write(profile, content)
+                .map_err(|e| format!("写入 {} 失败: {e}", profile.display()))?;
+        } else {
+            // 追加到文件末尾
+            let mut content = existing;
+            if !content.is_empty() && !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(&block);
+            std::fs::write(profile, content)
+                .map_err(|e| format!("写入 {} 失败: {e}", profile.display()))?;
+        }
+    }
+
+    // Linux: 额外尝试在 ~/.local/bin/ 创建 symlink
+    #[cfg(target_os = "linux")]
+    {
+        let local_bin = home.join(".local").join("bin");
+        if local_bin.exists() || std::fs::create_dir_all(&local_bin).is_ok() {
+            // 读取 CLI 配置，为每个注册的命令创建 symlink
+            if let Some(config) = read_cli_config() {
+                for cmd in &config.commands {
+                    let src = bin_dir.join(cmd);
+                    let dst = local_bin.join(cmd);
+                    let _ = std::fs::remove_file(&dst); // 先删除旧的
+                    let _ = std::os::unix::fs::symlink(&src, &dst);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unix_remove_from_path(_bin_dir: &Path) -> Result<(), String> {
+    let marker_start = "# >>> openakita cli >>>";
+    let marker_end = "# <<< openakita cli <<<";
+
+    let home = home_dir().ok_or("无法获取 HOME 目录")?;
+    let profiles = get_shell_profiles(&home);
+
+    for profile in &profiles {
+        if !profile.exists() {
+            continue;
+        }
+        let existing = std::fs::read_to_string(profile).unwrap_or_default();
+        if !existing.contains(marker_start) {
+            continue;
+        }
+        let lines: Vec<&str> = existing.lines().collect();
+        let mut new_lines: Vec<&str> = Vec::new();
+        let mut in_block = false;
+        for line in &lines {
+            if line.contains(marker_start) {
+                in_block = true;
+                continue;
+            }
+            if line.contains(marker_end) {
+                in_block = false;
+                continue;
+            }
+            if !in_block {
+                new_lines.push(line);
+            }
+        }
+        let content = new_lines.join("\n");
+        let _ = std::fs::write(profile, content);
+    }
+
+    // Linux: 清理 ~/.local/bin/ 中的 symlink
+    #[cfg(target_os = "linux")]
+    {
+        let local_bin = home.join(".local").join("bin");
+        if let Some(config) = read_cli_config() {
+            for cmd in &config.commands {
+                let dst = local_bin.join(cmd);
+                let _ = std::fs::remove_file(&dst);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn unix_is_in_path(bin_dir: &Path) -> bool {
+    let marker_start = "# >>> openakita cli >>>";
+    let home = match home_dir() {
+        Some(h) => h,
+        None => return false,
+    };
+    let profiles = get_shell_profiles(&home);
+    for profile in &profiles {
+        if let Ok(content) = std::fs::read_to_string(profile) {
+            if content.contains(marker_start) {
+                return true;
+            }
+        }
+    }
+    // 也检查当前运行时的 PATH
+    if let Ok(path) = std::env::var("PATH") {
+        let bin_str = bin_dir.to_string_lossy();
+        if path.split(':').any(|p| p == bin_str.as_ref()) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_shell_profiles(home: &Path) -> Vec<PathBuf> {
+    let mut profiles = Vec::new();
+    // zsh (macOS default, also common on Linux)
+    let zshrc = home.join(".zshrc");
+    profiles.push(zshrc);
+    // bash
+    #[cfg(target_os = "macos")]
+    {
+        profiles.push(home.join(".bash_profile"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        profiles.push(home.join(".bashrc"));
+    }
+    profiles
+}
+
+// ── Tauri 命令 ──
+
+#[tauri::command]
+fn register_cli(commands: Vec<String>, add_to_path: bool) -> Result<String, String> {
+    if commands.is_empty() {
+        return Err("至少需要选择一个命令名称".into());
+    }
+
+    // 验证命令名仅包含合法字符
+    for cmd in &commands {
+        if !cmd.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(format!("命令名 '{}' 包含非法字符", cmd));
+        }
+    }
+
+    let bin_dir = cli_bin_dir();
+    std::fs::create_dir_all(&bin_dir)
+        .map_err(|e| format!("创建 bin 目录失败: {e}"))?;
+
+    // 获取后端可执行文件路径
+    let backend_exe = cli_backend_exe_path()?;
+
+    // 生成 wrapper 脚本
+    for cmd_name in &commands {
+        create_wrapper_script(&bin_dir, cmd_name, &backend_exe)?;
+    }
+
+    // PATH 注入
+    if add_to_path {
+        #[cfg(target_os = "windows")]
+        windows_add_to_path(&bin_dir)?;
+
+        #[cfg(not(target_os = "windows"))]
+        unix_add_to_path(&bin_dir)?;
+    }
+
+    // 保存配置
+    let config = CliConfig {
+        commands: commands.clone(),
+        add_to_path,
+        bin_dir: bin_dir.to_string_lossy().to_string(),
+        installed_at: {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            format!("{}", now)
+        },
+    };
+    write_cli_config(&config)?;
+
+    Ok(format!(
+        "CLI 命令已注册: {}{}",
+        commands.join(", "),
+        if add_to_path { " (已添加到 PATH)" } else { "" }
+    ))
+}
+
+#[tauri::command]
+fn unregister_cli() -> Result<String, String> {
+    let config = read_cli_config().ok_or("未找到 CLI 配置")?;
+    let bin_dir = PathBuf::from(&config.bin_dir);
+
+    // 删除 wrapper 脚本
+    for cmd_name in &config.commands {
+        remove_wrapper_script(&bin_dir, cmd_name);
+    }
+
+    // 从 PATH 移除
+    if config.add_to_path {
+        #[cfg(target_os = "windows")]
+        windows_remove_from_path(&bin_dir)?;
+
+        #[cfg(not(target_os = "windows"))]
+        unix_remove_from_path(&bin_dir)?;
+    }
+
+    // 清理 bin 目录（如果为空）
+    let _ = std::fs::remove_dir(&bin_dir);
+
+    // 删除配置文件
+    let config_path = openakita_root_dir().join("cli.json");
+    let _ = std::fs::remove_file(&config_path);
+
+    Ok("CLI 命令已注销".into())
+}
+
+#[tauri::command]
+fn get_cli_status() -> Result<CliStatus, String> {
+    let bin_dir = cli_bin_dir();
+
+    if let Some(config) = read_cli_config() {
+        // 验证 wrapper 脚本是否实际存在
+        let existing_commands: Vec<String> = config
+            .commands
+            .iter()
+            .filter(|cmd| {
+                #[cfg(target_os = "windows")]
+                let path = PathBuf::from(&config.bin_dir).join(format!("{}.cmd", cmd));
+                #[cfg(not(target_os = "windows"))]
+                let path = PathBuf::from(&config.bin_dir).join(cmd.as_str());
+                path.exists()
+            })
+            .cloned()
+            .collect();
+
+        let in_path = {
+            #[cfg(target_os = "windows")]
+            { windows_is_in_path(&PathBuf::from(&config.bin_dir)) }
+            #[cfg(not(target_os = "windows"))]
+            { unix_is_in_path(&PathBuf::from(&config.bin_dir)) }
+        };
+
+        Ok(CliStatus {
+            registered_commands: existing_commands,
+            in_path,
+            bin_dir: config.bin_dir,
+        })
+    } else {
+        Ok(CliStatus {
+            registered_commands: vec![],
+            in_path: false,
+            bin_dir: bin_dir.to_string_lossy().to_string(),
+        })
+    }
 }

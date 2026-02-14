@@ -83,15 +83,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Windows - 核心包 + 完整包
           - platform: windows-latest
             bundles: "nsis"
             args: ""
+            build_mode: "core"
+            suffix: "-core"
+          - platform: windows-latest
+            bundles: "nsis"
+            args: ""
+            build_mode: "full"
+            suffix: "-full"
+          # Linux
           - platform: ubuntu-22.04
             bundles: "deb,appimage"
             args: ""
+            build_mode: "core"
+            suffix: ""
+          # macOS
           - platform: macos-latest
             bundles: "dmg"
             args: ""
+            build_mode: "core"
+            suffix: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -111,6 +125,11 @@ jobs:
             libfuse2 \
             rpm
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -127,13 +146,40 @@ jobs:
           workspaces: |
             apps/setup-center/src-tauri -> target
 
+      - name: Install Python project and PyInstaller
+        run: |
+          pip install -e ".[all]"
+          pip install pyinstaller
+
+      - name: Package Python backend (PyInstaller)
+        run: python build/build_backend.py --mode ${{ matrix.build_mode }}
+
+      - name: Bundle optional modules (full mode only)
+        if: matrix.build_mode == 'full'
+        run: python build/bundle_modules.py
+
+      - name: Copy backend to Tauri resources
+        shell: bash
+        run: |
+          RESOURCE_DIR="apps/setup-center/src-tauri/resources"
+          mkdir -p "$RESOURCE_DIR"
+          cp -r dist/openakita-server "$RESOURCE_DIR/openakita-server"
+          if [ "${{ matrix.build_mode }}" = "full" ] && [ -d "build/modules" ]; then
+            cp -r build/modules "$RESOURCE_DIR/modules"
+          fi
+          echo "Resources copied:"
+          du -sh "$RESOURCE_DIR"/*
+
       - name: Install frontend dependencies
         working-directory: apps/setup-center
         run: npm ci
 
       - name: Build Tauri bundles
         working-directory: apps/setup-center
-        run: npm run tauri build -- --bundles "${{ matrix.bundles }}" ${{ matrix.args }}
+        env:
+          # full 构建需要额外包含 modules 资源目录
+          TAURI_CONFIG: ${{ matrix.build_mode == 'full' && '{"bundle":{"resources":["resources/openakita-server/","resources/modules/"]}}' || '' }}
+        run: npx tauri build --bundles "${{ matrix.bundles }}" ${{ matrix.args }}
 
       - name: List bundle outputs
         shell: bash
@@ -155,12 +201,19 @@ jobs:
           rm -rf "${OUT_DIR}"
           mkdir -p "${OUT_DIR}"
 
+          SUFFIX="${{ matrix.suffix }}"
           copy_norm() {
             local f="$1"
             local base
             base="$(basename "$f")"
             # 统一文件名：把空格换成点，避免 Release 里出现重复/难找的资产名
             local norm="${base// /.}"
+            # 在扩展名前插入构建模式后缀（如 -core, -full）
+            if [ -n "${SUFFIX}" ]; then
+              local ext="${norm##*.}"
+              local name="${norm%.*}"
+              norm="${name}${SUFFIX}.${ext}"
+            fi
             cp -f "$f" "${OUT_DIR}/${norm}"
           }
 

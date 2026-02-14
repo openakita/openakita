@@ -7,6 +7,7 @@
     "chat": "Chat",
     "im": "IM Channels",
     "skills": "Skills",
+    "modules": "Modules",
     "status": "Status",
     "config": "Config",
     "configProgress": "{{done}}/{{total}}",
@@ -437,7 +438,17 @@
     "addCompiler": "Add Compiler Endpoint",
     "noCompiler": "No compiler endpoints configured",
     "apiKeyEnv": "API Key Env Var Name",
-    "customProvider": "Custom Provider"
+    "customProvider": "Custom Provider",
+    "testConnection": "Test Connection",
+    "testTesting": "Testing...",
+    "testSuccess": "Connection OK",
+    "testFailed": "Connection Failed",
+    "testModelCount": "{{count}} models found",
+    "testNetworkError": "Network unreachable, check API URL",
+    "testAuthError": "Authentication failed, check API Key",
+    "testForbidden": "Access denied, check API Key permissions",
+    "testNotFound": "Endpoint not found, check API URL",
+    "testTimeout": "Connection timed out, check network"
   },
   "welcome": {
     "title": "Setup Guide",
@@ -527,5 +538,77 @@
     "viewRelease": "View Release",
     "dismiss": "Later",
     "checking": "Checking for updates..."
+  },
+  "onboarding": {
+    "defaultWorkspace": "Default Workspace",
+    "welcome": {
+      "title": "Welcome to OpenAkita",
+      "desc": "Your all-in-one self-evolving AI Agent. Let's get you set up quickly.",
+      "start": "Get Started",
+      "advancedLink": "Advanced user? Use the full configuration wizard",
+      "envWarning": "Environment issues detected",
+      "envCleaned": "Environment cleaned up",
+      "serviceDetected": "Running service detected",
+      "serviceDetectedDesc": "A local OpenAkita service is already running (version {{version}}). You can connect to it directly.",
+      "connectExisting": "Connect to existing service",
+      "continueSetup": "Continue setup (ignore)"
+    },
+    "skipHint": "You can skip this step and complete the setup later in the Settings panel.",
+    "llm": {
+      "title": "Configure AI Model",
+      "desc": "Add at least one LLM endpoint (API Key). OpenAkita will use it to think and act.",
+      "skip": "Skip, configure later"
+    },
+    "im": {
+      "title": "IM Channels (Optional)",
+      "desc": "Connect Telegram, Feishu, DingTalk and other messaging platforms to let AI serve you directly in chat.",
+      "skip": "Skip, set up later",
+      "skipShort": "Skip"
+    },
+    "modules": {
+      "title": "Feature Modules",
+      "desc": "Select optional feature modules to install. Unselected modules can be installed later in settings.",
+      "installed": "Installed",
+      "loading": "Detecting modules...",
+      "installAndContinue": "Install & Continue",
+      "skipAndContinue": "Skip, start now"
+    },
+    "progress": {
+      "title": "Setting up...",
+      "creatingWorkspace": "Creating workspace...",
+      "workspaceCreated": "✓ Workspace created",
+      "workspaceExists": "✓ Workspace already exists",
+      "llmConfigSaved": "✓ LLM configuration saved",
+      "envSaved": "✓ Environment variables saved",
+      "installingModule": "Installing module: {{module}}...",
+      "moduleInstalled": "✓ {{module}} installed",
+      "moduleFailed": "✗ {{module}} installation failed: {{error}}",
+      "startingService": "Starting backend service...",
+      "serviceStarted": "✓ Backend service started",
+      "serviceStartFailed": "⚠ Service start failed: {{error}} (can start manually later)",
+      "done": "✓ All setup complete!",
+      "error": "Setup error: {{error}}",
+      "working": "Working..."
+    },
+    "done": {
+      "title": "Setup Complete!",
+      "desc": "OpenAkita is ready. Begin your AI journey.",
+      "enter": "Enter OpenAkita",
+      "someErrors": "Some issues occurred",
+      "errorsHint": "You can reinstall failed modules in settings."
+    }
+  },
+  "modules": {
+    "title": "Module Management",
+    "desc": "Manage optional feature module installation and removal. Restart backend service after changes.",
+    "installed": "Installed",
+    "install": "Install",
+    "uninstall": "Uninstall",
+    "installing": "Installing {{name}}...",
+    "installSuccess": "{{name}} installed successfully",
+    "uninstalled": "{{name}} uninstalled",
+    "bundledCannotUninstall": "Bundled modules cannot be uninstalled",
+    "loading": "Loading module list...",
+    "refresh": "Refresh"
   }
 }

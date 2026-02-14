@@ -2593,6 +2593,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-single-instance",
+ "winreg 0.55.0",
  "zip",
 ]
 

@@ -274,6 +274,36 @@ async def write_skills_config(body: SkillsWriteRequest):
     return {"status": "ok"}
 
 
+@router.get("/api/config/providers")
+async def list_providers_api():
+    """返回后端已注册的 LLM 服务商列表。
+
+    前端可在后端运行时通过此 API 获取最新的 provider 列表，
+    确保前后端数据一致。
+    """
+    try:
+        from openakita.llm.registries import list_providers
+
+        providers = list_providers()
+        return {
+            "providers": [
+                {
+                    "name": p.name,
+                    "slug": p.slug,
+                    "api_type": p.api_type,
+                    "default_base_url": p.default_base_url,
+                    "api_key_env_suggestion": getattr(p, "api_key_env_suggestion", ""),
+                    "supports_model_list": getattr(p, "supports_model_list", True),
+                    "supports_capability_api": getattr(p, "supports_capability_api", False),
+                }
+                for p in providers
+            ]
+        }
+    except Exception as e:
+        logger.error(f"[Config API] list-providers failed: {e}")
+        return {"providers": [], "error": str(e)}
+
+
 @router.post("/api/config/list-models")
 async def list_models_api(body: ListModelsRequest):
     """拉取 LLM 端点的模型列表（远程模式替代 Tauri openakita_list_models 命令）。

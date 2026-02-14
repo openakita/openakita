@@ -1072,8 +1072,28 @@ button:disabled {
   border-top: 1px solid var(--line);
   flex-shrink: 0;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
+}
+
+/* 端点连接测试结果 */
+.connTestResult {
+  margin: 0 24px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.connTestOk {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #059669;
+}
+.connTestFail {
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #dc2626;
 }
 
 /* Capability chips */
@@ -1695,3 +1715,333 @@ button:disabled {
   }
 }
 
+/* ──────────────────────────────────────────────────
+   Onboarding Wizard (全屏首次安装引导)
+   ────────────────────────────────────────────────── */
+
+.onboardingShell {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  overflow: hidden;
+}
+
+.obPage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+.obCenter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 520px;
+  gap: 16px;
+}
+
+.obLogo {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 8px;
+  border-radius: 16px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.obTitle {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+.obDesc {
+  font-size: 15px;
+  color: #64748b;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.obBtn {
+  padding: 12px 40px;
+  font-size: 15px;
+  border-radius: 10px;
+  margin-top: 8px;
+}
+
+.obLinkBtn {
+  background: none;
+  border: none;
+  color: #5B8DEF;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  opacity: 0.7;
+}
+.obLinkBtn:hover {
+  opacity: 1;
+}
+
+.obWarning {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  padding: 12px 16px;
+  text-align: left;
+  width: 100%;
+  font-size: 13px;
+  color: #92400e;
+}
+.obWarning ul {
+  margin: 8px 0 0 16px;
+  padding: 0;
+}
+.obWarning li {
+  margin-bottom: 4px;
+}
+
+/* Environment auto-cleaned info box */
+.obInfo {
+  background: #ecfdf5;
+  border: 1px solid #34d399;
+  border-radius: 8px;
+  padding: 12px 16px;
+  text-align: left;
+  width: 100%;
+  font-size: 13px;
+  color: #065f46;
+}
+.obInfo ul {
+  margin: 8px 0 0 16px;
+  padding: 0;
+}
+.obInfo li {
+  margin-bottom: 4px;
+}
+
+/* Onboarding content pages (LLM, IM, Modules) */
+.obContent {
+  flex: 1;
+  width: 100%;
+  max-width: 680px;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.obStepTitle {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 8px;
+}
+
+.obStepDesc {
+  font-size: 14px;
+  color: #64748b;
+  margin: 0 0 20px;
+}
+
+.obFormArea {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+/* Onboarding footer */
+.obFooter {
+  width: 100%;
+  max-width: 680px;
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.obFooterBtns {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.obSkipBtn {
+  background: none;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.obSkipBtn:hover {
+  background: #f1f5f9;
+}
+
+/* Skip hint text */
+.obSkipHint {
+  margin-top: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #94a3b8;
+  background: #f8fafc;
+  border-left: 3px solid #cbd5e1;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Step indicator dots */
+.obStepIndicator {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+}
+
+.obDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  transition: all 0.2s;
+}
+
+.obDotActive {
+  background: #5B8DEF;
+  transform: scale(1.3);
+}
+
+.obDotDone {
+  background: #22c55e;
+}
+
+/* Module selection list */
+.obModuleList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.obModuleItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.obModuleItem:hover {
+  border-color: #5B8DEF;
+}
+.obModuleItem input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #5B8DEF;
+}
+
+.obModuleInstalled {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.obModuleInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.obModuleInfo strong {
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.obModuleDesc {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.obModuleSize {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.obModuleBadge {
+  font-size: 11px;
+  color: #16a34a;
+  background: #dcfce7;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+/* Progress log */
+.obProgressLog {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 16px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 13px;
+  color: #e2e8f0;
+  min-height: 200px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.obProgressLine {
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+.obProgressSpinner {
+  color: #5B8DEF;
+}
+.obProgressSpinner::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  border: 2px solid #5B8DEF;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: obSpin 0.8s linear infinite;
+}
+
+@keyframes obSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Inline spinning icon for progress tasks */
+.obProgressSpinnerIcon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2.5px solid #3b82f6;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: obSpin 0.75s linear infinite;
+  vertical-align: middle;
+}
+
+/* Done page */
+.obDoneIcon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #fff;
+  font-size: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+}

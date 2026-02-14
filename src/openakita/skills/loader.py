@@ -295,7 +295,12 @@ class SkillLoader:
         args = args or []
 
         if script_path.suffix == ".py":
-            cmd = [sys.executable, str(script_path)] + args
+            # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
+            from openakita.runtime_env import get_python_executable
+            py = get_python_executable()
+            if not py:
+                return False, "Python 解释器不可用，无法执行脚本"
+            cmd = [py, str(script_path)] + args
         elif script_path.suffix in (".sh", ".bash"):
             bash_path = shutil.which("bash")
             if not bash_path:

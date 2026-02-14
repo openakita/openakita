@@ -15,6 +15,9 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ],
+    "resources": [
+      "resources/openakita-server/"
+    ],
     "windows": {
       "nsis": {
         "installerHooks": "./windows/hooks.nsh",

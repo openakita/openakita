@@ -651,6 +651,11 @@ def infer_capabilities(
 
     Returns:
         {"text": bool, "vision": bool, "video": bool, "tools": bool, "thinking": bool}
+
+    ⚠ 维护提示：前端有此函数的简化版 (apps/setup-center/src/App.tsx → inferCapabilities)，
+    用于打包模式下前端直连服务商 API 拉取模型列表时的 capability 推断。
+    如果修改了下方的关键词规则（第 4 步"基于模型名关键词智能推断"），
+    需要同步更新前端的 inferCapabilities 函数。
     """
     # 1. 优先使用用户配置
     if user_config:

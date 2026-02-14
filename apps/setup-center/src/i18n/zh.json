@@ -7,6 +7,7 @@
     "chat": "聊天",
     "im": "IM 通道",
     "skills": "技能",
+    "modules": "模块",
     "status": "状态",
     "config": "配置",
     "configProgress": "{{done}}/{{total}}",
@@ -437,7 +438,17 @@
     "addCompiler": "添加编译端点",
     "noCompiler": "未配置编译端点",
     "apiKeyEnv": "API Key 环境变量名",
-    "customProvider": "自定义服务商"
+    "customProvider": "自定义服务商",
+    "testConnection": "测试连接",
+    "testTesting": "测试中...",
+    "testSuccess": "连接成功",
+    "testFailed": "连接失败",
+    "testModelCount": "发现 {{count}} 个模型",
+    "testNetworkError": "网络不可达，请检查 API 地址是否正确",
+    "testAuthError": "认证失败，请检查 API Key 是否正确",
+    "testForbidden": "权限不足，请检查 API Key 权限",
+    "testNotFound": "接口不存在，请检查 API 地址",
+    "testTimeout": "连接超时，请检查网络"
   },
   "welcome": {
     "title": "配置向导",
@@ -527,5 +538,77 @@
     "viewRelease": "查看发布页",
     "dismiss": "稍后再说",
     "checking": "检查更新..."
+  },
+  "onboarding": {
+    "defaultWorkspace": "默认工作区",
+    "welcome": {
+      "title": "欢迎使用 OpenAkita",
+      "desc": "全能自进化 AI Agent，让我们快速完成初始配置。",
+      "start": "开始配置",
+      "advancedLink": "高级用户？使用完整配置向导",
+      "envWarning": "检测到环境异常",
+      "envCleaned": "环境清理完成",
+      "serviceDetected": "检测到已运行的服务",
+      "serviceDetectedDesc": "本地已有 OpenAkita 服务在运行（版本 {{version}}），可以直接连接使用。",
+      "connectExisting": "连接已有服务",
+      "continueSetup": "继续配置（忽略）"
+    },
+    "skipHint": "此步骤可以跳过，稍后在程序「配置」界面中完成设置。",
+    "llm": {
+      "title": "配置 AI 模型",
+      "desc": "添加至少一个 LLM 端点（API Key），OpenAkita 将使用它来思考和行动。",
+      "skip": "跳过，稍后配置"
+    },
+    "im": {
+      "title": "IM 通道（可选）",
+      "desc": "连接 Telegram、飞书、钉钉等即时通讯平台，让 AI 直接在聊天中为你服务。",
+      "skip": "跳过，稍后设置",
+      "skipShort": "跳过"
+    },
+    "modules": {
+      "title": "功能模块",
+      "desc": "选择需要安装的可选功能模块。未勾选的模块可以稍后在设置中安装。",
+      "installed": "已安装",
+      "loading": "正在检测模块...",
+      "installAndContinue": "安装并继续",
+      "skipAndContinue": "跳过，直接开始"
+    },
+    "progress": {
+      "title": "正在配置...",
+      "creatingWorkspace": "正在创建工作区...",
+      "workspaceCreated": "✓ 工作区创建完成",
+      "workspaceExists": "✓ 工作区已存在",
+      "llmConfigSaved": "✓ LLM 配置已保存",
+      "envSaved": "✓ 环境变量已保存",
+      "installingModule": "正在安装模块: {{module}}...",
+      "moduleInstalled": "✓ {{module}} 安装完成",
+      "moduleFailed": "✗ {{module}} 安装失败: {{error}}",
+      "startingService": "正在启动后端服务...",
+      "serviceStarted": "✓ 后端服务已启动",
+      "serviceStartFailed": "⚠ 服务启动失败: {{error}}（可稍后手动启动）",
+      "done": "✓ 全部配置完成!",
+      "error": "配置过程出错: {{error}}",
+      "working": "处理中..."
+    },
+    "done": {
+      "title": "配置完成！",
+      "desc": "OpenAkita 已准备就绪，开始你的 AI 之旅吧。",
+      "enter": "进入 OpenAkita",
+      "someErrors": "部分操作出现问题",
+      "errorsHint": "你可以在设置中重新安装失败的模块。"
+    }
+  },
+  "modules": {
+    "title": "模块管理",
+    "desc": "管理可选功能模块的安装与卸载。安装模块后需要重启后端服务生效。",
+    "installed": "已安装",
+    "install": "安装",
+    "uninstall": "卸载",
+    "installing": "正在安装 {{name}}...",
+    "installSuccess": "{{name}} 安装成功",
+    "uninstalled": "{{name}} 已卸载",
+    "bundledCannotUninstall": "内置模块无法卸载",
+    "loading": "正在加载模块列表...",
+    "refresh": "刷新"
   }
 }

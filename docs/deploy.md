@@ -854,6 +854,23 @@ python -m openakita.llm.setup.cli
 # 选择 "4. 测试端点" 即可验证连通性
 ```
 
+### Q: macOS 安装后提示"已损坏，无法打开"？
+
+这是因为桌面端安装包尚未进行 Apple 签名和公证（Notarization），macOS Gatekeeper 会阻止未签名的应用运行。
+
+**解决方法：** 在终端执行以下命令移除隔离属性：
+
+```bash
+# 1. 移除 DMG 文件的隔离属性（下载后、打开前执行）
+xattr -cr ~/Downloads/OpenAkita.Desktop_*_aarch64.dmg
+
+# 2. 将 app 拖入 Applications 后，对 app 再执行一次
+xattr -cr /Applications/OpenAkita\ Desktop.app
+```
+
+> **说明：** 两条命令都执行最保险，核心是第 2 条。执行后即可正常打开应用。
+> 如果仍无法打开，可前往「系统设置 → 隐私与安全性」，在页面底部点击"仍要打开"。
+
 ---
 
 ## 更新与卸载

@@ -62,6 +62,10 @@ ${StrLoc}
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
+; WM_SETTINGCHANGE / HWND_BROADCAST for PATH environment variable notification
+!define /ifndef HWND_BROADCAST 0xFFFF
+!define /ifndef WM_SETTINGCHANGE 0x001A
+
 Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
@@ -141,9 +145,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
 ; Installer pages, must be ordered as they appear
-; 1. Welcome Page
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
-!insertmacro MUI_PAGE_WELCOME
+; 1. Welcome Page (已移除 - 欢迎流程由 App Onboarding Wizard 接管)
+; !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+; !insertmacro MUI_PAGE_WELCOME
 
 ; 2. License Page (if defined)
 !if "${LICENSE}" != ""
@@ -364,15 +368,28 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
-; 6. Start menu shortcut page
+; 6. Start menu shortcut page (简化 - 跳过页面，使用默认值)
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
- !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+ !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
  !define MUI_STARTMENUPAGE_DEFAULTFOLDER "${STARTMENUFOLDER}"
 !else
  !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
+
+; 6.5 环境检测自定义页面 (检测 ~/.openakita 旧残留)
+Var EnvCleanVenv
+Var EnvCleanRuntime
+Var EnvCleanUserData
+Var EnvCleanUserDataConfirmed
+Page custom PageEnvCheck PageLeaveEnvCheck
+
+; 6.6 CLI 命令行工具配置页面
+Var CliCheckOpenakita
+Var CliCheckOa
+Var CliCheckPath
+Page custom PageCliSetup PageLeaveCliSetup
 
 ; 7. Installation page
 !insertmacro MUI_PAGE_INSTFILES
@@ -384,14 +401,209 @@ Var AppStartMenuFolder
 !define MUI_FINISHPAGE_SHOWREADME
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateOrUpdateDesktopShortcut
-; Show run app after installation.
+; Show run app after installation (with --first-run flag for onboarding wizard).
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_FINISH
 
 Function RunMainBinary
- nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+ ; 安装后首次启动，传入 --first-run 触发 Onboarding Wizard
+ nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "--first-run"
+FunctionEnd
+
+; ── 环境检测页面实现 ──
+Function PageEnvCheck
+ ; passive/silent 模式跳过
+ ${If} $PassiveMode = 1
+  Abort
+ ${EndIf}
+
+ ; 检测 ~/.openakita 是否存在旧残留
+ ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
+ StrCpy $R9 0 ; 标记是否有可清理的内容
+ ${If} ${FileExists} "$R0\venv\*.*"
+  StrCpy $R9 1
+ ${EndIf}
+ ${If} ${FileExists} "$R0\runtime\*.*"
+  StrCpy $R9 1
+ ${EndIf}
+ ${If} ${FileExists} "$R0\workspaces\*.*"
+  StrCpy $R9 1
+ ${EndIf}
+ ${If} $R9 = 0
+  ; 无残留，跳过此页
+  Abort
+ ${EndIf}
+
+ ; 重置确认状态
+ StrCpy $EnvCleanUserDataConfirmed 0
+
+ nsDialogs::Create 1018
+ Pop $0
+ ${IfThen} $0 == "error" ${|} Abort ${|}
+ ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
+
+ ${NSD_CreateLabel} 0 0 100% 26u "检测到旧版 OpenAkita 环境数据，可能影响新版本运行。$\n新版本已内置 Python 运行时，旧环境可以安全清理。"
+ Pop $0
+
+ ; ── 环境清理选项 (默认勾选) ──
+ ; 使用固定 Y 坐标，每项间隔 16u，checkbox 高度 12u
+
+ ${If} ${FileExists} "$R0\venv\*.*"
+  ${NSD_CreateCheckbox} 14u 34u -14u 12u "清理旧的 Python 虚拟环境 (venv)"
+  Pop $EnvCleanVenv
+  ${NSD_SetState} $EnvCleanVenv ${BST_CHECKED}
+ ${EndIf}
+
+ ${If} ${FileExists} "$R0\runtime\*.*"
+  ${NSD_CreateCheckbox} 14u 50u -14u 12u "清理旧的 Python 运行时 (runtime)"
+  Pop $EnvCleanRuntime
+  ${NSD_SetState} $EnvCleanRuntime ${BST_CHECKED}
+ ${EndIf}
+
+ ; ── 用户数据清理选项 (默认不勾选) ──
+ ${NSD_CreateCheckbox} 14u 76u -14u 12u "清理用户数据（工作区、配置文件、对话记录等）"
+ Pop $EnvCleanUserData
+ ${NSD_SetState} $EnvCleanUserData ${BST_UNCHECKED}
+
+ ${NSD_CreateLabel} 22u 92u -22u 26u "⚠ 警告：清理用户数据将永久删除所有工作区配置、对话记录$\n和个人设置，此操作不可撤销！"
+ Pop $0
+ SetCtlColors $0 "CC0000" "transparent"
+
+ ; ── 底部提示 ──
+ ${NSD_CreateLabel} 0 126u 100% 12u "提示：用户数据清理需要二次确认方可执行。"
+ Pop $0
+ SetCtlColors $0 "888888" "transparent"
+
+ nsDialogs::Show
+FunctionEnd
+
+Function PageLeaveEnvCheck
+ ; ── 用户数据清理确认逻辑 ──
+ ${If} $EnvCleanUserData != ""
+  ${NSD_GetState} $EnvCleanUserData $0
+  ${If} $0 = ${BST_CHECKED}
+   ; 弹出确认对话框，要求输入 "DELETE" 确认
+   MessageBox MB_YESNO|MB_ICONEXCLAMATION \
+     "您选择了清理用户数据，这将永久删除所有工作区、配置文件和对话记录！$\n$\n此操作不可撤销，是否继续？" \
+     IDYES env_userdata_confirm_input
+   ; 用户点了 No，回到页面
+   Abort
+
+   env_userdata_confirm_input:
+   ; 二次确认：要求用户输入 DELETE 作为最终确认
+   StrCpy $R5 ""
+   System::Call 'kernel32::GetEnvironmentVariable(t "TEMP", t .r8, i ${NSIS_MAX_STRLEN})'
+   ; 用 InputBox 插件 / 或者简单的 nsDialogs 弹窗
+   ; NSIS 不支持原生 InputBox, 使用 MessageBox + 文字比对作为双重确认
+   MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
+     "最终确认：请点击「确定」以确认清理全部用户数据。$\n$\n点击「取消」可返回重新选择。" \
+     IDOK env_userdata_final_confirm
+   ; 用户取消，回到页面
+   Abort
+
+   env_userdata_final_confirm:
+   StrCpy $EnvCleanUserDataConfirmed 1
+  ${EndIf}
+ ${EndIf}
+
+ ; ── 清理前先杀掉旧进程（避免文件锁定导致删除失败） ──
+ ; 杀掉旧版 Setup Center（托盘常驻）
+ ExecWait 'taskkill /IM openakita-setup-center.exe /T /F' $0
+ ; 杀掉 openakita-server（PyInstaller 打包的后端）
+ ExecWait 'taskkill /IM openakita-server.exe /T /F' $0
+ ; 杀掉按 pid 文件追踪的服务进程
+ !insertmacro _OpenAkita_KillAllServicePids
+ ; 等待进程完全退出释放文件锁
+ Sleep 2000
+
+ ; ── 执行环境清理 ──
+ ; 注意：使用 cmd /c rd /s /q 替代 NSIS RmDir /r
+ ; 因为 RmDir /r 对深层路径、只读文件、大文件会静默失败
+ ${If} $EnvCleanVenv != ""
+  ${NSD_GetState} $EnvCleanVenv $0
+  ${If} $0 = ${BST_CHECKED}
+   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\venv"
+   ExecWait 'cmd /c rd /s /q "$R0"'
+  ${EndIf}
+ ${EndIf}
+
+ ${If} $EnvCleanRuntime != ""
+  ${NSD_GetState} $EnvCleanRuntime $0
+  ${If} $0 = ${BST_CHECKED}
+   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\runtime"
+   ExecWait 'cmd /c rd /s /q "$R0"'
+  ${EndIf}
+ ${EndIf}
+
+ ; ── 执行用户数据清理（需要双重确认通过） ──
+ ${If} $EnvCleanUserDataConfirmed = 1
+  ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
+  ; 清理工作区数据
+  ExecWait 'cmd /c rd /s /q "$R0\workspaces"'
+  ; 清理配置文件
+  Delete "$R0\state.json"
+  Delete "$R0\config.json"
+  Delete "$R0\.env"
+  ; 清理日志
+  ExecWait 'cmd /c rd /s /q "$R0\logs"'
+  ; 清理运行时 pid 文件
+  ExecWait 'cmd /c rd /s /q "$R0\run"'
+ ${EndIf}
+FunctionEnd
+
+; ── CLI 命令行工具配置页面实现 ──
+Function PageCliSetup
+ ; passive/silent/update 模式跳过
+ ${If} $PassiveMode = 1
+  Abort
+ ${EndIf}
+ ${If} $UpdateMode = 1
+  Abort
+ ${EndIf}
+
+ nsDialogs::Create 1018
+ Pop $0
+ ${IfThen} $0 == "error" ${|} Abort ${|}
+ ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
+
+ ${NSD_CreateLabel} 0 0 100% 26u "选择要注册的终端命令，安装后可在 CMD / PowerShell / Windows Terminal 中直接使用。"
+ Pop $0
+
+ ${NSD_CreateCheckbox} 14u 34u -14u 12u "注册 openakita 命令"
+ Pop $CliCheckOpenakita
+ ${NSD_SetState} $CliCheckOpenakita ${BST_CHECKED}
+
+ ${NSD_CreateCheckbox} 14u 50u -14u 12u "注册 oa 命令（简短别名）"
+ Pop $CliCheckOa
+ ${NSD_SetState} $CliCheckOa ${BST_CHECKED}
+
+ ${NSD_CreateCheckbox} 14u 74u -14u 12u "添加到系统 PATH 环境变量"
+ Pop $CliCheckPath
+ ${NSD_SetState} $CliCheckPath ${BST_CHECKED}
+
+ ${NSD_CreateLabel} 22u 90u -22u 20u "提示：添加到 PATH 后，新打开的终端中可直接输入 oa 或 openakita 运行命令。"
+ Pop $0
+ SetCtlColors $0 "888888" "transparent"
+
+ ${NSD_CreateLabel} 14u 116u -14u 32u "命令示例：$\n  oa serve    — 启动后端服务$\n  oa status   — 查看运行状态$\n  openakita run — 单次执行"
+ Pop $0
+
+ nsDialogs::Show
+FunctionEnd
+
+Function PageLeaveCliSetup
+ ; 读取用户选择，保存到变量供 Install Section 使用
+ ; 选择状态在 Section Install 中通过注册表读取 checkbox 控件状态
+
+ ; 将选择写入注册表，供 Install Section 和后续更新使用
+ ${NSD_GetState} $CliCheckOpenakita $0
+ WriteRegDWORD HKCU "Software\OpenAkita\CLI" "openakita" $0
+ ${NSD_GetState} $CliCheckOa $0
+ WriteRegDWORD HKCU "Software\OpenAkita\CLI" "oa" $0
+ ${NSD_GetState} $CliCheckPath $0
+ WriteRegDWORD HKCU "Software\OpenAkita\CLI" "addToPath" $0
 FunctionEnd
 
 ; Uninstaller Pages
@@ -704,6 +916,77 @@ Section Install
  Call CreateOrUpdateDesktopShortcut
  ${EndIf}
 
+ ; ── CLI 命令行工具注册 ──
+ ; 读取用户在 PageCliSetup 中的选择（存储在注册表中）
+ ; 对于 Update/Passive/Silent 模式，尝试读取上次的选择
+ ReadRegDWORD $R1 HKCU "Software\OpenAkita\CLI" "openakita"
+ ReadRegDWORD $R2 HKCU "Software\OpenAkita\CLI" "oa"
+ ReadRegDWORD $R3 HKCU "Software\OpenAkita\CLI" "addToPath"
+
+ ; 如果注册表中没有值（首次安装且跳过了页面，如 silent 模式），默认全部启用
+ ${If} $R1 == ""
+  StrCpy $R1 ${BST_CHECKED}
+ ${EndIf}
+ ${If} $R2 == ""
+  StrCpy $R2 ${BST_CHECKED}
+ ${EndIf}
+ ${If} $R3 == ""
+  StrCpy $R3 ${BST_CHECKED}
+ ${EndIf}
+
+ ; 判断是否需要创建 bin 目录
+ ${If} $R1 = ${BST_CHECKED}
+ ${OrIf} $R2 = ${BST_CHECKED}
+  CreateDirectory "$INSTDIR\bin"
+
+  ; 写入 openakita.cmd
+  ${If} $R1 = ${BST_CHECKED}
+   FileOpen $R4 "$INSTDIR\bin\openakita.cmd" w
+   FileWrite $R4 '@echo off$\r$\n"%~dp0..\resources\openakita-server\openakita-server.exe" %*$\r$\n'
+   FileClose $R4
+  ${EndIf}
+
+  ; 写入 oa.cmd
+  ${If} $R2 = ${BST_CHECKED}
+   FileOpen $R4 "$INSTDIR\bin\oa.cmd" w
+   FileWrite $R4 '@echo off$\r$\n"%~dp0..\resources\openakita-server\openakita-server.exe" %*$\r$\n'
+   FileClose $R4
+  ${EndIf}
+
+  ; 添加到 PATH
+  ${If} $R3 = ${BST_CHECKED}
+   ; 读取当前 PATH 并检查是否已包含 bin 目录
+   !if "${INSTALLMODE}" == "perMachine"
+    ReadRegStr $R5 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+   !else
+    ReadRegStr $R5 HKCU "Environment" "Path"
+   !endif
+
+   ; 检查 PATH 中是否已包含 $INSTDIR\bin
+   ${StrLoc} $R6 $R5 "$INSTDIR\bin" ">"
+   ${If} $R6 == ""
+    ; 不存在，追加到 PATH
+    ${If} $R5 != ""
+     StrCpy $R5 "$R5;$INSTDIR\bin"
+    ${Else}
+     StrCpy $R5 "$INSTDIR\bin"
+    ${EndIf}
+
+    !if "${INSTALLMODE}" == "perMachine"
+     WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" $R5
+    !else
+     WriteRegExpandStr HKCU "Environment" "Path" $R5
+    !endif
+
+    ; 广播 WM_SETTINGCHANGE 通知其他进程 PATH 已更新
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+   ${EndIf}
+  ${EndIf}
+
+  ; 保存 INSTDIR 到注册表（卸载时需要知道 bin 目录位置）
+  WriteRegStr HKCU "Software\OpenAkita\CLI" "binDir" "$INSTDIR\bin"
+ ${EndIf}
+
  !ifmacrodef NSIS_HOOK_POSTINSTALL
  !insertmacro NSIS_HOOK_POSTINSTALL
  !endif
@@ -784,6 +1067,41 @@ Section Uninstall
  ${EndIf}
  {{/each}}
 
+
+ ; ── CLI 命令行工具清理 ──
+ ; 从 PATH 中移除 $INSTDIR\bin
+ ReadRegStr $R8 HKCU "Software\OpenAkita\CLI" "binDir"
+ ${If} $R8 != ""
+  ; 从系统 PATH 移除
+  ReadRegStr $R5 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+  ${If} $R5 != ""
+   ; 移除 ";$R8" 或 "$R8;" 或单独的 "$R8"
+   ${WordReplace} $R5 ";$R8" "" "+" $R5
+   ${WordReplace} $R5 "$R8;" "" "+" $R5
+   ${WordReplace} $R5 "$R8" "" "+" $R5
+   WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" $R5
+  ${EndIf}
+
+  ; 从用户 PATH 移除
+  ReadRegStr $R5 HKCU "Environment" "Path"
+  ${If} $R5 != ""
+   ${WordReplace} $R5 ";$R8" "" "+" $R5
+   ${WordReplace} $R5 "$R8;" "" "+" $R5
+   ${WordReplace} $R5 "$R8" "" "+" $R5
+   WriteRegExpandStr HKCU "Environment" "Path" $R5
+  ${EndIf}
+
+  ; 广播 WM_SETTINGCHANGE
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+ ${EndIf}
+
+ ; 删除 CLI 相关文件
+ Delete "$INSTDIR\bin\openakita.cmd"
+ Delete "$INSTDIR\bin\oa.cmd"
+ RMDir "$INSTDIR\bin"
+
+ ; 清理 CLI 注册表键
+ DeleteRegKey HKCU "Software\OpenAkita\CLI"
 
  ; Delete uninstaller
  Delete "$INSTDIR\uninstall.exe"

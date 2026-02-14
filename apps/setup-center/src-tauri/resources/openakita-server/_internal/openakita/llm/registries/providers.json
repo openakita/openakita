@@ -1,0 +1,152 @@
+[
+  {
+    "name": "Anthropic (Official / Compatible)",
+    "slug": "anthropic",
+    "api_type": "anthropic",
+    "default_base_url": "https://api.anthropic.com",
+    "api_key_env_suggestion": "ANTHROPIC_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "AnthropicRegistry"
+  },
+  {
+    "name": "OpenAI (Official / Compatible)",
+    "slug": "openai",
+    "api_type": "openai",
+    "default_base_url": "https://api.openai.com/v1",
+    "api_key_env_suggestion": "OPENAI_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "OpenAIRegistry"
+  },
+  {
+    "name": "阿里云 DashScope（中国区）",
+    "slug": "dashscope",
+    "api_type": "openai",
+    "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key_env_suggestion": "DASHSCOPE_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "DashScopeRegistry"
+  },
+  {
+    "name": "Alibaba DashScope (International)",
+    "slug": "dashscope-intl",
+    "api_type": "openai",
+    "default_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "api_key_env_suggestion": "DASHSCOPE_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "DashScopeInternationalRegistry"
+  },
+  {
+    "name": "Kimi（月之暗面·中国区）",
+    "slug": "kimi-cn",
+    "api_type": "openai",
+    "default_base_url": "https://api.moonshot.cn/v1",
+    "api_key_env_suggestion": "KIMI_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "KimiChinaRegistry"
+  },
+  {
+    "name": "Kimi（月之暗面·国际区）",
+    "slug": "kimi-int",
+    "api_type": "openai",
+    "default_base_url": "https://api.moonshot.ai/v1",
+    "api_key_env_suggestion": "KIMI_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "KimiInternationalRegistry"
+  },
+  {
+    "name": "MiniMax（中国区）",
+    "slug": "minimax-cn",
+    "api_type": "openai",
+    "default_base_url": "https://api.minimaxi.com/v1",
+    "api_key_env_suggestion": "MINIMAX_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "MiniMaxChinaRegistry"
+  },
+  {
+    "name": "MiniMax（国际区）",
+    "slug": "minimax-int",
+    "api_type": "openai",
+    "default_base_url": "https://api.minimax.io/v1",
+    "api_key_env_suggestion": "MINIMAX_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "MiniMaxInternationalRegistry"
+  },
+  {
+    "name": "DeepSeek",
+    "slug": "deepseek",
+    "api_type": "openai",
+    "default_base_url": "https://api.deepseek.com/v1",
+    "api_key_env_suggestion": "DEEPSEEK_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "DeepSeekRegistry"
+  },
+  {
+    "name": "OpenRouter",
+    "slug": "openrouter",
+    "api_type": "openai",
+    "default_base_url": "https://openrouter.ai/api/v1",
+    "api_key_env_suggestion": "OPENROUTER_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": true,
+    "registry_class": "OpenRouterRegistry"
+  },
+  {
+    "name": "硅基流动 SiliconFlow（中国区）",
+    "slug": "siliconflow",
+    "api_type": "openai",
+    "default_base_url": "https://api.siliconflow.cn/v1",
+    "api_key_env_suggestion": "SILICONFLOW_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "SiliconFlowRegistry"
+  },
+  {
+    "name": "SiliconFlow (International)",
+    "slug": "siliconflow-intl",
+    "api_type": "openai",
+    "default_base_url": "https://api.siliconflow.com/v1",
+    "api_key_env_suggestion": "SILICONFLOW_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "SiliconFlowInternationalRegistry"
+  },
+  {
+    "name": "火山引擎 (Volcengine)",
+    "slug": "volcengine",
+    "api_type": "openai",
+    "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "api_key_env_suggestion": "ARK_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "VolcEngineRegistry"
+  },
+  {
+    "name": "智谱 AI (Zhipu·中国区)",
+    "slug": "zhipu-cn",
+    "api_type": "openai",
+    "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "api_key_env_suggestion": "ZHIPU_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "ZhipuChinaRegistry"
+  },
+  {
+    "name": "Zhipu AI (Z.AI·International)",
+    "slug": "zhipu-int",
+    "api_type": "openai",
+    "default_base_url": "https://api.z.ai/api/paas/v4",
+    "api_key_env_suggestion": "ZHIPU_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "ZhipuInternationalRegistry"
+  }
+]

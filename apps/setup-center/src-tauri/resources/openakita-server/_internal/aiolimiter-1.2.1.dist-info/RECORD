@@ -1,0 +1,10 @@
+aiolimiter-1.2.1.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+aiolimiter-1.2.1.dist-info/LICENSE.txt,sha256=c4us74SLnliQwFWMcf6GUQKJoA4N53aG_NS28LFzH-4,1072
+aiolimiter-1.2.1.dist-info/METADATA,sha256=me2I-j7j4ejdlYHENg75TpjqtS4rVthUMc6VFtQTZEo,4500
+aiolimiter-1.2.1.dist-info/RECORD,,
+aiolimiter-1.2.1.dist-info/WHEEL,sha256=Nq82e9rUAnEjt98J6MlVmMCZb-t9cYE2Ir1kpBmnWfs,88
+aiolimiter/__init__.py,sha256=GbwTFfPAYLMJCR3Q9h855M0G_jxi9F3t7kU30uOMY9o,287
+aiolimiter/__pycache__/__init__.cpython-313.pyc,,
+aiolimiter/__pycache__/leakybucket.cpython-313.pyc,,
+aiolimiter/leakybucket.py,sha256=l2Lvdykii26g4vuDJC1hhTM6M8c9K4y-8v-ieSPpeig,7206
+aiolimiter/py.typed,sha256=23PdwU7M-tlmOJftbeQnCGVoWqOElTTT9-FlvDeHl_k,113

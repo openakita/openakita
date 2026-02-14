@@ -9,6 +9,7 @@ OpenAkita CLI 入口
 import asyncio
 import importlib
 import logging
+import os
 import subprocess
 import sys
 
@@ -102,7 +103,14 @@ def get_master_agent():
 
 def is_orchestration_enabled() -> bool:
     """检查是否启用多 Agent 协同模式"""
-    return settings.orchestration_enabled
+    if not settings.orchestration_enabled:
+        return False
+    try:
+        import zmq  # noqa: F401
+        return True
+    except ImportError:
+        logger.warning("pyzmq 未安装，多 Agent 协同模式自动禁用。安装: pip install pyzmq")
+        return False
 
 
 # ==================== IM 通道依赖自动安装 ====================
@@ -154,12 +162,24 @@ def _ensure_channel_deps() -> None:
 
     pkg_list = ", ".join(missing)
     logger.info(f"IM 通道依赖自动安装: {pkg_list} ...")
+
+    # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
+    from openakita.runtime_env import get_pip_command
+    pip_cmd = get_pip_command(missing)
+    if not pip_cmd:
+        logger.warning("当前环境不支持自动安装依赖，请通过设置中心的模块管理安装")
+        console.print(
+            f"[yellow]⚠[/yellow] 当前环境不支持自动安装依赖: [bold]{pkg_list}[/bold]\n"
+            f"  请通过设置中心的模块管理功能安装，或手动运行: [bold]pip install {' '.join(missing)}[/bold]"
+        )
+        return
+
     console.print(
         f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] ..."
     )
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", *missing],
+            pip_cmd,
             capture_output=True,
             text=True,
             timeout=180,
@@ -1110,6 +1130,14 @@ def serve():
 
     # 压制 Windows asyncio 关闭时的 ResourceWarning
     warnings.filterwarnings("ignore", category=ResourceWarning, module="asyncio")
+
+    # PyInstaller 打包模式 + Windows: Rich 的 legacy_windows_render 会因 GBK 编码
+    # 无法输出 Unicode 符号（✓、⚠ 等）而崩溃。使用安全的 Console 替代。
+    global console
+    if getattr(sys, "frozen", False) or os.environ.get("NO_COLOR"):
+        import io
+        console = Console(file=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace"),
+                          force_terminal=False, no_color=True, highlight=False)
 
     # 用于优雅关闭的标志
     shutdown_event = None

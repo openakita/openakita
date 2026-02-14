@@ -1,10 +1,9 @@
 """
-OpenAkita 模块入口
-
-允许通过 python -m openakita 运行
+OpenAkita 包入口点 - 支持 `python -m openakita` 调用
+同时作为 PyInstaller 打包入口
 """
 
-from .main import app
+from openakita.main import app
 
 if __name__ == "__main__":
     app()

@@ -19,6 +19,23 @@ import {
 } from "./icons";
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
+// ═══════════════════════════════════════════════════════════════════════
+// 前后端交互路由原则（全局适用）：
+//   后端运行中 → 所有配置读写、模型列表、连接测试 **优先走后端 HTTP API**
+//                后端负责持久化、热加载、配置兼容性验证
+//   后端未运行（onboarding / 首次配置 / wizard full 模式 finish 步骤前）
+//                → 走本地 Tauri Rust 操作或前端直连服务商 API
+//   判断函数：shouldUseHttpApi()  /  httpApiBase()
+//   容错机制：HTTP API 调用失败时自动回退到 Tauri 本地操作（应对后端重启等瞬态异常）
+//
+// 两种使用模式均完整支持：
+//   1. Onboarding（打包模式）：NSIS → onboarding wizard → 写本地 → 启动服务 → HTTP API
+//   2. Wizard Full（开发者模式）：选工作区 → 装 venv → 配置端点(本地) → 启动服务 → HTTP API
+// ═══════════════════════════════════════════════════════════════════════
+// ── 唯一数据源：与 Python 后端共享 providers.json ──
+// 路径通过 vite.config.ts alias 映射到 src/openakita/llm/registries/providers.json
+// 新增/修改服务商只需编辑该 JSON 文件，前后端自动同步
+import SHARED_PROVIDERS from "@shared/providers.json";
 
 type PlatformInfo = {
   os: string;
@@ -44,11 +61,90 @@ type ProviderInfo = {
   supports_capability_api: boolean;
 };
 
+// 内置 Provider 列表（打包模式下 venv 不可用时作为回退）
+// 数据来源：@shared/providers.json（与 Python 后端共享同一份文件）
+// registry_class 字段仅 Python 使用，前端忽略
+const BUILTIN_PROVIDERS: ProviderInfo[] = SHARED_PROVIDERS as ProviderInfo[];
+
 type ListedModel = {
   id: string;
   name: string;
   capabilities: Record<string, boolean>;
 };
+
+// ── 前端直连模型列表 API（不依赖 Python 后端）──
+// 当 Python venv 和本地服务都不可用时（如打包模式 onboarding），
+// 前端可以直接用用户的 API Key 请求服务商的 /models 接口。
+// 这与 Python bridge 的 list_models 逻辑完全等价。
+
+/**
+ * 前端版 infer_capabilities：根据模型名推断能力。
+ * 与 Python 端 openakita.llm.capabilities.infer_capabilities 的关键词规则保持一致。
+ *
+ * ⚠ 维护提示：如果 Python 端的推断规则有修改，需要同步更新此函数。
+ * 参见: src/openakita/llm/capabilities.py → infer_capabilities()
+ */
+function inferCapabilities(modelName: string, _providerSlug?: string | null): Record<string, boolean> {
+  const m = modelName.toLowerCase();
+  const caps: Record<string, boolean> = { text: true, vision: false, video: false, tools: false, thinking: false };
+
+  // Vision
+  if (["vl", "vision", "visual", "image", "-v-", "4v"].some(kw => m.includes(kw))) caps.vision = true;
+  // Video
+  if (["kimi", "gemini"].some(kw => m.includes(kw))) caps.video = true;
+  // Thinking
+  if (["thinking", "r1", "qwq", "qvq", "o1"].some(kw => m.includes(kw))) caps.thinking = true;
+  // Tools
+  if (["qwen", "gpt", "claude", "deepseek", "kimi", "glm", "gemini", "moonshot"].some(kw => m.includes(kw))) caps.tools = true;
+
+  return caps;
+}
+
+/**
+ * 前端直连服务商 API 拉取模型列表。
+ * 通过 Rust http_proxy_request 命令代理发送，绕过 WebView CORS 限制。
+ */
+async function fetchModelsDirectly(params: {
+  apiType: string; baseUrl: string; providerSlug: string | null; apiKey: string;
+}): Promise<ListedModel[]> {
+  const { apiType, baseUrl, providerSlug, apiKey } = params;
+  const base = baseUrl.replace(/\/+$/, "");
+
+  if (apiType === "anthropic") {
+    // Anthropic: GET /v1/models
+    const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
+    const resp = await proxyFetch(url, {
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      timeoutSecs: 30,
+    });
+    if (resp.status >= 400) throw new Error(`Anthropic API ${resp.status}: ${resp.body.slice(0, 200)}`);
+    const data = JSON.parse(resp.body);
+    return (data.data ?? [])
+      .map((m: any) => ({
+        id: String(m.id ?? "").trim(),
+        name: String(m.display_name ?? m.id ?? ""),
+        capabilities: inferCapabilities(String(m.id ?? ""), providerSlug),
+      }))
+      .filter((m: ListedModel) => m.id);
+  }
+
+  // OpenAI-compatible: GET /models
+  const url = `${base}/models`;
+  const resp = await proxyFetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    timeoutSecs: 30,
+  });
+  if (resp.status >= 400) throw new Error(`API ${resp.status}: ${resp.body.slice(0, 200)}`);
+  const data = JSON.parse(resp.body);
+  return (data.data ?? [])
+    .map((m: any) => ({
+      id: String(m.id ?? "").trim(),
+      name: String(m.id ?? ""),
+      capabilities: inferCapabilities(String(m.id ?? ""), providerSlug),
+    }))
+    .filter((m: ListedModel) => m.id)
+    .sort((a: ListedModel, b: ListedModel) => a.id.localeCompare(b.id));
+}
 
 type EndpointDraft = {
   name: string;
@@ -399,6 +495,26 @@ async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
+/**
+ * 通过 Rust http_proxy_request 命令发送 HTTP 请求，绕过 WebView 的 CORS 限制。
+ * 当前端需要直连外部 API（如 LLM 服务商）但 Python 后端未运行时使用。
+ */
+async function proxyFetch(url: string, options?: {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutSecs?: number;
+}): Promise<{ status: number; body: string }> {
+  const raw = await invoke<string>("http_proxy_request", {
+    url,
+    method: options?.method ?? "GET",
+    headers: options?.headers ?? null,
+    body: options?.body ?? null,
+    timeoutSecs: options?.timeoutSecs ?? 30,
+  });
+  return JSON.parse(raw) as { status: number; body: string };
+}
+
 // ── 故障排除面板组件 ──
 function TroubleshootPanel({ t }: { t: (k: string) => string }) {
   const [copied, setCopied] = useState<string | null>(null);
@@ -520,7 +636,8 @@ export function App() {
     [configMode, t],
   );
 
-  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im">("wizard");
+  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules">("wizard");
+  const [appInitializing, setAppInitializing] = useState(true); // 首次加载检测中，防止闪烁
   const [configExpanded, setConfigExpanded] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -557,6 +674,117 @@ export function App() {
     const saved = localStorage.getItem("openakita_maxStep");
     setMaxReachedStepIdx(saved ? parseInt(saved, 10) || 0 : 0);
   }, [currentWorkspaceId]);
+
+  // ── Onboarding Wizard (首次安装引导) ──
+  type OnboardingStep = "ob-welcome" | "ob-llm" | "ob-im" | "ob-modules" | "ob-cli" | "ob-progress" | "ob-done";
+  type ModuleInfo = { id: string; name: string; description: string; installed: boolean; bundled: boolean; sizeMb: number };
+  const [obStep, setObStep] = useState<OnboardingStep>("ob-welcome");
+  const [obModules, setObModules] = useState<ModuleInfo[]>([]);
+  const [obSelectedModules, setObSelectedModules] = useState<Set<string>>(new Set());
+  const [obInstallLog, setObInstallLog] = useState<string[]>([]);
+  const [obInstalling, setObInstalling] = useState(false);
+  const [obEnvCheck, setObEnvCheck] = useState<{
+    hasOldVenv: boolean; hasOldRuntime: boolean; hasOldWorkspaces: boolean;
+    oldVersion: string | null; currentVersion: string; conflicts: string[];
+    diskUsageMb: number; runningProcesses: string[];
+  } | null>(null);
+  /** onboarding 启动时检测到已运行的本地后端服务（用户可选择跳过 onboarding 直接连接） */
+  const [obDetectedService, setObDetectedService] = useState<{
+    version: string; pid: number | null;
+  } | null>(null);
+
+  // CLI 命令注册状态
+  const [obCliOpenakita, setObCliOpenakita] = useState(true);
+  const [obCliOa, setObCliOa] = useState(true);
+  const [obCliAddToPath, setObCliAddToPath] = useState(true);
+
+  /** 探测本地是否有后端服务在运行（用于 onboarding 前提示用户） */
+  async function obProbeRunningService() {
+    try {
+      const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        const data = await res.json();
+        setObDetectedService({ version: data.version || "unknown", pid: data.pid ?? null });
+      }
+    } catch {
+      // 无服务运行，正常进入 onboarding
+      setObDetectedService(null);
+    }
+  }
+
+  /** 连接已检测到的本地服务，跳过 onboarding */
+  async function obConnectExistingService() {
+    try {
+      // 1. 确保有默认工作区
+      const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+      if (!wsList.length) {
+        const wsId = "default";
+        await invoke("create_workspace", { name: t("onboarding.defaultWorkspace"), id: wsId, setCurrent: true });
+        await invoke("set_current_workspace", { id: wsId });
+        setCurrentWorkspaceId(wsId);
+        setWorkspaces([{ id: wsId, name: t("onboarding.defaultWorkspace"), path: "", isCurrent: true }]);
+      } else {
+        setWorkspaces(wsList);
+        if (!currentWorkspaceId && wsList.length > 0) {
+          setCurrentWorkspaceId(wsList[0].id);
+        }
+      }
+      // 2. 设置服务状态为已运行
+      const baseUrl = "http://127.0.0.1:18900";
+      setApiBaseUrl(baseUrl);
+      setServiceStatus({ running: true, pid: obDetectedService?.pid ?? null, pidFile: "" });
+      // 3. 刷新状态 & 自动检查端点
+      refreshStatus("local", baseUrl, true);
+      autoCheckEndpoints(baseUrl);
+      // 4. 跳过 onboarding，进入主界面
+      setView("status");
+    } catch (e) {
+      console.error("obConnectExistingService failed:", e);
+    }
+  }
+
+  // 首次运行检测（在此完成前不渲染主界面，防止先闪主页再跳 onboarding）
+  useEffect(() => {
+    (async () => {
+      try {
+        const firstRun = await invoke<boolean>("is_first_run");
+        if (firstRun) {
+          await obProbeRunningService();
+          setView("onboarding");
+          obLoadEnvCheck();
+        }
+      } catch {
+        // is_first_run 命令不可用（开发模式），忽略
+      } finally {
+        setAppInitializing(false);
+      }
+    })();
+    const unlisten = listen<string>("app-launch-mode", async (e) => {
+      if (e.payload === "first-run") {
+        await obProbeRunningService();
+        setView("onboarding");
+        obLoadEnvCheck();
+      }
+    });
+    // ── DEV: Ctrl+Shift+O 强制进入 onboarding 测试模式 ──
+    const devKeyHandler = (ev: KeyboardEvent) => {
+      if (ev.ctrlKey && ev.shiftKey && ev.key === "O") {
+        ev.preventDefault();
+        console.log("[DEV] Force entering onboarding mode");
+        setObStep("ob-welcome");
+        setObDetectedService(null);
+        obProbeRunningService();
+        setView("onboarding");
+        obLoadEnvCheck();
+      }
+    };
+    window.addEventListener("keydown", devKeyHandler);
+    return () => {
+      unlisten.then((u) => u());
+      window.removeEventListener("keydown", devKeyHandler);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // workspace create
   const [newWsName, setNewWsName] = useState("默认工作区");
@@ -674,6 +902,12 @@ export function App() {
   }>>({});
   const [healthChecking, setHealthChecking] = useState<string | null>(null); // "all" | endpoint name
   const [imChecking, setImChecking] = useState(false);
+
+  // ── 端点连接测试（弹窗内，前端直连服务商 API，不依赖后端） ──
+  const [connTesting, setConnTesting] = useState(false);
+  const [connTestResult, setConnTestResult] = useState<{
+    ok: boolean; latencyMs: number; error?: string; modelCount?: number;
+  } | null>(null);
 
   // unified env draft (full coverage)
   const [envDraft, setEnvDraft] = useState<EnvMap>({});
@@ -809,7 +1043,7 @@ export function App() {
       // 自重启互锁：restartOverlay 期间暂停心跳
       if (restartOverlay) return;
 
-      const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+      const effectiveBase = httpApiBase();
       try {
         const res = await fetch(`${effectiveBase}/api/health`, { signal: AbortSignal.timeout(3000) });
         if (res.ok) {
@@ -930,6 +1164,25 @@ export function App() {
     };
   }, []);
 
+  // module install progress events → feed into detail log
+  useEffect(() => {
+    let unlisten: null | (() => void) = null;
+    (async () => {
+      unlisten = await listen("module-install-progress", (ev) => {
+        const p = ev.payload as any;
+        if (!p || typeof p !== "object") return;
+        const msg = String(p.message || "");
+        const status = String(p.status || "");
+        const moduleId = String(p.moduleId || "");
+        if (msg) {
+          const prefix = status === "retrying" ? "🔄" : status === "error" ? "❌" : status === "done" ? "✅" : "📦";
+          setObDetailLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${prefix} [${moduleId}] ${msg}`]);
+        }
+      });
+    })();
+    return () => { if (unlisten) unlisten(); };
+  }, []);
+
   // tray quit failed: service still running
   useEffect(() => {
     let unlisten: null | (() => void) = null;
@@ -1031,20 +1284,28 @@ export function App() {
   async function ensureEnvLoaded(workspaceId: string): Promise<EnvMap> {
     if (envLoadedForWs.current === workspaceId) return envDraft;
     let parsed: EnvMap = {};
-    // Always try HTTP API first — reads the backend's actual .env
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-    try {
-      const res = await safeFetch(`${base}/api/config/env`);
-      const data = await res.json();
-      parsed = data.env || {};
-    } catch {
-      // Service unreachable — fall back to Tauri local read
-      if (dataMode !== "remote" && workspaceId) {
-        try {
-          const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
-          parsed = parseEnv(content);
-        } catch { parsed = {}; }
+
+    if (shouldUseHttpApi()) {
+      // ── 后端运行中 → HTTP API（读取后端实时 env）──
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/config/env`);
+        const data = await res.json();
+        parsed = data.env || {};
+      } catch {
+        // HTTP 暂时不可用（后端刚启动未就绪等），回退到本地读取
+        if (workspaceId) {
+          try {
+            const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
+            parsed = parseEnv(content);
+          } catch { parsed = {}; }
+        }
       }
+    } else if (workspaceId) {
+      // ── 后端未运行 → Tauri 本地读取 .env ──
+      try {
+        const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
+        parsed = parseEnv(content);
+      } catch { parsed = {}; }
     }
     // Set sensible defaults for first-time setup
     const defaults: Record<string, string> = {
@@ -1263,27 +1524,50 @@ export function App() {
     setError(null);
     setBusy("读取服务商列表...");
     try {
-      const raw = await invoke<string>("openakita_list_providers", { venvDir });
-      const parsed = JSON.parse(raw) as ProviderInfo[];
+      let parsed: ProviderInfo[] = [];
+
+      if (shouldUseHttpApi()) {
+        // ── 后端运行中 → HTTP API（获取后端实时的 provider 列表）──
+        try {
+          const res = await safeFetch(`${httpApiBase()}/api/config/providers`, { signal: AbortSignal.timeout(5000) });
+          const data = await res.json();
+          parsed = Array.isArray(data.providers) ? data.providers : Array.isArray(data) ? data : [];
+        } catch {
+          parsed = BUILTIN_PROVIDERS; // 后端旧版本不支持此 API，回退
+        }
+      } else {
+        // ── 后端未运行 → Tauri invoke，失败则用内置列表 ──
+        try {
+          const raw = await invoke<string>("openakita_list_providers", { venvDir });
+          parsed = JSON.parse(raw) as ProviderInfo[];
+        } catch {
+          parsed = BUILTIN_PROVIDERS;
+        }
+      }
+
+      if (parsed.length === 0) parsed = BUILTIN_PROVIDERS;
       setProviders(parsed);
       const first = parsed[0]?.slug ?? "";
       setProviderSlug((prev) => prev || first);
-      setNotice(`已加载服务商：${parsed.length} 个`);
-      try {
-        const v = await invoke<string>("openakita_version", { venvDir });
-        setOpenakitaVersion(v || "");
-      } catch {
-        setOpenakitaVersion("");
-      }
-      const slugs = new Set(parsed.map((p) => (p.slug || "").toLowerCase()));
-      if (!slugs.has("kimi-cn") || !slugs.has("minimax-cn") || !slugs.has("deepseek")) {
-        setNotice(
-          `已加载服务商：${parsed.length} 个（但看起来 openakita 版本偏旧，缺少部分内置供应商）。建议回到“安装”用“本地源码/GitHub”重新安装 openakita，然后再回来刷新服务商列表。`,
-        );
+      setError(null);
+
+      // 非关键：获取版本号（仅后端未运行时尝试 venv 方式）
+      if (!shouldUseHttpApi()) {
+        try {
+          const v = await invoke<string>("openakita_version", { venvDir });
+          setOpenakitaVersion(v || "");
+        } catch {
+          setOpenakitaVersion("");
+        }
       }
     } catch (e) {
-      setError(String(e));
-      throw e;
+      console.warn("doLoadProviders failed:", e);
+      if (providers.length === 0) {
+        setProviders(BUILTIN_PROVIDERS);
+        const first = BUILTIN_PROVIDERS[0]?.slug ?? "";
+        setProviderSlug((prev) => prev || first);
+        setError(null);
+      }
     } finally {
       setBusy(null);
     }
@@ -1325,6 +1609,7 @@ export function App() {
     setSelectedModelId(""); // clear search / selection
     setBusy("拉取模型列表...");
     try {
+      console.log('[doFetchModels] apiType:', apiType, 'baseUrl:', baseUrl, 'slug:', selectedProvider?.slug, 'keyLen:', apiKeyValue?.length, 'httpApi:', shouldUseHttpApi());
       const parsed = await fetchModelListUnified({
         apiType,
         baseUrl,
@@ -1336,49 +1621,125 @@ export function App() {
       setSelectedModelId("");
       setNotice(`拉取到模型：${parsed.length} 个`);
       setCapTouched(false);
+    } catch (e: any) {
+      console.error('[doFetchModels] error:', e);
+      const msg = String(e?.message || e);
+      setError(msg);
     } finally {
       setBusy(null);
     }
   }
 
   /**
-   * 通用模型列表拉取：远程模式走 HTTP API，本地模式走 Tauri invoke。
+   * 测试端点连接（路由原则同上）：
+   *   后端运行中 → 走后端 /api/config/list-models，验证后端与配置参数的兼容性
+   *   后端未运行 → 前端直连服务商 /models API，仅验证 API Key 和地址有效性
    */
-  async function fetchModelListUnified(params: {
-    apiType: string; baseUrl: string; providerSlug: string | null; apiKey: string;
-  }): Promise<ListedModel[]> {
-    const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-    // 优先走 HTTP API（远程模式或服务运行中）
-    if (dataMode === "remote" || serviceStatus?.running) {
-      try {
-        const res = await safeFetch(`${effectiveBase}/api/config/list-models`, {
+  async function doTestConnection(params: {
+    testApiType: string; testBaseUrl: string; testApiKey: string; testProviderSlug?: string | null;
+  }) {
+    setConnTesting(true);
+    setConnTestResult(null);
+    const t0 = performance.now();
+    try {
+      let modelCount = 0;
+      if (shouldUseHttpApi()) {
+        // ── 后端运行中 → 走后端 API（验证后端兼容性 + 热加载）──
+        const base = httpApiBase();
+        const res = await safeFetch(`${base}/api/config/list-models`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            api_type: params.apiType,
-            base_url: params.baseUrl,
-            provider_slug: params.providerSlug || null,
-            api_key: params.apiKey,
+            api_type: params.testApiType,
+            base_url: params.testBaseUrl,
+            provider_slug: params.testProviderSlug || null,
+            api_key: params.testApiKey,
           }),
           signal: AbortSignal.timeout(30_000),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        return Array.isArray(data.models) ? data.models : data;
-      } catch (e) {
-        if (dataMode === "remote") throw e;
-        // 本地模式：HTTP 失败，回退到 Tauri
+        const models = Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []);
+        modelCount = models.length;
+      } else {
+        // ── 后端未运行 → 前端直连服务商 API ──
+        const result = await fetchModelsDirectly({
+          apiType: params.testApiType,
+          baseUrl: params.testBaseUrl,
+          providerSlug: params.testProviderSlug ?? null,
+          apiKey: params.testApiKey,
+        });
+        modelCount = result.length;
       }
+      const latency = Math.round(performance.now() - t0);
+      setConnTestResult({ ok: true, latencyMs: latency, modelCount });
+    } catch (e) {
+      const latency = Math.round(performance.now() - t0);
+      let errMsg = String(e);
+      if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
+        errMsg = t("llm.testNetworkError");
+      } else if (errMsg.includes("401") || errMsg.includes("Unauthorized")) {
+        errMsg = t("llm.testAuthError");
+      } else if (errMsg.includes("403") || errMsg.includes("Forbidden")) {
+        errMsg = t("llm.testForbidden");
+      } else if (errMsg.includes("404")) {
+        errMsg = t("llm.testNotFound");
+      } else if (errMsg.includes("timeout") || errMsg.includes("AbortError")) {
+        errMsg = t("llm.testTimeout");
+      }
+      setConnTestResult({ ok: false, latencyMs: latency, error: errMsg });
+    } finally {
+      setConnTesting(false);
     }
-    // 回退：Tauri invoke（本地模式）
-    const raw = await invoke<string>("openakita_list_models", {
-      venvDir,
-      apiType: params.apiType,
-      baseUrl: params.baseUrl,
-      providerSlug: params.providerSlug,
-      apiKey: params.apiKey,
-    });
-    return JSON.parse(raw) as ListedModel[];
+  }
+
+  /**
+   * 通用模型列表拉取（路由原则同上）：
+   *   后端运行中 → 必须走后端 HTTP API（验证后端兼容性，capability 推断更精确）
+   *   后端未运行 → 本地回退链：Tauri invoke → 前端直连服务商 API
+   *
+   * ⚠ 维护提示：前端直连 fallback 使用 fetchModelsDirectly()，
+   *   其 capability 推断是 Python 端 infer_capabilities() 的简化版。
+   *   如需更精确的推断，服务启动后会自动走后端路径。
+   */
+  async function fetchModelListUnified(params: {
+    apiType: string; baseUrl: string; providerSlug: string | null; apiKey: string;
+  }): Promise<ListedModel[]> {
+    // ── 后端运行中 → HTTP API ──
+    console.log('[fetchModelListUnified] shouldUseHttpApi:', shouldUseHttpApi(), 'httpApiBase:', httpApiBase());
+    if (shouldUseHttpApi()) {
+      console.log('[fetchModelListUnified] using HTTP API');
+      const res = await safeFetch(`${httpApiBase()}/api/config/list-models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_type: params.apiType,
+          base_url: params.baseUrl,
+          provider_slug: params.providerSlug || null,
+          api_key: params.apiKey,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      return Array.isArray(data.models) ? data.models : data;
+    }
+    // ── 后端未运行 → 本地回退 ──
+    // 回退 1：Tauri invoke → Python bridge（开发模式 / 有 venv 时）
+    try {
+      const raw = await invoke<string>("openakita_list_models", {
+        venvDir,
+        apiType: params.apiType,
+        baseUrl: params.baseUrl,
+        providerSlug: params.providerSlug,
+        apiKey: params.apiKey,
+      });
+      return JSON.parse(raw) as ListedModel[];
+    } catch (e) {
+      console.warn("openakita_list_models via Python bridge failed, using direct fetch:", e);
+    }
+    // 回退 2：前端直连服务商 API（打包模式，无 venv，onboarding 阶段）
+    return fetchModelsDirectly(params);
   }
 
   // When selected model changes, default capabilities from fetched model unless user manually edited.
@@ -1453,17 +1814,7 @@ export function App() {
   }
 
   async function readEndpointsJson(): Promise<{ endpoints: any[]; settings: any }> {
-    if (dataMode === "remote") {
-      try {
-        const res = await safeFetch(`${apiBaseUrl}/api/config/endpoints`);
-        const data = await res.json();
-        const eps = Array.isArray(data?.endpoints) ? data.endpoints : [];
-        return { endpoints: eps, settings: data?.raw?.settings || {} };
-      } catch {
-        return { endpoints: [], settings: {} };
-      }
-    }
-    if (!currentWorkspaceId) return { endpoints: [], settings: {} };
+    if (!currentWorkspaceId && !shouldUseHttpApi()) return { endpoints: [], settings: {} };
     try {
       const raw = await readWorkspaceFile("data/llm_endpoints.json");
       const parsed = raw ? JSON.parse(raw) : { endpoints: [], settings: {} };
@@ -1487,81 +1838,99 @@ export function App() {
     await writeWorkspaceFile("data/llm_endpoints.json", next);
   }
 
-  // ── Generic file read/write with remote mode support ──
+  // ── 配置读写路由 ──
+  // 路由原则：
+  //   后端运行中 (serviceStatus?.running) 或远程模式 → 必须走 HTTP API（后端负责持久化 + 热加载）
+  //   后端未运行 → 走本地 Tauri Rust 操作（直接读写工作区文件）
+  // 这样保证：
+  //   1. 后端运行时，所有读写经过后端，确保配置兼容性和即时生效
+  //   2. 后端未运行时（onboarding / 首次配置），直接操作本地文件，服务启动后自动加载
+
+  /** 判断当前是否应走后端 HTTP API */
+  function shouldUseHttpApi(): boolean {
+    return dataMode === "remote" || !!serviceStatus?.running;
+  }
+
+  function httpApiBase(): string {
+    return dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+  }
+
   async function readWorkspaceFile(relativePath: string): Promise<string> {
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-    // Always try HTTP API first — reads the backend's actual config
-    try {
-      if (relativePath === "data/llm_endpoints.json") {
-        const res = await safeFetch(`${base}/api/config/endpoints`);
-        const data = await res.json();
-        return JSON.stringify(data.raw || { endpoints: data.endpoints || [] });
+    // ── 后端运行中 → 优先 HTTP API（读取后端内存中的实时状态）──
+    if (shouldUseHttpApi()) {
+      try {
+        const base = httpApiBase();
+        if (relativePath === "data/llm_endpoints.json") {
+          const res = await safeFetch(`${base}/api/config/endpoints`);
+          const data = await res.json();
+          return JSON.stringify(data.raw || { endpoints: data.endpoints || [] });
+        }
+        if (relativePath === "data/skills.json") {
+          const res = await safeFetch(`${base}/api/config/skills`);
+          const data = await res.json();
+          return JSON.stringify(data.skills || {});
+        }
+        if (relativePath === ".env") {
+          const res = await safeFetch(`${base}/api/config/env`);
+          const data = await res.json();
+          return data.raw || "";
+        }
+      } catch {
+        // HTTP 暂时不可用 — 回退到本地读取（比如后端正在重启、状态延迟）
+        console.warn(`readWorkspaceFile: HTTP failed for ${relativePath}, falling back to Tauri`);
       }
-      if (relativePath === "data/skills.json") {
-        const res = await safeFetch(`${base}/api/config/skills`);
-        const data = await res.json();
-        return JSON.stringify(data.skills || {});
-      }
-      if (relativePath === ".env") {
-        const res = await safeFetch(`${base}/api/config/env`);
-        const data = await res.json();
-        return data.raw || "";
-      }
-    } catch {
-      // Service unreachable — fall through to Tauri
     }
-    // Fallback: Tauri local read (service not running)
-    if (dataMode !== "remote" && currentWorkspaceId) {
+    // ── 后端未运行 / HTTP 回退 → Tauri 本地读取 ──
+    if (currentWorkspaceId) {
       return invoke<string>("workspace_read_file", { workspaceId: currentWorkspaceId, relativePath });
     }
-    throw new Error(`读取配置失败：服务不可达 (${relativePath})`);
+    throw new Error(`读取配置失败：服务未运行且无本地工作区 (${relativePath})`);
   }
 
   async function writeWorkspaceFile(relativePath: string, content: string): Promise<void> {
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-    let httpOk = false;
-    // Always try HTTP API first
-    if (relativePath === "data/llm_endpoints.json") {
+    // ── 后端运行中 → 优先 HTTP API（后端负责持久化 + 热加载）──
+    if (shouldUseHttpApi()) {
       try {
-        await safeFetch(`${base}/api/config/endpoints`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: JSON.parse(content) }),
-        });
-        triggerConfigReload().catch(() => {});
-        httpOk = true;
-      } catch { /* service unreachable */ }
-    } else if (relativePath === "data/skills.json") {
-      try {
-        await safeFetch(`${base}/api/config/skills`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: JSON.parse(content) }),
-        });
-        httpOk = true;
-      } catch { /* service unreachable */ }
-    }
-    // In local mode, also persist to workspace dir for future service starts
-    if (dataMode !== "remote" && currentWorkspaceId) {
-      await invoke("workspace_write_file", { workspaceId: currentWorkspaceId, relativePath, content });
-      if (!httpOk && relativePath === "data/llm_endpoints.json") {
-        triggerConfigReload().catch(() => {});
+        const base = httpApiBase();
+        if (relativePath === "data/llm_endpoints.json") {
+          await safeFetch(`${base}/api/config/endpoints`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: JSON.parse(content) }),
+          });
+          triggerConfigReload().catch(() => {});
+          return;
+        }
+        if (relativePath === "data/skills.json") {
+          await safeFetch(`${base}/api/config/skills`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: JSON.parse(content) }),
+          });
+          return;
+        }
+      } catch {
+        // HTTP 暂时不可用 — 回退到本地写入（比如后端正在重启）
+        console.warn(`writeWorkspaceFile: HTTP failed for ${relativePath}, falling back to Tauri`);
       }
-    } else if (!httpOk) {
-      throw new Error(`写入配置失败：服务不可达 (${relativePath})`);
     }
+    // ── 后端未运行 / HTTP 回退 → Tauri 本地写入 ──
+    if (currentWorkspaceId) {
+      await invoke("workspace_write_file", { workspaceId: currentWorkspaceId, relativePath, content });
+      return;
+    }
+    throw new Error(`写入配置失败：服务未运行且无本地工作区 (${relativePath})`);
   }
 
   /**
-   * 通知运行中的后端热重载 LLM 端点配置。
-   * 在写入 llm_endpoints.json 之后调用，确保服务端不需要重启即可生效。
-   * 静默失败（服务可能尚未启动）。
+   * 通知运行中的后端热重载配置。
+   * 仅在后端运行时调用有意义；后端未运行时静默跳过。
    */
   async function triggerConfigReload(): Promise<void> {
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    if (!shouldUseHttpApi()) return; // 后端未运行，无需热加载
     try {
-      await safeFetch(`${base}/api/config/reload`, { method: "POST", signal: AbortSignal.timeout(3000) });
-    } catch { /* service not running or reload not supported — that's ok */ }
+      await safeFetch(`${httpApiBase()}/api/config/reload`, { method: "POST", signal: AbortSignal.timeout(3000) });
+    } catch { /* reload not supported or transient error — that's ok */ }
   }
 
   /**
@@ -1569,7 +1938,7 @@ export function App() {
    * 如果服务未运行，仅保存不重启并提示。
    */
   async function applyAndRestart(keys: string[]): Promise<void> {
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
+    const base = httpApiBase();
     setError(null);
     setRestartOverlay({ phase: "saving" });
 
@@ -1717,19 +2086,24 @@ export function App() {
     setBusy("写入编译端点...");
     setError(null);
     try {
-      // Write API key to .env — always notify the running service via HTTP
+      // Write API key to .env — 遵循路由原则
       const compilerEnvPayload = { entries: { [compilerApiKeyEnv.trim()]: compilerApiKeyValue.trim() } };
-      const compilerServiceBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-      try {
-        await safeFetch(`${compilerServiceBase}/api/config/env`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(compilerEnvPayload),
-        });
-      } catch {
-        // Service not reachable — fall through to local write
-      }
-      if (dataMode !== "remote" && currentWorkspaceId) {
+      if (shouldUseHttpApi()) {
+        try {
+          await safeFetch(`${httpApiBase()}/api/config/env`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(compilerEnvPayload),
+          });
+        } catch {
+          if (currentWorkspaceId) {
+            await invoke("workspace_update_env", {
+              workspaceId: currentWorkspaceId,
+              entries: [{ key: compilerApiKeyEnv.trim(), value: compilerApiKeyValue.trim() }],
+            });
+          }
+        }
+      } else if (currentWorkspaceId) {
         await invoke("workspace_update_env", {
           workspaceId: currentWorkspaceId,
           entries: [{ key: compilerApiKeyEnv.trim(), value: compilerApiKeyValue.trim() }],
@@ -1888,6 +2262,7 @@ export function App() {
       caps: Array.isArray(ep.capabilities) && ep.capabilities.length ? ep.capabilities : ["text"],
     });
     setEditModalOpen(true);
+    setConnTestResult(null);
     setNotice(null);
   }
 
@@ -1954,20 +2329,23 @@ export function App() {
         await ensureEnvLoaded(currentWorkspaceId);
         setEnvDraft((e) => envSet(e, editDraft.apiKeyEnv.trim(), editDraft.apiKeyValue.trim()));
         const envPayload = { entries: { [editDraft.apiKeyEnv.trim()]: editDraft.apiKeyValue.trim() } };
-        // Always write to the running service's .env via HTTP API so the backend
-        // picks up new keys (also updates os.environ on the server side).
-        const serviceBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-        try {
-          await safeFetch(`${serviceBase}/api/config/env`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(envPayload),
-          });
-        } catch {
-          // Service not reachable — fall through to local write
-        }
-        // In local mode, also persist to workspace .env for future service starts.
-        if (dataMode !== "remote" && currentWorkspaceId) {
+        if (shouldUseHttpApi()) {
+          try {
+            await safeFetch(`${httpApiBase()}/api/config/env`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(envPayload),
+            });
+          } catch {
+            // HTTP 回退
+            if (currentWorkspaceId) {
+              await invoke("workspace_update_env", {
+                workspaceId: currentWorkspaceId,
+                entries: [{ key: editDraft.apiKeyEnv.trim(), value: editDraft.apiKeyValue.trim() }],
+              });
+            }
+          }
+        } else if (currentWorkspaceId) {
           await invoke("workspace_update_env", {
             workspaceId: currentWorkspaceId,
             entries: [{ key: editDraft.apiKeyEnv.trim(), value: editDraft.apiKeyValue.trim() }],
@@ -2040,20 +2418,24 @@ export function App() {
       await ensureEnvLoaded(currentWorkspaceId);
       setEnvDraft((e) => envSet(e, apiKeyEnv.trim(), apiKeyValue.trim()));
       const envPayload = { entries: { [apiKeyEnv.trim()]: apiKeyValue.trim() } };
-      // Always write to the running service's .env via HTTP API so the backend
-      // picks up new keys (also updates os.environ on the server side).
-      const serviceBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-      try {
-        await safeFetch(`${serviceBase}/api/config/env`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(envPayload),
-        });
-      } catch {
-        // Service not reachable — fall through to local write
-      }
-      // In local mode, also persist to workspace .env for future service starts.
-      if (dataMode !== "remote" && currentWorkspaceId) {
+
+      if (shouldUseHttpApi()) {
+        try {
+          await safeFetch(`${httpApiBase()}/api/config/env`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(envPayload),
+          });
+        } catch {
+          // HTTP 回退到本地写入
+          if (currentWorkspaceId) {
+            await invoke("workspace_update_env", {
+              workspaceId: currentWorkspaceId,
+              entries: [{ key: apiKeyEnv.trim(), value: apiKeyValue.trim() }],
+            });
+          }
+        }
+      } else if (currentWorkspaceId) {
         await invoke("workspace_update_env", {
           workspaceId: currentWorkspaceId,
           entries: [{ key: apiKeyEnv.trim(), value: apiKeyValue.trim() }],
@@ -2176,19 +2558,23 @@ export function App() {
       }
     }
     if (!Object.keys(entries).length) return;
-    // Always try HTTP API first (reaches the running backend's .env)
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-    try {
-      await safeFetch(`${base}/api/config/env`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries }),
-      });
-    } catch {
-      // Service unreachable — will fall through to Tauri local write
+
+    if (shouldUseHttpApi()) {
+      // ── 后端运行中 → 优先 HTTP API（后端写入 .env 并热加载）──
+      try {
+        await safeFetch(`${httpApiBase()}/api/config/env`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries }),
+        });
+        return; // HTTP 成功，无需本地写入
+      } catch {
+        // HTTP 暂时不可用，回退到本地写入
+        console.warn("saveEnvKeys: HTTP failed, falling back to Tauri");
+      }
     }
-    // In local mode, also persist to workspace .env for future service starts
-    if (dataMode !== "remote" && currentWorkspaceId) {
+    // ── 后端未运行 / HTTP 回退 → Tauri 本地写入 ──
+    if (currentWorkspaceId) {
       await ensureEnvLoaded(currentWorkspaceId);
       const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
       await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
@@ -3027,22 +3413,10 @@ export function App() {
   async function refreshServiceLog(workspaceId: string) {
     try {
       let chunk: { path: string; content: string; truncated: boolean };
-      if (dataMode === "remote") {
-        // 远程模式：通过 HTTP API 获取远程服务日志
-        const res = await safeFetch(`${apiBaseUrl}/api/logs/service?tail_bytes=60000`);
+      if (shouldUseHttpApi()) {
+        // ── 后端运行中 → HTTP API 获取日志 ──
+        const res = await safeFetch(`${httpApiBase()}/api/logs/service?tail_bytes=60000`);
         chunk = await res.json();
-      } else if (serviceStatus?.running) {
-        // 本地模式且服务运行中：优先通过 HTTP API 获取（日志内容更实时）
-        try {
-          const res = await safeFetch("http://127.0.0.1:18900/api/logs/service?tail_bytes=60000");
-          chunk = await res.json();
-        } catch {
-          // HTTP API 不可达，回退到 Tauri 本地文件读取
-          chunk = await invoke<{ path: string; content: string; truncated: boolean }>("openakita_service_log", {
-            workspaceId,
-            tailBytes: 60000,
-          });
-        }
       } else {
         // 本地模式且服务未运行：直接读本地日志文件
         chunk = await invoke<{ path: string; content: string; truncated: boolean }>("openakita_service_log", {
@@ -3112,23 +3486,22 @@ export function App() {
     setBusy("读取 skills...");
     try {
       let skillsList: any[] = [];
-      const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-      // 优先走 HTTP API（远程模式或服务运行中）
-      if (dataMode === "remote" || serviceStatus?.running) {
-        try {
-          const res = await safeFetch(`${effectiveBase}/api/skills`, { signal: AbortSignal.timeout(5000) });
-          const data = await res.json();
-          skillsList = Array.isArray(data?.skills) ? data.skills : [];
-        } catch (e) {
-          if (dataMode === "remote") throw e;
-          // 本地模式 HTTP 失败，回退到 Tauri
-        }
+      // ── 后端运行中 → HTTP API ──
+      if (shouldUseHttpApi()) {
+        const res = await safeFetch(`${httpApiBase()}/api/skills`, { signal: AbortSignal.timeout(5000) });
+        const data = await res.json();
+        skillsList = Array.isArray(data?.skills) ? data.skills : [];
       }
-      // 回退：Tauri invoke（本地模式）
-      if (skillsList.length === 0 && dataMode !== "remote" && currentWorkspaceId) {
-        const skillsRaw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
-        const skillsParsed = JSON.parse(skillsRaw) as { count: number; skills: any[] };
-        skillsList = Array.isArray(skillsParsed.skills) ? skillsParsed.skills : [];
+      // ── 后端未运行 → Tauri invoke（需要 venv）──
+      if (!shouldUseHttpApi() && skillsList.length === 0 && currentWorkspaceId) {
+        try {
+          const skillsRaw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
+          const skillsParsed = JSON.parse(skillsRaw) as { count: number; skills: any[] };
+          skillsList = Array.isArray(skillsParsed.skills) ? skillsParsed.skills : [];
+        } catch (e) {
+          // 打包模式下无 venv，Tauri invoke 会失败，降级为空列表（服务启动后可通过 HTTP API 获取）
+          console.warn("openakita_list_skills via Tauri failed:", e);
+        }
       }
       const systemCount = skillsList.filter((s: any) => !!s.system).length;
       const externalCount = skillsList.length - systemCount;
@@ -3327,9 +3700,8 @@ export function App() {
               setHealthChecking("all");
               try {
                 let results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }>;
-                // Always use HTTP API when service is running (bridge has no health-check command)
-                const effectiveBase = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-                const healthUrl = serviceStatus?.running ? effectiveBase : null;
+                // health-check 必须走后端 HTTP API
+                const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
                 if (healthUrl) {
                   const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}), signal: AbortSignal.timeout(60_000) });
                   const data = await res.json();
@@ -3377,8 +3749,7 @@ export function App() {
                       setHealthChecking(e.name);
                       try {
                         let r: any[];
-                        const effectiveBase2 = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-                        const healthUrl = serviceStatus?.running ? effectiveBase2 : null;
+                        const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
                         if (healthUrl) {
                           const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }), signal: AbortSignal.timeout(60_000) });
                           const data = await res.json();
@@ -3406,8 +3777,7 @@ export function App() {
               <button className="btnSmall" onClick={async () => {
                 setImChecking(true);
                 try {
-                  const effectiveBase3 = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-                  const healthUrl = serviceStatus?.running ? effectiveBase3 : null;
+                  const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
                   if (healthUrl) {
                     const res = await safeFetch(`${healthUrl}/api/im/channels`);
                     const data = await res.json();
@@ -4155,6 +4525,7 @@ export function App() {
 
   function openAddEpDialog() {
     resetEndpointEditor();
+    setConnTestResult(null);
     doLoadProviders();
     setAddEpDialogOpen(true);
   }
@@ -4304,6 +4675,11 @@ export function App() {
                     </button>
                   </div>
                 )}
+                {error && (
+                  <div style={{ marginTop: 6, padding: "6px 10px", background: "rgba(229,57,53,0.12)", border: "1px solid rgba(229,57,53,0.3)", borderRadius: 6, fontSize: 12, color: "#e53935", wordBreak: "break-all" }}>
+                    ⚠ {error}
+                  </div>
+                )}
               </div>
 
               <div className="dialogSection">
@@ -4359,12 +4735,31 @@ export function App() {
               </details>
               </div>
 
+              {/* 连接测试结果 */}
+              {connTestResult && (
+                <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
+                  {connTestResult.ok
+                    ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                    : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
+                </div>
+              )}
+
               {/* Footer — fixed at bottom */}
               <div className="dialogFooter">
-                <button className="btnSmall" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); }}>{t("common.cancel")}</button>
-                <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEndpoint(); setAddEpDialogOpen(false); }} disabled={!selectedModelId.trim() || !apiKeyEnv.trim() || !apiKeyValue.trim() || !baseUrl.trim() || (!currentWorkspaceId && dataMode !== "remote") || !!busy}>
-                  {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
-                </button>
+                <button className="btnSmall" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btnSmall"
+                    style={{ padding: "8px 16px", borderRadius: 8 }}
+                    disabled={!apiKeyValue.trim() || !baseUrl.trim() || connTesting}
+                    onClick={() => doTestConnection({ testApiType: apiType, testBaseUrl: baseUrl, testApiKey: apiKeyValue, testProviderSlug: selectedProvider?.slug })}
+                  >
+                    {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
+                  </button>
+                  <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEndpoint(); setAddEpDialogOpen(false); setConnTestResult(null); }} disabled={!selectedModelId.trim() || !apiKeyEnv.trim() || !apiKeyValue.trim() || !baseUrl.trim() || (!currentWorkspaceId && dataMode !== "remote") || !!busy}>
+                    {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4380,10 +4775,6 @@ export function App() {
               </div>
               <div className="dialogBody">
               <div className="dialogSection">
-                <div className="dialogLabel">{t("status.model")}</div>
-                <input value={editDraft.modelId || ""} onChange={(e) => setEditDraft({ ...editDraft, modelId: e.target.value })} />
-              </div>
-              <div className="dialogSection">
                 <div className="dialogLabel">Base URL</div>
                 <input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} />
               </div>
@@ -4396,10 +4787,57 @@ export function App() {
                   </button>
                 </div>
               </div>
+              <div className="dialogSection">
+                <div className="dialogLabel">{t("status.model")}</div>
+                <SearchSelect
+                  value={editDraft.modelId || ""}
+                  onChange={(v) => setEditDraft({ ...editDraft, modelId: v })}
+                  options={editModels.length > 0 ? editModels.map(m => m.id) : [editDraft.modelId || ""].filter(Boolean)}
+                  placeholder={editModels.length > 0 ? t("llm.searchModel") : (editDraft.modelId || t("llm.modelPlaceholder"))}
+                  disabled={!!busy}
+                />
+                <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                  <button onClick={doFetchEditModels} className="btnSmall" disabled={!(envDraft[editDraft.apiKeyEnv || ""] || "").trim() || !(editDraft.baseUrl || "").trim() || !!busy}
+                    style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
+                    {t("llm.fetchModels")}
+                  </button>
+                  {editModels.length > 0 && <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: editModels.length })}</span>}
+                </div>
+                {error && (
+                  <div style={{ marginTop: 6, padding: "6px 10px", background: "rgba(229,57,53,0.12)", border: "1px solid rgba(229,57,53,0.3)", borderRadius: 6, fontSize: 12, color: "#e53935", wordBreak: "break-all" }}>
+                    ⚠ {error}
+                  </div>
+                )}
               </div>
+              </div>
+
+              {/* 连接测试结果 */}
+              {connTestResult && (
+                <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
+                  {connTestResult.ok
+                    ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                    : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
+                </div>
+              )}
+
               <div className="dialogFooter">
-                <button className="btnSmall" onClick={() => resetEndpointEditor()}>{t("common.cancel")}</button>
-                <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEditedEndpoint(); }} disabled={!!busy}>{t("common.save")}</button>
+                <button className="btnSmall" onClick={() => { resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btnSmall"
+                    style={{ padding: "8px 16px", borderRadius: 8 }}
+                    disabled={!(envDraft[editDraft.apiKeyEnv || ""] || "").trim() || !(editDraft.baseUrl || "").trim() || connTesting}
+                    onClick={() => doTestConnection({
+                      testApiType: editDraft.apiType || "openai",
+                      testBaseUrl: editDraft.baseUrl || "",
+                      testApiKey: envDraft[editDraft.apiKeyEnv || ""] || "",
+                      testProviderSlug: editDraft.providerSlug,
+                    })}
+                  >
+                    {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
+                  </button>
+                  <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEditedEndpoint(); setConnTestResult(null); }} disabled={!!busy}>{t("common.save")}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -5012,7 +5450,139 @@ export function App() {
           </details>
 
         </div>
+
+        {/* ── CLI 命令行工具管理 ── */}
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="cardTitle">CLI 命令行工具</div>
+          <div className="cardHint">管理终端命令注册，注册后可在 CMD / PowerShell / 终端中直接使用 oa 或 openakita 命令。</div>
+          <div className="divider" />
+          <CliManager />
+        </div>
       </>
+    );
+  }
+
+  // ── CLI 命令行工具管理组件 ──
+  function CliManager() {
+    const [cliStatus, setCliStatus] = useState<{
+      registeredCommands: string[];
+      inPath: boolean;
+      binDir: string;
+    } | null>(null);
+    const [cliLoading, setCliLoading] = useState(false);
+    const [cliMsg, setCliMsg] = useState("");
+    const [cliRegOpenakita, setCliRegOpenakita] = useState(true);
+    const [cliRegOa, setCliRegOa] = useState(true);
+    const [cliRegPath, setCliRegPath] = useState(true);
+
+    useEffect(() => {
+      loadCliStatus();
+    }, []);
+
+    async function loadCliStatus() {
+      try {
+        const status = await invoke<{ registeredCommands: string[]; inPath: boolean; binDir: string }>("get_cli_status");
+        setCliStatus(status);
+        setCliRegOpenakita(status.registeredCommands.includes("openakita"));
+        setCliRegOa(status.registeredCommands.includes("oa"));
+        setCliRegPath(status.inPath);
+      } catch (e) {
+        setCliMsg(`查询 CLI 状态失败: ${String(e)}`);
+      }
+    }
+
+    async function doRegister() {
+      const cmds: string[] = [];
+      if (cliRegOpenakita) cmds.push("openakita");
+      if (cliRegOa) cmds.push("oa");
+      if (cmds.length === 0) {
+        setCliMsg("请至少选择一个命令名称");
+        return;
+      }
+      setCliLoading(true);
+      setCliMsg("");
+      try {
+        const result = await invoke<string>("register_cli", { commands: cmds, addToPath: cliRegPath });
+        setCliMsg(`✓ ${result}`);
+        await loadCliStatus();
+      } catch (e) {
+        setCliMsg(`✗ 注册失败: ${String(e)}`);
+      } finally {
+        setCliLoading(false);
+      }
+    }
+
+    async function doUnregister() {
+      setCliLoading(true);
+      setCliMsg("");
+      try {
+        const result = await invoke<string>("unregister_cli");
+        setCliMsg(`✓ ${result}`);
+        await loadCliStatus();
+      } catch (e) {
+        setCliMsg(`✗ 注销失败: ${String(e)}`);
+      } finally {
+        setCliLoading(false);
+      }
+    }
+
+    const hasRegistered = cliStatus && cliStatus.registeredCommands.length > 0;
+
+    return (
+      <div style={{ padding: "0 0 8px" }}>
+        {cliStatus && hasRegistered && (
+          <div style={{ background: "rgba(34,197,94,0.08)", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>已注册命令</div>
+            <div style={{ fontSize: 13 }}>
+              {cliStatus.registeredCommands.map(cmd => (
+                <code key={cmd} style={{ marginRight: 8, padding: "2px 6px", background: "rgba(0,0,0,0.1)", borderRadius: 4 }}>{cmd}</code>
+              ))}
+              {cliStatus.inPath ? (
+                <span style={{ color: "#22c55e", fontSize: 12 }}> (已在 PATH 中)</span>
+              ) : (
+                <span style={{ color: "#f59e0b", fontSize: 12 }}> (未在 PATH 中)</span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>目录: {cliStatus.binDir}</div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input type="checkbox" checked={cliRegOpenakita} onChange={() => setCliRegOpenakita(!cliRegOpenakita)} />
+            <span><strong>openakita</strong> — 完整命令</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input type="checkbox" checked={cliRegOa} onChange={() => setCliRegOa(!cliRegOa)} />
+            <span><strong>oa</strong> — 简短别名</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input type="checkbox" checked={cliRegPath} onChange={() => setCliRegPath(!cliRegPath)} />
+            <span>添加到系统 PATH</span>
+          </label>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btnPrimary" onClick={doRegister} disabled={cliLoading} style={{ fontSize: 13 }}>
+            {cliLoading ? "处理中..." : hasRegistered ? "更新注册" : "注册"}
+          </button>
+          {hasRegistered && (
+            <button onClick={doUnregister} disabled={cliLoading} style={{ fontSize: 13 }}>
+              注销全部
+            </button>
+          )}
+        </div>
+
+        {cliMsg && (
+          <div style={{
+            marginTop: 8, padding: "6px 10px", borderRadius: 6, fontSize: 12,
+            background: cliMsg.startsWith("✓") ? "rgba(34,197,94,0.1)" : cliMsg.startsWith("✗") ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.1)",
+            color: cliMsg.startsWith("✓") ? "#22c55e" : cliMsg.startsWith("✗") ? "#ef4444" : "#f59e0b",
+          }}>
+            {cliMsg}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -5901,7 +6471,7 @@ export function App() {
     [endpointSummary, endpointHealth],
   );
 
-  // 保存 env keys 的辅助函数（供 SkillManager 使用）
+  // 保存 env keys 的辅助函数（供 SkillManager 使用，路由逻辑与 saveEnvKeys 一致）
   async function saveEnvKeysExternal(keys: string[]) {
     const entries: Record<string, string> = {};
     for (const k of keys) {
@@ -5910,21 +6480,689 @@ export function App() {
       }
     }
     if (!Object.keys(entries).length) return;
-    // Always try HTTP API first
-    const base = dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
-    try {
-      await safeFetch(`${base}/api/config/env`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries }),
-      });
-    } catch {
-      // Service unreachable — will fall through to Tauri local write
+
+    if (shouldUseHttpApi()) {
+      try {
+        await safeFetch(`${httpApiBase()}/api/config/env`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries }),
+        });
+        return;
+      } catch {
+        console.warn("saveEnvKeysExternal: HTTP failed, falling back to Tauri");
+      }
     }
-    // In local mode, also persist to workspace .env
-    if (dataMode !== "remote" && currentWorkspaceId) {
+    if (currentWorkspaceId) {
       const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
       await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
+    }
+  }
+
+  // ── Onboarding Wizard 渲染 ──
+  async function obLoadModules() {
+    try {
+      const modules = await invoke<ModuleInfo[]>("detect_modules");
+      setObModules(modules);
+    } catch (e) {
+      console.warn("detect_modules failed:", e);
+    }
+  }
+
+  async function obLoadEnvCheck() {
+    try {
+      const check = await invoke<typeof obEnvCheck>("check_environment");
+      setObEnvCheck(check);
+    } catch (e) {
+      console.warn("check_environment failed:", e);
+    }
+  }
+
+  function obToggleModule(id: string) {
+    setObSelectedModules((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const [obHasErrors, setObHasErrors] = useState(false);
+
+  // ── 结构化进度跟踪 ──
+  type TaskStatus = "pending" | "running" | "done" | "error" | "skipped";
+  type SetupTask = { id: string; label: string; status: TaskStatus; detail?: string };
+  const [obTasks, setObTasks] = useState<SetupTask[]>([]);
+  const [obDetailLog, setObDetailLog] = useState<string[]>([]);
+
+  function updateTask(id: string, update: Partial<SetupTask>) {
+    setObTasks(prev => prev.map(t => t.id === id ? { ...t, ...update } : t));
+  }
+  function addDetailLog(msg: string) {
+    setObDetailLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  }
+
+  async function obRunSetup() {
+    setObInstalling(true);
+    setObInstallLog([]);
+    setObDetailLog([]);
+    setObHasErrors(false);
+
+    // 初始化任务列表
+    const taskDefs: SetupTask[] = [
+      { id: "workspace", label: "准备工作区", status: "pending" },
+      { id: "llm-config", label: "保存 LLM 配置", status: savedEndpoints.length > 0 ? "pending" : "skipped" },
+      { id: "env-save", label: "保存环境变量", status: "pending" },
+    ];
+    // 动态添加模块安装任务
+    if (obSelectedModules.size > 0) {
+      taskDefs.push({ id: "python-check", label: "检查 Python 环境", status: "pending" });
+      for (const moduleId of obSelectedModules) {
+        taskDefs.push({ id: `module-${moduleId}`, label: `安装模块: ${moduleId}`, status: "pending" });
+      }
+    }
+    // CLI 注册
+    const cliCommands: string[] = [];
+    if (obCliOpenakita) cliCommands.push("openakita");
+    if (obCliOa) cliCommands.push("oa");
+    if (cliCommands.length > 0) {
+      taskDefs.push({ id: "cli", label: `注册 CLI 命令 (${cliCommands.join(", ")})`, status: "pending" });
+    }
+    taskDefs.push({ id: "service-start", label: "启动后端服务", status: "pending" });
+    taskDefs.push({ id: "http-wait", label: "等待 HTTP 服务就绪", status: "pending" });
+    setObTasks(taskDefs);
+
+    const log = (msg: string) => {
+      setObInstallLog((prev) => [...prev, msg]);
+      addDetailLog(msg);
+    };
+    let hasErr = false;
+
+    try {
+      // ── STEP: workspace ──
+      updateTask("workspace", { status: "running" });
+      let activeWsId = currentWorkspaceId;
+      log(t("onboarding.progress.creatingWorkspace"));
+      if (!activeWsId || !workspaces.length) {
+        const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+        if (!wsList.length) {
+          activeWsId = "default";
+          await invoke("create_workspace", { name: t("onboarding.defaultWorkspace"), id: activeWsId, setCurrent: true });
+          await invoke("set_current_workspace", { id: activeWsId });
+          setCurrentWorkspaceId(activeWsId);
+          log(t("onboarding.progress.workspaceCreated"));
+        } else {
+          activeWsId = wsList[0].id;
+          setCurrentWorkspaceId(activeWsId);
+          log(t("onboarding.progress.workspaceExists"));
+        }
+      } else {
+        log(t("onboarding.progress.workspaceExists"));
+      }
+      updateTask("workspace", { status: "done" });
+
+      // ── STEP: llm-config ──
+      if (savedEndpoints.length > 0) {
+        updateTask("llm-config", { status: "running" });
+        const llmData = { endpoints: savedEndpoints, settings: {} };
+        await invoke("workspace_write_file", {
+          workspaceId: activeWsId,
+          relativePath: "data/llm_endpoints.json",
+          content: JSON.stringify(llmData, null, 2),
+        });
+        log(t("onboarding.progress.llmConfigSaved"));
+        updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length} 个端点` });
+      }
+
+      // ── STEP: env-save ──
+      updateTask("env-save", { status: "running" });
+      try {
+        const imKeys = getAutoSaveKeysForStep("im");
+        const envEntries: { key: string; value: string }[] = [];
+        for (const k of imKeys) {
+          if (Object.prototype.hasOwnProperty.call(envDraft, k) && envDraft[k]) {
+            envEntries.push({ key: k, value: envDraft[k] });
+          }
+        }
+        for (const ep of savedEndpoints) {
+          const keyName = (ep as any).api_key_env;
+          if (keyName && Object.prototype.hasOwnProperty.call(envDraft, keyName) && envDraft[keyName]) {
+            envEntries.push({ key: keyName, value: envDraft[keyName] });
+          }
+        }
+        if (envEntries.length > 0) {
+          await invoke("workspace_update_env", { workspaceId: activeWsId, entries: envEntries });
+          log(t("onboarding.progress.envSaved") || "✓ 环境变量已保存");
+        }
+        updateTask("env-save", { status: "done", detail: `${envEntries.length} 项` });
+      } catch (e) {
+        log(`⚠ 保存环境变量失败: ${String(e)}`);
+        updateTask("env-save", { status: "error", detail: String(e) });
+        hasErr = true;
+      }
+
+      // ── STEP: python-check + modules ──
+      if (obSelectedModules.size > 0) {
+        updateTask("python-check", { status: "running" });
+        let pyReady = false;
+        log("检查 Python 环境...");
+        try {
+          const pyCheck = await invoke<string>("check_python_for_pip");
+          log(`✓ ${pyCheck}`);
+          pyReady = true;
+          updateTask("python-check", { status: "done", detail: pyCheck });
+        } catch {
+          log("未找到 Python 环境，正在安装嵌入式 Python...");
+          updateTask("python-check", { detail: "正在安装嵌入式 Python..." });
+          try {
+            await invoke("install_embedded_python", { pythonSeries: "3.11" });
+            log("✓ 嵌入式 Python 安装完成");
+            pyReady = true;
+            updateTask("python-check", { status: "done", detail: "嵌入式 Python" });
+          } catch (pyErr) {
+            log(`⚠ 嵌入式 Python 安装失败: ${String(pyErr)}`);
+            updateTask("python-check", { status: "error", detail: String(pyErr) });
+            hasErr = true;
+          }
+        }
+
+        for (const moduleId of obSelectedModules) {
+          const taskId = `module-${moduleId}`;
+          updateTask(taskId, { status: "running" });
+          log(t("onboarding.progress.installingModule", { module: moduleId }));
+          if (!pyReady) {
+            updateTask(taskId, { status: "error", detail: "Python 环境不可用" });
+            log(`⚠ 跳过 ${moduleId}: Python 环境不可用`);
+            hasErr = true;
+            continue;
+          }
+          try {
+            await invoke("install_module", { moduleId, mirror: null });
+            log(t("onboarding.progress.moduleInstalled", { module: moduleId }));
+            updateTask(taskId, { status: "done" });
+          } catch (e) {
+            log(t("onboarding.progress.moduleFailed", { module: moduleId, error: String(e) }));
+            updateTask(taskId, { status: "error", detail: String(e).slice(0, 120) });
+            hasErr = true;
+          }
+        }
+      }
+
+      // ── STEP: cli ──
+      if (cliCommands.length > 0) {
+        updateTask("cli", { status: "running" });
+        log("注册 CLI 命令...");
+        try {
+          const result = await invoke<string>("register_cli", {
+            commands: cliCommands,
+            addToPath: obCliAddToPath,
+          });
+          log(`✓ ${result}`);
+          updateTask("cli", { status: "done" });
+        } catch (e) {
+          log(`⚠ CLI 命令注册失败: ${String(e)}`);
+          updateTask("cli", { status: "error", detail: String(e) });
+        }
+      }
+
+      // ── STEP: service-start ──
+      updateTask("service-start", { status: "running" });
+      log(t("onboarding.progress.startingService"));
+      const effectiveVenv = venvDir || (info ? joinPath(info.openakitaRootDir, "venv") : "");
+      try {
+        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+        log(t("onboarding.progress.serviceStarted"));
+        updateTask("service-start", { status: "done" });
+
+        // ── STEP: http-wait ──
+        updateTask("http-wait", { status: "running" });
+        log("等待 HTTP 服务就绪...");
+        let httpReady = false;
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          updateTask("http-wait", { detail: `已等待 ${(i + 1) * 2}s...` });
+          try {
+            const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
+            if (res.ok) {
+              log("✓ HTTP 服务已就绪");
+              setServiceStatus({ running: true, pid: null, pidFile: "" });
+              httpReady = true;
+              updateTask("http-wait", { status: "done", detail: `${(i + 1) * 2}s` });
+              break;
+            }
+          } catch { /* not ready yet */ }
+          if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
+        }
+        if (!httpReady) {
+          log("⚠ HTTP 服务尚未就绪，可进入主页面后手动刷新");
+          updateTask("http-wait", { status: "error", detail: "超时" });
+        }
+      } catch (e) {
+        const errStr = String(e);
+        log(t("onboarding.progress.serviceStartFailed", { error: errStr }));
+        updateTask("service-start", { status: "error", detail: errStr.slice(0, 120) });
+        updateTask("http-wait", { status: "skipped" });
+        if (errStr.length > 200) {
+          log('--- 详细错误信息 ---');
+          log(errStr);
+        }
+        hasErr = true;
+      }
+
+      log(t("onboarding.progress.done"));
+    } catch (e) {
+      log(t("onboarding.progress.error", { error: String(e) }));
+      hasErr = true;
+    } finally {
+      setObHasErrors(hasErr);
+      setObInstalling(false);
+      setObStep("ob-done");
+    }
+  }
+
+  function renderOnboarding() {
+    const obStepDots = ["ob-welcome", "ob-llm", "ob-im", "ob-modules", "ob-cli", "ob-progress", "ob-done"] as OnboardingStep[];
+    const obCurrentIdx = obStepDots.indexOf(obStep);
+
+    const stepIndicator = (
+      <div className="obStepIndicator">
+        {obStepDots.map((s, i) => (
+          <div
+            key={s}
+            className={`obDot ${i === obCurrentIdx ? "obDotActive" : i < obCurrentIdx ? "obDotDone" : ""}`}
+          />
+        ))}
+      </div>
+    );
+
+    switch (obStep) {
+      case "ob-welcome":
+        return (
+          <div className="obPage">
+            <div className="obCenter">
+              <img src={logoUrl} alt="OpenAkita" className="obLogo" />
+              <h1 className="obTitle">{t("onboarding.welcome.title")}</h1>
+              <p className="obDesc">{t("onboarding.welcome.desc")}</p>
+              {obEnvCheck && obEnvCheck.conflicts.length > 0 && (
+                <div className={
+                  obEnvCheck.conflicts.some(c => c.includes("失败") || c.includes("进程"))
+                    ? "obWarning"
+                    : "obInfo"
+                }>
+                  <strong>
+                    {obEnvCheck.conflicts.some(c => c.includes("失败") || c.includes("进程"))
+                      ? t("onboarding.welcome.envWarning")
+                      : t("onboarding.welcome.envCleaned")}
+                  </strong>
+                  <ul>
+                    {obEnvCheck.conflicts.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                </div>
+              )}
+              {obDetectedService && (
+                <div className="obInfo" style={{ marginBottom: 12 }}>
+                  <strong>{t("onboarding.welcome.serviceDetected")}</strong>
+                  <p style={{ margin: "6px 0" }}>
+                    {t("onboarding.welcome.serviceDetectedDesc", { version: obDetectedService.version })}
+                  </p>
+                  <button
+                    className="btnPrimary"
+                    style={{ marginTop: 4 }}
+                    onClick={() => obConnectExistingService()}
+                  >
+                    {t("onboarding.welcome.connectExisting")}
+                  </button>
+                </div>
+              )}
+              <button
+                className="btnPrimary obBtn"
+                onClick={async () => {
+                  // 首次运行：提前创建默认工作区，确保后续 LLM/IM 保存有正确的 workspaceId
+                  try {
+                    const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+                    if (!wsList.length) {
+                      const wsId = "default";
+                      await invoke("create_workspace", { name: t("onboarding.defaultWorkspace"), id: wsId, setCurrent: true });
+                      await invoke("set_current_workspace", { id: wsId });
+                      setCurrentWorkspaceId(wsId);
+                      setWorkspaces([{ id: wsId, name: t("onboarding.defaultWorkspace"), path: "", isCurrent: true }]);
+                    } else {
+                      setWorkspaces(wsList);
+                      if (!currentWorkspaceId && wsList.length > 0) {
+                        setCurrentWorkspaceId(wsList[0].id);
+                      }
+                    }
+                  } catch (e) {
+                    console.warn("ob: create default workspace failed:", e);
+                  }
+                  setObStep("ob-llm");
+                }}
+              >
+                {t("onboarding.welcome.start")}
+              </button>
+              <button
+                className="obLinkBtn"
+                onClick={() => {
+                  setView("wizard");
+                  setConfigMode("full");
+                  setStepId("welcome");
+                }}
+              >
+                {t("onboarding.welcome.advancedLink")}
+              </button>
+            </div>
+            {stepIndicator}
+          </div>
+        );
+
+      case "ob-llm":
+        return (
+          <div className="obPage">
+            <div className="obContent">
+              <h2 className="obStepTitle">{t("onboarding.llm.title")}</h2>
+              <p className="obStepDesc">{t("onboarding.llm.desc")}</p>
+              <div className="obFormArea">{renderLLM()}</div>
+              <p className="obSkipHint">{t("onboarding.skipHint")}</p>
+            </div>
+            <div className="obFooter">
+              {stepIndicator}
+              <div className="obFooterBtns">
+                <button onClick={() => setObStep("ob-welcome")}>{t("config.prev")}</button>
+                {savedEndpoints.length > 0 ? (
+                  <button className="btnPrimary" onClick={() => setObStep("ob-im")}>
+                    {t("config.next")}
+                  </button>
+                ) : (
+                  <button className="obSkipBtn" onClick={() => setObStep("ob-im")}>
+                    {t("onboarding.llm.skip")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+
+      case "ob-im":
+        return (
+          <div className="obPage">
+            <div className="obContent">
+              <h2 className="obStepTitle">{t("onboarding.im.title")}</h2>
+              <p className="obStepDesc">{t("onboarding.im.desc")}</p>
+              <div className="obFormArea">{renderIM()}</div>
+              <p className="obSkipHint">{t("onboarding.skipHint")}</p>
+            </div>
+            <div className="obFooter">
+              {stepIndicator}
+              <div className="obFooterBtns">
+                <button onClick={() => setObStep("ob-llm")}>{t("config.prev")}</button>
+                <button className="btnPrimary" onClick={() => { obLoadModules(); setObStep("ob-modules"); }}>
+                  {t("config.next")}
+                </button>
+                <button className="obSkipBtn" onClick={() => { obLoadModules(); setObStep("ob-modules"); }} title={t("onboarding.im.skip")}>
+                  {t("onboarding.im.skipShort") || t("onboarding.im.skip")}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
+      case "ob-modules":
+        return (
+          <div className="obPage">
+            <div className="obContent">
+              <h2 className="obStepTitle">{t("onboarding.modules.title")}</h2>
+              <p className="obStepDesc">{t("onboarding.modules.desc")}</p>
+              <div className="obModuleList">
+                {obModules.map((m) => (
+                  <label key={m.id} className={`obModuleItem ${m.installed || m.bundled ? "obModuleInstalled" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={m.installed || m.bundled || obSelectedModules.has(m.id)}
+                      disabled={m.installed || m.bundled}
+                      onChange={() => obToggleModule(m.id)}
+                    />
+                    <div className="obModuleInfo">
+                      <strong>{m.name}</strong>
+                      <span className="obModuleDesc">{m.description}</span>
+                      <span className="obModuleSize">~{m.sizeMb} MB</span>
+                    </div>
+                    {(m.installed || m.bundled) && <span className="obModuleBadge">{t("onboarding.modules.installed")}</span>}
+                  </label>
+                ))}
+                {obModules.length === 0 && <p style={{ color: "#94a3b8" }}>{t("onboarding.modules.loading")}</p>}
+              </div>
+            </div>
+            <div className="obFooter">
+              {stepIndicator}
+              <div className="obFooterBtns">
+                <button onClick={() => setObStep("ob-im")}>{t("config.prev")}</button>
+                <button className="btnPrimary" onClick={() => setObStep("ob-cli")}>
+                  {t("config.next")}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
+      case "ob-cli":
+        return (
+          <div className="obPage">
+            <div className="obContent">
+              <h2 className="obStepTitle">终端命令注册</h2>
+              <p className="obStepDesc">
+                注册命令行工具后，可在终端中直接使用命令管理服务，无需打开桌面客户端。
+              </p>
+
+              <div className="obModuleList">
+                {/* openakita 命令 */}
+                <label className={`obModuleItem ${obCliOpenakita ? "" : ""}`} style={obCliOpenakita ? { borderColor: "#5B8DEF", background: "#f0f5ff" } : {}}>
+                  <input
+                    type="checkbox"
+                    checked={obCliOpenakita}
+                    onChange={() => setObCliOpenakita(!obCliOpenakita)}
+                  />
+                  <div className="obModuleInfo">
+                    <strong style={{ fontFamily: "monospace", fontSize: 15 }}>openakita</strong>
+                    <span className="obModuleDesc">完整命令名称</span>
+                  </div>
+                </label>
+
+                {/* oa 命令 */}
+                <label className={`obModuleItem`} style={obCliOa ? { borderColor: "#5B8DEF", background: "#f0f5ff" } : {}}>
+                  <input
+                    type="checkbox"
+                    checked={obCliOa}
+                    onChange={() => setObCliOa(!obCliOa)}
+                  />
+                  <div className="obModuleInfo">
+                    <strong style={{ fontFamily: "monospace", fontSize: 15 }}>oa</strong>
+                    <span className="obModuleDesc">简短别名，推荐日常使用</span>
+                  </div>
+                  <span className="obModuleBadge" style={{ background: "#e0e7ff", color: "#4f46e5" }}>推荐</span>
+                </label>
+
+                {/* PATH 选项 */}
+                <label className={`obModuleItem`} style={obCliAddToPath ? { borderColor: "#5B8DEF", background: "#f0f5ff" } : {}}>
+                  <input
+                    type="checkbox"
+                    checked={obCliAddToPath}
+                    onChange={() => setObCliAddToPath(!obCliAddToPath)}
+                  />
+                  <div className="obModuleInfo">
+                    <strong>添加到系统 PATH</strong>
+                    <span className="obModuleDesc">新打开的终端中可直接输入命令名运行，无需完整路径</span>
+                  </div>
+                </label>
+              </div>
+
+              {/* 命令预览 */}
+              {(obCliOpenakita || obCliOa) && (
+                <div className="obFormArea" style={{ marginTop: 16, padding: "16px 20px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#475569", marginBottom: 10 }}>
+                    安装后可使用的命令示例
+                  </div>
+                  <div style={{
+                    background: "#1e293b", borderRadius: 8, padding: "14px 18px",
+                    fontFamily: "'Cascadia Code', 'Fira Code', 'SF Mono', Consolas, monospace",
+                    fontSize: 13, lineHeight: 1.9, color: "#e2e8f0", overflowX: "auto",
+                  }}>
+                    {obCliOa && <>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> serve <span style={{ color: "#64748b", marginLeft: 24 }}># 启动后端服务</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> status <span style={{ color: "#64748b", marginLeft: 16 }}># 查看运行状态</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> run <span style={{ color: "#64748b", marginLeft: 36 }}># 单次对话</span></div>
+                    </>}
+                    {obCliOa && obCliOpenakita && <div style={{ height: 4 }} />}
+                    {obCliOpenakita && <>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#a5b4fc" }}>openakita</span> init <span style={{ color: "#64748b", marginLeft: 8 }}># 初始化工作区</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#a5b4fc" }}>openakita</span> serve <span style={{ color: "#64748b" }}># 启动后端服务</span></div>
+                    </>}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="obFooter">
+              {stepIndicator}
+              <div className="obFooterBtns">
+                <button onClick={() => setObStep("ob-modules")}>{t("config.prev")}</button>
+                <button className="btnPrimary" onClick={() => { setObStep("ob-progress"); obRunSetup(); }}>
+                  {obSelectedModules.size > 0
+                    ? t("onboarding.modules.installAndContinue")
+                    : t("onboarding.modules.skipAndContinue")}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
+      case "ob-progress": {
+        const taskStatusIcon = (status: TaskStatus) => {
+          switch (status) {
+            case "done": return <span style={{ color: "#22c55e", fontSize: 18 }}>&#x2714;</span>;
+            case "running": return <span className="obProgressSpinnerIcon" />;
+            case "error": return <span style={{ color: "#ef4444", fontSize: 18 }}>&#x2716;</span>;
+            case "skipped": return <span style={{ color: "#9ca3af", fontSize: 14 }}>&#x2014;</span>;
+            default: return <span style={{ color: "#d1d5db", fontSize: 14 }}>&#x25CB;</span>;
+          }
+        };
+        const taskStatusColor: Record<TaskStatus, string> = {
+          done: "#22c55e", running: "#3b82f6", error: "#ef4444", skipped: "#9ca3af", pending: "#9ca3af",
+        };
+        return (
+          <div className="obPage">
+            <div className="obContent" style={{ display: "flex", flexDirection: "column", gap: 0, flex: 1, minHeight: 0 }}>
+              <h2 className="obStepTitle">{t("onboarding.progress.title")}</h2>
+
+              {/* ── 任务进度列表 ── */}
+              <div style={{
+                background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0",
+                padding: "16px 20px", marginBottom: 12,
+              }}>
+                {obTasks.map((task, idx) => (
+                  <div key={task.id} style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "8px 0",
+                    borderBottom: idx < obTasks.length - 1 ? "1px solid #f1f5f9" : "none",
+                    opacity: task.status === "pending" ? 0.5 : 1,
+                  }}>
+                    <div style={{ width: 24, textAlign: "center", flexShrink: 0 }}>
+                      {taskStatusIcon(task.status)}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 14, fontWeight: task.status === "running" ? 600 : 400,
+                        color: taskStatusColor[task.status] ?? "#475569",
+                      }}>
+                        {task.label}
+                      </div>
+                      {task.detail && (
+                        <div style={{
+                          fontSize: 12, color: task.status === "error" ? "#ef4444" : "#94a3b8",
+                          marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }}>
+                          {task.detail}
+                        </div>
+                      )}
+                    </div>
+                    {task.status === "running" && (
+                      <span style={{ fontSize: 12, color: "#3b82f6", flexShrink: 0, fontWeight: 500 }}>进行中</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* ── 实时日志窗口 ── */}
+              <div style={{
+                flex: 1, minHeight: 120, maxHeight: 200,
+                background: "#1e293b", borderRadius: 10, padding: "12px 16px",
+                overflowY: "auto", overflowX: "hidden",
+                fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
+                fontSize: 12, lineHeight: 1.7, color: "#cbd5e1",
+              }}
+                ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
+              >
+                {obDetailLog.length === 0 && (
+                  <div style={{ color: "#64748b" }}>等待任务开始...</div>
+                )}
+                {obDetailLog.map((line, i) => (
+                  <div key={i} style={{
+                    color: line.includes("⚠") || line.includes("失败") ? "#fbbf24"
+                         : line.includes("✓") ? "#4ade80"
+                         : line.includes("---") ? "#64748b"
+                         : "#cbd5e1",
+                  }}>{line}</div>
+                ))}
+                {obInstalling && (
+                  <div style={{ color: "#60a5fa" }}>
+                    <span className="obProgressSpinnerIcon" style={{ display: "inline-block", marginRight: 8 }} />
+                    {t("onboarding.progress.working")}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="obFooter">
+              {stepIndicator}
+            </div>
+          </div>
+        );
+      }
+
+      case "ob-done":
+        return (
+          <div className="obPage">
+            <div className="obCenter">
+              <div className="obDoneIcon">✓</div>
+              <h1 className="obTitle">{t("onboarding.done.title")}</h1>
+              <p className="obDesc">{t("onboarding.done.desc")}</p>
+              {obHasErrors && (
+                <div className="obWarning">
+                  <strong>{t("onboarding.done.someErrors")}</strong>
+                  <p>{t("onboarding.done.errorsHint")}</p>
+                </div>
+              )}
+              <button
+                className="btnPrimary obBtn"
+                onClick={async () => {
+                  // 设置短暂宽限期：onboarding 结束后 HTTP 服务可能还在启动中
+                  // 避免心跳检测立刻报"不可达"导致闪烁
+                  visibilityGraceRef.current = true;
+                  heartbeatFailCount.current = 0;
+                  setTimeout(() => { visibilityGraceRef.current = false; }, 15000);
+                  setView("status");
+                  await refreshAll();
+                  // 关键：刷新端点列表、IM 状态等（forceAliveCheck=true 绕过 serviceStatus 闭包）
+                  try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
+                  autoCheckEndpoints("http://127.0.0.1:18900");
+                }}
+              >
+                {t("onboarding.done.enter")}
+              </button>
+            </div>
+            {stepIndicator}
+          </div>
+        );
+
+      default:
+        return null;
     }
   }
 
@@ -5948,6 +7186,72 @@ export function App() {
     }
     if (view === "im") {
       return <IMView serviceRunning={serviceStatus?.running ?? false} />;
+    }
+    if (view === "modules") {
+      return (
+        <div className="card">
+          <h2 className="cardTitle">{t("modules.title")}</h2>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{t("modules.desc")}</p>
+          <div className="obModuleList">
+            {obModules.map((m) => (
+              <div key={m.id} className={`obModuleItem ${m.installed || m.bundled ? "obModuleInstalled" : ""}`}>
+                <div className="obModuleInfo" style={{ flex: 1 }}>
+                  <strong>{m.name}</strong>
+                  <span className="obModuleDesc">{m.description}</span>
+                  <span className="obModuleSize">~{m.sizeMb} MB</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {(m.installed || m.bundled) ? (
+                    <>
+                      <span className="obModuleBadge">{t("modules.installed")}</span>
+                      <button
+                        className="btnSmall"
+                        style={{ color: "#ef4444" }}
+                        onClick={async () => {
+                          try {
+                            await invoke("uninstall_module", { moduleId: m.id });
+                            setNotice(t("modules.uninstalled", { name: m.name }));
+                            obLoadModules();
+                          } catch (e) {
+                            setError(String(e));
+                          }
+                        }}
+                        disabled={m.bundled}
+                        title={m.bundled ? t("modules.bundledCannotUninstall") : t("modules.uninstall")}
+                      >
+                        {t("modules.uninstall")}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="btnPrimary btnSmall"
+                      onClick={async () => {
+                        try {
+                          setBusy(t("modules.installing", { name: m.name }));
+                          await invoke("install_module", { moduleId: m.id, mirror: null });
+                          setNotice(t("modules.installSuccess", { name: m.name }));
+                          obLoadModules();
+                        } catch (e) {
+                          setError(String(e));
+                        } finally {
+                          setBusy(null);
+                        }
+                      }}
+                      disabled={!!busy}
+                    >
+                      {t("modules.install")}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {obModules.length === 0 && <p style={{ color: "#94a3b8" }}>{t("modules.loading")}</p>}
+          </div>
+          <button className="btnSmall" style={{ marginTop: 16 }} onClick={obLoadModules} disabled={!!busy}>
+            {t("modules.refresh")}
+          </button>
+        </div>
+      );
     }
     switch (stepId) {
       case "welcome":
@@ -5977,6 +7281,27 @@ export function App() {
       default:
         return renderWelcome();
     }
+  }
+
+  // ── 初始化加载中：检测是否首次运行，防止先闪主页面再跳 onboarding ──
+  if (appInitializing) {
+    return (
+      <div className="onboardingShell" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ textAlign: "center", opacity: 0.6 }}>
+          <div className="spinner" style={{ margin: "0 auto 16px" }} />
+          <div style={{ fontSize: 14 }}>Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Onboarding 全屏模式 (隐藏侧边栏和顶部状态栏) ──
+  if (view === "onboarding") {
+    return (
+      <div className="onboardingShell">
+        {renderOnboarding()}
+      </div>
+    );
   }
 
   return (
@@ -6011,6 +7336,9 @@ export function App() {
           </div>
           <div className={`navItem ${view === "skills" ? "navItemActive" : ""}`} onClick={() => setView("skills")} role="button" tabIndex={0} title={t("sidebar.skills")}>
             <IconSkills size={16} /> {!sidebarCollapsed && <span>{t("sidebar.skills")}</span>}
+          </div>
+          <div className={`navItem ${view === "modules" ? "navItemActive" : ""}`} onClick={() => { setView("modules"); obLoadModules(); }} role="button" tabIndex={0} title={t("sidebar.modules")}>
+            <IconGear size={16} /> {!sidebarCollapsed && <span>{t("sidebar.modules")}</span>}
           </div>
           <div className={`navItem ${view === "status" ? "navItemActive" : ""}`} onClick={async () => { setView("status"); try { await refreshStatus(); } catch { /* ignore */ } }} role="button" tabIndex={0} title={t("sidebar.status")}>
             <IconStatus size={16} /> {!sidebarCollapsed && <span>{t("sidebar.status")}</span>}

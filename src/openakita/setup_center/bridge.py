@@ -419,10 +419,21 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         _json_print({"status": "ok", "installed": [], "message": "所有依赖已就绪"})
         return
 
-    # 执行安装
+    # 执行安装 (PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器)
+    from openakita.runtime_env import get_pip_command
+    pip_cmd = get_pip_command(missing)
+    if not pip_cmd:
+        _json_print({
+            "status": "error",
+            "installed": [],
+            "missing": missing,
+            "message": "当前环境不支持自动安装依赖，请通过设置中心的模块管理安装",
+        })
+        return
+
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", *missing],
+            pip_cmd,
             capture_output=True,
             text=True,
             timeout=180,

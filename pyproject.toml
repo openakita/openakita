@@ -21,59 +21,65 @@ dependencies = [
     # Core LLM
     "anthropic>=0.40.0",
     "openai>=1.0.0",
-    
+
     # MCP (Model Context Protocol)
     "mcp>=1.0.0",
-    
+
     # Web Search
     "ddgs>=8.0.0",
-    
+
     # CLI and UI
     "rich>=13.7.0",
     "prompt-toolkit>=3.0.43",
     "typer>=0.12.0",
-    
+
     # Async and HTTP
     "httpx>=0.27.0",
     "aiofiles>=24.1.0",
     "nest-asyncio>=1.5.0",
-    
+
     # Database
     "aiosqlite>=0.20.0",
-    
+
     # Data validation
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    
+
     # Git operations
     "gitpython>=3.1.40",
-    
-    # Browser automation
-    "playwright>=1.40.0",
-    
+
     # YAML for config
     "pyyaml>=6.0.1",
-    
+
     # Utilities
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.3",
-    
+
     # HTTP API (serve mode + Desktop Terminal)
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
-    
-    # Memory - Vector Search
-    "sentence-transformers>=2.2.0",
-    "chromadb>=0.4.0",
-    
-    # Multi-Agent Orchestration
-    "pyzmq>=25.0.0",
-    
+
     # IM Channels - Telegram (default)
     "python-telegram-bot>=21.0",
 ]
 
 [project.optional-dependencies]
+# 向量记忆增强 (sentence-transformers + chromadb)
+memory = [
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+]
+
+# 浏览器自动化 (playwright)
+automation = [
+    "playwright>=1.40.0",
+]
+
+# 多 Agent 协同 (pyzmq)
+orchestration = [
+    "pyzmq>=25.0.0",
+]
+
 # 飞书 IM 通道
 feishu = [
     "lark-oapi>=1.2.0",
@@ -125,6 +131,12 @@ windows = [
 # 全部可选依赖
 all = [
     # 注意：不要让项目“依赖自己”。这里展开成所有 extra 的合集。
+    # -- 从核心依赖分离的重型模块 --
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+    "playwright>=1.40.0",
+    "pyzmq>=25.0.0",
+    # -- IM 通道 --
     "lark-oapi>=1.2.0",
     "dingtalk-stream>=0.24.0",
     "aiohttp>=3.9.0",
@@ -132,6 +144,7 @@ all = [
     "websockets>=12.0",
     "qq-botpy>=1.1.5",
     "pilk>=0.2.1",
+    # -- 语音 / 浏览器 AI / 桌面 --
     "openai-whisper>=20231117",
     "static-ffmpeg>=2.7",
     "browser-use>=0.11.8",

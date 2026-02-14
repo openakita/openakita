@@ -11,7 +11,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@shared/providers.json": ["../../src/openakita/llm/registries/providers.json"]
+    }
   },
   "include": ["src"]
 }
