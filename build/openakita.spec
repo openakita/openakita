@@ -232,25 +232,24 @@ exe = EXE(
     entitlements_file=None,
 )
 
-# On macOS, filter out duplicate Python framework entries to avoid symlink FileExistsError
+# On macOS, remove conflicting Python file before COLLECT creates symlink
 # This is a workaround for PyInstaller bug with Python.framework symlinks
 import sys as _sys
 _binaries_filtered = a.binaries
 if _sys.platform == "darwin":
-    # Remove duplicate Python framework entries that cause symlink conflicts
-    _seen_python = set()
-    _filtered = []
-    for item in a.binaries:
-        name = item[0] if isinstance(item, tuple) else item
-        # Skip duplicate Python framework entries
-        if 'Python.framework' in str(name) and 'Python' in str(name):
-            if name in _seen_python:
-                print(f"[spec] Skipping duplicate: {name}")
-                continue
-            _seen_python.add(name)
-        _filtered.append(item)
-    _binaries_filtered = _filtered
-    print(f"[spec] Filtered binaries: {len(a.binaries)} -> {len(_binaries_filtered)}")
+    # Remove the Python file that conflicts with symlink creation
+    _internal_python = PROJECT_ROOT / "dist" / "openakita-server" / "_internal" / "Python"
+    if _internal_python.exists():
+        print(f"[spec] Removing conflicting file: {_internal_python}")
+        _internal_python.unlink()
+    
+    # Also try to remove the entire _internal directory if it exists
+    _internal_dir = PROJECT_ROOT / "dist" / "openakita-server" / "_internal"
+    if _internal_dir.exists():
+        print(f"[spec] Removing _internal directory: {_internal_dir}")
+        shutil.rmtree(_internal_dir)
+    
+    print(f"[spec] macOS cleanup completed, binaries count: {len(a.binaries)}")
 
 coll = COLLECT(
     exe,

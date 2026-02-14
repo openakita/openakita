@@ -79,6 +79,12 @@ def build_backend(mode: str):
 
     print("\n[3/4] Running PyInstaller...")
     env = {"OPENAKITA_BUILD_MODE": mode}
+    
+    # On macOS, set environment to avoid symlink issues
+    if sys.platform == "darwin":
+        # Disable symlinks in PyInstaller to avoid FileExistsError
+        env["PYINSTALLER_DO_NOT_SYMLINK_PYTHON"] = "1"
+    
     run_cmd(
         [
             sys.executable, "-m", "PyInstaller",
