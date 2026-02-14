@@ -232,6 +232,15 @@ exe = EXE(
     entitlements_file=None,
 )
 
+# Force remove output dir right before COLLECT to avoid macOS symlink FileExistsError
+# This is needed because PyInstaller's COLLECT phase may conflict with files created earlier
+import sys as _sys
+if _sys.platform == "darwin":
+    _collect_output = PROJECT_ROOT / "dist" / "openakita-server"
+    if _collect_output.exists():
+        print(f"[spec] Removing output before COLLECT: {_collect_output}")
+        shutil.rmtree(_collect_output)
+
 coll = COLLECT(
     exe,
     a.binaries,
