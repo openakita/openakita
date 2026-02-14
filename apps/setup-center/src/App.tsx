@@ -1282,7 +1282,12 @@ export function App() {
         );
       }
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      if (msg.includes("venv python not found")) {
+        setError("未检测到可用的 venv Python。请先在“安装”步骤完成 venv 和 openakita 安装，然后再添加端点。");
+      } else {
+        setError(msg);
+      }
       throw e;
     } finally {
       setBusy(null);
@@ -1336,9 +1341,67 @@ export function App() {
       setSelectedModelId("");
       setNotice(`拉取到模型：${parsed.length} 个`);
       setCapTouched(false);
+    } catch (e) {
+      setError(`拉取模型失败：${String(e)}`);
     } finally {
       setBusy(null);
     }
+  }
+
+  function inferCapsFromModelId(modelId: string): Record<string, boolean> {
+    const id = (modelId || "").toLowerCase();
+    const vision = /vision|vl|image|gpt-4o|gemini|claude-3|claude-4/.test(id);
+    const thinking = /reason|reasoning|thinking|o1|o3|r1|qwq/.test(id);
+    return {
+      text: true,
+      vision,
+      image: vision,
+      tool_calling: true,
+      reasoning: thinking,
+      thinking,
+      audio: /audio|realtime|whisper/.test(id),
+      video: /video/.test(id),
+    };
+  }
+
+  async function fetchModelListDirectFromProvider(params: {
+    apiType: string; baseUrl: string; apiKey: string;
+  }): Promise<ListedModel[]> {
+    const base = (params.baseUrl || "").trim().replace(/\/+$/, "");
+    const key = (params.apiKey || "").trim();
+    if (!base) throw new Error("请先填写 Base URL");
+    if (!key) throw new Error("请先填写 API Key");
+
+    if ((params.apiType || "openai") === "anthropic") {
+      const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
+      const res = await safeFetch(url, {
+        headers: {
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
+      const data = await res.json();
+      const arr = Array.isArray(data?.data) ? data.data : [];
+      const out: ListedModel[] = arr
+        .map((m: any) => String(m?.id || "").trim())
+        .filter(Boolean)
+        .map((id: string) => ({ id, name: id, capabilities: inferCapsFromModelId(id) }));
+      return out.sort((a, b) => a.id.localeCompare(b.id));
+    }
+
+    // OpenAI-compatible providers
+    const res = await safeFetch(`${base}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const data = await res.json();
+    const arr = Array.isArray(data?.data) ? data.data : [];
+    const out: ListedModel[] = arr
+      .map((m: any) => String(m?.id || "").trim())
+      .filter(Boolean)
+      .map((id: string) => ({ id, name: id, capabilities: inferCapsFromModelId(id) }));
+    return out.sort((a, b) => a.id.localeCompare(b.id));
   }
 
   /**
@@ -1369,6 +1432,14 @@ export function App() {
         if (dataMode === "remote") throw e;
         // 本地模式：HTTP 失败，回退到 Tauri
       }
+    }
+    // 快速模式：本地运行时尚未安装时，前端直接向服务商 API 拉取模型
+    if (configMode === "quick" && !serviceStatus?.running) {
+      return await fetchModelListDirectFromProvider({
+        apiType: params.apiType,
+        baseUrl: params.baseUrl,
+        apiKey: params.apiKey,
+      });
     }
     // 回退：Tauri invoke（本地模式）
     const raw = await invoke<string>("openakita_list_models", {
@@ -3516,6 +3587,30 @@ export function App() {
                 setStepId("quick-form");
                 setMaxReachedStepIdx(1);
                 localStorage.setItem("openakita_maxStep", "1");
+                // Quick mode should have a writable workspace before endpoint editing.
+                void (async () => {
+                  try {
+                    const ws = await invoke<WorkspaceSummary>("create_workspace", {
+                      id: "default",
+                      name: "默认工作区",
+                      setCurrent: true,
+                    });
+                    await refreshAll();
+                    setCurrentWorkspaceId(ws.id);
+                    envLoadedForWs.current = null;
+                  } catch {
+                    try {
+                      const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+                      const existing = wsList.find((w) => w.id === "default");
+                      if (existing) {
+                        await invoke("set_current_workspace", { id: "default" });
+                        await refreshAll();
+                        setCurrentWorkspaceId("default");
+                        envLoadedForWs.current = null;
+                      }
+                    } catch { /* ignore */ }
+                  }
+                })();
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 20px rgba(25,118,210,0.25)"; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = ""; (e.currentTarget as HTMLElement).style.transform = ""; }}
@@ -4154,6 +4249,10 @@ export function App() {
   const [addCompDialogOpen, setAddCompDialogOpen] = useState(false);
 
   function openAddEpDialog() {
+    if (dataMode !== "remote" && configMode !== "quick" && (!venvReady || !openakitaInstalled)) {
+      setError("请先完成安装：创建 venv 并安装 openakita，然后再添加端点。");
+      return;
+    }
     resetEndpointEditor();
     doLoadProviders();
     setAddEpDialogOpen(true);
@@ -4212,7 +4311,14 @@ export function App() {
               <div className="statusCardLabel">{t("llm.compiler")}</div>
               <div className="cardHint" style={{ fontSize: 11 }}>{t("llm.compilerHint")}</div>
             </div>
-            <button className="btnSmall btnSmallPrimary" onClick={() => { doLoadProviders(); setAddCompDialogOpen(true); }} disabled={!!busy}>
+            <button className="btnSmall btnSmallPrimary" onClick={() => {
+              if (dataMode !== "remote" && configMode !== "quick" && (!venvReady || !openakitaInstalled)) {
+                setError("请先完成安装：创建 venv 并安装 openakita，然后再添加端点。");
+                return;
+              }
+              doLoadProviders();
+              setAddCompDialogOpen(true);
+            }} disabled={!!busy}>
               + {t("llm.addEndpoint")}
             </button>
           </div>
@@ -6447,4 +6553,3 @@ export function App() {
     </div>
   );
 }
-

@@ -1990,8 +1990,20 @@ async fn install_embedded_python(python_series: Option<String>) -> Result<Embedd
 async fn create_venv(python_command: Vec<String>, venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
         let venv = PathBuf::from(venv_dir);
+        let venv_text = venv.to_string_lossy().to_string();
+        let py = venv_python_path(&venv_text);
         if venv.exists() {
-            return Ok(venv.to_string_lossy().to_string());
+            if py.exists() {
+                return Ok(venv_text);
+            }
+            // Incomplete/broken venv (e.g. interrupted setup): recreate it.
+            if venv.is_dir() {
+                fs::remove_dir_all(&venv)
+                    .map_err(|e| format!("failed to remove incomplete venv: {e}"))?;
+            } else {
+                fs::remove_file(&venv)
+                    .map_err(|e| format!("failed to remove incomplete venv file: {e}"))?;
+            }
         }
         let cmd = python_command;
         if cmd.is_empty() {
@@ -2009,7 +2021,10 @@ async fn create_venv(python_command: Vec<String>, venv_dir: String) -> Result<St
             .success()
             .then_some(())
             .ok_or_else(|| "venv creation failed".to_string())?;
-        Ok(venv.to_string_lossy().to_string())
+        if !py.exists() {
+            return Err(format!("venv python not found after create: {}", py.to_string_lossy()));
+        }
+        Ok(venv_text)
     })
     .await
 }
@@ -2313,9 +2328,33 @@ fn run_python_module_json(
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+fn builtin_providers_json() -> String {
+    serde_json::json!([
+        {"name":"Anthropic (Official / Compatible)","slug":"anthropic","api_type":"anthropic","default_base_url":"https://api.anthropic.com","api_key_env_suggestion":"ANTHROPIC_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"OpenAI (Official / Compatible)","slug":"openai","api_type":"openai","default_base_url":"https://api.openai.com/v1","api_key_env_suggestion":"OPENAI_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"阿里云 DashScope（中国区）","slug":"dashscope","api_type":"openai","default_base_url":"https://dashscope.aliyuncs.com/compatible-mode/v1","api_key_env_suggestion":"DASHSCOPE_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"Alibaba DashScope (International)","slug":"dashscope-intl","api_type":"openai","default_base_url":"https://dashscope-intl.aliyuncs.com/compatible-mode/v1","api_key_env_suggestion":"DASHSCOPE_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"Kimi（月之暗面，中国区）","slug":"kimi-cn","api_type":"openai","default_base_url":"https://api.moonshot.cn/v1","api_key_env_suggestion":"KIMI_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"Kimi (International)","slug":"kimi-int","api_type":"openai","default_base_url":"https://api.moonshot.ai/v1","api_key_env_suggestion":"KIMI_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"MiniMax（中国区）","slug":"minimax-cn","api_type":"openai","default_base_url":"https://api.minimax.chat/v1","api_key_env_suggestion":"MINIMAX_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"MiniMax (International)","slug":"minimax-int","api_type":"openai","default_base_url":"https://api.minimax.io/v1","api_key_env_suggestion":"MINIMAX_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"DeepSeek","slug":"deepseek","api_type":"openai","default_base_url":"https://api.deepseek.com/v1","api_key_env_suggestion":"DEEPSEEK_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"OpenRouter","slug":"openrouter","api_type":"openai","default_base_url":"https://openrouter.ai/api/v1","api_key_env_suggestion":"OPENROUTER_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"SiliconFlow（中国区）","slug":"siliconflow","api_type":"openai","default_base_url":"https://api.siliconflow.cn/v1","api_key_env_suggestion":"SILICONFLOW_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"SiliconFlow (International)","slug":"siliconflow-int","api_type":"openai","default_base_url":"https://api.siliconflow.com/v1","api_key_env_suggestion":"SILICONFLOW_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"VolcEngine Ark","slug":"volcengine","api_type":"openai","default_base_url":"https://ark.cn-beijing.volces.com/api/v3","api_key_env_suggestion":"VOLCENGINE_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"智谱 AI（中国区）","slug":"zhipu-cn","api_type":"openai","default_base_url":"https://open.bigmodel.cn/api/paas/v4","api_key_env_suggestion":"ZHIPU_API_KEY","supports_model_list":true,"supports_capability_api":false},
+        {"name":"Zhipu AI (International)","slug":"zhipu-int","api_type":"openai","default_base_url":"https://open.zhipuai.com/api/paas/v4","api_key_env_suggestion":"ZHIPU_API_KEY","supports_model_list":true,"supports_capability_api":false}
+    ]).to_string()
+}
+
 #[tauri::command]
 async fn openakita_list_providers(venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
+        let py = venv_python_path(&venv_dir);
+        if !py.exists() {
+            return Ok(builtin_providers_json());
+        }
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &["list-providers"], &[])
     })
     .await
