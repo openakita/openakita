@@ -42,7 +42,7 @@ type StreamEvent =
   | { type: "context_compressed"; before_tokens: number; after_tokens: number }
   | { type: "thinking_start" }
   | { type: "thinking_delta"; content: string }
-  | { type: "thinking_end"; duration_ms?: number }
+  | { type: "thinking_end"; duration_ms?: number; has_thinking?: boolean }
   | { type: "text_delta"; content: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
   | { type: "tool_call_end"; tool: string; result: string; id?: string }
@@ -257,10 +257,33 @@ function ChainGroupItem({ group, onToggle, isLast, streaming }: {
   streaming: boolean;
 }) {
   const { t } = useTranslation();
-  const durationSec = group.thinking?.durationMs
-    ? (group.thinking.durationMs / 1000).toFixed(1)
-    : "...";
   const isActive = isLast && streaming;
+  const hasThinking = !!group.thinking?.content;
+  const hasTools = group.toolCalls.length > 0;
+  const durMs = group.thinking?.durationMs || group.durationMs;
+  const durationSec = durMs ? (durMs / 1000).toFixed(1) : "...";
+
+  // 没有 thinking 也没有 tool calls —— 纯等待/直接回答场景
+  // 显示紧凑的一行："已处理 (X.Xs)" 或 "处理中..."
+  if (!hasThinking && !hasTools && !isActive) {
+    return (
+      <div className="chainGroup chainGroupCompact">
+        {group.contextCompressed && (
+          <div className="chainCompressedIndicator">
+            {t("chat.contextCompressed", {
+              before: Math.round(group.contextCompressed.beforeTokens / 1000),
+              after: Math.round(group.contextCompressed.afterTokens / 1000),
+            })}
+          </div>
+        )}
+        <div className="chainProcessedLine">
+          <IconLoader size={11} />
+          <span>{t("chat.processed", { seconds: durationSec })}</span>
+        </div>
+      </div>
+    );
+  }
+
   const showContent = !group.collapsed || isActive;
 
   return (
@@ -274,35 +297,31 @@ function ChainGroupItem({ group, onToggle, isLast, streaming }: {
           })}
         </div>
       )}
-      {/* Thinking header: "Thought for Xs" */}
+      {/* Header: 有 thinking 时显示 "思考了 Xs"，否则 "处理中..." 或 "已处理" */}
       <div className="chainThinkingHeader" onClick={onToggle}>
         <span className="chainChevron" style={{ transform: showContent ? "rotate(90deg)" : "rotate(0deg)" }}>
           <IconChevronRight size={11} />
         </span>
         <span className="chainThinkingLabel">
-          {isActive && !group.thinking?.durationMs
-            ? t("chat.thinking")
-            : group.thinking?.durationMs
+          {isActive
+            ? (hasThinking ? t("chat.thinking") : t("chat.processing"))
+            : hasThinking
               ? t("chat.thoughtFor", { seconds: durationSec })
-              : t("chat.thinking")}
+              : t("chat.processed", { seconds: durationSec })}
         </span>
       </div>
 
       {showContent && (
         <>
           {/* Thinking content (inline visible, Cursor style) */}
-          {group.thinking?.content ? (
+          {hasThinking && (
             <div className="chainThinkingContent">
-              {group.thinking.content}
+              {group.thinking!.content}
             </div>
-          ) : (!isActive && group.toolCalls.length === 0) ? (
-            <div className="chainThinkingContent chainThinkingEmpty">
-              {t("chat.noThinkingContent")}
-            </div>
-          ) : null}
+          )}
 
           {/* Tool calls */}
-          {group.toolCalls.length > 0 && (
+          {hasTools && (
             <div className="chainToolList">
               {group.toolCalls.map((tc, i) => (
                 <ChainToolItem key={tc.toolId || i} tc={tc} />
@@ -1506,15 +1525,17 @@ export function ChatView({
                 // 思维链: 记录 thinking 到当前组
                 const _thinkDuration = event.duration_ms || (Date.now() - thinkingStartTime);
                 const _preview = currentThinkingContent.split(/[。\n]/)[0].slice(0, 80);
+                const _hasThinking = event.has_thinking ?? (currentThinkingContent.length > 0);
                 if (currentChainGroup) {
                   const grp: ChainGroup = currentChainGroup;
                   currentChainGroup = {
                     ...grp,
-                    thinking: {
+                    thinking: _hasThinking ? {
                       content: currentThinkingContent,
                       durationMs: _thinkDuration,
                       preview: _preview,
-                    },
+                    } : undefined,
+                    durationMs: _thinkDuration,
                   };
                   chainGroups = chainGroups.map((g, i) =>
                     i === chainGroups.length - 1 ? currentChainGroup! : g

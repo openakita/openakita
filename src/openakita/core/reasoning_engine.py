@@ -1182,12 +1182,14 @@ class ReasoningEngine:
 
                 # Emit thinking content
                 _thinking_duration = int((time.time() - _thinking_t0) * 1000)
-                if decision.thinking_content:
+                _has_thinking = bool(decision.thinking_content)
+                if _has_thinking:
                     yield {"type": "thinking_delta", "content": decision.thinking_content}
-                elif decision.text_content:
-                    # 模型不支持 extended thinking 时，用 text_content 作为思考预览
-                    yield {"type": "thinking_delta", "content": decision.text_content[:500]}
-                yield {"type": "thinking_end", "duration_ms": _thinking_duration}
+                yield {
+                    "type": "thinking_end",
+                    "duration_ms": _thinking_duration,
+                    "has_thinking": _has_thinking,
+                }
 
                 if task_monitor:
                     task_monitor.end_iteration(decision.text_content or "")

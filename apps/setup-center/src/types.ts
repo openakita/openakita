@@ -168,6 +168,7 @@ export type ChainGroup = {
     durationMs: number;    // 思考耗时 ms
     preview: string;       // 首句/首 80 字符, 用于组标题
   };
+  durationMs?: number;     // 本轮耗时 ms（无 thinking 内容时也有）
   toolCalls: ChainToolCall[];
   summary?: string;        // 自动生成: "Explored 3 files 2 searches"
   collapsed: boolean;      // 当前折叠状态

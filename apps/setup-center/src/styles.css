@@ -2101,9 +2101,22 @@ button:disabled {
   overflow-y: auto;
 }
 
-.chainThinkingEmpty {
-  font-style: italic;
-  opacity: 0.4;
+.chainGroupCompact {
+  margin-bottom: 4px;
+}
+
+.chainProcessedLine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted, #888);
+  opacity: 0.6;
+  padding: 2px 0;
+}
+
+.chainProcessedLine svg {
+  opacity: 0.5;
 }
 
 .chainToolList {
