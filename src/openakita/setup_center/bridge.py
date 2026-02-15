@@ -570,6 +570,10 @@ def install_skill(workspace_dir: str, url: str) -> None:
 
         if "@" in url:
             repo_part, skill_name = url.split("@", 1)
+            skill_name = skill_name.strip()
+            if not skill_name:
+                # "owner/repo@" → 使用仓库名作为技能名
+                skill_name = repo_part.split("/")[-1]
         else:
             repo_part = url
             skill_name = url.split("/")[-1]
