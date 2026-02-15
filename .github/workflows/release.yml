@@ -404,13 +404,41 @@ jobs:
             --output latest-this.json \
             --repo "${{ github.repository }}"
 
-          # 根据渠道决定文件名
+          NEW_VER=$(python -c "import json; print(json.load(open('latest-this.json'))['version'])")
+          echo "New version: ${NEW_VER}"
+
           if [ "$IS_STABLE" = "true" ]; then
-            cp latest-this.json latest.json
-            echo "📦 Stable release → latest.json"
+            # ── 稳定版：只有版本号更大才覆盖 latest.json（防止老分支 bugfix 降级） ──
+            SHOULD_UPDATE="true"
+            # 尝试获取当前线上的 latest.json
+            if curl -sf "https://openakita.ai/api/latest.json" -o existing-latest.json 2>/dev/null; then
+              OLD_VER=$(python -c "import json; print(json.load(open('existing-latest.json'))['version'])" 2>/dev/null || echo "0.0.0")
+              echo "Existing stable version: ${OLD_VER}"
+              # 比较版本号：如果新版本不大于旧版本，跳过更新
+              IS_NEWER=$(python -c "
+          old = list(map(int, '${OLD_VER}'.split('.')))
+          new = list(map(int, '${NEW_VER}'.split('.')))
+          print('true' if new > old else 'false')
+          ")
+              if [ "$IS_NEWER" = "false" ]; then
+                echo "⏭️ Skipping latest.json update: ${NEW_VER} <= ${OLD_VER}"
+                SHOULD_UPDATE="false"
+              fi
+            else
+              echo "No existing latest.json found, will create"
+            fi
+
+            if [ "$SHOULD_UPDATE" = "true" ]; then
+              cp latest-this.json latest.json
+              echo "📦 Stable release → latest.json (${NEW_VER})"
+            fi
+            # 不管是否更新 latest.json，总是写入对应分支的 manifest
+            cp latest-this.json "latest-stable-${NEW_VER}.json"
+            echo "SHOULD_UPDATE_STABLE=${SHOULD_UPDATE}" >> "$GITHUB_ENV"
           else
             cp latest-this.json latest-dev.json
             echo "🔧 Dev release → latest-dev.json"
+            echo "SHOULD_UPDATE_STABLE=false" >> "$GITHUB_ENV"
           fi
 
           echo "=== manifest ==="
@@ -421,13 +449,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           IS_STABLE: ${{ needs.create_release.outputs.is_stable }}
         run: |
-          if [ "$IS_STABLE" = "true" ]; then
-            gh release upload "${{ env.RELEASE_TAG }}" latest.json --clobber
-          else
-            gh release upload "${{ env.RELEASE_TAG }}" latest-dev.json --clobber
-          fi
+          # 始终把当前版本的 manifest 上传到对应 Release
+          gh release upload "${{ env.RELEASE_TAG }}" latest-this.json --clobber
 
-      - name: Push latest.json / latest-dev.json to website repo
+      - name: Push to website repo
         if: ${{ secrets.WEBSITE_DEPLOY_TOKEN != '' }}
         env:
           GH_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
@@ -439,20 +464,28 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if [ "$IS_STABLE" = "true" ]; then
+          CHANGED="false"
+
+          if [ "$IS_STABLE" = "true" ] && [ "$SHOULD_UPDATE_STABLE" = "true" ]; then
+            # 稳定版且版本号更大 → 更新 latest.json
             cp "$GITHUB_WORKSPACE/latest.json" api/latest.json
             git add api/latest.json
-            MSG="chore: update latest.json (stable) for ${{ env.RELEASE_TAG }}"
-          else
-            cp "$GITHUB_WORKSPACE/latest-dev.json" api/latest-dev.json
-            git add api/latest-dev.json
-            MSG="chore: update latest-dev.json (dev) for ${{ env.RELEASE_TAG }}"
+            CHANGED="true"
+            echo "Will update latest.json"
           fi
 
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "$MSG"
+          if [ "$IS_STABLE" != "true" ]; then
+            # 开发版 → 更新 latest-dev.json
+            cp "$GITHUB_WORKSPACE/latest-dev.json" api/latest-dev.json
+            git add api/latest-dev.json
+            CHANGED="true"
+            echo "Will update latest-dev.json"
+          fi
+
+          if [ "$CHANGED" = "true" ] && ! git diff --cached --quiet; then
+            git commit -m "chore: update manifest for ${{ env.RELEASE_TAG }} (${{ needs.create_release.outputs.channel }})"
             git push
             echo "Pushed to openakita-web"
+          else
+            echo "No changes to push"
           fi
