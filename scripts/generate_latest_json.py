@@ -15,11 +15,11 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 try:
-    import urllib.request
     import urllib.error
+    import urllib.request
 except ImportError:
     pass
 
@@ -131,7 +131,7 @@ def main():
     version = tag.lstrip("v")
     assets = release.get("assets", [])
     notes = release.get("body", "")
-    pub_date = release.get("published_at") or datetime.now(timezone.utc).isoformat()
+    pub_date = release.get("published_at") or datetime.now(UTC).isoformat()
 
     print(f"Release {tag}: {len(assets)} assets found")
 
