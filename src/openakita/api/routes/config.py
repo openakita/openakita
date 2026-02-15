@@ -341,4 +341,19 @@ async def list_models_api(body: ListModelsRequest):
         return {"models": models}
     except Exception as e:
         logger.error(f"[Config API] list-models failed: {e}")
-        return {"error": str(e), "models": []}
+        # 将原始 Python 异常转为用户友好的提示
+        raw = str(e).lower()
+        friendly = str(e)
+        if "connect" in raw or "connection refused" in raw or "no route" in raw or "unreachable" in raw:
+            friendly = "无法连接到服务商，请检查 API 地址和网络连接"
+        elif "401" in raw or "unauthorized" in raw or "invalid api key" in raw or "authentication" in raw:
+            friendly = "API Key 无效或已过期，请检查后重试"
+        elif "403" in raw or "forbidden" in raw or "permission" in raw:
+            friendly = "API Key 权限不足，请确认已开通模型访问权限"
+        elif "404" in raw or "not found" in raw:
+            friendly = "API 地址有误，服务商未返回模型列表接口"
+        elif "timeout" in raw or "timed out" in raw:
+            friendly = "请求超时，请检查网络或稍后重试"
+        elif len(friendly) > 150:
+            friendly = friendly[:150] + "…"
+        return {"error": friendly, "models": []}

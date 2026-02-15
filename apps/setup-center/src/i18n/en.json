@@ -464,7 +464,16 @@
     "testTimeout": "Connection timed out, check network",
     "localNoKey": "No API Key required",
     "localKeyPlaceholder": "Local service, no API Key needed",
-    "localHint": "Local services (Ollama / LM Studio) don't require a real API Key, a placeholder has been auto-filled"
+    "localHint": "Local services (Ollama / LM Studio) don't require a real API Key, a placeholder has been auto-filled",
+    "fetchSuccess": "Successfully fetched {{count}} models, please select one",
+    "fetchErrorNetwork": "Cannot reach the provider, please check API URL and network",
+    "fetchErrorAuth": "Invalid or expired API Key, please verify and retry",
+    "fetchErrorForbidden": "Insufficient API Key permissions, please check access rights",
+    "fetchErrorNotFound": "API URL is incorrect, model list endpoint not found",
+    "fetchErrorTimeout": "Request timed out, please check network or try again later",
+    "fetchErrorLocalNotRunning": "Local service is not running, please start {{provider}} first",
+    "fetchErrorEmpty": "Provider returned an empty model list, please check account quota or API URL",
+    "fetchErrorUnknown": "Failed to fetch models: {{detail}}"
   },
   "welcome": {
     "title": "Setup Guide",

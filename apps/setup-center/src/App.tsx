@@ -80,6 +80,44 @@ function localProviderPlaceholderKey(p: ProviderInfo | null | undefined): string
   return p?.slug || "local";
 }
 
+/**
+ * 将模型拉取的原始错误转换为用户友好的提示信息。
+ * @param rawError 原始错误字符串
+ * @param t i18n 翻译函数
+ * @param providerName 服务商显示名称（可选，用于本地服务提示）
+ */
+function friendlyFetchError(rawError: string, t: (k: string, vars?: Record<string, unknown>) => string, providerName?: string): string {
+  const e = rawError.toLowerCase();
+
+  // 网络不可达 / CORS / Failed to fetch
+  if (e.includes("failed to fetch") || e.includes("networkerror") || e.includes("network error") || e.includes("error sending request") || e.includes("fetch failed")) {
+    // 本地服务商特化提示
+    if (providerName && (e.includes("localhost") || e.includes("127.0.0.1") || e.includes("0.0.0.0"))) {
+      return t("llm.fetchErrorLocalNotRunning", { provider: providerName });
+    }
+    return t("llm.fetchErrorNetwork");
+  }
+  // 认证失败
+  if (e.includes("401") || e.includes("unauthorized") || e.includes("invalid api key") || e.includes("invalid_api_key") || e.includes("authentication")) {
+    return t("llm.fetchErrorAuth");
+  }
+  // 权限不足
+  if (e.includes("403") || e.includes("forbidden") || e.includes("permission")) {
+    return t("llm.fetchErrorForbidden");
+  }
+  // 接口不存在
+  if (e.includes("404") || e.includes("not found")) {
+    return t("llm.fetchErrorNotFound");
+  }
+  // 超时
+  if (e.includes("timeout") || e.includes("aborterror") || e.includes("timed out") || e.includes("deadline")) {
+    return t("llm.fetchErrorTimeout");
+  }
+  // 兜底：截断原始信息，移除过长的技术细节
+  const detail = rawError.length > 120 ? rawError.slice(0, 120) + "…" : rawError;
+  return t("llm.fetchErrorUnknown", { detail });
+}
+
 type ListedModel = {
   id: string;
   name: string;
@@ -1647,14 +1685,17 @@ export function App() {
         apiKey: effectiveKey,
       });
       setModels(parsed);
-      // 不要默认选中/填入任何模型，避免“自动出现一个搜索结果”造成误导
       setSelectedModelId("");
-      setNotice(`拉取到模型：${parsed.length} 个`);
+      if (parsed.length > 0) {
+        setNotice(t("llm.fetchSuccess", { count: parsed.length }));
+      } else {
+        setError(t("llm.fetchErrorEmpty"));
+      }
       setCapTouched(false);
     } catch (e: any) {
       console.error('[doFetchModels] error:', e);
-      const msg = String(e?.message || e);
-      setError(msg);
+      const raw = String(e?.message || e);
+      setError(friendlyFetchError(raw, t, selectedProvider?.name));
     } finally {
       setBusy(null);
     }
@@ -1673,26 +1714,38 @@ export function App() {
     const t0 = performance.now();
     try {
       let modelCount = 0;
+      let httpApiFailed = false;
       if (shouldUseHttpApi()) {
         // ── 后端运行中 → 走后端 API（验证后端兼容性 + 热加载）──
-        const base = httpApiBase();
-        const res = await safeFetch(`${base}/api/config/list-models`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            api_type: params.testApiType,
-            base_url: params.testBaseUrl,
-            provider_slug: params.testProviderSlug || null,
-            api_key: params.testApiKey,
-          }),
-          signal: AbortSignal.timeout(30_000),
-        });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        const models = Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []);
-        modelCount = models.length;
-      } else {
-        // ── 后端未运行 → 前端直连服务商 API ──
+        try {
+          const base = httpApiBase();
+          const res = await safeFetch(`${base}/api/config/list-models`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              api_type: params.testApiType,
+              base_url: params.testBaseUrl,
+              provider_slug: params.testProviderSlug || null,
+              api_key: params.testApiKey,
+            }),
+            signal: AbortSignal.timeout(30_000),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          const models = Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []);
+          modelCount = models.length;
+        } catch (httpErr) {
+          const msg = String(httpErr);
+          if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("AbortError")) {
+            console.warn("[doTestConnection] HTTP API unreachable, falling back to direct:", httpErr);
+            httpApiFailed = true;
+          } else {
+            throw httpErr;
+          }
+        }
+      }
+      if (!shouldUseHttpApi() || httpApiFailed) {
+        // ── 后端未运行 / 不可达 → 前端直连服务商 API ──
         const result = await fetchModelsDirectly({
           apiType: params.testApiType,
           baseUrl: params.testBaseUrl,
@@ -1705,18 +1758,10 @@ export function App() {
       setConnTestResult({ ok: true, latencyMs: latency, modelCount });
     } catch (e) {
       const latency = Math.round(performance.now() - t0);
-      let errMsg = String(e);
-      if (errMsg.includes("Failed to fetch") || errMsg.includes("NetworkError")) {
-        errMsg = t("llm.testNetworkError");
-      } else if (errMsg.includes("401") || errMsg.includes("Unauthorized")) {
-        errMsg = t("llm.testAuthError");
-      } else if (errMsg.includes("403") || errMsg.includes("Forbidden")) {
-        errMsg = t("llm.testForbidden");
-      } else if (errMsg.includes("404")) {
-        errMsg = t("llm.testNotFound");
-      } else if (errMsg.includes("timeout") || errMsg.includes("AbortError")) {
-        errMsg = t("llm.testTimeout");
-      }
+      const raw = String(e);
+      // 使用通用友好化函数，testProviderSlug 可用于定位本地服务名称
+      const provName = providers.find((p) => p.slug === params.testProviderSlug)?.name;
+      const errMsg = friendlyFetchError(raw, t, provName);
       setConnTestResult({ ok: false, latencyMs: latency, error: errMsg });
     } finally {
       setConnTesting(false);
@@ -1739,22 +1784,33 @@ export function App() {
     console.log('[fetchModelListUnified] shouldUseHttpApi:', shouldUseHttpApi(), 'httpApiBase:', httpApiBase());
     if (shouldUseHttpApi()) {
       console.log('[fetchModelListUnified] using HTTP API');
-      const res = await safeFetch(`${httpApiBase()}/api/config/list-models`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          api_type: params.apiType,
-          base_url: params.baseUrl,
-          provider_slug: params.providerSlug || null,
-          api_key: params.apiKey,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      return Array.isArray(data.models) ? data.models : data;
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/config/list-models`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_type: params.apiType,
+            base_url: params.baseUrl,
+            provider_slug: params.providerSlug || null,
+            api_key: params.apiKey,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        return Array.isArray(data.models) ? data.models : data;
+      } catch (httpErr) {
+        // 后端 API 不可达（端口冲突、未完全启动等），回退到 Tauri/直连
+        const msg = String(httpErr);
+        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("AbortError")) {
+          console.warn("[fetchModelListUnified] HTTP API unreachable, falling back to Tauri/direct:", httpErr);
+        } else {
+          // 非网络错误（如后端返回业务错误），直接抛出
+          throw httpErr;
+        }
+      }
     }
-    // ── 后端未运行 → 本地回退 ──
+    // ── 后端未运行 / 后端不可达 → 本地回退 ──
     // 回退 1：Tauri invoke → Python bridge（开发模式 / 有 venv 时）
     try {
       const raw = await invoke<string>("openakita_list_models", {
@@ -2091,9 +2147,15 @@ export function App() {
       });
       setCompilerModels(parsed);
       setCompilerModel("");
-      setNotice(`编译端点拉取到模型：${parsed.length} 个`);
+      if (parsed.length > 0) {
+        setNotice(t("llm.fetchSuccess", { count: parsed.length }));
+      } else {
+        setError(t("llm.fetchErrorEmpty"));
+      }
     } catch (e: any) {
-      setError(String(e));
+      const raw = String(e?.message || e);
+      const cprov = providers.find((p) => p.slug === compilerProviderSlug);
+      setError(friendlyFetchError(raw, t, cprov?.name));
     } finally {
       setBusy(null);
     }
@@ -2334,9 +2396,15 @@ export function App() {
         apiKey: key || "local",
       });
       setEditModels(parsed);
-      setNotice(`拉取到模型：${parsed.length} 个`);
+      if (parsed.length > 0) {
+        setNotice(t("llm.fetchSuccess", { count: parsed.length }));
+      } else {
+        setError(t("llm.fetchErrorEmpty"));
+      }
     } catch (e: any) {
-      setError(String(e));
+      const raw = String(e?.message || e);
+      const eprov = providers.find((p) => p.slug === (editDraft?.providerSlug || ""));
+      setError(friendlyFetchError(raw, t, eprov?.name));
     } finally {
       setBusy(null);
     }

@@ -464,7 +464,16 @@
     "testTimeout": "连接超时，请检查网络",
     "localNoKey": "无需 API Key",
     "localKeyPlaceholder": "本地服务无需 API Key，可留空",
-    "localHint": "本地服务（Ollama / LM Studio）无需真实 API Key，已自动填入占位值"
+    "localHint": "本地服务（Ollama / LM Studio）无需真实 API Key，已自动填入占位值",
+    "fetchSuccess": "成功拉取到 {{count}} 个模型，请选择一个",
+    "fetchErrorNetwork": "无法连接到服务商，请检查 API 地址和网络连接",
+    "fetchErrorAuth": "API Key 无效或已过期，请检查后重试",
+    "fetchErrorForbidden": "API Key 权限不足，请确认已开通模型访问权限",
+    "fetchErrorNotFound": "API 地址有误，服务商未返回模型列表接口",
+    "fetchErrorTimeout": "请求超时，请检查网络或稍后重试",
+    "fetchErrorLocalNotRunning": "本地服务未启动，请先启动 {{provider}} 后再拉取",
+    "fetchErrorEmpty": "服务商返回了空的模型列表，请检查账号配额或 API 地址",
+    "fetchErrorUnknown": "拉取模型失败：{{detail}}"
   },
   "welcome": {
     "title": "配置向导",
