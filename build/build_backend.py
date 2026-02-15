@@ -93,6 +93,20 @@ def build_backend(mode: str):
     )
 
     print("\n[4/4] Verifying build output...")
+    
+    # On macOS with onefile mode, PyInstaller outputs directly to dist/openakita-server (file)
+    # We need to move it to dist/openakita-server/openakita-server (expected directory structure)
+    if sys.platform == "darwin":
+        onefile_exe = DIST_DIR / "openakita-server"
+        if onefile_exe.is_file():
+            print(f"  [macOS] Moving onefile executable to directory structure...")
+            # Create the expected directory
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            # Move the executable into the directory
+            target_exe = OUTPUT_DIR / "openakita-server"
+            shutil.move(str(onefile_exe), str(target_exe))
+            print(f"  [macOS] Moved to: {target_exe}")
+    
     if sys.platform == "win32":
         exe_path = OUTPUT_DIR / "openakita-server.exe"
     else:

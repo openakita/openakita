@@ -214,30 +214,58 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name="openakita-server",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=True,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-)
+import sys as _sys
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="openakita-server",
-)
+# On macOS, use onefile mode to avoid COLLECT symlink issues with Python.framework
+# On other platforms, use onedir mode for faster startup
+if _sys.platform == "darwin":
+    # macOS: bundle everything into single executable
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,  # Include binaries in EXE for onefile mode
+        a.datas,     # Include datas in EXE for onefile mode
+        [],
+        name="openakita-server",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,  # Disable UPX on macOS for stability
+        console=True,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+    )
+    # onefile mode outputs directly to distpath, no COLLECT needed
+    # build_backend.py will move it to the expected directory structure
+else:
+    # Windows/Linux: use onedir mode with COLLECT
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name="openakita-server",
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        console=True,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+    )
+
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name="openakita-server",
+    )
