@@ -94,6 +94,7 @@ data/*
 # Identity files (local only, auto-generated from .example templates)
 identity/*.md
 !identity/*.md.example
+identity/personas/user_custom.md
 
 # External/downloaded skills (keep structure)
 skills/*
