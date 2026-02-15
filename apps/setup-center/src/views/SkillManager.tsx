@@ -287,25 +287,32 @@ export function SkillManager({
     try {
       let data: { skills: Record<string, unknown>[] } | null = null;
 
+      let httpError: string | null = null;
+
       // 优先从运行中的服务 HTTP API 获取（远程模式或本地服务运行时）
       if (serviceRunning && apiBaseUrl) {
         try {
           const res = await fetch(`${apiBaseUrl}/api/skills`, { signal: AbortSignal.timeout(5000) });
           if (res.ok) {
             data = await res.json();
+          } else {
+            httpError = `HTTP ${res.status}`;
           }
-        } catch {
-          // HTTP API 不可用，fall back to Tauri
+        } catch (e) {
+          httpError = String(e);
         }
       }
 
-      // Fallback: Tauri 本地命令（仅本地模式）
+      // Fallback: Tauri 本地命令（仅本地模式，且 HTTP 未成功时）
       if (!data && dataMode !== "remote" && venvDir && currentWorkspaceId) {
         try {
           const raw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
           data = JSON.parse(raw);
         } catch {
-          // Tauri 也失败了
+          // Tauri 也失败了——如果 HTTP 也失败了，显示错误
+          if (httpError) {
+            setError(`技能列表获取失败 (HTTP: ${httpError})`);
+          }
         }
       }
 
@@ -486,40 +493,46 @@ export function SkillManager({
 
   // ── 安装技能 ──
   const handleInstall = useCallback(async (skill: MarketplaceSkill) => {
-    if (dataMode !== "remote" && (!venvDir || !currentWorkspaceId)) {
+    if (dataMode !== "remote" && !serviceRunning && (!venvDir || !currentWorkspaceId)) {
       setError("环境未就绪：请先完成 Python 环境和工作区配置");
       return;
     }
     setInstalling(skill.name);
+    setError(null);
     try {
-      // 远程模式或服务运行中：优先走 HTTP API
-      if (dataMode === "remote" || serviceRunning) {
+      let installed = false;
+
+      // 方式1：服务运行中 → HTTP API 安装（首选，不回退 Tauri 避免 venv 缺失报错）
+      if (serviceRunning && apiBaseUrl) {
+        const res = await fetch(`${apiBaseUrl}/api/skills/install`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: skill.url }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        installed = true;
+        // 安装成功后通知后端热重载技能
         try {
-          const res = await fetch(`${apiBaseUrl}/api/skills/install`, {
+          await fetch(`${apiBaseUrl}/api/skills/reload`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: skill.url }),
-            signal: AbortSignal.timeout(60_000),
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(10_000),
           });
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-        } catch (e) {
-          if (dataMode === "remote") throw e;
-          // 本地模式 HTTP 失败，回退到 Tauri
-          await invoke<string>("openakita_install_skill", {
-            venvDir,
-            workspaceId: currentWorkspaceId,
-            url: skill.url,
-          });
-        }
-      } else {
-        // 本地模式：Tauri invoke
+        } catch { /* reload 失败不阻塞，技能下次重启时自动加载 */ }
+      }
+
+      // 方式2：服务未运行 → Tauri invoke（本地模式）
+      if (!installed && dataMode !== "remote" && currentWorkspaceId) {
         await invoke<string>("openakita_install_skill", {
           venvDir,
           workspaceId: currentWorkspaceId,
           url: skill.url,
         });
       }
+
       setMarketplace((prev) => prev.map((s) =>
         s.name === skill.name ? { ...s, installed: true } : s
       ));
@@ -562,6 +575,29 @@ export function SkillManager({
           {t("skills.marketplace")}
         </button>
         <div style={{ flex: 1 }} />
+        {serviceRunning && (
+          <button
+            onClick={async () => {
+              setError(null);
+              try {
+                const res = await fetch(`${apiBaseUrl}/api/skills/reload`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({}),
+                  signal: AbortSignal.timeout(15_000),
+                });
+                const data = await res.json();
+                if (data.error) { setError(data.error); return; }
+                await loadSkills();
+              } catch (e) { setError(String(e)); }
+            }}
+            disabled={loading}
+            style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}
+            title={t("skills.reloadHint") || "让后端重新扫描加载所有技能"}
+          >
+            {t("skills.reload") || "热重载"}
+          </button>
+        )}
         <button
           onClick={loadSkills}
           disabled={loading}

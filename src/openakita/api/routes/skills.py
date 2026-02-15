@@ -98,6 +98,52 @@ async def install_skill(request: Request):
         return {"error": str(e)}
 
 
+@router.post("/api/skills/reload")
+async def reload_skills(request: Request):
+    """热重载技能（安装新技能后、修改 SKILL.md 后调用）。
+
+    POST body: { "skill_name": "optional-name" }
+    如果 skill_name 为空或未提供，则重新扫描并加载所有技能。
+    """
+    from openakita.core.agent import Agent
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    skill_name = (body.get("skill_name") or "").strip()
+
+    agent = getattr(request.app.state, "agent", None)
+    actual_agent = agent
+    if not isinstance(agent, Agent):
+        actual_agent = getattr(agent, "_local_agent", None)
+
+    if actual_agent is None:
+        return {"error": "Agent not initialized"}
+
+    loader = getattr(actual_agent, "skill_loader", None)
+    registry = getattr(actual_agent, "skill_registry", None)
+    if not loader or not registry:
+        return {"error": "Skill loader/registry not available"}
+
+    try:
+        if skill_name:
+            # 重载单个技能
+            reloaded = loader.reload_skill(skill_name)
+            if reloaded:
+                return {"status": "ok", "reloaded": [skill_name]}
+            else:
+                return {"error": f"Skill '{skill_name}' not found or reload failed"}
+        else:
+            # 全量重新扫描：让 loader 发现新技能并重新加载
+            from openakita.config import settings
+
+            base_path = getattr(settings, "project_root", None)
+            loaded_count = loader.load_all(base_path)
+            total = len(registry.list_all())
+            return {"status": "ok", "reloaded": "all", "loaded": loaded_count, "total": total}
+    except Exception as e:
+        logger.error(f"Skill reload failed: {e}")
+        return {"error": str(e)}
+
+
 @router.get("/api/skills/marketplace")
 async def search_marketplace(q: str = "agent"):
     """Proxy to skills.sh search API (bypasses CORS for desktop app)."""

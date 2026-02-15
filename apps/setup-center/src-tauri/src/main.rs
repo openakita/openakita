@@ -2994,16 +2994,31 @@ fn run_python_module_json(
     args: &[&str],
     extra_env: &[(&str, &str)],
 ) -> Result<String, String> {
-    let py = venv_python_path(venv_dir);
-    if !py.exists() {
-        return Err(format!("venv python not found: {}", py.to_string_lossy()));
-    }
+    // 1. 优先使用 venv Python（开发模式）
+    let venv_py = venv_python_path(venv_dir);
+    let py = if venv_py.exists() {
+        venv_py
+    } else {
+        // 2. 回退到 bundled / embedded / PATH Python（打包模式）
+        find_pip_python().ok_or_else(|| {
+            format!(
+                "No Python interpreter available. Tried venv: {}, bundled and PATH Python also not found.",
+                venv_python_path(venv_dir).to_string_lossy()
+            )
+        })?
+    };
 
     let mut c = Command::new(&py);
     apply_no_window(&mut c);
     // Force UTF-8 output on Windows (avoid garbled Chinese when Rust decodes stdout/stderr as UTF-8).
     c.env("PYTHONUTF8", "1");
     c.env("PYTHONIOENCODING", "utf-8");
+    // 如果使用 bundled Python（_internal/python.exe），确保 PYTHONPATH 包含 _internal 目录
+    let bundled = bundled_backend_dir();
+    let internal_dir = bundled.join("_internal");
+    if py.starts_with(&internal_dir) {
+        c.env("PYTHONPATH", internal_dir.to_string_lossy().to_string());
+    }
     c.arg("-m").arg(module);
     c.args(args);
     for (k, v) in extra_env {
