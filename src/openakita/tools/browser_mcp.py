@@ -584,9 +584,9 @@ class BrowserMCP:
             return True
 
         except ImportError:
-            logger.error(
-                "Playwright not installed. Run: pip install playwright && playwright install chromium"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("playwright")
+            logger.error(f"Playwright 导入失败: {hint}")
             return False
         except Exception as e:
             logger.error(f"Failed to start browser: {e}")
@@ -1585,10 +1585,12 @@ class BrowserMCP:
             }
 
         except ImportError as e:
-            logger.error(f"[BrowserTask] Import error: {e}")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("browser_use") or import_or_hint("langchain_openai") or str(e)
+            logger.error(f"[BrowserTask] Import error: {hint}")
             return {
                 "success": False,
-                "error": f"browser-use 未安装或缺少依赖: {str(e)}. 请运行: pip install browser-use langchain-openai",
+                "error": hint,
             }
         except Exception as e:
             logger.error(f"[BrowserTask] Error: {e}")

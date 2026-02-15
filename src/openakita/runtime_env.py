@@ -111,3 +111,27 @@ def get_pip_command(packages: list[str]) -> list[str] | None:
     if IS_FROZEN and py == sys.executable:
         return None
     return [py, "-m", "pip", "install", *packages]
+
+
+def inject_module_paths() -> None:
+    """将 ~/.openakita/modules/*/site-packages 注入 sys.path（兜底机制）。
+
+    在 PyInstaller 打包环境中，Rust 端通过 PYTHONPATH 环境变量注入模块路径，
+    但在 CLI 直接运行或 PYTHONPATH 未设置时，此函数作为兜底确保已安装的
+    可选模块能被正确发现。
+    """
+    if not IS_FROZEN:
+        return
+    modules_base = _get_openakita_root() / "modules"
+    if not modules_base.exists():
+        return
+    injected = []
+    for module_dir in modules_base.iterdir():
+        if not module_dir.is_dir():
+            continue
+        sp = module_dir / "site-packages"
+        if sp.is_dir() and str(sp) not in sys.path:
+            sys.path.insert(0, str(sp))
+            injected.append(module_dir.name)
+    if injected:
+        logger.debug(f"已注入模块路径: {', '.join(injected)}")

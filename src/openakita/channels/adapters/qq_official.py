@@ -50,9 +50,8 @@ def _import_botpy():
             botpy = _botpy
             botpy_message = _msg
         except ImportError:
-            raise ImportError(
-                "qq-botpy not installed. Run: pip install qq-botpy"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("botpy"))
 
 
 class QQBotAdapter(ChannelAdapter):

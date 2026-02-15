@@ -89,7 +89,8 @@ def web_search(
     try:
         from ddgs import DDGS
     except ImportError:
-        return "错误：ddgs 库未安装。请运行: pip install ddgs"
+        from openakita.tools._import_helper import import_or_hint
+        return f"错误：{import_or_hint('ddgs')}"
 
     # 限制结果数量
     max_results = min(max(1, max_results), 20)
@@ -129,7 +130,8 @@ def news_search(
     try:
         from ddgs import DDGS
     except ImportError:
-        return "错误：ddgs 库未安装。请运行: pip install ddgs"
+        from openakita.tools._import_helper import import_or_hint
+        return f"错误：{import_or_hint('ddgs')}"
 
     # 限制结果数量
     max_results = min(max(1, max_results), 20)

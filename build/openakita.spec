@@ -73,6 +73,7 @@ hidden_imports_core = [
     "openakita.logging",
     "openakita.tools",
     "openakita.tools.shell",
+    "openakita.tools._import_helper",
     # -- Third-party core dependencies --
     "uvicorn",
     "uvicorn.lifespan",
@@ -101,6 +102,13 @@ hidden_imports_core = [
     "git",
     "mcp",
     "nest_asyncio",
+    # -- Lightweight runtime dependencies (frequently used, small footprint) --
+    "ddgs",                     # DuckDuckGo search (~2MB)
+    "psutil",                   # Process info (~1MB)
+    "pyperclip",                # Clipboard (~50KB)
+    "websockets",               # WebSocket protocol (~500KB)
+    "aiohttp",                  # Async HTTP server (~2MB, used by wework/qq webhook)
+    "aiohttp.web",
 ]
 
 hidden_imports_full = [
@@ -136,12 +144,12 @@ excludes_core = [
     # Heavy packages not needed for core (often pulled in from global site-packages)
     "cv2",                  # OpenCV (~122MB) — not a core dependency
     "opencv_python",
-    "numpy",                # NumPy (~27MB) — only needed by ML extras (all excluded above)
-    "numpy.testing",
+    # NOTE: numpy and PIL removed from excludes — many optional modules
+    # (e.g. Pillow, mss, pyautogui) depend on them indirectly; excluding
+    # causes silent cascading ImportErrors at runtime.
     "matplotlib",
     "scipy",
     "pandas",
-    "PIL",
     "psycopg2",             # PostgreSQL driver — not a core dependency
     "psycopg2_binary",
     # GUI toolkits (not needed for headless server)

@@ -645,6 +645,9 @@
     "uninstalled": "{{name}} 已卸载",
     "bundledCannotUninstall": "内置模块无法卸载",
     "loading": "正在加载模块列表...",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "categoryCore": "核心扩展",
+    "categoryExtended": "功能增强",
+    "categoryIM": "IM 通道适配器"
   }
 }

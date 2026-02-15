@@ -29,7 +29,8 @@ try:
     import mss
     import mss.tools
 except ImportError:
-    raise ImportError("mss is required for screenshot functionality. Install with: pip install mss")
+    from openakita.tools._import_helper import import_or_hint
+    raise ImportError(import_or_hint("mss"))
 
 
 class ScreenCapture:

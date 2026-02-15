@@ -92,10 +92,9 @@ class MediaHandler:
             self._whisper_loaded = True
             logger.info(f"Whisper model '{self.whisper_model}' loaded successfully")
         except ImportError:
-            logger.warning(
-                "Whisper not installed. Voice transcription will not be available. "
-                "Run: pip install openai-whisper"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("whisper")
+            logger.warning(f"Whisper 不可用: {hint}")
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
 
@@ -275,7 +274,9 @@ class MediaHandler:
             return text.strip() if text.strip() else "[图片无可识别文字]"
 
         except ImportError:
-            logger.warning("pytesseract not installed, skipping OCR")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("pytesseract")
+            logger.warning(f"OCR 不可用: {hint}")
             return ""
         except Exception as e:
             logger.warning(f"OCR failed: {e}")
@@ -352,9 +353,9 @@ class MediaHandler:
                 return "\n".join(text_parts)
 
             except ImportError:
-                raise ImportError(
-                    "PDF extraction requires PyMuPDF or pypdf. Run: pip install PyMuPDF"
-                )
+                from openakita.tools._import_helper import import_or_hint
+                hint = import_or_hint("fitz")
+                raise ImportError(f"PDF 提取不可用: {hint}")
 
     async def _extract_docx(self, path: Path) -> str:
         """提取 Word 文档内容"""
@@ -370,7 +371,9 @@ class MediaHandler:
             return "\n".join(text_parts)
 
         except ImportError:
-            raise ImportError("DOCX extraction requires python-docx. Run: pip install python-docx")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("docx")
+            raise ImportError(f"DOCX 提取不可用: {hint}")
 
     async def _extract_xlsx(self, path: Path) -> str:
         """提取 Excel 内容"""
@@ -391,7 +394,9 @@ class MediaHandler:
             return "\n".join(text_parts)
 
         except ImportError:
-            raise ImportError("XLSX extraction requires openpyxl. Run: pip install openpyxl")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("openpyxl")
+            raise ImportError(f"XLSX 提取不可用: {hint}")
 
     async def _extract_pptx(self, path: Path) -> str:
         """提取 PowerPoint 内容"""
@@ -411,4 +416,6 @@ class MediaHandler:
             return "\n".join(text_parts)
 
         except ImportError:
-            raise ImportError("PPTX extraction requires python-pptx. Run: pip install python-pptx")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("pptx")
+            raise ImportError(f"PPTX 提取不可用: {hint}")

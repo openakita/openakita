@@ -30,7 +30,9 @@ def _lazy_import():
 
             _sentence_transformers_available = True
         except ImportError:
-            logger.warning("sentence-transformers not installed, vector search disabled")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("sentence_transformers")
+            logger.warning(f"向量搜索不可用: {hint}")
             _sentence_transformers_available = False
             return False
 
@@ -43,7 +45,9 @@ def _lazy_import():
 
             _chromadb = chromadb
         except ImportError:
-            logger.warning("chromadb not installed, vector search disabled")
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("chromadb")
+            logger.warning(f"ChromaDB 不可用: {hint}")
             return False
 
     return True

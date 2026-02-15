@@ -45,7 +45,8 @@ def _import_lark():
 
             lark_oapi = lark
         except ImportError:
-            raise ImportError("lark-oapi not installed. Run: pip install lark-oapi")
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("lark_oapi"))
 
 
 @dataclass

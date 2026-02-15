@@ -645,6 +645,9 @@
     "uninstalled": "{{name}} uninstalled",
     "bundledCannotUninstall": "Bundled modules cannot be uninstalled",
     "loading": "Loading module list...",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "categoryCore": "Core Extensions",
+    "categoryExtended": "Feature Enhancements",
+    "categoryIM": "IM Channel Adapters"
   }
 }

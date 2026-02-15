@@ -25,7 +25,8 @@ try:
     from pywinauto.findwindows import ElementAmbiguousError, ElementNotFoundError
     from pywinauto.timings import TimeoutError as PywinautoTimeoutError
 except ImportError:
-    raise ImportError("pywinauto is required for UIAutomation. Install with: pip install pywinauto")
+    from openakita.tools._import_helper import import_or_hint
+    raise ImportError(import_or_hint("pywinauto"))
 
 logger = logging.getLogger(__name__)
 

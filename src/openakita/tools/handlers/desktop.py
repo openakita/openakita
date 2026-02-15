@@ -50,7 +50,9 @@ class DesktopHandler:
 
                 self._desktop_handler = DesktopToolHandler()
             except ImportError as e:
-                logger.warning(f"Desktop tools not available: {e}")
+                from openakita.tools._import_helper import import_or_hint
+                hint = import_or_hint("pyautogui") or str(e)
+                logger.warning(f"Desktop tools not available: {hint}")
                 self._available = False
         return self._desktop_handler
 
@@ -66,7 +68,11 @@ class DesktopHandler:
             执行结果字符串
         """
         if not self._available:
-            return "桌面工具仅在 Windows 上可用。安装依赖: pip install mss pyautogui pywinauto pyperclip psutil"
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("pyautogui")
+            if hint:
+                return f"桌面工具不可用: {hint}"
+            return "桌面工具仅在 Windows 上可用"
 
         handler = self.desktop_handler
         if handler is None:

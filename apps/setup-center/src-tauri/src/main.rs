@@ -288,10 +288,22 @@ struct ModuleInfo {
 fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'static [&'static str], u32)> {
     // (id, name, description, pip_packages, estimated_size_mb)
     vec![
+        // == Core optional modules ==
         ("vector-memory", "向量记忆增强", "语义搜索与向量记忆 (sentence-transformers + chromadb)", &["sentence-transformers", "chromadb"], 500),
         ("browser", "浏览器自动化", "Playwright 浏览器自动化", &["playwright"], 150),
         ("whisper", "语音识别", "OpenAI Whisper 语音转文字", &["openai-whisper", "static-ffmpeg"], 300),
         ("orchestration", "多Agent协同", "ZeroMQ 多 Agent 协同通信", &["pyzmq"], 10),
+        // == Extended optional modules ==
+        ("browser-agent", "AI浏览器代理", "browser-use 智能浏览器代理 (需先安装浏览器自动化)", &["browser-use", "langchain-openai"], 60),
+        ("desktop", "桌面自动化", "鼠标键盘控制/窗口管理/截图 (Windows)", &["pyautogui", "pywinauto", "mss"], 15),
+        ("document", "文档处理", "Word/Excel/PPT/PDF 文件读写", &["python-docx", "openpyxl", "python-pptx", "PyMuPDF"], 30),
+        ("image", "图像处理", "图片格式转换与处理 (Pillow)", &["Pillow"], 15),
+        // == IM channel adapters ==
+        ("im-feishu", "飞书通道", "飞书 IM 机器人适配器", &["lark-oapi"], 5),
+        ("im-dingtalk", "钉钉通道", "钉钉 IM 机器人 (Stream 模式)", &["dingtalk-stream"], 5),
+        ("im-wework", "企业微信通道", "企业微信机器人回调适配器", &["pycryptodome"], 3),
+        ("im-qqbot", "QQ机器人", "QQ 官方机器人适配器", &["qq-botpy"], 10),
+        ("im-onebot", "OneBot协议", "NapCat/Lagrange 等 OneBot 协议适配器", &["websockets"], 2),
     ]
 }
 

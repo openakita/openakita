@@ -39,7 +39,8 @@ def _import_websockets():
 
             websockets = ws
         except ImportError:
-            raise ImportError("websockets not installed. Run: pip install websockets")
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("websockets"))
 
 
 @dataclass

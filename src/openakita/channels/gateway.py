@@ -697,11 +697,9 @@ class MessageGateway:
             static_ffmpeg.add_paths(weak=True)  # weak=True: 不覆盖已有
             logger.info("ffmpeg auto-configured via static-ffmpeg")
         except ImportError:
-            logger.warning(
-                "ffmpeg not found and static-ffmpeg not installed. "
-                "Voice transcription may fail. "
-                "Install: pip install static-ffmpeg"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("static_ffmpeg")
+            logger.warning(f"ffmpeg 不可用: {hint}")
 
     def _load_whisper_model(self) -> None:
         """加载 Whisper 模型（在线程池中执行）"""
@@ -751,10 +749,9 @@ class MessageGateway:
             logger.info(f"Whisper model '{model_name}' loaded successfully")
 
         except ImportError:
-            logger.warning(
-                "Whisper not installed. Voice transcription will not be available. "
-                "Run: pip install openai-whisper"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("whisper")
+            logger.warning(f"Whisper 不可用: {hint}")
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
 

@@ -21,7 +21,9 @@ try:
     HAS_ZMQ = True
 except ImportError:
     HAS_ZMQ = False
-    zmq = None
+    zmq = None  # type: ignore[assignment]
+    from openakita.tools._import_helper import import_or_hint as _zmq_hint
+    _ZMQ_HINT = _zmq_hint("zmq")  # 预生成提示信息
 
 import contextlib
 
@@ -73,7 +75,7 @@ class AgentBus:
             is_master: 是否是主进程端
         """
         if not HAS_ZMQ:
-            raise ImportError("pyzmq is required for AgentBus. Install with: pip install pyzmq")
+            raise ImportError(_ZMQ_HINT)
 
         self.config = config or BusConfig()
         self.is_master = is_master

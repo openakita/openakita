@@ -21,9 +21,8 @@ if sys.platform != "win32":
 try:
     import pyautogui
 except ImportError:
-    raise ImportError(
-        "pyautogui is required for keyboard control. Install with: pip install pyautogui"
-    )
+    from openakita.tools._import_helper import import_or_hint
+    raise ImportError(import_or_hint("pyautogui"))
 
 logger = logging.getLogger(__name__)
 

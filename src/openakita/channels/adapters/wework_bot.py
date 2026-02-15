@@ -67,7 +67,8 @@ def _import_aiohttp():
 
             aiohttp = ah
         except ImportError:
-            raise ImportError("aiohttp not installed. Run: pip install aiohttp")
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("aiohttp"))
 
 
 # ==================== 智能机器人消息加解密 ====================
@@ -100,9 +101,8 @@ class BotMsgCrypt:
         try:
             from Crypto.Cipher import AES
         except ImportError:
-            raise ImportError(
-                "pycryptodome not installed. Run: pip install pycryptodome"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("Crypto"))
 
         import os
 
@@ -134,9 +134,8 @@ class BotMsgCrypt:
         try:
             from Crypto.Cipher import AES
         except ImportError:
-            raise ImportError(
-                "pycryptodome not installed. Run: pip install pycryptodome"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("Crypto"))
 
         encrypted = base64.b64decode(ciphertext)
 
@@ -241,9 +240,8 @@ class BotMsgCrypt:
         try:
             from Crypto.Cipher import AES
         except ImportError:
-            raise ImportError(
-                "pycryptodome not installed. Run: pip install pycryptodome"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            raise ImportError(import_or_hint("Crypto"))
 
         iv = self.aes_key[:16]
         cipher = AES.new(self.aes_key, AES.MODE_CBC, iv)
@@ -1387,10 +1385,9 @@ class WeWorkBotAdapter(ChannelAdapter):
             img.save(output, format="JPEG", quality=90)
             return output.getvalue()
         except ImportError:
-            logger.warning(
-                f"WeWorkBot: Pillow not installed, cannot convert {filename}. "
-                f"Sending raw data (may fail if not JPG/PNG)"
-            )
+            from openakita.tools._import_helper import import_or_hint
+            hint = import_or_hint("PIL")
+            logger.warning(f"WeWorkBot: {hint}，无法转换 {filename}，尝试发送原始数据")
             return raw_data
         except Exception as e:
             logger.error(

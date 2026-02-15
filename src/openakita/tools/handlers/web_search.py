@@ -39,7 +39,8 @@ class WebSearchHandler:
         try:
             from ddgs import DDGS
         except ImportError:
-            return "错误：ddgs 库未安装。请运行: pip install ddgs"
+            from openakita.tools._import_helper import import_or_hint
+            return f"错误：{import_or_hint('ddgs')}"
 
         try:
             with DDGS() as ddgs:
@@ -70,7 +71,8 @@ class WebSearchHandler:
         try:
             from ddgs import DDGS
         except ImportError:
-            return "错误：ddgs 库未安装。请运行: pip install ddgs"
+            from openakita.tools._import_helper import import_or_hint
+            return f"错误：{import_or_hint('ddgs')}"
 
         try:
             with DDGS() as ddgs:
