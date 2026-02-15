@@ -2728,6 +2728,29 @@ fn venv_python_path(venv_dir: &str) -> PathBuf {
     }
 }
 
+/// 解析可用的 Python 解释器路径，并可选返回需要设置的 PYTHONPATH（bundled 模式）。
+/// 查找顺序：venv → bundled _internal/python.exe → embedded → PATH Python
+fn resolve_python(venv_dir: &str) -> Result<(PathBuf, Option<String>), String> {
+    let venv_py = venv_python_path(venv_dir);
+    if venv_py.exists() {
+        return Ok((venv_py, None));
+    }
+    let py = find_pip_python().ok_or_else(|| {
+        format!(
+            "No Python interpreter available. Tried venv: {}, bundled and PATH Python also not found.",
+            venv_py.to_string_lossy()
+        )
+    })?;
+    let bundled = bundled_backend_dir();
+    let internal_dir = bundled.join("_internal");
+    let pythonpath = if py.starts_with(&internal_dir) {
+        Some(internal_dir.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    Ok((py, pythonpath))
+}
+
 fn venv_pythonw_path(venv_dir: &str) -> PathBuf {
     let v = PathBuf::from(venv_dir);
     if cfg!(windows) {
@@ -2749,10 +2772,7 @@ async fn pip_install(
     index_url: Option<String>,
 ) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let py = venv_python_path(&venv_dir);
-        if !py.exists() {
-            return Err(format!("venv python not found: {}", py.to_string_lossy()));
-        }
+        let (py, _pythonpath) = resolve_python(&venv_dir)?;
 
         let mut log = String::new();
 
@@ -2948,10 +2968,7 @@ async fn pip_install(
 #[tauri::command]
 async fn pip_uninstall(venv_dir: String, package_name: String) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let py = venv_python_path(&venv_dir);
-        if !py.exists() {
-            return Err(format!("venv python not found: {}", py.to_string_lossy()));
-        }
+        let (py, _pythonpath) = resolve_python(&venv_dir)?;
         if package_name.trim().is_empty() {
             return Err("package_name is empty".into());
         }
@@ -2994,30 +3011,14 @@ fn run_python_module_json(
     args: &[&str],
     extra_env: &[(&str, &str)],
 ) -> Result<String, String> {
-    // 1. 优先使用 venv Python（开发模式）
-    let venv_py = venv_python_path(venv_dir);
-    let py = if venv_py.exists() {
-        venv_py
-    } else {
-        // 2. 回退到 bundled / embedded / PATH Python（打包模式）
-        find_pip_python().ok_or_else(|| {
-            format!(
-                "No Python interpreter available. Tried venv: {}, bundled and PATH Python also not found.",
-                venv_python_path(venv_dir).to_string_lossy()
-            )
-        })?
-    };
+    let (py, pythonpath) = resolve_python(venv_dir)?;
 
     let mut c = Command::new(&py);
     apply_no_window(&mut c);
-    // Force UTF-8 output on Windows (avoid garbled Chinese when Rust decodes stdout/stderr as UTF-8).
     c.env("PYTHONUTF8", "1");
     c.env("PYTHONIOENCODING", "utf-8");
-    // 如果使用 bundled Python（_internal/python.exe），确保 PYTHONPATH 包含 _internal 目录
-    let bundled = bundled_backend_dir();
-    let internal_dir = bundled.join("_internal");
-    if py.starts_with(&internal_dir) {
-        c.env("PYTHONPATH", internal_dir.to_string_lossy().to_string());
+    if let Some(ref pp) = pythonpath {
+        c.env("PYTHONPATH", pp);
     }
     c.arg("-m").arg(module);
     c.args(args);
@@ -3084,14 +3085,27 @@ async fn openakita_list_models(
 #[tauri::command]
 async fn openakita_version(venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let py = venv_python_path(&venv_dir);
-        if !py.exists() {
-            return Err(format!("venv python not found: {}", py.to_string_lossy()));
+        // 1. 尝试从打包后端读取 _bundled_version.txt（最快且无需 Python）
+        let bundled = bundled_backend_dir();
+        let version_file = bundled.join("_internal").join("openakita").join("_bundled_version.txt");
+        if version_file.exists() {
+            if let Ok(v) = fs::read_to_string(&version_file) {
+                let v = v.trim().to_string();
+                if !v.is_empty() {
+                    return Ok(v);
+                }
+            }
         }
+
+        // 2. 使用 resolve_python 查找可用 Python 并获取版本
+        let (py, pythonpath) = resolve_python(&venv_dir)?;
         let mut c = Command::new(&py);
         apply_no_window(&mut c);
         c.env("PYTHONUTF8", "1");
         c.env("PYTHONIOENCODING", "utf-8");
+        if let Some(ref pp) = pythonpath {
+            c.env("PYTHONPATH", pp);
+        }
         c.args([
             "-c",
             "import openakita; print(getattr(openakita,'__version__',''))",
