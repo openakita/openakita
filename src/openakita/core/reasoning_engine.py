@@ -1494,6 +1494,8 @@ class ReasoningEngine:
                         elif tool_name == "update_plan_step" and isinstance(tool_args, dict):
                             step_id = tool_args.get("step_id", "")
                             yield {"type": "plan_step_updated", "stepId": step_id, "status": tool_args.get("status", "completed")}
+                        elif tool_name == "complete_plan":
+                            yield {"type": "plan_completed"}
 
                         tool_results_for_msg.append({
                             "type": "tool_result",

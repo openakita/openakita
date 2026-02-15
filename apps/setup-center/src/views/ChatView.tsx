@@ -50,6 +50,7 @@ type StreamEvent =
   | { type: "tool_call_end"; tool: string; result: string; id?: string }
   | { type: "plan_created"; plan: ChatPlan }
   | { type: "plan_step_updated"; stepId?: string; stepIdx?: number; status: string }
+  | { type: "plan_completed" }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
@@ -1829,7 +1830,14 @@ export function ChatView({
                       : event.stepIdx != null && currentPlan!.steps.indexOf(s) === event.stepIdx;
                     return matched ? { ...s, status: event.status as ChatPlanStep["status"] } : s;
                   });
-                  currentPlan = { ...currentPlan, steps: newSteps } as ChatPlan;
+                  // 如果所有步骤都结束了，自动标记 plan 为 completed
+                  const allDone = newSteps.every((s) => s.status === "completed" || s.status === "skipped" || s.status === "failed");
+                  currentPlan = { ...currentPlan, steps: newSteps, ...(allDone ? { status: "completed" as const } : {}) } as ChatPlan;
+                }
+                break;
+              case "plan_completed":
+                if (currentPlan) {
+                  currentPlan = { ...currentPlan, status: "completed" } as ChatPlan;
                 }
                 break;
               case "ask_user": {
@@ -2385,9 +2393,9 @@ export function ChatView({
           <div ref={messagesEndRef} />
         </div>
 
-        {/* 浮动 Plan 进度条 —— 贴在输入框上方 */}
+        {/* 浮动 Plan 进度条 —— 贴在输入框上方，仅显示进行中的 plan */}
         {(() => {
-          const activePlan = [...messages].reverse().find((m) => m.plan)?.plan;
+          const activePlan = [...messages].reverse().find((m) => m.plan && m.plan.status !== "completed" && m.plan.status !== "failed")?.plan;
           return activePlan ? <FloatingPlanBar plan={activePlan} /> : null;
         })()}
 
