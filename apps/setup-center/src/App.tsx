@@ -1103,7 +1103,9 @@ export function App() {
         }
         setServiceStatus(prev => prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" });
         setBackendVersion(null);
-        heartbeatFailCount.current = 0;
+        // 注意：不要在 dead 状态下重置 heartbeatFailCount！
+        // 否则下轮心跳 failCount 从 0 开始 → 进入 suspect → 再次变为 dead → 重复发送系统通知。
+        // failCount 会在服务恢复 (alive) 时自动重置为 0（见上方 res.ok 分支）。
       }
     }, interval);
 

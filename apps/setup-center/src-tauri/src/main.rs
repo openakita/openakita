@@ -180,7 +180,10 @@ fn find_pip_python() -> Option<PathBuf> {
         };
         if internal_py.exists() {
             // 验证 pip 可用
-            if let Ok(output) = Command::new(&internal_py).args(["-m", "pip", "--version"]).output() {
+            let mut c = Command::new(&internal_py);
+            c.args(["-m", "pip", "--version"]);
+            apply_no_window(&mut c);
+            if let Ok(output) = c.output() {
                 if output.status.success() {
                     return Some(internal_py);
                 }
@@ -214,10 +217,10 @@ fn find_pip_python() -> Option<PathBuf> {
         vec!["python3", "python"]
     };
     for name in candidates {
-        if let Ok(output) = Command::new(if cfg!(windows) { "where" } else { "which" })
-            .arg(name)
-            .output()
-        {
+        let mut wc = Command::new(if cfg!(windows) { "where" } else { "which" });
+        wc.arg(name);
+        apply_no_window(&mut wc);
+        if let Ok(output) = wc.output() {
             if output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 // where 可能返回多个路径，逐一检查
@@ -235,7 +238,10 @@ fn find_pip_python() -> Option<PathBuf> {
                     }
 
                     // 验证 Python 实际可执行（避免其他假冒/损坏的 Python）
-                    if let Ok(ver) = Command::new(&p).arg("--version").output() {
+                    let mut vc = Command::new(&p);
+                    vc.arg("--version");
+                    apply_no_window(&mut vc);
+                    if let Ok(ver) = vc.output() {
                         if ver.status.success() {
                             return Some(p);
                         }
@@ -361,7 +367,10 @@ async fn install_module(
             if !p.exists() {
                 return Err(format!("自动安装嵌入式 Python 后仍找不到: {}", p.display()));
             }
-            let _ = Command::new(&p).args(["-m", "ensurepip", "--upgrade"]).output();
+            let mut ep = Command::new(&p);
+            ep.args(["-m", "ensurepip", "--upgrade"]);
+            apply_no_window(&mut ep);
+            let _ = ep.output();
             p
         }
     };
@@ -400,6 +409,7 @@ async fn install_module(
         c.arg(&bundled_wheels);
         c.arg("--target").arg(&target_dir);
         for pkg in *packages { c.arg(*pkg); }
+        apply_no_window(&mut c);
         let output = c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped())
             .output().map_err(|e| format!("执行 pip 失败: {e}"))?;
         let result = run_pip_result(output, "离线");
@@ -449,6 +459,7 @@ async fn install_module(
         let timeout = if idx == 0 { "120" } else { "60" };
         c.args(["--timeout", timeout]);
         for pkg in *packages { c.arg(*pkg); }
+        apply_no_window(&mut c);
 
         match c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).output() {
             Ok(output) => {
@@ -643,10 +654,10 @@ fn force_remove_dir(path: &std::path::Path) -> Result<(), String> {
     // 第二次尝试 (Windows)：使用 cmd /c rd /s /q 处理长路径和只读文件
     #[cfg(target_os = "windows")]
     {
-        let status = std::process::Command::new("cmd")
-            .args(["/c", "rd", "/s", "/q"])
-            .arg(path)
-            .status()
+        let mut rd_cmd = std::process::Command::new("cmd");
+        rd_cmd.args(["/c", "rd", "/s", "/q"]).arg(path);
+        apply_no_window(&mut rd_cmd);
+        let status = rd_cmd.status()
             .map_err(|e| format!("执行 rd 命令失败: {e}"))?;
         if status.success() || !path.exists() {
             return Ok(());
@@ -2080,11 +2091,25 @@ fn set_tray_backend_status(app: tauri::AppHandle, status: String) -> Result<(), 
     if status == "dead" {
         #[cfg(windows)]
         {
-            // 使用 Windows toast notification via PowerShell (简单可靠)
+            // 使用 Windows toast notification via PowerShell
+            // 关键：AUMID 必须与 NSIS 安装器在开始菜单快捷方式上设置的一致（即 tauri.conf.json 的 identifier），
+            // 否则 Windows 无法关联到已注册的应用，导致通知内容为空。
+            // 同时在注册表注册 AUMID 以确保通知正常显示。
             let mut cmd = Command::new("powershell");
             cmd.args([
                 "-NoProfile", "-NonInteractive", "-Command",
-                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); $text = $xml.GetElementsByTagName('text'); $text[0].AppendChild($xml.CreateTextNode('OpenAkita')) | Out-Null; $text[1].AppendChild($xml.CreateTextNode('Backend service has stopped')) | Out-Null; $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('OpenAkita').Show($toast)"
+                "try { \
+                    $aumid = 'com.openakita.setupcenter'; \
+                    $rp = \"HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\$aumid\"; \
+                    if (!(Test-Path $rp)) { New-Item $rp -Force | Out-Null; Set-ItemProperty $rp -Name DisplayName -Value 'OpenAkita Desktop' }; \
+                    [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
+                    $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); \
+                    $t = $xml.GetElementsByTagName('text'); \
+                    $t[0].AppendChild($xml.CreateTextNode('OpenAkita')) | Out-Null; \
+                    $t[1].AppendChild($xml.CreateTextNode('Backend service has stopped')) | Out-Null; \
+                    $n = [Windows.UI.Notifications.ToastNotification]::new($xml); \
+                    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($n) \
+                } catch {}"
             ]);
             apply_no_window(&mut cmd);
             let _ = cmd.spawn();
@@ -3514,10 +3539,10 @@ async fn download_file(url: String, filename: String) -> Result<String, String> 
 fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
-            .spawn()
-            .map_err(|e| format!("Failed to open URL: {e}"))?;
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", &url]);
+        apply_no_window(&mut c);
+        c.spawn().map_err(|e| format!("Failed to open URL: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
