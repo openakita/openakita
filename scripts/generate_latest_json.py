@@ -163,13 +163,52 @@ def main():
 
     if not platforms:
         print("Warning: no platforms with valid signatures found", file=sys.stderr)
-        # Still write the file but with empty platforms — the updater will gracefully skip
+
+    # ── downloads: 网站下载页使用（无需 .sig，直接链接安装包） ──
+    DOWNLOAD_PATTERNS = {
+        "windows": {
+            "extensions": [".exe"],
+            "keywords": ["core"],
+            "exclude": ["full", "uninstall"],
+        },
+        "windows-full": {
+            "extensions": [".exe"],
+            "keywords": ["full"],
+            "exclude": ["uninstall"],
+        },
+        "macos": {
+            "extensions": [".dmg"],
+            "keywords": [],
+            "exclude": [],
+        },
+        "linux-appimage": {
+            "extensions": [".appimage"],
+            "keywords": [],
+            "exclude": [],
+        },
+        "linux-deb": {
+            "extensions": [".deb"],
+            "keywords": [],
+            "exclude": [],
+        },
+    }
+    downloads = {}
+    for dl_key, dl_config in DOWNLOAD_PATTERNS.items():
+        asset = find_asset(assets, dl_config)
+        if asset:
+            downloads[dl_key] = {
+                "name": asset["name"],
+                "url": asset["browser_download_url"],
+                "size": asset.get("size", 0),
+            }
+            print(f"  download.{dl_key}: {asset['name']} ✓")
 
     manifest = {
         "version": version,
         "notes": notes,
         "pub_date": pub_date,
         "platforms": platforms,
+        "downloads": downloads,
     }
 
     with open(args.output, "w", encoding="utf-8") as f:
