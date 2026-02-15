@@ -1199,6 +1199,7 @@ def serve():
                 agent=agent_or_master,
                 shutdown_event=shutdown_event,
                 session_manager=_session_manager,
+                gateway=_message_gateway,
             )
             console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
         except ImportError:

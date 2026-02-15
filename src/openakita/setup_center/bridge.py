@@ -511,8 +511,22 @@ def list_skills(workspace_dir: str) -> None:
     _json_print({"count": len(out), "skills": out})
 
 
+def _looks_like_github_shorthand(url: str) -> bool:
+    """判断 URL 是否为 GitHub 简写格式，如 'owner/repo' 或 'owner/repo@skill'。
+
+    排除本地路径（包含反斜杠、以 . 或 / 开头、包含盘符如 C:）。
+    """
+    if url.startswith((".", "/", "~")) or "\\" in url:
+        return False
+    if len(url) > 1 and url[1] == ":":
+        return False  # Windows 盘符路径，如 C:\\...
+    # 至少包含一个 / 分隔 owner/repo
+    parts = url.split("@")[0] if "@" in url else url
+    return "/" in parts and len(parts.split("/")) == 2
+
+
 def install_skill(workspace_dir: str, url: str) -> None:
-    """安装技能（从 Git URL 或目录）"""
+    """安装技能（从 Git URL、GitHub 简写或本地目录）"""
     wd = Path(workspace_dir).expanduser().resolve()
     skills_dir = wd / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
@@ -549,6 +563,51 @@ def install_skill(workspace_dir: str, url: str) -> None:
             capture_output=True,
             text=True,
         )
+    elif _looks_like_github_shorthand(url):
+        # GitHub 简写格式: "owner/repo@skill-name" 或 "owner/repo"
+        import shutil
+        import tempfile
+
+        if "@" in url:
+            repo_part, skill_name = url.split("@", 1)
+        else:
+            repo_part = url
+            skill_name = url.split("/")[-1]
+
+        repo_url = f"https://github.com/{repo_part}.git"
+        target = skills_dir / skill_name
+
+        if target.exists():
+            raise ValueError(f"技能目录已存在: {target}")
+
+        # 克隆到临时目录，然后提取目标技能子目录
+        tmp_dir = tempfile.mkdtemp(prefix="openakita_skill_")
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", repo_url, tmp_dir],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            # 优先查找 skills/<skill_name> 子目录（常见的多技能仓库布局）
+            skill_sub = Path(tmp_dir) / "skills" / skill_name
+            if skill_sub.is_dir():
+                shutil.copytree(str(skill_sub), str(target))
+            else:
+                # 其次查找仓库根目录下的 <skill_name> 子目录
+                alt_sub = Path(tmp_dir) / skill_name
+                if alt_sub.is_dir():
+                    shutil.copytree(str(alt_sub), str(target))
+                else:
+                    # 整个仓库就是一个技能
+                    shutil.copytree(tmp_dir, str(target))
+                    # 清理克隆产生的 .git 目录
+                    git_dir = target / ".git"
+                    if git_dir.exists():
+                        shutil.rmtree(str(git_dir), ignore_errors=True)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
     else:
         # Local path
         src = Path(url).expanduser().resolve()

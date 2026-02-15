@@ -975,7 +975,14 @@ class ReasoningEngine:
                         return
                     _endpoint_switched = True
 
+            # 获取实际使用的模型名：如果切换了端点，从 LLMClient 获取该端点的模型名
             current_model = self._brain.model
+            if _endpoint_switched and endpoint_override:
+                llm_client = getattr(self._brain, "_llm_client", None)
+                if llm_client:
+                    _provider = llm_client._providers.get(endpoint_override)
+                    if _provider:
+                        current_model = _provider.model
 
             # ReAct multi-turn loop (与 run() 保持一致，由 settings 控制上限)
             max_iterations = settings.max_iterations

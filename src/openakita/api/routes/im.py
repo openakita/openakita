@@ -12,20 +12,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _get_agent(request: Request):
-    return getattr(request.app.state, "agent", None)
+def _get_gateway(request: Request):
+    """Get the MessageGateway from app state (set by server.create_app)."""
+    return getattr(request.app.state, "gateway", None)
+
+
+def _get_session_manager(request: Request):
+    """Get the SessionManager from app state (set by server.create_app)."""
+    return getattr(request.app.state, "session_manager", None)
 
 
 @router.get("/api/im/channels")
 async def list_channels(request: Request):
     """Return all configured IM channels with online status."""
-    agent = _get_agent(request)
     channels: list[dict[str, Any]] = []
-    if agent is None:
-        return JSONResponse(content={"channels": channels})
 
-    # Try to access gateway -> adapters
-    gateway = getattr(agent, "_gateway", None) or getattr(agent, "gateway", None)
+    gateway = _get_gateway(request)
     if gateway is None:
         return JSONResponse(content={"channels": channels})
 
@@ -36,7 +38,8 @@ async def list_channels(request: Request):
         adapter_items = list(adapters_dict.items())
     else:
         adapter_items = [(getattr(a, "name", f"adapter_{i}"), a) for i, a in enumerate(adapters_list)]
-    session_mgr = getattr(agent, "_session_manager", None) or getattr(agent, "session_manager", None)
+
+    session_mgr = _get_session_manager(request)
 
     for adapter_name, adapter in adapter_items:
         name = adapter_name or getattr(adapter, "name", None) or getattr(adapter, "channel_type", "unknown")
@@ -67,12 +70,9 @@ async def list_channels(request: Request):
 @router.get("/api/im/sessions")
 async def list_sessions(request: Request, channel: str = Query("")):
     """Return sessions for a given IM channel."""
-    agent = _get_agent(request)
     result: list[dict[str, Any]] = []
-    if agent is None:
-        return JSONResponse(content={"sessions": result})
 
-    session_mgr = getattr(agent, "_session_manager", None) or getattr(agent, "session_manager", None)
+    session_mgr = _get_session_manager(request)
     if session_mgr is None:
         return JSONResponse(content={"sessions": result})
 
@@ -114,11 +114,7 @@ async def get_session_messages(
     offset: int = Query(0, ge=0),
 ):
     """Return messages for a specific session."""
-    agent = _get_agent(request)
-    if agent is None:
-        return JSONResponse(content={"messages": [], "total": 0, "hasMore": False})
-
-    session_mgr = getattr(agent, "_session_manager", None) or getattr(agent, "session_manager", None)
+    session_mgr = _get_session_manager(request)
     if session_mgr is None:
         return JSONResponse(content={"messages": [], "total": 0, "hasMore": False})
 

@@ -28,7 +28,12 @@ API_HOST = "127.0.0.1"
 API_PORT = 18900
 
 
-def create_app(agent: Any = None, shutdown_event: asyncio.Event | None = None, session_manager: Any = None) -> FastAPI:
+def create_app(
+    agent: Any = None,
+    shutdown_event: asyncio.Event | None = None,
+    session_manager: Any = None,
+    gateway: Any = None,
+) -> FastAPI:
     """Create the FastAPI application with all routes mounted."""
 
     app = FastAPI(
@@ -50,6 +55,7 @@ def create_app(agent: Any = None, shutdown_event: asyncio.Event | None = None, s
     app.state.agent = agent
     app.state.shutdown_event = shutdown_event
     app.state.session_manager = session_manager
+    app.state.gateway = gateway
 
     # Mount routes
     app.include_router(chat.router)
@@ -92,6 +98,7 @@ async def start_api_server(
     agent: Any = None,
     shutdown_event: asyncio.Event | None = None,
     session_manager: Any = None,
+    gateway: Any = None,
     host: str = API_HOST,
     port: int = API_PORT,
 ) -> asyncio.Task:
@@ -105,7 +112,7 @@ async def start_api_server(
     """
     import uvicorn
 
-    app = create_app(agent=agent, shutdown_event=shutdown_event, session_manager=session_manager)
+    app = create_app(agent=agent, shutdown_event=shutdown_event, session_manager=session_manager, gateway=gateway)
 
     config = uvicorn.Config(
         app=app,
