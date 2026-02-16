@@ -44,10 +44,11 @@ def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
     """
     try:
         import pilk  # type: ignore[import-untyped]
-    except ImportError:
+    except ImportError as e:
         from openakita.tools._import_helper import import_or_hint
         hint = import_or_hint("pilk")
         logger.warning(f"SILK 解码不可用: {hint}")
+        logger.warning(f"pilk ImportError 详情: {e}", exc_info=True)
         return False
 
     import wave

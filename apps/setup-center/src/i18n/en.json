@@ -129,6 +129,7 @@
     "restarting": "Restarting...",
     "unresponsive": "Backend Unresponsive",
     "degradedHint": "Backend process is alive but HTTP is unreachable. It may be busy processing. Wait or restart manually.",
+    "degradedAutoClean": "If the process heartbeat stays stale for ~60s, the system will automatically clean up the hung process.",
     "backendNotRunning": "Backend Service Not Running",
     "backendNotRunningHint": "Chat, IM channels, skills and other features require the backend service. Click the button to start it.",
     "backendDied": "OpenAkita backend service has stopped",
@@ -646,6 +647,10 @@
     "uninstalled": "{{name}} uninstalled",
     "bundledCannotUninstall": "Bundled modules cannot be uninstalled",
     "loading": "Loading module list...",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "restartTitle": "Restart Required",
+    "restartDesc": "Module \"{{name}}\" changes are complete. A backend restart is needed for changes to take effect. Restart now?",
+    "restartNow": "Restart Now",
+    "restartLater": "Later"
   }
 }

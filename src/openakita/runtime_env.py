@@ -158,4 +158,82 @@ def inject_module_paths() -> None:
                 injected.append(module_dir.name)
 
     if injected:
-        logger.debug(f"已注入模块路径（追加到 sys.path 末尾）: {', '.join(injected)}")
+        logger.info(f"已注入模块路径（追加到 sys.path 末尾）: {', '.join(injected)}")
+
+    # Windows 下为含有 C 扩展 DLL 的模块（如 torch）添加 DLL 搜索路径。
+    # Python 3.8+ 在 Windows 上不再将 sys.path 用于 DLL 解析，必须通过
+    # os.add_dll_directory() 显式注册，否则 torch._C 等 PYD 的依赖 DLL
+    # （c10.dll, torch_cpu.dll 等）无法被找到，导致 ImportError: DLL load failed。
+    if sys.platform == "win32":
+        _register_dll_directories(os)
+
+
+def _register_dll_directories(os_module) -> None:
+    """在 Windows 上为 sys.path 中含有 C 扩展 DLL 的目录注册 DLL 搜索路径。
+
+    扫描 sys.path 中的每个路径，检查是否存在已知的 DLL 子目录
+    （如 torch/lib/），然后通过 os.add_dll_directory() 注册。
+    同时将 DLL 路径追加到 PATH 环境变量作为兜底。
+    """
+    # 已知需要注册 DLL 目录的包及其 DLL 子路径
+    _DLL_SUBDIRS = [
+        ("torch", "lib"),          # PyTorch: c10.dll, torch_cpu.dll, libiomp5md.dll
+        ("torch", "bin"),          # PyTorch 某些版本把 DLL 放在 bin/
+    ]
+
+    registered = []
+    for p in list(sys.path):
+        p_path = Path(p)
+        if not p_path.is_dir():
+            continue
+        for pkg, sub in _DLL_SUBDIRS:
+            dll_dir = p_path / pkg / sub
+            if dll_dir.is_dir():
+                dll_str = str(dll_dir)
+                try:
+                    os_module.add_dll_directory(dll_str)
+                    registered.append(dll_str)
+                except OSError as e:
+                    logger.warning(f"添加 DLL 路径失败: {dll_dir} - {e}")
+                # 兜底：将 DLL 目录追加到 PATH（某些旧版 Python 或特殊环境）
+                current_path = os_module.environ.get("PATH", "")
+                if dll_str not in current_path:
+                    os_module.environ["PATH"] = dll_str + ";" + current_path
+
+    if registered:
+        logger.info(f"已注册 Windows DLL 搜索路径: {', '.join(registered)}")
+
+
+def inject_module_paths_runtime() -> int:
+    """运行时重新扫描并注入模块路径（不要求 IS_FROZEN）。
+
+    用于模块安装后无需重启即可加载新模块。
+    与 inject_module_paths() 不同，此函数不检查 IS_FROZEN，
+    可在任何环境下调用。
+
+    Returns:
+        新注入的路径数量
+    """
+    import os
+
+    injected = []
+
+    # 扫描 ~/.openakita/modules/*/site-packages
+    modules_base = _get_openakita_root() / "modules"
+    if modules_base.exists():
+        for module_dir in modules_base.iterdir():
+            if not module_dir.is_dir():
+                continue
+            sp = module_dir / "site-packages"
+            if sp.is_dir() and str(sp) not in sys.path:
+                sys.path.append(str(sp))
+                injected.append(module_dir.name)
+
+    if injected:
+        logger.info(f"[Runtime] 已注入模块路径: {', '.join(injected)}")
+
+    # Windows DLL 目录
+    if sys.platform == "win32":
+        _register_dll_directories(os)
+
+    return len(injected)

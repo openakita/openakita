@@ -180,9 +180,12 @@ class AnthropicProvider(LLMProvider):
 
     def _build_request_body(self, request: LLMRequest) -> dict:
         """构建请求体"""
+        # Anthropic API 强制要求 max_tokens（不传会 400 报错），
+        # 与 OpenAI 兼容 API 不同（可选参数，不传则用模型默认上限）。
+        # 因此这里必须传一个值。使用端点配置的 max_tokens 或请求指定的值。
         body = {
             "model": self.config.model,
-            "max_tokens": request.max_tokens or self.config.max_tokens,
+            "max_tokens": request.max_tokens or self.config.max_tokens or 16384,
             "messages": [msg.to_dict() for msg in request.messages],
         }
 

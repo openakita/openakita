@@ -650,6 +650,18 @@ class ReasoningEngine:
                 f"tokens_in={_in_tokens}, tokens_out={_out_tokens}"
             )
 
+            # ==================== stop_reason=max_tokens 检测 ====================
+            # 当 LLM 输出被 max_tokens 限制截断时，工具调用的 JSON 可能不完整。
+            # 检测此情况并记录明确警告，帮助排查。
+            if decision.stop_reason == "max_tokens":
+                logger.warning(
+                    f"[ReAct] Iter {iteration+1} — ⚠️ LLM output truncated (stop_reason=max_tokens). "
+                    f"The response hit the max_tokens limit ({self._brain.max_tokens}). "
+                    f"Tool calls may have incomplete JSON arguments. "
+                    f"Consider increasing endpoint max_tokens or reducing tool argument size."
+                )
+                _iter_trace["truncated"] = True
+
             # ==================== 决策分支 ====================
 
             if decision.type == DecisionType.FINAL_ANSWER:
@@ -1299,6 +1311,15 @@ class ReasoningEngine:
                     f"[ReAct-Stream] Iter {_iteration+1} — decision={_iter_trace['decision_type']}, "
                     f"tools={tool_names_log}, tokens_in={_in_tokens}, tokens_out={_out_tokens}"
                 )
+
+                # ==================== stop_reason=max_tokens 检测（与 run() 一致）====================
+                if decision.stop_reason == "max_tokens":
+                    logger.warning(
+                        f"[ReAct-Stream] Iter {_iteration+1} — ⚠️ LLM output truncated (stop_reason=max_tokens). "
+                        f"The response hit the max_tokens limit ({self._brain.max_tokens}). "
+                        f"Tool calls may have incomplete JSON arguments."
+                    )
+                    _iter_trace["truncated"] = True
 
                 # ==================== FINAL_ANSWER ====================
                 if decision.type == DecisionType.FINAL_ANSWER:

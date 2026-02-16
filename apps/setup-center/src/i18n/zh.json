@@ -129,6 +129,7 @@
     "restarting": "正在重启...",
     "unresponsive": "后端无响应",
     "degradedHint": "后端进程存活但 HTTP 不可达，可能正忙于处理任务。可等待恢复或手动重启。",
+    "degradedAutoClean": "若进程心跳持续超时（约 60 秒），系统将自动清理卡死进程并更新状态。",
     "backendNotRunning": "后端服务未启动",
     "backendNotRunningHint": "聊天、IM 通道、技能等功能需要后端服务运行。点击右侧按钮启动服务。",
     "backendDied": "OpenAkita 后端服务已停止",
@@ -646,6 +647,10 @@
     "uninstalled": "{{name}} 已卸载",
     "bundledCannotUninstall": "内置模块无法卸载",
     "loading": "正在加载模块列表...",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "restartTitle": "需要重启服务",
+    "restartDesc": "模块「{{name}}」变更已完成。需要重启后端服务才能生效，是否立即重启？",
+    "restartNow": "立即重启",
+    "restartLater": "稍后再说"
   }
 }

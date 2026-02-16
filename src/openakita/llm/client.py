@@ -212,7 +212,7 @@ class LLMClient:
         messages: list[Message],
         system: str = "",
         tools: list[Tool] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 0,
         temperature: float = 1.0,
         enable_thinking: bool = False,
         thinking_depth: str | None = None,
@@ -312,98 +312,36 @@ class LLMClient:
         if eligible:
             return await self._try_endpoints(eligible, request, allow_failover=allow_failover)
 
-        # eligible 为空时，可能原因包括：
-        # - 配置里确实没有满足能力的端点
-        # - 端点存在但都处于冷静期/不健康（被筛掉）
-        providers_sorted = sorted(self._providers.values(), key=lambda p: p.config.priority)
-        capability_matched = [
-            p
-            for p in providers_sorted
-            if (not require_tools or p.config.has_capability("tools"))
-            and (not require_vision or p.config.has_capability("vision"))
-            and (not require_video or p.config.has_capability("video"))
-            and (not require_thinking or p.config.has_capability("thinking"))
-        ]
-
-        if require_video and not capability_matched:
-            raise UnsupportedMediaError(
-                "No endpoint supports video. Configure a video-capable endpoint (e.g., kimi-k2.5)."
-            )
-
-        if capability_matched:
-            # 有能力匹配的端点，但都不健康/冷静期
-            # 检查是否所有端点都在短冷静期（全局故障恢复场景），如果是则等待后重试
-            min_cooldown = min(
-                (p.cooldown_remaining for p in capability_matched if not p.is_healthy),
-                default=0,
-            )
-            if min_cooldown > 0 and min_cooldown <= 15:
-                # 全局故障场景：最短冷静期 ≤ 15s，等一下再试
-                logger.info(
-                    f"[LLM] All endpoints in cooldown, shortest={min_cooldown}s. "
-                    f"Waiting for recovery (likely transient network issue)..."
-                )
-                await asyncio.sleep(min(min_cooldown + 1, 12))
-                # 等待后重新筛选（保持亲和性）
-                eligible = self._filter_eligible_endpoints(
-                    require_tools=require_tools,
-                    require_vision=require_vision,
-                    require_video=require_video,
-                    require_thinking=require_thinking,
-                    conversation_id=conversation_id,
-                    prefer_endpoint=self._last_success_endpoint if has_tool_context else None,
-                )
-                if eligible:
-                    logger.info(
-                        f"[LLM] Recovery detected: {len(eligible)} endpoints available after wait"
-                    )
-                    return await self._try_endpoints(
-                        eligible, request, allow_failover=allow_failover
-                    )
-
-            # 检查是否全部是结构性错误（400 参数错误等），此类错误重试无意义
-            # 只有瞬态错误（503/timeout/连接错误）才值得 "anyway" 降级尝试
-            unhealthy_structural = [
-                p for p in capability_matched
-                if not p.is_healthy and getattr(p, '_error_category', '') == "structural"
-            ]
-            unhealthy_total = [p for p in capability_matched if not p.is_healthy]
-            if unhealthy_structural and len(unhealthy_structural) == len(unhealthy_total):
-                # 全部都是结构性错误导致的 cooldown，不应强行重试
-                last_err = unhealthy_structural[0]._last_error or "unknown structural error"
-                raise AllEndpointsFailedError(
-                    f"All endpoints failed with structural errors (cooldown {min_cooldown}s). "
-                    f"Last error: {last_err}"
-                )
-
-            logger.warning(
-                "No healthy endpoint meets required capabilities: "
-                f"tools={require_tools}, vision={require_vision}, video={require_video}, "
-                f"thinking={require_thinking}. Trying capability-matched endpoints anyway."
-            )
-            return await self._try_endpoints(
-                capability_matched, request, allow_failover=allow_failover
-            )
-
-        # 配置里确实没有能力匹配：警告后用首选端点尝试（尽量不中断）
-        logger.warning(
-            f"No endpoint supports required capabilities: "
-            f"tools={require_tools}, vision={require_vision}, "
-            f"video={require_video}, thinking={require_thinking}. Falling back to primary endpoint."
+        # eligible 为空 — 使用公共降级策略
+        providers = await self._resolve_providers_with_fallback(
+            request=request,
+            require_tools=require_tools,
+            require_vision=require_vision,
+            require_video=require_video,
+            require_thinking=require_thinking,
+            conversation_id=conversation_id,
+            prefer_endpoint=self._last_success_endpoint if has_tool_context else None,
         )
-        return await self._try_endpoints(providers_sorted, request, allow_failover=allow_failover)
+        return await self._try_endpoints(providers, request, allow_failover=allow_failover)
 
     async def chat_stream(
         self,
         messages: list[Message],
         system: str = "",
         tools: list[Tool] | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 0,
         temperature: float = 1.0,
+        enable_thinking: bool = False,
+        thinking_depth: str | None = None,
+        conversation_id: str | None = None,
         **kwargs,
     ) -> AsyncIterator[dict]:
         """
-        流式聊天接口
+        流式聊天接口（带完整降级策略）
+
+        与 chat() 共用降级逻辑：thinking 软降级、冷静期等待、多端点轮询。
+        流式特殊处理：一旦开始产出事件（yielded=True），中途失败不再切换端点
+        （避免向客户端发送混合的部分响应）。
 
         Args:
             messages: 消息列表
@@ -411,6 +349,9 @@ class LLMClient:
             tools: 工具定义列表
             max_tokens: 最大输出 token
             temperature: 温度
+            enable_thinking: 是否启用思考模式
+            thinking_depth: 思考深度 ('low'/'medium'/'high')
+            conversation_id: 对话 ID
             **kwargs: 额外参数
 
         Yields:
@@ -422,6 +363,8 @@ class LLMClient:
             tools=tools,
             max_tokens=max_tokens,
             temperature=temperature,
+            enable_thinking=enable_thinking,
+            thinking_depth=thinking_depth,
             extra_params=kwargs.get("extra_params"),
         )
 
@@ -429,31 +372,207 @@ class LLMClient:
         require_tools = bool(tools)
         require_vision = self._has_images(messages)
         require_video = self._has_videos(messages)
+        require_thinking = bool(enable_thinking)
 
+        # 使用公共降级策略解析端点列表
         eligible = self._filter_eligible_endpoints(
             require_tools=require_tools,
             require_vision=require_vision,
             require_video=require_video,
+            require_thinking=require_thinking,
+            conversation_id=conversation_id,
         )
 
         if not eligible:
-            providers_sorted = sorted(self._providers.values(), key=lambda p: p.config.priority)
-            capability_matched = [
-                p
-                for p in providers_sorted
-                if (not require_tools or p.config.has_capability("tools"))
-                and (not require_vision or p.config.has_capability("vision"))
-                and (not require_video or p.config.has_capability("video"))
-            ]
+            eligible = await self._resolve_providers_with_fallback(
+                request=request,
+                require_tools=require_tools,
+                require_vision=require_vision,
+                require_video=require_video,
+                require_thinking=require_thinking,
+                conversation_id=conversation_id,
+            )
 
-            if require_video and not capability_matched:
-                raise UnsupportedMediaError("No endpoint supports video")
-            eligible = capability_matched if capability_matched else providers_sorted
+        # 多端点轮询：依次尝试每个端点
+        # 流式特殊处理：一旦有事件产出就不再切换（避免混合响应）
+        last_error: Exception | None = None
+        for i, provider in enumerate(eligible):
+            yielded = False
+            try:
+                logger.info(
+                    f"[LLM-Stream] endpoint={provider.name} model={provider.model} "
+                    f"action=stream_request"
+                )
+                async for event in provider.chat_stream(request):
+                    yielded = True
+                    yield event
+                # 流完成：provider 内部已调用 mark_healthy()
+                self._last_success_endpoint = provider.name
+                return
+            except LLMError as e:
+                last_error = e
+                if yielded:
+                    # 已产出部分事件，不能切换端点（客户端会收到混合响应）
+                    logger.error(
+                        f"[LLM-Stream] endpoint={provider.name} mid-stream failure: {e}. "
+                        f"Cannot failover (partial response already sent)."
+                    )
+                    raise
+                # 未产出任何事件 → 安全切换到下一个端点
+                # provider 内部已调用 mark_unhealthy()
+                logger.warning(
+                    f"[LLM-Stream] endpoint={provider.name} error={e}"
+                    + (f", trying next endpoint..." if i < len(eligible) - 1 else "")
+                )
+            except Exception as e:
+                last_error = e
+                if yielded:
+                    raise
+                provider.mark_unhealthy(str(e))
+                logger.warning(
+                    f"[LLM-Stream] endpoint={provider.name} unexpected_error={e}"
+                    + (f", trying next endpoint..." if i < len(eligible) - 1 else "")
+                )
 
-        # 流式只尝试第一个端点
-        provider = eligible[0]
-        async for event in provider.chat_stream(request):
-            yield event
+        raise AllEndpointsFailedError(
+            f"Stream: all {len(eligible)} endpoints failed. Last error: {last_error}"
+        )
+
+    # ==================== 公共降级策略 ====================
+
+    async def _resolve_providers_with_fallback(
+        self,
+        request: LLMRequest,
+        require_tools: bool = False,
+        require_vision: bool = False,
+        require_video: bool = False,
+        require_thinking: bool = False,
+        conversation_id: str | None = None,
+        prefer_endpoint: str | None = None,
+    ) -> list[LLMProvider]:
+        """公共分层降级策略 — 供 chat() 和 chat_stream() 复用
+
+        当 _filter_eligible_endpoints() 返回空列表时调用此方法，
+        按以下顺序逐级降级，直到找到可用端点：
+
+        1. thinking 软降级：放弃 thinking 要求，用非 thinking 端点
+        2. 等待冷静期恢复：等最短的瞬时冷静期（最多等 35s）
+        3. 强制重试：忽略冷静期，强制调用匹配基础能力的端点
+        4. 最终兜底：所有端点都试一遍
+
+        副作用：
+            - 可能修改 request.enable_thinking = False（thinking 降级时）
+
+        Raises:
+            UnsupportedMediaError: 需要视频但无视频能力端点
+            AllEndpointsFailedError: 所有端点均为结构性错误
+
+        Returns:
+            按优先级排序的端点列表（至少包含一个端点）
+        """
+        providers_sorted = sorted(self._providers.values(), key=lambda p: p.config.priority)
+
+        # ── 降级 1: thinking 软降级 ──
+        # thinking 不同于 tools/vision/video：没有它请求仍能正常工作
+        # 如果因为 thinking 要求导致无可用端点，降级到无 thinking 模式
+        if require_thinking:
+            eligible_no_thinking = self._filter_eligible_endpoints(
+                require_tools=require_tools,
+                require_vision=require_vision,
+                require_video=require_video,
+                require_thinking=False,
+                conversation_id=conversation_id,
+                prefer_endpoint=prefer_endpoint,
+            )
+            if eligible_no_thinking:
+                logger.info(
+                    f"[LLM] No healthy thinking-capable endpoint. "
+                    f"Falling back to non-thinking mode "
+                    f"({len(eligible_no_thinking)} endpoints available)."
+                )
+                request.enable_thinking = False
+                return eligible_no_thinking
+
+        # ── 降级 2+3+4: 所有端点都在冷静期 ──
+        # 构建基础能力匹配列表（不含 thinking 要求，忽略健康状态）
+        base_capability_matched = [
+            p
+            for p in providers_sorted
+            if (not require_tools or p.config.has_capability("tools"))
+            and (not require_vision or p.config.has_capability("vision"))
+            and (not require_video or p.config.has_capability("video"))
+        ]
+
+        if require_video and not base_capability_matched:
+            raise UnsupportedMediaError(
+                "No endpoint supports video. Configure a video-capable endpoint (e.g., kimi-k2.5)."
+            )
+
+        # 如果降级了 thinking，更新 request
+        if require_thinking:
+            request.enable_thinking = False
+            logger.info("[LLM] All endpoints in cooldown. Disabling thinking for fallback attempt.")
+
+        if base_capability_matched:
+            unhealthy = [p for p in base_capability_matched if not p.is_healthy]
+            unhealthy_count = len(unhealthy)
+
+            if unhealthy_count > 0:
+                # 按错误类型分组
+                structural = [p for p in unhealthy if p.error_category == "structural"]
+                non_structural = [p for p in unhealthy if p.error_category != "structural"]
+
+                # ── 降级 2: 等待瞬时冷静期恢复 ──
+                if non_structural:
+                    min_transient_cd = min(p.cooldown_remaining for p in non_structural)
+                    if 0 < min_transient_cd <= 35:
+                        logger.info(
+                            f"[LLM] All endpoints in cooldown. "
+                            f"Waiting {min_transient_cd}s for transient recovery..."
+                        )
+                        await asyncio.sleep(min(min_transient_cd + 1, 35))
+                        # 等待后重新筛选
+                        eligible = self._filter_eligible_endpoints(
+                            require_tools=require_tools,
+                            require_vision=require_vision,
+                            require_video=require_video,
+                            require_thinking=False,
+                            conversation_id=conversation_id,
+                            prefer_endpoint=prefer_endpoint,
+                        )
+                        if eligible:
+                            logger.info(
+                                f"[LLM] Recovery detected: "
+                                f"{len(eligible)} endpoints available after wait"
+                            )
+                            return eligible
+
+                # ── 全部是结构性错误（400 参数错误等），重试无意义 → 报错 ──
+                if structural and len(structural) == unhealthy_count:
+                    last_err = structural[0]._last_error or "unknown structural error"
+                    min_cd = min(p.cooldown_remaining for p in structural)
+                    raise AllEndpointsFailedError(
+                        f"All endpoints failed with structural errors "
+                        f"(cooldown {min_cd}s). Last error: {last_err}"
+                    )
+
+            # ── 降级 3: 强制重试（忽略冷静期） ──
+            logger.warning(
+                f"[LLM] No healthy endpoint available. "
+                f"Force-retrying {len(base_capability_matched)} endpoints "
+                f"(ignoring cooldown)."
+            )
+            return base_capability_matched
+
+        # ── 降级 4: 最终兜底 — 尝试所有端点 ──
+        logger.warning(
+            f"[LLM] No endpoint matches required capabilities "
+            f"(tools={require_tools}, vision={require_vision}, video={require_video}). "
+            f"Trying all {len(providers_sorted)} endpoints as last resort."
+        )
+        return providers_sorted
+
+    # ==================== 端点筛选 ====================
 
     def _filter_eligible_endpoints(
         self,
@@ -670,6 +789,8 @@ class LLMClient:
                         "invalid_parameter",
                         "messages with role",
                         "must be a response to a preceeding message",
+                        "does not support",  # Ollama: "model does not support thinking" 等
+                        "not supported",     # 通用的"不支持"格式
                     ]
                     is_non_retryable = any(
                         pattern in error_str.lower() for pattern in non_retryable_patterns

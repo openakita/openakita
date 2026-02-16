@@ -237,9 +237,18 @@ class OpenAIProvider(LLMProvider):
 
         body = {
             "model": self.config.model,
-            "max_tokens": request.max_tokens or self.config.max_tokens,
             "messages": messages,
         }
+
+        # max_tokens 处理策略：
+        # OpenAI 兼容 API 中 max_tokens 是可选参数。
+        # 不传时，API 会使用模型的默认最大输出上限，LLM 可以生成到自然结束。
+        # 这对 Agent 场景非常重要——工具调用（如 write_file）可能产生极长的 JSON 参数，
+        # 人为限制 max_tokens 会导致 JSON 被截断、工具调用失败。
+        # 因此：仅当调用方显式传了 max_tokens 且 > 0 时才发送，否则不传（让 API 用模型默认值）。
+        _max_tokens = request.max_tokens
+        if _max_tokens and _max_tokens > 0:
+            body["max_tokens"] = _max_tokens
 
         # 工具
         if request.tools:
@@ -259,6 +268,13 @@ class OpenAIProvider(LLMProvider):
             body.update(self.config.extra_params)
         if request.extra_params:
             body.update(request.extra_params)
+
+        # ── 本地端点检测 ──
+        # Ollama / LM Studio 等本地推理引擎的 OpenAI 兼容 API 不支持
+        # thinking: {"type": "enabled"} 格式的思考参数。
+        # 本地模型的思考能力通过模型自身机制实现（如 qwen3 的 <think> 标签），
+        # 无需也不能通过 API 参数控制。
+        is_local = self._is_local_endpoint()
 
         # DashScope 思考模式 — 必须在 extra_params 之后，以覆盖其中的 enable_thinking
         if self.config.provider == "dashscope" and self.config.has_capability("thinking"):
@@ -280,9 +296,15 @@ class OpenAIProvider(LLMProvider):
         #   thinking: {"type": "enabled"} 来启用思考模式，reasoning_effort 只是可选的深度控制
         # - 如果只传 reasoning_effort 而不启用 thinking，火山引擎等 API 会返回 400:
         #   "Invalid combination of reasoning_effort and thinking type: medium + disabled"
+        #
+        # 排除本地端点（Ollama / LM Studio 等）：
+        # - Ollama 的 OpenAI 兼容 API 不支持 thinking: {"type": "enabled"} 参数
+        # - 本地模型的思考能力通过模型自身的 <think> 标签实现，无需 API 参数
+        # - 向 Ollama 发送此参数会导致 400: "model does not support thinking"
         if (
             self.config.provider != "dashscope"
             and self.config.has_capability("thinking")
+            and not is_local
         ):
             if request.enable_thinking:
                 # 显式启用思考（DeepSeek/vLLM/火山引擎等 OpenAI-compatible 标准）
@@ -300,6 +322,19 @@ class OpenAIProvider(LLMProvider):
                 body.pop("reasoning_effort", None)
                 if "thinking" in body:
                     body["thinking"] = {"type": "disabled"}
+
+        # ── 本地端点清理 ──
+        # 移除可能通过 extra_params 泄漏到请求体中的思考相关参数，
+        # 避免 Ollama / LM Studio 返回 400 错误
+        if is_local:
+            _stripped = [k for k in ("thinking", "enable_thinking", "thinking_budget", "reasoning_effort") if k in body]
+            for _key in _stripped:
+                body.pop(_key, None)
+            if _stripped:
+                logger.debug(
+                    f"[OpenAI] Local endpoint '{self.name}': stripped thinking params {_stripped} "
+                    f"(local models use native thinking mechanism, not API params)"
+                )
 
         return body
 

@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     default_model: str = Field(
         default="claude-opus-4-5-20251101-thinking", description="默认使用的模型"
     )
-    max_tokens: int = Field(default=8192, description="最大输出 token 数")
+    max_tokens: int = Field(
+        default=0,
+        description="最大输出 token 数 (0=不限制，使用模型默认上限；仅 Anthropic API 强制要求此参数时才会自动使用兜底值)",
+    )
 
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")

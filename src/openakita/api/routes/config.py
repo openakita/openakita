@@ -213,12 +213,20 @@ async def reload_config(request: Request):
 
     try:
         success = llm_client.reload()
+
+        # 同时刷新编译端点（Brain 对象上的 compiler_client）
+        compiler_reloaded = False
+        brain_obj = brain  # 上面已经解析过的 brain 对象
+        if brain_obj and hasattr(brain_obj, "reload_compiler_client"):
+            compiler_reloaded = brain_obj.reload_compiler_client()
+
         if success:
             logger.info("[Config API] LLM endpoints reloaded successfully")
             return {
                 "status": "ok",
                 "reloaded": True,
                 "endpoints": len(llm_client.endpoints),
+                "compiler_reloaded": compiler_reloaded,
             }
         else:
             return {"status": "ok", "reloaded": False, "reason": "reload returned false"}
@@ -246,6 +254,22 @@ async def restart_service(request: Request):
         logger.warning("[Config API] Restart requested but no shutdown_event available")
         cfg._restart_requested = False
         return {"status": "error", "message": "restart not available in this mode"}
+
+
+@router.post("/api/modules/refresh")
+async def refresh_module_paths():
+    """运行时重新扫描并注入可选模块路径到 sys.path。
+
+    模块安装/卸载后调用此端点，可在不重启服务的情况下让 Python 发现新模块。
+    注意：某些模块（如依赖 torch 的 whisper）可能仍需完整重启才能正确加载 DLL。
+    """
+    try:
+        from openakita.runtime_env import inject_module_paths_runtime
+        count = inject_module_paths_runtime()
+        return {"status": "ok", "injected": count}
+    except Exception as e:
+        logger.error(f"[Modules API] refresh failed: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/api/config/skills")

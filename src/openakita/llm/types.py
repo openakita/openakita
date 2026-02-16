@@ -243,7 +243,7 @@ class LLMRequest:
     messages: list[Message]
     system: str = ""
     tools: list[Tool] | None = None
-    max_tokens: int = 4096
+    max_tokens: int = 0  # 0=不限制（OpenAI 不发送该参数；Anthropic 使用端点配置值或兜底 16384）
     temperature: float = 1.0
     enable_thinking: bool = False
     thinking_depth: str | None = None  # 思考深度: 'low'/'medium'/'high'
@@ -320,7 +320,7 @@ class EndpointConfig:
     api_key: str | None = None  # 直接存储的 API Key (不推荐，但支持)
     model: str = ""  # 模型名称
     priority: int = 1  # 优先级 (越小越优先)
-    max_tokens: int = 4096  # 最大输出 tokens
+    max_tokens: int = 0  # 最大输出 tokens (0=不限制，使用模型默认上限)
     context_window: int = 150000  # 上下文窗口大小 (输入+输出总 token 上限)，配置缺失时的兜底值
     timeout: int = 180  # 超时时间 (秒)
     capabilities: list[str] | None = None  # 能力列表
@@ -387,7 +387,7 @@ class EndpointConfig:
             api_key=data.get("api_key"),
             model=data.get("model", ""),
             priority=data.get("priority", 1),
-            max_tokens=data.get("max_tokens", 4096),
+            max_tokens=data.get("max_tokens", 0),
             context_window=data.get("context_window", 150000),
             timeout=data.get("timeout", 180),
             capabilities=data.get("capabilities"),

@@ -347,6 +347,7 @@ function SearchSelect({
   const [search, setSearch] = useState(""); // 独立搜索词，与选中值分离
   const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const justSelected = useRef(false); // 跟踪用户是否刚从下拉中选了一项
   const hasOptions = options.length > 0;
 
   // 当有下拉选项时：显示文本 = 搜索词（正在搜索）或已选值
@@ -382,7 +383,20 @@ function SearchSelect({
           onFocus={() => { if (hasOptions) setOpen(true); }}
           onBlur={() => {
             // 延迟关闭，让 click 事件先触发
-            setTimeout(() => setOpen(false), 150);
+            setTimeout(() => {
+              setOpen(false);
+              // 如果用户刚从下拉中选了一项，不要覆盖选择
+              if (justSelected.current) {
+                justSelected.current = false;
+                return;
+              }
+              // 如果有未提交的搜索文本（用户手动输入了不在列表中的模型名），
+              // 将其提交为值。否则用户打字后点击其他地方，值不会更新。
+              if (hasOptions && search.trim() && search !== value) {
+                onChange(search.trim());
+                setSearch("");
+              }
+            }, 150);
           }}
           onKeyDown={(e) => {
             if (!hasOptions) return;
@@ -396,7 +410,15 @@ function SearchSelect({
             } else if (e.key === "Enter") {
               if (open && filtered[hoverIdx]) {
                 e.preventDefault();
+                justSelected.current = true;
                 onChange(filtered[hoverIdx]);
+                setSearch("");
+                setOpen(false);
+              } else if (hasOptions && search.trim()) {
+                // 用户在有下拉选项时手动输入并回车确认
+                e.preventDefault();
+                justSelected.current = true;
+                onChange(search.trim());
                 setSearch("");
                 setOpen(false);
               }
@@ -495,6 +517,7 @@ function SearchSelect({
                 key={opt}
                 onMouseEnter={() => setHoverIdx(idx)}
                 onClick={() => {
+                  justSelected.current = true;
                   onChange(opt);
                   setSearch("");
                   setOpen(false);
@@ -629,6 +652,9 @@ export function App() {
 
   // ── Restart overlay state ──
   const [restartOverlay, setRestartOverlay] = useState<{ phase: "saving" | "restarting" | "waiting" | "done" | "fail" | "notRunning" } | null>(null);
+
+  // ── Module restart prompt ──
+  const [moduleRestartPrompt, setModuleRestartPrompt] = useState<string | null>(null);
 
   // ── Service conflict & version state ──
   const [conflictDialog, setConflictDialog] = useState<{ pid: number; version: string } | null>(null);
@@ -1033,7 +1059,7 @@ export function App() {
                 api_type: String(e?.api_type || ""), base_url: String(e?.base_url || ""),
                 model: String(e?.model || ""), api_key_env: String(e?.api_key_env || ""),
                 priority: Number(e?.priority || 1),
-                max_tokens: Number(e?.max_tokens || 8192),
+                max_tokens: Number(e?.max_tokens ?? 0),
                 context_window: Number(e?.context_window || 150000),
                 timeout: Number(e?.timeout || 180),
                 capabilities: Array.isArray(e?.capabilities) ? e.capabilities.map((x: any) => String(x)) : [],
@@ -1306,7 +1332,7 @@ export function App() {
   useEffect(() => {
     const coreSteps: StepId[] = configMode === "quick"
       ? ["welcome", "quick-form", "quick-setup"]
-      : ["welcome", "workspace", "python", "install", "llm"];
+      : ["workspace", "python", "install", "llm"];
     const allCoreDone = coreSteps.every((id) => done.has(id));
     if (allCoreDone) {
       // 所有核心步骤完成 -> 解锁全部步骤
@@ -1607,7 +1633,16 @@ export function App() {
         }
       }
 
-      if (parsed.length === 0) parsed = BUILTIN_PROVIDERS;
+      if (parsed.length === 0) {
+        parsed = BUILTIN_PROVIDERS;
+      } else {
+        // 后端返回的列表可能不完整（部分 registry 加载失败），
+        // 将 BUILTIN_PROVIDERS 中缺失的服务商补充进去
+        const slugSet = new Set(parsed.map(p => p.slug));
+        for (const bp of BUILTIN_PROVIDERS) {
+          if (!slugSet.has(bp.slug)) parsed.push(bp);
+        }
+      }
       setProviders(parsed);
       const first = parsed[0]?.slug ?? "";
       setProviderSlug((prev) => prev || first);
@@ -1857,7 +1892,7 @@ export function App() {
           api_key_env: String(e?.api_key_env || ""),
           model: String(e?.model || ""),
           priority: Number.isFinite(Number(e?.priority)) ? Number(e?.priority) : 999,
-          max_tokens: Number.isFinite(Number(e?.max_tokens)) ? Number(e?.max_tokens) : 8192,
+          max_tokens: Number.isFinite(Number(e?.max_tokens)) ? Number(e?.max_tokens) : 0,
           context_window: Number.isFinite(Number(e?.context_window)) ? Number(e?.context_window) : 150000,
           timeout: Number.isFinite(Number(e?.timeout)) ? Number(e?.timeout) : 180,
           capabilities: Array.isArray(e?.capabilities) ? e.capabilities.map((x: any) => String(x)) : [],
@@ -2478,7 +2513,7 @@ export function App() {
         api_key_env: editDraft.apiKeyEnv.trim(),
         model: editDraft.modelId.trim(),
         priority: normalizePriority(editDraft.priority, 1),
-        max_tokens: existing?.max_tokens ?? 8192,
+        max_tokens: existing?.max_tokens ?? 0,
         context_window: existing?.context_window ?? 150000,
         timeout: existing?.timeout ?? 180,
         capabilities: editDraft.caps?.length ? editDraft.caps : ["text"],
@@ -2594,7 +2629,7 @@ export function App() {
           api_key_env: effectiveApiKeyEnv,
           model: selectedModelId,
           priority: normalizePriority(endpointPriority, 1),
-          max_tokens: 8192,
+          max_tokens: 0,
           context_window: 150000,
           timeout: 180,
           capabilities: capList,
@@ -2854,6 +2889,14 @@ export function App() {
       quickSetupStarted.current = false;
       setQuickSetupPhase(0);
       setQuickSetupError(null);
+      setConfigMode(null);
+      setStepId("welcome");
+      setMaxReachedStepIdx(0);
+      localStorage.setItem("openakita_maxStep", "0");
+      return;
+    }
+    // Full 模式在 workspace（第一步）按后退，返回模式选择页
+    if (configMode === "full" && stepId === "workspace") {
       setConfigMode(null);
       setStepId("welcome");
       setMaxReachedStepIdx(0);
@@ -3818,11 +3861,15 @@ export function App() {
                 }} disabled={!!busy}>全部停止</button>
               </div>
             )}
-            {/* Degraded hint */}
+            {/* Degraded hint — process alive but HTTP unreachable */}
             {heartbeatState === "degraded" && (
               <div style={{ marginTop: 8, padding: "6px 10px", background: "#fffde7", borderRadius: 6, fontSize: 12, color: "#f57f17", display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
                 <DotYellow size={8} />
-                <span>{t("status.degradedHint")}</span>
+                <span>
+                  {t("status.degradedHint")}
+                  <br />
+                  <span style={{ fontSize: 11, color: "#b0880a" }}>{t("status.degradedAutoClean")}</span>
+                </span>
               </div>
             )}
             {/* Troubleshooting panel */}
@@ -4070,7 +4117,29 @@ export function App() {
                 background: "linear-gradient(135deg, #e3f2fd 0%, #f5f5f5 100%)",
                 transition: "box-shadow 0.2s, transform 0.15s",
               }}
-              onClick={() => {
+              onClick={async () => {
+                // Quick 模式需要工作区才能保存端点配置，若无工作区则先自动创建
+                if (!currentWorkspaceId) {
+                  try {
+                    const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+                    if (!wsList.length) {
+                      const ws = await invoke<WorkspaceSummary>("create_workspace", {
+                        id: "default", name: t("onboarding.defaultWorkspace") || "默认工作区", setCurrent: true,
+                      });
+                      await refreshAll();
+                      setCurrentWorkspaceId(ws.id);
+                      envLoadedForWs.current = null;
+                    } else {
+                      const cur = wsList.find((w) => w.isCurrent) || wsList[0];
+                      await invoke("set_current_workspace", { id: cur.id });
+                      await refreshAll();
+                      setCurrentWorkspaceId(cur.id);
+                      envLoadedForWs.current = null;
+                    }
+                  } catch (e) {
+                    console.warn("Quick mode: auto-create workspace failed:", e);
+                  }
+                }
                 setConfigMode("quick");
                 setStepId("quick-form");
                 setMaxReachedStepIdx(1);
@@ -4104,7 +4173,29 @@ export function App() {
             <div
               className="card"
               style={{ marginTop: 0, cursor: "pointer", border: "2px solid transparent", transition: "box-shadow 0.2s, transform 0.15s, border-color 0.2s" }}
-              onClick={() => {
+              onClick={async () => {
+                // Full 模式也需确保工作区存在（与 Quick 模式行为统一）
+                if (!currentWorkspaceId) {
+                  try {
+                    const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+                    if (!wsList.length) {
+                      const ws = await invoke<WorkspaceSummary>("create_workspace", {
+                        id: "default", name: t("onboarding.defaultWorkspace") || "默认工作区", setCurrent: true,
+                      });
+                      await refreshAll();
+                      setCurrentWorkspaceId(ws.id);
+                      envLoadedForWs.current = null;
+                    } else {
+                      const cur = wsList.find((w) => w.isCurrent) || wsList[0];
+                      await invoke("set_current_workspace", { id: cur.id });
+                      await refreshAll();
+                      setCurrentWorkspaceId(cur.id);
+                      envLoadedForWs.current = null;
+                    }
+                  } catch (e) {
+                    console.warn("Full mode: auto-ensure workspace failed:", e);
+                  }
+                }
                 setConfigMode("full");
                 setStepId("workspace");
                 setMaxReachedStepIdx(0);
@@ -7138,10 +7229,34 @@ export function App() {
               </button>
               <button
                 className="obLinkBtn"
-                onClick={() => {
+                onClick={async () => {
+                  // 确保工作区存在（与 Quick/Full 模式行为统一）
+                  if (!currentWorkspaceId) {
+                    try {
+                      const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
+                      if (!wsList.length) {
+                        const ws = await invoke<WorkspaceSummary>("create_workspace", {
+                          id: "default", name: t("onboarding.defaultWorkspace") || "默认工作区", setCurrent: true,
+                        });
+                        await refreshAll();
+                        setCurrentWorkspaceId(ws.id);
+                        envLoadedForWs.current = null;
+                      } else {
+                        const cur = wsList.find((w) => w.isCurrent) || wsList[0];
+                        await invoke("set_current_workspace", { id: cur.id });
+                        await refreshAll();
+                        setCurrentWorkspaceId(cur.id);
+                        envLoadedForWs.current = null;
+                      }
+                    } catch (e) {
+                      console.warn("Onboarding advanced: auto-ensure workspace failed:", e);
+                    }
+                  }
                   setView("wizard");
                   setConfigMode("full");
-                  setStepId("welcome");
+                  setStepId("workspace");
+                  setMaxReachedStepIdx(0);
+                  localStorage.setItem("openakita_maxStep", "0");
                 }}
               >
                 {t("onboarding.welcome.advancedLink")}
@@ -7525,6 +7640,9 @@ export function App() {
                             await invoke("uninstall_module", { moduleId: m.id });
                             setNotice(t("modules.uninstalled", { name: m.name }));
                             obLoadModules();
+                            if (serviceStatus?.running) {
+                              setModuleRestartPrompt(m.name);
+                            }
                           } catch (e) {
                             setError(String(e));
                           }
@@ -7544,6 +7662,9 @@ export function App() {
                           await invoke("install_module", { moduleId: m.id, mirror: null });
                           setNotice(t("modules.installSuccess", { name: m.name }));
                           obLoadModules();
+                          if (serviceStatus?.running) {
+                            setModuleRestartPrompt(m.name);
+                          }
                         } catch (e) {
                           setError(String(e));
                         } finally {
@@ -7613,6 +7734,28 @@ export function App() {
     return (
       <div className="onboardingShell">
         {renderOnboarding()}
+
+        {/* confirmDialog 在 onboarding 中也需要渲染 */}
+        {confirmDialog && (
+          <div className="modalOverlay" onClick={() => setConfirmDialog(null)}>
+            <div className="modalContent" style={{ maxWidth: 380, padding: 24 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>{confirmDialog.message}</div>
+              <div className="dialogFooter" style={{ justifyContent: "flex-end" }}>
+                <button className="btnSmall" onClick={() => setConfirmDialog(null)}>{t("common.cancel")}</button>
+                <button className="btnSmall" style={{ background: "var(--danger, #e53935)", color: "#fff", border: "none" }} onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}>{t("common.confirm")}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Toast 在 onboarding 中也需要渲染 */}
+        {(busy || notice || error) && (
+          <div className="toastContainer">
+            {busy && <div className="toast toastInfo">{busy}</div>}
+            {notice && <div className="toast toastOk" onClick={() => setNotice(null)}>{notice}</div>}
+            {error && <div className="toast toastError" onClick={() => setError(null)}>{error}</div>}
+          </div>
+        )}
       </div>
     );
   }
@@ -7660,7 +7803,7 @@ export function App() {
 
         {/* Collapsible Config section */}
         <div className="configSection">
-          <div className="configHeader" onClick={() => { if (sidebarCollapsed || configMode === null) { setView("wizard"); setStepId("welcome"); } else { setConfigExpanded((v) => !v); } }} role="button" tabIndex={0} title={t("sidebar.config")}>
+          <div className="configHeader" onClick={() => { if (sidebarCollapsed || configMode === null) { setView("wizard"); setStepId("welcome"); setConfigExpanded(true); } else if (view !== "wizard") { setView("wizard"); setConfigExpanded(true); } else { setConfigExpanded((v) => !v); } }} role="button" tabIndex={0} title={t("sidebar.config")}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <IconConfig size={16} />
               {!sidebarCollapsed && <span>{t("sidebar.config")}</span>}
@@ -7949,6 +8092,25 @@ export function App() {
         )}
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
+        {/* ── Module restart prompt ── */}
+        {moduleRestartPrompt && (
+          <div className="modalOverlay" onClick={() => setModuleRestartPrompt(null)}>
+            <div className="modalContent" style={{ maxWidth: 400, padding: "28px 24px", borderRadius: 16 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>{t("modules.restartTitle")}</div>
+              <div style={{ fontSize: 13, color: "#64748b", marginBottom: 20, lineHeight: 1.6 }}>
+                {t("modules.restartDesc", { name: moduleRestartPrompt })}
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button className="btnSmall" onClick={() => setModuleRestartPrompt(null)}>{t("modules.restartLater")}</button>
+                <button className="btnPrimary btnSmall" onClick={async () => {
+                  setModuleRestartPrompt(null);
+                  await applyAndRestart([]);
+                }}>{t("modules.restartNow")}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Service conflict dialog ── */}
         {conflictDialog && (
           <div className="modalOverlay" onClick={() => { setConflictDialog(null); setPendingStartWsId(null); }}>
@@ -8106,7 +8268,7 @@ export function App() {
                 )}
               </div>
               <div className="btnRow">
-                <button onClick={goPrev} disabled={isFirst || !!busy}>{t("config.prev")}</button>
+                <button onClick={goPrev} disabled={(isFirst && !(configMode === "full" && stepId === "workspace")) || !!busy}>{t("config.prev")}</button>
                 {stepId === "finish" ? (
                   <button
                     className="btnPrimary"

@@ -1123,8 +1123,13 @@ def serve():
     支持单 Agent 和多 Agent 协同模式。
     支持通过 /api/config/restart 触发优雅重启。
     """
+    import json
     import signal
+    import threading
+    import time
     import warnings
+
+    from pathlib import Path
 
     from openakita import config as cfg
 
@@ -1139,6 +1144,58 @@ def serve():
         console = Console(file=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace"),
                           force_terminal=False, no_color=True, highlight=False)
 
+    # ── 心跳文件机制 ──
+    # 后端进程通过独立守护线程定期写入心跳文件，供 Tauri 侧判断进程真实健康状态。
+    # 使用独立线程而非 asyncio task，确保即使 event loop 卡死，心跳也能持续（或停止写入
+    # 以表明进程已卡死）。心跳文件位于 {CWD}/data/backend.heartbeat。
+    _heartbeat_file = Path.cwd() / "data" / "backend.heartbeat"
+    _heartbeat_stop = threading.Event()
+    _heartbeat_phase = "starting"  # "starting" | "initializing" | "running" | "restarting"
+    _heartbeat_http_ready = False
+
+    def _write_heartbeat():
+        """写入一次心跳（原子写入：先写临时文件再重命名）"""
+        try:
+            _heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "pid": os.getpid(),
+                "timestamp": time.time(),
+                "phase": _heartbeat_phase,
+                "http_ready": _heartbeat_http_ready,
+            }
+            tmp = _heartbeat_file.with_suffix(".heartbeat.tmp")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            # 原子重命名（Windows 上 rename 会覆盖目标文件，Python 3.3+）
+            tmp.replace(_heartbeat_file)
+        except Exception:
+            pass  # 心跳写入失败不应影响服务运行
+
+    def _heartbeat_loop():
+        """心跳守护线程：每 10 秒写入一次心跳文件"""
+        while not _heartbeat_stop.is_set():
+            _write_heartbeat()
+            _heartbeat_stop.wait(10)  # 等待 10 秒或被唤醒停止
+
+    def _start_heartbeat():
+        """启动心跳线程"""
+        nonlocal _heartbeat_phase, _heartbeat_http_ready
+        _heartbeat_stop.clear()
+        _heartbeat_phase = "starting"
+        _heartbeat_http_ready = False
+        _write_heartbeat()  # 立即写一次
+        t = threading.Thread(target=_heartbeat_loop, daemon=True, name="heartbeat")
+        t.start()
+        return t
+
+    def _stop_heartbeat():
+        """停止心跳并清理心跳文件"""
+        _heartbeat_stop.set()
+        try:
+            if _heartbeat_file.exists():
+                _heartbeat_file.unlink()
+        except Exception:
+            pass
+
     # 用于优雅关闭的标志
     shutdown_event = None
     agent_or_master = None
@@ -1146,8 +1203,10 @@ def serve():
 
     async def _serve():
         nonlocal shutdown_event, agent_or_master, shutdown_triggered
+        nonlocal _heartbeat_phase, _heartbeat_http_ready
         shutdown_event = asyncio.Event()
         shutdown_triggered = False
+        _heartbeat_phase = "initializing"
 
         mode_text = "多 Agent 协同模式" if is_orchestration_enabled() else "单 Agent 模式"
         console.print(
@@ -1203,6 +1262,9 @@ def serve():
                 gateway=_message_gateway,
             )
             console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
+            _heartbeat_phase = "running"
+            _heartbeat_http_ready = True
+            _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
         except ImportError:
             console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
         except Exception as e:
@@ -1228,6 +1290,10 @@ def serve():
             if not shutdown_triggered:
                 shutdown_triggered = True
                 is_restart = cfg._restart_requested
+                # 更新心跳状态为重启/停止中
+                _heartbeat_phase = "restarting" if is_restart else "stopping"
+                _heartbeat_http_ready = False
+                _write_heartbeat()
                 if is_restart:
                     console.print("\n[yellow]正在重启服务...[/yellow]")
                 else:
@@ -1278,6 +1344,7 @@ def serve():
     # 首次进入时 _restart_requested 为 False，正常启动。
     # 当 /api/config/restart 设置 _restart_requested=True 并触发 shutdown 后，
     # 循环会重新加载配置、重置全局状态并重新初始化所有组件。
+    heartbeat_thread = _start_heartbeat()
     first_run = True
     while first_run or cfg._restart_requested:
         first_run = False
@@ -1286,6 +1353,20 @@ def serve():
             cfg._restart_requested = False
             _reset_globals()
             settings.reload()  # 重新读取 .env 配置
+
+            # 重置心跳状态为重启中
+            _heartbeat_phase = "restarting"
+            _heartbeat_http_ready = False
+            _write_heartbeat()
+
+            # 重新扫描并注入模块路径（模块可能在服务运行期间安装/卸载）
+            try:
+                from openakita.runtime_env import inject_module_paths_runtime
+                n = inject_module_paths_runtime()
+                if n > 0:
+                    console.print(f"[dim]已注入 {n} 个新模块路径[/dim]")
+            except Exception as e:
+                logger.debug(f"Module path refresh failed (non-critical): {e}")
 
             # 等待端口释放（旧 uvicorn 关闭后 TCP socket 可能处于 TIME_WAIT）
             try:
@@ -1346,6 +1427,9 @@ def serve():
 
         # 不是重启请求，跳出循环
         break
+
+    # 主循环结束，停止心跳并清理心跳文件
+    _stop_heartbeat()
 
 
 if __name__ == "__main__":

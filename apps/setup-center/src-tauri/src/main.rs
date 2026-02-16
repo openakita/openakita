@@ -829,6 +829,47 @@ fn list_service_pids() -> Vec<ServicePidEntry> {
     out
 }
 
+// ── 心跳文件管理 ──
+// Python 后端每 10 秒写入心跳文件 {workspace}/data/backend.heartbeat
+// Tauri 读取此文件判断后端真实健康状态。
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct HeartbeatData {
+    pid: u32,
+    timestamp: f64,  // unix epoch seconds (float for sub-second precision)
+    #[serde(default)]
+    phase: String,    // "starting" | "initializing" | "running" | "restarting" | "stopping"
+    #[serde(default)]
+    http_ready: bool, // HTTP API 是否就绪
+}
+
+/// 心跳文件路径：{workspace_dir}/data/backend.heartbeat
+fn service_heartbeat_file(workspace_id: &str) -> PathBuf {
+    workspace_dir(workspace_id).join("data").join("backend.heartbeat")
+}
+
+/// 读取心跳文件
+fn read_heartbeat_file(workspace_id: &str) -> Option<HeartbeatData> {
+    let path = service_heartbeat_file(workspace_id);
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<HeartbeatData>(content.trim()).ok()
+}
+
+/// 心跳是否过期。max_age_secs 为最大容忍的无心跳时间（秒）。
+/// 返回 None 表示没有心跳文件（旧版后端或尚未启动），
+/// 返回 Some(true) 表示心跳过期，Some(false) 表示心跳新鲜。
+fn is_heartbeat_stale(workspace_id: &str, max_age_secs: u64) -> Option<bool> {
+    let hb = read_heartbeat_file(workspace_id)?;
+    let now = now_epoch_secs() as f64;
+    let age = now - hb.timestamp;
+    Some(age > max_age_secs as f64)
+}
+
+/// 删除心跳文件（进程清理时调用）
+fn remove_heartbeat_file(workspace_id: &str) {
+    let _ = fs::remove_file(service_heartbeat_file(workspace_id));
+}
+
 /// 检测指定端口是否可用（未被占用）。
 /// 尝试绑定端口，成功则可用，失败则被占用。
 fn check_port_available(port: u16) -> bool {
@@ -1664,8 +1705,15 @@ fn startup_reconcile() {
     for ent in &entries {
         if let Some(data) = read_pid_file(&ent.workspace_id) {
             if !is_pid_file_valid(&data) {
-                // 进程已死或 PID 被复用，清理
+                // 进程已死或 PID 被复用，清理 PID 文件和心跳文件
                 let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
+                remove_heartbeat_file(&ent.workspace_id);
+            } else if let Some(true) = is_heartbeat_stale(&ent.workspace_id, 60) {
+                // PID 文件有效但心跳超时（进程可能卡死），强制清理
+                let port = read_workspace_api_port(&ent.workspace_id);
+                let _ = graceful_stop_pid(data.pid, port);
+                let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
+                remove_heartbeat_file(&ent.workspace_id);
             }
         }
     }
@@ -1811,6 +1859,35 @@ struct ServiceStatus {
     running: bool,
     pid: Option<u32>,
     pid_file: String,
+    /// 后端心跳阶段："starting" | "initializing" | "running" | "restarting" | "stopping" | ""
+    #[serde(default)]
+    heartbeat_phase: String,
+    /// 心跳是否过期（超过 30 秒没更新）。None = 没有心跳文件（旧版后端）
+    #[serde(default)]
+    heartbeat_stale: Option<bool>,
+    /// 距上次心跳的秒数。None = 没有心跳文件
+    #[serde(default)]
+    heartbeat_age_secs: Option<f64>,
+}
+
+/// 构造 ServiceStatus，自动填充心跳信息
+fn build_service_status(workspace_id: &str, running: bool, pid: Option<u32>, pid_file_str: String) -> ServiceStatus {
+    let (heartbeat_phase, heartbeat_stale, heartbeat_age_secs) = if let Some(hb) = read_heartbeat_file(workspace_id) {
+        let now = now_epoch_secs() as f64;
+        let age = now - hb.timestamp;
+        let stale = age > 30.0; // 超过 30 秒无心跳视为过期
+        (hb.phase, Some(stale), Some(age))
+    } else {
+        (String::new(), None, None)
+    };
+    ServiceStatus {
+        running,
+        pid,
+        pid_file: pid_file_str,
+        heartbeat_phase,
+        heartbeat_stale,
+        heartbeat_age_secs,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1824,6 +1901,7 @@ struct ServiceLogChunk {
 #[tauri::command]
 fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, String> {
     let pid_file = service_pid_file(&workspace_id);
+    let pf = pid_file.to_string_lossy().to_string();
 
     // ── 1. 优先用 MANAGED_CHILD（精确 try_wait）──
     {
@@ -1832,21 +1910,14 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
             if mp.workspace_id == workspace_id {
                 match mp.child.try_wait() {
                     Ok(None) => {
-                        return Ok(ServiceStatus {
-                            running: true,
-                            pid: Some(mp.pid),
-                            pid_file: pid_file.to_string_lossy().to_string(),
-                        });
+                        return Ok(build_service_status(&workspace_id, true, Some(mp.pid), pf));
                     }
                     _ => {
-                        // 进程已退出，清理 handle 和 PID 文件
+                        // 进程已退出，清理 handle、PID 文件和心跳文件
                         *guard = None;
                         let _ = fs::remove_file(&pid_file);
-                        return Ok(ServiceStatus {
-                            running: false,
-                            pid: None,
-                            pid_file: pid_file.to_string_lossy().to_string(),
-                        });
+                        remove_heartbeat_file(&workspace_id);
+                        return Ok(build_service_status(&workspace_id, false, None, pf));
                     }
                 }
             }
@@ -1856,26 +1927,21 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
     // ── 2. 回退到 PID 文件 ──
     if let Some(data) = read_pid_file(&workspace_id) {
         if is_pid_file_valid(&data) {
-            return Ok(ServiceStatus {
-                running: true,
-                pid: Some(data.pid),
-                pid_file: pid_file.to_string_lossy().to_string(),
-            });
+            // PID 文件有效，但如果心跳超过 60 秒没更新，进程可能卡死
+            // 此时仍报告 running（让前端根据心跳状态决定是否提示用户）
+            return Ok(build_service_status(&workspace_id, true, Some(data.pid), pf));
         } else {
-            // Stale PID，清理
+            // Stale PID，清理 PID 文件和心跳文件
             let _ = fs::remove_file(&pid_file);
+            remove_heartbeat_file(&workspace_id);
         }
     }
-    Ok(ServiceStatus {
-        running: false,
-        pid: None,
-        pid_file: pid_file.to_string_lossy().to_string(),
-    })
+    Ok(build_service_status(&workspace_id, false, None, pf))
 }
 
-/// 新增命令：检查进程是否仍在运行（供前端心跳二次确认用）
-/// 除了检查 PID 存活，还验证进程是否确实是 OpenAkita 后端。
-/// 如果 PID 存活但不是 OpenAkita 进程（PID 被复用），自动清理 stale PID 文件并返回 false。
+/// 检查进程是否仍在运行（供前端心跳二次确认用）。
+/// 除了检查 PID 存活，还验证进程身份和心跳文件。
+/// 如果心跳超过 60 秒没更新且 HTTP 不可达，自动清理进程和 PID 文件。
 #[tauri::command]
 fn openakita_check_pid_alive(workspace_id: String) -> Result<bool, String> {
     // 优先 MANAGED_CHILD（由 Tauri 直接管理的子进程，不需要额外校验身份）
@@ -1883,21 +1949,41 @@ fn openakita_check_pid_alive(workspace_id: String) -> Result<bool, String> {
         let mut guard = MANAGED_CHILD.lock().unwrap();
         if let Some(ref mut mp) = *guard {
             if mp.workspace_id == workspace_id {
-                return Ok(mp.child.try_wait().ok().flatten().is_none());
+                let alive = mp.child.try_wait().ok().flatten().is_none();
+                if !alive {
+                    // 进程已退出，清理
+                    *guard = None;
+                    let _ = fs::remove_file(service_pid_file(&workspace_id));
+                    remove_heartbeat_file(&workspace_id);
+                }
+                return Ok(alive);
             }
         }
     }
     // 回退到 PID 文件：检查 PID 存活 + 验证进程身份
     if let Some(data) = read_pid_file(&workspace_id) {
         if !is_pid_running(data.pid) {
-            // 进程已死，清理 stale PID 文件
+            // 进程已死，清理 stale PID 文件和心跳文件
             let _ = fs::remove_file(service_pid_file(&workspace_id));
+            remove_heartbeat_file(&workspace_id);
             return Ok(false);
         }
         // PID 存活，但需验证是否真的是 OpenAkita 进程
         if !is_openakita_process(data.pid) {
-            // PID 被其他进程复用了，清理 stale PID 文件
+            // PID 被其他进程复用了，清理 stale PID 文件和心跳文件
             let _ = fs::remove_file(service_pid_file(&workspace_id));
+            remove_heartbeat_file(&workspace_id);
+            return Ok(false);
+        }
+        // 进程身份已确认，但检查心跳是否严重过期（> 60 秒）
+        // 心跳过期意味着进程虽然存活但可能已经卡死
+        if let Some(true) = is_heartbeat_stale(&workspace_id, 60) {
+            // 心跳严重过期，进程很可能已卡死。
+            // 主动尝试清理：先 kill 进程，再清理 PID 和心跳文件。
+            let port = read_workspace_api_port(&workspace_id);
+            let _ = graceful_stop_pid(data.pid, port);
+            let _ = fs::remove_file(service_pid_file(&workspace_id));
+            remove_heartbeat_file(&workspace_id);
             return Ok(false);
         }
         return Ok(true);
@@ -1948,6 +2034,10 @@ fn read_env_kv(path: &Path) -> Vec<(String, String)> {
 fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<ServiceStatus, String> {
     fs::create_dir_all(run_dir()).map_err(|e| format!("create run dir failed: {e}"))?;
     let pid_file = service_pid_file(&workspace_id);
+    let pf = pid_file.to_string_lossy().to_string();
+
+    // ── 0. 启动前清理旧的心跳文件（避免新进程读到旧心跳） ──
+    remove_heartbeat_file(&workspace_id);
 
     // ── 1. 检查是否已在运行（通过 MANAGED_CHILD 或 PID 文件）──
     {
@@ -1956,11 +2046,7 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
             if mp.workspace_id == workspace_id {
                 match mp.child.try_wait() {
                     Ok(None) => {
-                        return Ok(ServiceStatus {
-                            running: true,
-                            pid: Some(mp.pid),
-                            pid_file: pid_file.to_string_lossy().to_string(),
-                        });
+                        return Ok(build_service_status(&workspace_id, true, Some(mp.pid), pf));
                     }
                     _ => { *guard = None; }
                 }
@@ -1969,13 +2055,19 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     }
     if let Some(data) = read_pid_file(&workspace_id) {
         if is_pid_file_valid(&data) {
-            return Ok(ServiceStatus {
-                running: true,
-                pid: Some(data.pid),
-                pid_file: pid_file.to_string_lossy().to_string(),
-            });
+            // 进程已在运行，但检查心跳是否严重过期（可能卡死）
+            if let Some(true) = is_heartbeat_stale(&workspace_id, 60) {
+                // 心跳严重过期，进程可能卡死，先尝试清理再启动
+                let port = read_workspace_api_port(&workspace_id);
+                let _ = graceful_stop_pid(data.pid, port);
+                let _ = fs::remove_file(&pid_file);
+                remove_heartbeat_file(&workspace_id);
+            } else {
+                return Ok(build_service_status(&workspace_id, true, Some(data.pid), pf));
+            }
         } else {
             let _ = fs::remove_file(&pid_file);
+            remove_heartbeat_file(&workspace_id);
         }
     }
 
@@ -2107,11 +2199,7 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
         ));
     }
 
-    Ok(ServiceStatus {
-        running: true,
-        pid: Some(pid),
-        pid_file: pid_file.to_string_lossy().to_string(),
-    })
+    Ok(build_service_status(&workspace_id, true, Some(pid), pf))
 }
 
 #[tauri::command]
@@ -2133,11 +2221,8 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
                 let _ = fs::remove_file(&pid_file);
                 // 等待端口释放（最多 10 秒），确保后续重启不会遇到端口冲突
                 let _ = wait_for_port_free(effective_port, 10_000);
-                return Ok(ServiceStatus {
-                    running: false,
-                    pid: None,
-                    pid_file: pid_file.to_string_lossy().to_string(),
-                });
+                remove_heartbeat_file(&workspace_id);
+                return Ok(build_service_status(&workspace_id, false, None, pid_file.to_string_lossy().to_string()));
             } else {
                 *guard = Some(mp);
             }
@@ -2151,13 +2236,10 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
         graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
     }
     let _ = fs::remove_file(&pid_file);
+    remove_heartbeat_file(&workspace_id);
     // 等待端口释放（最多 10 秒），确保后续重启不会遇到端口冲突
     let _ = wait_for_port_free(effective_port, 10_000);
-    Ok(ServiceStatus {
-        running: false,
-        pid: None,
-        pid_file: pid_file.to_string_lossy().to_string(),
-    })
+    Ok(build_service_status(&workspace_id, false, None, pid_file.to_string_lossy().to_string()))
 }
 
 #[tauri::command]

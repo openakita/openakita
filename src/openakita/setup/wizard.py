@@ -462,7 +462,7 @@ Press Ctrl+C at any time to cancel.
                     "api_key_env": api_key_env,
                     "model": model,
                     "priority": 1,
-                    "max_tokens": int(self.config.get("MAX_TOKENS", "8192")),
+                    "max_tokens": int(self.config.get("MAX_TOKENS", "0")),
                     "timeout": 180,
                     "capabilities": capabilities,
                 }
@@ -801,14 +801,14 @@ Press Ctrl+C at any time to cancel.
 
         if not configure_advanced:
             # 使用默认值
-            self.config.setdefault("MAX_TOKENS", "8192")
+            self.config.setdefault("MAX_TOKENS", "0")
             self.config.setdefault("MAX_ITERATIONS", "100")
             self.config.setdefault("LOG_LEVEL", "INFO")
             console.print("[dim]Using default advanced settings.[/dim]\n")
             return
 
         # Max tokens
-        max_tokens = Prompt.ask("Max output tokens", default="8192")
+        max_tokens = Prompt.ask("Max output tokens (0=不限制)", default="0")
         self.config["MAX_TOKENS"] = max_tokens
 
         # Max iterations
@@ -939,7 +939,7 @@ Press Ctrl+C at any time to cancel.
             "",
             "# ========== Model Configuration ==========",
             f"DEFAULT_MODEL={self.config.get('DEFAULT_MODEL', 'claude-sonnet-4-20250514')}",
-            f"MAX_TOKENS={self.config.get('MAX_TOKENS', '8192')}",
+            f"MAX_TOKENS={self.config.get('MAX_TOKENS', '0')}",
             f"THINKING_MODE={self.config.get('THINKING_MODE', 'auto')}",
         ]
 

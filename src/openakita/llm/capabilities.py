@@ -715,10 +715,23 @@ def get_provider_slug_from_base_url(base_url: str) -> str | None:
         "https://api.openai.com/v1" -> "openai"
         "https://dashscope.aliyuncs.com/..." -> "dashscope"
         "https://openrouter.ai/api/v1" -> "openrouter"
+        "http://localhost:11434/v1" -> "ollama"
+        "http://127.0.0.1:1234/v1" -> "lmstudio"
     """
     for domain, slug in URL_TO_PROVIDER.items():
         if domain in base_url:
             return slug
+
+    # 本地端点检测：基于端口号区分 Ollama / LM Studio
+    url_lower = base_url.lower()
+    local_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    if any(host in url_lower for host in local_hosts):
+        if ":11434" in url_lower:
+            return "ollama"
+        if ":1234" in url_lower:
+            return "lmstudio"
+        # 其他本地端口 → 通用本地标识
+        return "local"
 
     return None
 

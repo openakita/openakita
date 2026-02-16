@@ -3959,6 +3959,15 @@ NEXT: 建议的下一步（如有）"""
                     # 没有 task_monitor，直接抛出异常
                     raise
 
+            # 检测 max_tokens 截断
+            _stop_reason = getattr(response, "stop_reason", "")
+            if str(_stop_reason) == "max_tokens":
+                logger.warning(
+                    f"[Agent] ⚠️ LLM output truncated (stop_reason=max_tokens). "
+                    f"The response hit the max_tokens limit ({self.brain.max_tokens}). "
+                    f"Tool call JSON may be incomplete."
+                )
+
             # 处理响应
             tool_calls = []
             text_content = ""
@@ -4474,6 +4483,13 @@ NEXT: 建议的下一步（如有）"""
                 messages=messages,
             )
 
+            # 检测 max_tokens 截断
+            _cli_stop = getattr(response, "stop_reason", "")
+            if str(_cli_stop) == "max_tokens":
+                logger.warning(
+                    f"[CLI] ⚠️ LLM output truncated (stop_reason=max_tokens, limit={self.brain.max_tokens})"
+                )
+
             # 处理响应
             tool_calls = []
             text_content = ""
@@ -4890,6 +4906,13 @@ NEXT: 建议的下一步（如有）"""
                         )
                         recent_tool_calls.clear()
                         continue
+
+                # 检测 max_tokens 截断
+                _task_stop = getattr(response, "stop_reason", "")
+                if str(_task_stop) == "max_tokens":
+                    logger.warning(
+                        f"[Task:{task.id}] ⚠️ LLM output truncated (stop_reason=max_tokens, limit={self.brain.max_tokens})"
+                    )
 
                 # 处理响应
                 tool_calls = []

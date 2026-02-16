@@ -14,6 +14,7 @@ import asyncio
 import base64
 import contextlib
 import logging
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -696,15 +697,26 @@ class MessageGateway:
 
             static_ffmpeg.add_paths(weak=True)  # weak=True: 不覆盖已有
             logger.info("ffmpeg auto-configured via static-ffmpeg")
-        except ImportError:
+        except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
             hint = import_or_hint("static_ffmpeg")
             logger.warning(f"ffmpeg 不可用: {hint}")
+            logger.warning(f"static_ffmpeg ImportError 详情: {e}", exc_info=True)
 
     def _load_whisper_model(self) -> None:
         """加载 Whisper 模型（在线程池中执行）"""
         if self._whisper_loaded:
             return
+
+        # 模块可能在服务运行期间安装，路径尚未注入 sys.path。
+        # 在导入前尝试刷新一次（idempotent，不会重复添加已有路径）。
+        # 必须在 _ensure_ffmpeg 之前执行，因为 static_ffmpeg 也在 whisper 模块中。
+        if "whisper" not in sys.modules:
+            try:
+                from openakita.runtime_env import inject_module_paths_runtime
+                inject_module_paths_runtime()
+            except Exception:
+                pass
 
         # 确保 ffmpeg 可用（Whisper 依赖 ffmpeg 解码音频）
         self._ensure_ffmpeg()
@@ -748,12 +760,13 @@ class MessageGateway:
             self._whisper_loaded = True
             logger.info(f"Whisper model '{model_name}' loaded successfully")
 
-        except ImportError:
+        except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
             hint = import_or_hint("whisper")
             logger.warning(f"Whisper 不可用: {hint}")
+            logger.warning(f"Whisper ImportError 详情: {e}", exc_info=True)
         except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}")
+            logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
 
     async def stop(self) -> None:
         """停止网关"""

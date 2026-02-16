@@ -77,7 +77,10 @@ class Brain:
         model: str | None = None,
         max_tokens: int | None = None,
     ):
-        self.max_tokens = max_tokens or settings.max_tokens
+        # max_tokens=0 表示"不限制输出"：
+        # - 对 OpenAI 兼容 API：不传 max_tokens 参数，让模型生成到自然结束
+        # - 对 Anthropic API：使用端点配置值或兜底 16384（该 API 强制要求此参数）
+        self.max_tokens = max_tokens if max_tokens is not None else settings.max_tokens
 
         # 创建 LLMClient（统一入口）
         config_path = get_default_config_path()
@@ -138,6 +141,26 @@ class Brain:
                 logger.info("No compiler endpoints configured, will fall back to main model")
         except Exception as e:
             logger.warning(f"Failed to init compiler client: {e}")
+
+    def reload_compiler_client(self) -> bool:
+        """热重载编译端点配置。
+
+        Returns:
+            True 表示成功重载，False 表示无变化或失败。
+        """
+        try:
+            _, compiler_eps, _ = load_endpoints_config()
+            if compiler_eps:
+                self._compiler_client = LLMClient(endpoints=compiler_eps)
+                names = [ep.name for ep in compiler_eps]
+                logger.info(f"Compiler LLMClient reloaded with endpoints: {names}")
+            else:
+                self._compiler_client = None
+                logger.info("Compiler endpoints cleared (none configured)")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to reload compiler client: {e}")
+            return False
 
     async def compiler_think(self, prompt: str, system: str = "") -> Response:
         """
@@ -573,6 +596,7 @@ class Brain:
         system: str | None = None,
         tools: list[ToolParam] | None = None,
         max_tokens: int | None = None,
+        thinking_depth: str | None = None,
     ) -> Response:
         """
         发送思考请求到 LLM（通过 LLMClient）
@@ -583,6 +607,7 @@ class Brain:
             system: 系统提示词
             tools: 可用工具列表
             max_tokens: 最大输出 token（不传则使用 self.max_tokens）
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
 
         Returns:
             Response 对象
@@ -616,6 +641,7 @@ class Brain:
             tools=llm_tools,
             max_tokens=max_tokens or self.max_tokens,
             enable_thinking=self.is_thinking_enabled(),
+            thinking_depth=thinking_depth,
         )
 
         # 保存响应到调试文件

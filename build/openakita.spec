@@ -138,35 +138,59 @@ hidden_imports_core = [
     "lxml.html",
     "lxml.etree",
     "fake_useragent",           # ddgs 随机 User-Agent
+    "fake_useragent.data",      # fake_useragent 数据文件 (browsers.jsonl, importlib.resources 动态加载)
     "h2",                       # ddgs HTTP/2 支持
+    "hpack",                    # h2 依赖: HTTP/2 头部压缩
+    "hyperframe",               # h2 依赖: HTTP/2 帧协议
     "httpcore",                 # httpx 传输层
     "psutil",                   # Process info (~1MB)
     "pyperclip",                # Clipboard (~50KB)
     "websockets",               # WebSocket protocol (~500KB)
     "aiohttp",                  # Async HTTP server (~2MB, used by wework/qq webhook)
     "aiohttp.web",
+    "multidict",                # aiohttp 依赖: 多值字典
+    "yarl",                     # aiohttp 依赖: URL 解析
+    "frozenlist",               # aiohttp 依赖: 不可变列表
+    "aiosignal",                # aiohttp 依赖: 异步信号
+    # -- MCP (Model Context Protocol) --
+    "mcp.server.fastmcp",       # FastMCP 服务端 (web_search MCP server)
+    "mcp.client.stdio",         # MCP stdio 客户端
+    "mcp.client.streamable_http",  # MCP HTTP 客户端
     # -- Document processing (skill dependencies, bundled directly) --
     "docx",                     # python-docx: Word files (~1MB)
+    "docx.opc",                 # python-docx 包格式
+    "docx.oxml",                # python-docx XML 层
     "openpyxl",                 # Excel files (~5MB)
+    "openpyxl.workbook",        # openpyxl 工作簿
+    "openpyxl.worksheet",       # openpyxl 工作表
     "pptx",                     # python-pptx: PowerPoint files (~3MB)
+    "pptx.opc",                 # python-pptx 包格式
+    "pptx.oxml",                # python-pptx XML 层
     "fitz",                     # PyMuPDF: PDF files (~15MB)
     "pypdf",                    # pypdf: PDF fallback (~2MB)
     # -- Image processing --
     "PIL",                      # Pillow: image format conversion (~10MB)
     # -- Desktop automation (Windows) --
     "pyautogui",                # Mouse/keyboard control (~2MB)
+    "pyscreeze",                # pyautogui 依赖: 截图功能
+    "pytweening",               # pyautogui 依赖: 动画插值
     "pywinauto",                # Windows UI Automation (~5MB)
     "pywinauto.controls",
     "pywinauto.controls.uiawrapper",
+    "comtypes",                 # pywinauto 依赖: COM 类型支持 (Windows)
+    "comtypes.client",          # pywinauto 依赖: COM 客户端
     "mss",                      # Screenshot capture (~1MB)
     "mss.tools",
     # -- IM channel adapters (small, bundled to avoid install-on-config bugs) --
     "lark_oapi",                # Feishu/Lark (~3MB)
+    "lark_oapi.ws",             # Feishu WebSocket
+    "lark_oapi.ws.client",      # Feishu WebSocket 客户端
     "dingtalk_stream",          # DingTalk Stream (~2MB)
     "Crypto",                   # pycryptodome for WeWork (~3MB)
     "Crypto.Cipher",
     "Crypto.Cipher.AES",
     "botpy",                    # QQ Bot (~5MB)
+    "botpy.message",            # QQ Bot 消息模块
 ]
 
 hidden_imports_full = [
@@ -237,6 +261,17 @@ datas = []
 import rich._unicode_data as _rud
 _rud_dir = str(Path(_rud.__file__).parent)
 datas.append((_rud_dir, "rich/_unicode_data"))
+
+# fake_useragent 数据文件 (browsers.jsonl)
+# fake_useragent 使用 importlib.resources 动态加载数据文件，PyInstaller 无法自动捕获
+try:
+    import fake_useragent as _fua
+    _fua_data_dir = Path(_fua.__file__).parent / "data"
+    if _fua_data_dir.exists():
+        datas.append((str(_fua_data_dir), "fake_useragent/data"))
+        print(f"[spec] Bundling fake_useragent data: {_fua_data_dir}")
+except ImportError:
+    print("[spec] WARNING: fake_useragent not installed, data files not bundled")
 
 # Provider list (single source of truth, shared by frontend and backend)
 # Must be bundled to openakita/llm/registries/ directory, Python reads via Path(__file__).parent

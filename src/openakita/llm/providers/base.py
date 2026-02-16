@@ -112,17 +112,22 @@ class LLMProvider(ABC):
                 - "": 默认 (180s)
 
         连续冷静期升级：
-            连续 N 次进入冷静期（中间没有成功请求）→ 升级到 1 小时。
-            全局故障（shorten_cooldown）产生的短冷静期不计入连续次数。
+            连续 N 次非结构性错误进入冷静期（中间没有成功请求）→ 升级到 1 小时。
+            结构性错误（如 "does not support thinking"）不计入连续次数，
+            因为重试不会改变结果，升级毫无意义。
+            全局故障（shorten_cooldown）产生的短冷静期也不计入连续次数。
         """
         self._healthy = False
         self._last_error = error
         self._error_category = category or self._classify_error(error)
 
         # 累计连续冷静期次数
-        self._consecutive_cooldowns += 1
+        # 结构性错误不累计：每次重试结果相同（如 "does not support thinking"），
+        # 累计到升级阈值只会造成无意义的 1 小时锁定
+        if self._error_category != "structural":
+            self._consecutive_cooldowns += 1
 
-        # 连续 N 次失败 → 升级到 1 小时冷静期
+        # 连续 N 次非结构性失败 → 升级到 1 小时冷静期
         if self._consecutive_cooldowns >= CONSECUTIVE_FAILURE_THRESHOLD:
             cooldown = COOLDOWN_EXTENDED
             self._is_extended_cooldown = True
@@ -260,7 +265,8 @@ class LLMProvider(ABC):
         # 结构性/格式类
         if any(kw in err_lower for kw in [
             "invalid_request", "invalid_parameter", "messages with role",
-            "must be a response", "400",
+            "must be a response", "does not support", "not supported",
+            "400",
         ]):
             return "structural"
 
