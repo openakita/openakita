@@ -41,6 +41,12 @@ def _lazy_import():
 
     if _chromadb is None:
         try:
+            # 在导入前禁用 chromadb 遥测，避免因 posthog 缺失导致 ImportError
+            # chromadb 在 import 时会检查这些环境变量
+            import os
+            os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+            os.environ.setdefault("CHROMA_TELEMETRY", "False")
+
             import chromadb
 
             _chromadb = chromadb
@@ -142,7 +148,18 @@ class VectorStore:
                 return True
 
             except Exception as e:
-                logger.error(f"Failed to initialize VectorStore: {e}")
+                err_msg = str(e)
+                if "posthog" in err_msg:
+                    logger.warning(
+                        f"VectorStore 初始化失败（chromadb 遥测依赖缺失，不影响核心功能）: {e}"
+                    )
+                elif "chromadb" in err_msg.lower():
+                    logger.warning(
+                        f"VectorStore 初始化失败（chromadb 内部模块缺失，"
+                        f"请尝试重新安装 vector-memory 模块）: {e}"
+                    )
+                else:
+                    logger.error(f"Failed to initialize VectorStore: {e}")
                 self._enabled = False
                 return False
 

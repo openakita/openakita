@@ -44,18 +44,34 @@ _CLASS_MODULE_MAP: dict[str, str] = {
 
 
 def _build_registries() -> list[ProviderRegistry]:
-    """根据 providers.json 构建全部注册表实例"""
+    """根据 providers.json 构建全部注册表实例。
+
+    单个 registry 加载失败不影响其他 provider（仅记录警告并跳过）。
+    常见原因：PyInstaller 打包遗漏模块、动态依赖缺失等。
+    """
+    import logging
+
+    _logger = logging.getLogger(__name__)
     registries: list[ProviderRegistry] = []
     for entry in _PROVIDER_ENTRIES:
         cls_name = entry["registry_class"]
         mod_name = _CLASS_MODULE_MAP.get(cls_name)
         if mod_name is None:
-            raise ValueError(
+            _logger.warning(
                 f"providers.json 中的 registry_class '{cls_name}' "
-                f"未在 _CLASS_MODULE_MAP 中注册，请在 __init__.py 中添加映射"
+                f"未在 _CLASS_MODULE_MAP 中注册，跳过"
             )
-        mod = import_module(mod_name, package=__package__)
-        cls = getattr(mod, cls_name)
+            continue
+        try:
+            mod = import_module(mod_name, package=__package__)
+            cls = getattr(mod, cls_name)
+        except (ImportError, AttributeError) as e:
+            _logger.warning(
+                f"Registry '{cls_name}' (module={mod_name}) 加载失败，"
+                f"跳过该服务商 '{entry.get('name', '?')}': {e}"
+            )
+            continue
+
         instance = cls()
 
         # 用 providers.json 中的声明覆盖 registry class 上的默认 info，
