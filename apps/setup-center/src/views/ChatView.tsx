@@ -1313,12 +1313,18 @@ export function ChatView({
 
   // ── 切换对话时加载对应消息 ──
   const prevConvIdRef = useRef<string | null>(activeConvId);
+  const skipConvLoadRef = useRef(false); // sendMessage 创建新对话时跳过加载
   useEffect(() => {
     if (activeConvId && activeConvId !== prevConvIdRef.current) {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + activeConvId);
-        setMessages(raw ? JSON.parse(raw) : []);
-      } catch { setMessages([]); }
+      if (skipConvLoadRef.current) {
+        // sendMessage 刚创建了新对话并已设置好 messages，不要从 localStorage 覆盖
+        skipConvLoadRef.current = false;
+      } else {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + activeConvId);
+          setMessages(raw ? JSON.parse(raw) : []);
+        } catch { setMessages([]); }
+      }
     }
     prevConvIdRef.current = activeConvId;
   }, [activeConvId]);
@@ -1545,6 +1551,7 @@ export function ChatView({
     let convId = activeConvId;
     if (!convId) {
       convId = genId();
+      skipConvLoadRef.current = true; // 阻止 activeConvId effect 从 localStorage 加载空消息覆盖已添加的 messages
       setActiveConvId(convId);
       setConversations((prev) => [{
         id: convId!,
