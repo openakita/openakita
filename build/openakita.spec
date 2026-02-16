@@ -152,6 +152,16 @@ hidden_imports_core = [
     "yarl",                     # aiohttp 依赖: URL 解析
     "frozenlist",               # aiohttp 依赖: 不可变列表
     "aiosignal",                # aiohttp 依赖: 异步信号
+    # -- Python stdlib modules needed by external optional modules (torch/whisper etc.) --
+    # PyInstaller only bundles stdlib modules referenced by the main app; external modules
+    # loaded at runtime via sys.path.append may need additional stdlib modules.
+    "timeit",                   # torch benchmark; whisper → torch → timeit
+    "cmath",                    # torch complex math support
+    "lzma",                     # torch serialization / model loading
+    "bz2",                      # compression (torch checkpoint loading)
+    "opcode",                   # torch JIT compiler (dis → opcode)
+    "dis",                      # torch JIT disassembly
+    "tokenize",                 # torch scripting
     # -- MCP (Model Context Protocol) --
     "mcp.server.fastmcp",       # FastMCP 服务端 (web_search MCP server)
     "mcp.client.stdio",         # MCP stdio 客户端

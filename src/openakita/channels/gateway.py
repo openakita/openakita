@@ -1259,7 +1259,7 @@ class MessageGateway:
             return text if text else None
 
         except Exception as e:
-            logger.error(f"Voice transcription failed: {e}")
+            logger.error(f"Voice transcription failed: {e}", exc_info=True)
             return None
 
     async def _send_typing(self, message: UnifiedMessage) -> None:
