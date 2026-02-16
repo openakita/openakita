@@ -173,6 +173,9 @@ def _apply_source_env(source: ModelSource) -> None:
         os.environ.pop("HF_ENDPOINT", None)
         _sync_hf_hub_endpoint("https://huggingface.co")
 
+    # 设置 huggingface_hub 的下载超时（默认 10s 连接超时太短，镜像源可能慢）
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
 
 def _sync_hf_hub_endpoint(endpoint: str) -> None:
     """同步 huggingface_hub 内部已缓存的 HF_ENDPOINT 常量。
@@ -280,21 +283,30 @@ def load_embedding_model(
     model_name: str,
     source: str | ModelSource = "auto",
     device: str = "cpu",
+    max_retries: int = 3,
+    initial_backoff: float = 5.0,
 ):
     """
-    加载 embedding 模型，支持多源自动切换。
+    加载 embedding 模型，支持多源自动切换 + 整体重试 + 指数退避。
+
+    重试策略（三层防御）:
+      Layer 1: huggingface_hub 内部重试（5 次，1-2-4s 退避）
+      Layer 2: 源级别回退（当前源 → hf-mirror → modelscope）
+      Layer 3: 本函数的整体重试（默认 3 轮，5-10-20s 指数退避）
 
     Args:
         model_name: 模型名称 (如 "shibing624/text2vec-base-chinese")
         source: 下载源 ("auto" | "huggingface" | "hf-mirror" | "modelscope")
         device: 运行设备 ("cpu" | "cuda")
+        max_retries: 整体重试次数 (默认 3)
+        initial_backoff: 首次重试等待秒数 (默认 5s，后续指数增长)
 
     Returns:
         SentenceTransformer 模型实例
 
     Raises:
         ImportError: sentence-transformers 未安装
-        Exception: 所有下载源均失败
+        Exception: 所有重试均失败
     """
     resolved = _resolve_source(source)
 
@@ -327,15 +339,48 @@ def load_embedding_model(
     # 配置环境变量
     _apply_source_env(resolved)
 
-    logger.info(
-        f"[ModelHub] 加载模型 '{model_name}' (源={resolved.value}, 设备={device})"
-    )
+    # ── 整体重试循环（Layer 3）──
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(
+                f"[ModelHub] 加载模型 '{model_name}' "
+                f"(源={resolved.value}, 设备={device}, "
+                f"尝试 {attempt}/{max_retries})"
+            )
 
-    # 根据源加载
-    if resolved == ModelSource.MODELSCOPE:
-        return _load_from_modelscope(model_name, device)
-    else:
-        return _load_from_hf(model_name, device)
+            if resolved == ModelSource.MODELSCOPE:
+                return _load_from_modelscope(model_name, device)
+            else:
+                return _load_from_hf(model_name, device)
+
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                backoff = initial_backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    f"[ModelHub] ⚠ 模型加载失败 (尝试 {attempt}/{max_retries}): {e}"
+                )
+                logger.info(
+                    f"[ModelHub] 将在 {backoff:.0f}s 后重试... "
+                    f"(剩余 {max_retries - attempt} 次)"
+                )
+                time.sleep(backoff)
+                # 重试前重新配置环境（可能因回退被改过）
+                _apply_source_env(resolved)
+            else:
+                logger.error(
+                    f"[ModelHub] ✗ 模型加载最终失败 "
+                    f"(已重试 {max_retries} 次): {e}"
+                )
+                logger.error(
+                    "[ModelHub] 排查建议: "
+                    "① 检查网络连接 "
+                    "② 在设置中心切换模型下载源 "
+                    "③ 手动下载模型到 ~/.cache/huggingface/hub/"
+                )
+
+    raise last_error  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

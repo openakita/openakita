@@ -98,15 +98,34 @@ class VectorStore:
         self._collection = None
         self._enabled = False
 
-        # 延迟初始化
+        # 延迟初始化（支持失败后冷却重试）
         self._initialized = False
+        self._init_failed = False
+        self._init_fail_time: float = 0.0
+        self._init_retry_cooldown: float = 300.0  # 失败后 5 分钟冷却再重试
         self._lock = threading.RLock()
 
     def _ensure_initialized(self) -> bool:
-        """确保已初始化"""
+        """确保已初始化。
+
+        如果之前初始化失败，会在冷却期（默认 5 分钟）后自动重试，
+        避免网络恢复后仍然无法使用向量搜索。
+        """
         with self._lock:
-            if self._initialized:
-                return self._enabled
+            if self._initialized and self._enabled:
+                return True
+
+            # 如果之前失败过，检查是否到了冷却重试时间
+            if self._init_failed:
+                import time as _time
+
+                elapsed = _time.monotonic() - self._init_fail_time
+                if elapsed < self._init_retry_cooldown:
+                    return False  # 冷却期内不重试
+                logger.info(
+                    f"[VectorStore] 上次初始化失败已过 {elapsed:.0f}s，重新尝试..."
+                )
+                self._init_failed = False
 
             self._initialized = True
 
@@ -169,6 +188,8 @@ class VectorStore:
                 return True
 
             except Exception as e:
+                import time as _time
+
                 err_msg = str(e)
                 if "posthog" in err_msg:
                     logger.warning(
@@ -181,7 +202,14 @@ class VectorStore:
                     )
                 else:
                     logger.error(f"Failed to initialize VectorStore: {e}")
+
                 self._enabled = False
+                self._initialized = False  # 允许后续重试
+                self._init_failed = True
+                self._init_fail_time = _time.monotonic()
+                logger.info(
+                    f"[VectorStore] 将在 {self._init_retry_cooldown:.0f}s 后自动重试初始化"
+                )
                 return False
 
     @property
