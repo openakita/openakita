@@ -154,7 +154,7 @@ fn build_modules_pythonpath() -> Option<String> {
         return None;
     }
     let mut paths = Vec::new();
-    for (module_id, _, _, _, _) in module_definitions() {
+    for (module_id, _, _, _, _, _) in module_definitions() {
         let sp = base.join(module_id).join("site-packages");
         if sp.exists() {
             paths.push(sp.to_string_lossy().to_string());
@@ -283,27 +283,29 @@ struct ModuleInfo {
     installed: bool,
     bundled: bool,
     size_mb: u32,
+    category: String,
 }
 
-fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'static [&'static str], u32)> {
-    // (id, name, description, pip_packages, estimated_size_mb)
+fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'static [&'static str], u32, &'static str)> {
+    // (id, name, description, pip_packages, estimated_size_mb, category)
+    // category: "core" = 初始向导显示, "extended" = 初始向导显示, "im" = 仅在设置页/配置通道时显示
     vec![
-        // == Core optional modules ==
-        ("vector-memory", "向量记忆增强", "语义搜索与向量记忆 (sentence-transformers + chromadb)", &["sentence-transformers", "chromadb"], 500),
-        ("browser", "浏览器自动化", "Playwright 浏览器自动化", &["playwright"], 150),
-        ("whisper", "语音识别", "OpenAI Whisper 语音转文字", &["openai-whisper", "static-ffmpeg"], 300),
-        ("orchestration", "多Agent协同", "ZeroMQ 多 Agent 协同通信", &["pyzmq"], 10),
-        // == Extended optional modules ==
-        ("browser-agent", "AI浏览器代理", "browser-use 智能浏览器代理 (需先安装浏览器自动化)", &["browser-use", "langchain-openai"], 60),
-        ("desktop", "桌面自动化", "鼠标键盘控制/窗口管理/截图 (Windows)", &["pyautogui", "pywinauto", "mss"], 15),
-        ("document", "文档处理", "Word/Excel/PPT/PDF 文件读写", &["python-docx", "openpyxl", "python-pptx", "PyMuPDF"], 30),
-        ("image", "图像处理", "图片格式转换与处理 (Pillow)", &["Pillow"], 15),
-        // == IM channel adapters ==
-        ("im-feishu", "飞书通道", "飞书 IM 机器人适配器", &["lark-oapi"], 5),
-        ("im-dingtalk", "钉钉通道", "钉钉 IM 机器人 (Stream 模式)", &["dingtalk-stream"], 5),
-        ("im-wework", "企业微信通道", "企业微信机器人回调适配器", &["pycryptodome"], 3),
-        ("im-qqbot", "QQ机器人", "QQ 官方机器人适配器", &["qq-botpy"], 10),
-        ("im-onebot", "OneBot协议", "NapCat/Lagrange 等 OneBot 协议适配器", &["websockets"], 2),
+        // == Core optional modules (向导中显示) ==
+        ("vector-memory", "向量记忆增强", "语义搜索与向量记忆 (sentence-transformers + chromadb)", &["sentence-transformers", "chromadb"], 500, "core"),
+        ("browser", "浏览器自动化", "Playwright 浏览器自动化", &["playwright"], 150, "core"),
+        ("whisper", "语音识别", "OpenAI Whisper 语音转文字", &["openai-whisper", "static-ffmpeg"], 300, "core"),
+        ("orchestration", "多Agent协同", "ZeroMQ 多 Agent 协同通信", &["pyzmq"], 10, "core"),
+        // == Extended optional modules (向导中显示) ==
+        ("browser-agent", "AI浏览器代理", "browser-use 智能浏览器代理 (需先安装浏览器自动化)", &["browser-use", "langchain-openai"], 60, "extended"),
+        ("desktop", "桌面自动化", "鼠标键盘控制/窗口管理/截图 (Windows)", &["pyautogui", "pywinauto", "mss"], 15, "extended"),
+        ("document", "文档处理", "Word/Excel/PPT/PDF 文件读写", &["python-docx", "openpyxl", "python-pptx", "PyMuPDF"], 30, "extended"),
+        ("image", "图像处理", "图片格式转换与处理 (Pillow)", &["Pillow"], 15, "extended"),
+        // == IM channel adapters (仅设置页显示，配置通道时自动安装) ==
+        ("im-feishu", "飞书通道", "飞书 IM 机器人适配器", &["lark-oapi"], 5, "im"),
+        ("im-dingtalk", "钉钉通道", "钉钉 IM 机器人 (Stream 模式)", &["dingtalk-stream"], 5, "im"),
+        ("im-wework", "企业微信通道", "企业微信机器人回调适配器", &["pycryptodome"], 3, "im"),
+        ("im-qqbot", "QQ机器人", "QQ 官方机器人适配器", &["qq-botpy"], 10, "im"),
+        ("im-onebot", "OneBot协议", "NapCat/Lagrange 等 OneBot 协议适配器", &["websockets"], 2, "im"),
     ]
 }
 
@@ -336,13 +338,14 @@ fn is_module_bundled(module_id: &str) -> bool {
 fn detect_modules() -> Vec<ModuleInfo> {
     module_definitions()
         .iter()
-        .map(|(id, name, desc, _pkgs, size)| ModuleInfo {
+        .map(|(id, name, desc, _pkgs, size, cat)| ModuleInfo {
             id: id.to_string(),
             name: name.to_string(),
             description: desc.to_string(),
             installed: is_module_installed(id),
             bundled: is_module_bundled(id),
             size_mb: *size,
+            category: cat.to_string(),
         })
         .collect()
 }
@@ -355,9 +358,9 @@ async fn install_module(
 ) -> Result<String, String> {
     // 从 module_definitions() 获取包列表（单一数据源，避免重复定义）
     let defs = module_definitions();
-    let (_, _, _, packages, _) = defs
+    let (_, _, _, packages, _, _) = defs
         .iter()
-        .find(|(id, _, _, _, _)| *id == module_id.as_str())
+        .find(|(id, _, _, _, _, _)| *id == module_id.as_str())
         .ok_or_else(|| format!("未知模块: {}", module_id))?;
 
     let target_dir = modules_dir().join(&module_id).join("site-packages");
