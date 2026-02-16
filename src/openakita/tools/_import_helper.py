@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # pip_package 为空串时使用 import name 作为 pip 包名
 
 _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
-    # -- 已打包的轻量包（正常不应缺失，但保留映射以防万一）--
+    # -- 已直接打包的包 (module_id=None，正常不应缺失) --
     "ddgs": (None, None, "ddgs"),
     "psutil": (None, None, "psutil"),
     "pyperclip": (None, None, "pyperclip"),
@@ -37,36 +37,24 @@ _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
     "httpx": (None, None, "httpx"),
     "yaml": (None, None, "pyyaml"),
     "mcp": (None, None, "mcp"),
-    # -- 浏览器自动化 --
+    # 文档处理 (已直接打包)
+    "docx": (None, None, "python-docx"),
+    "openpyxl": (None, None, "openpyxl"),
+    "pptx": (None, None, "python-pptx"),
+    "fitz": (None, None, "PyMuPDF"),
+    "pypdf": (None, None, "pypdf"),
+    # 图像处理 (已直接打包)
+    "PIL": (None, None, "Pillow"),
+    "Pillow": (None, None, "Pillow"),
+    # 桌面自动化 (已直接打包)
+    "pyautogui": (None, None, "pyautogui"),
+    "pywinauto": (None, None, "pywinauto"),
+    "mss": (None, None, "mss"),
+    # -- 浏览器自动化 (重量级可选模块) --
     "playwright": ("browser", "浏览器自动化", "playwright"),
     "playwright.async_api": ("browser", "浏览器自动化", "playwright"),
-    # -- AI 浏览器代理 --
-    "browser_use": ("browser-agent", "AI浏览器代理", "browser-use"),
-    "langchain_openai": ("browser-agent", "AI浏览器代理", "langchain-openai"),
-    # -- 桌面自动化 --
-    "pyautogui": ("desktop", "桌面自动化", "pyautogui"),
-    "pywinauto": ("desktop", "桌面自动化", "pywinauto"),
-    "mss": ("desktop", "桌面自动化", "mss"),
-    # -- 文档处理 --
-    "docx": ("document", "文档处理", "python-docx"),
-    "openpyxl": ("document", "文档处理", "openpyxl"),
-    "pptx": ("document", "文档处理", "python-pptx"),
-    "fitz": ("document", "文档处理", "PyMuPDF"),
-    "pypdf": ("document", "文档处理", "pypdf"),
-    # -- 图像处理 --
-    "PIL": ("image", "图像处理", "Pillow"),
-    "Pillow": ("image", "图像处理", "Pillow"),
-    # -- 飞书 --
-    "lark_oapi": ("im-feishu", "飞书通道", "lark-oapi"),
-    # -- 钉钉 --
-    "dingtalk_stream": ("im-dingtalk", "钉钉通道", "dingtalk-stream"),
-    # -- 企业微信 --
-    "Crypto": ("im-wework", "企业微信通道", "pycryptodome"),
-    "Cryptodome": ("im-wework", "企业微信通道", "pycryptodome"),
-    # -- QQ 机器人 --
-    "botpy": ("im-qqbot", "QQ机器人", "qq-botpy"),
-    # -- OneBot --
-    # websockets 已打包进 core，但 OneBot 适配器单独作为模块
+    "browser_use": ("browser", "浏览器自动化", "browser-use"),
+    "langchain_openai": ("browser", "浏览器自动化", "langchain-openai"),
     # -- 向量记忆 --
     "sentence_transformers": ("vector-memory", "向量记忆增强", "sentence-transformers"),
     "chromadb": ("vector-memory", "向量记忆增强", "chromadb"),
@@ -75,11 +63,16 @@ _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
     "static_ffmpeg": ("whisper", "语音识别", "static-ffmpeg"),
     # -- 多 Agent 协同 --
     "zmq": ("orchestration", "多Agent协同", "pyzmq"),
-    # -- Telegram --
-    "telegram": (None, None, "python-telegram-bot"),
-    # -- 其他可选包 --
-    "pytesseract": (None, None, "pytesseract"),
+    # -- IM 通道适配器 --
+    "lark_oapi": ("im-feishu", "飞书通道", "lark-oapi"),
+    "dingtalk_stream": ("im-dingtalk", "钉钉通道", "dingtalk-stream"),
+    "Crypto": ("im-wework", "企业微信通道", "pycryptodome"),
+    "Cryptodome": ("im-wework", "企业微信通道", "pycryptodome"),
+    "botpy": ("im-qqbot", "QQ机器人", "qq-botpy"),
     "pilk": ("im-qqbot", "QQ机器人", "pilk"),
+    # -- 其他 --
+    "telegram": (None, None, "python-telegram-bot"),
+    "pytesseract": (None, None, "pytesseract"),
     "nacl": (None, None, "PyNaCl"),
     "modelscope": (None, None, "modelscope"),
 }

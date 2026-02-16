@@ -109,6 +109,21 @@ hidden_imports_core = [
     "websockets",               # WebSocket protocol (~500KB)
     "aiohttp",                  # Async HTTP server (~2MB, used by wework/qq webhook)
     "aiohttp.web",
+    # -- Document processing (skill dependencies, bundled directly) --
+    "docx",                     # python-docx: Word files (~1MB)
+    "openpyxl",                 # Excel files (~5MB)
+    "pptx",                     # python-pptx: PowerPoint files (~3MB)
+    "fitz",                     # PyMuPDF: PDF files (~15MB)
+    "pypdf",                    # pypdf: PDF fallback (~2MB)
+    # -- Image processing --
+    "PIL",                      # Pillow: image format conversion (~10MB)
+    # -- Desktop automation (Windows) --
+    "pyautogui",                # Mouse/keyboard control (~2MB)
+    "pywinauto",                # Windows UI Automation (~5MB)
+    "pywinauto.controls",
+    "pywinauto.controls.uiawrapper",
+    "mss",                      # Screenshot capture (~1MB)
+    "mss.tools",
 ]
 
 hidden_imports_full = [

@@ -7478,10 +7478,9 @@ export function App() {
       return <IMView serviceRunning={serviceStatus?.running ?? false} />;
     }
     if (view === "modules") {
-      const categoryOrder = ["core", "extended", "im"] as const;
+      const categoryOrder = ["core", "im"] as const;
       const categoryLabels: Record<string, string> = {
         core: t("modules.categoryCore"),
-        extended: t("modules.categoryExtended"),
         im: t("modules.categoryIM"),
       };
       const renderModuleItem = (m: ModuleInfo) => (
