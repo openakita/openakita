@@ -828,6 +828,26 @@ fn list_service_pids() -> Vec<ServicePidEntry> {
     out
 }
 
+/// 检测指定端口是否可用（未被占用）。
+/// 尝试绑定端口，成功则可用，失败则被占用。
+fn check_port_available(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// 等待端口释放，最多等 timeout_ms 毫秒。
+/// 返回 true 表示端口已释放。
+fn wait_for_port_free(port: u16, timeout_ms: u64) -> bool {
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+    while start.elapsed() < timeout {
+        if check_port_available(port) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    false
+}
+
 /// 尝试通过 HTTP API 优雅关闭 Python 服务（POST /api/shutdown），
 /// 然后等待进程退出。如果 API 调用失败或超时则回退到 kill。
 /// `port`: 可选端口号，默认 18900
@@ -1971,6 +1991,22 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     let ws_dir = workspace_dir(&workspace_id);
     ensure_workspace_scaffold(&ws_dir)?;
 
+    // ── 2.5 端口可用性预检 ──
+    // 在 spawn 之前检查端口是否被占用（旧进程残留、TIME_WAIT、其他程序等）。
+    // Python 端也有重试，但尽早发现可以给用户更明确的提示。
+    let effective_port = read_workspace_api_port(&workspace_id).unwrap_or(18900);
+    if !check_port_available(effective_port) {
+        // 端口被占用，等待最多 10 秒（处理 TIME_WAIT 等场景）
+        if !wait_for_port_free(effective_port, 10_000) {
+            return Err(format!(
+                "端口 {} 已被占用，无法启动后端服务。\n\
+                 可能原因：上次关闭后端口尚未释放、或有其他程序占用该端口。\n\
+                 请稍后重试，或检查是否有其他程序占用端口 {}。",
+                effective_port, effective_port
+            ));
+        }
+    }
+
     // 优先使用内嵌 PyInstaller 后端，降级到 venv python
     let (backend_exe, backend_args) = get_backend_executable(&venv_dir);
     if !backend_exe.exists() {
@@ -2084,6 +2120,7 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String> {
     let pid_file = service_pid_file(&workspace_id);
     let port = read_workspace_api_port(&workspace_id);
+    let effective_port = port.unwrap_or(18900);
 
     // ── 1. MANAGED_CHILD handle ──
     {
@@ -2096,6 +2133,8 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
                     let _ = mp.child.wait();
                 }
                 let _ = fs::remove_file(&pid_file);
+                // 等待端口释放（最多 10 秒），确保后续重启不会遇到端口冲突
+                let _ = wait_for_port_free(effective_port, 10_000);
                 return Ok(ServiceStatus {
                     running: false,
                     pid: None,
@@ -2114,6 +2153,8 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
         graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
     }
     let _ = fs::remove_file(&pid_file);
+    // 等待端口释放（最多 10 秒），确保后续重启不会遇到端口冲突
+    let _ = wait_for_port_free(effective_port, 10_000);
     Ok(ServiceStatus {
         running: false,
         pid: None,

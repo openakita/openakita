@@ -2065,8 +2065,8 @@ export function App() {
         await fetch(`${base}/api/config/restart`, { method: "POST", signal: AbortSignal.timeout(3000) });
       } catch { /* 请求可能因服务关闭而失败，这是预期的 */ }
 
-      // Step 4: 等待服务关闭 (短暂延迟)
-      await new Promise((r) => setTimeout(r, 1500));
+      // Step 4: 等待服务关闭（轮询端口不可达，而非固定延时）
+      await waitForServiceDown(base, 15000);
 
       // Step 5: 轮询等待服务恢复
       setRestartOverlay({ phase: "waiting" });
@@ -3224,6 +3224,27 @@ export function App() {
   }
 
   /**
+   * 轮询等待后端 HTTP 服务完全关闭（端口不可达）。
+   * 用于重启场景，确保旧服务完全关闭后再启动新服务。
+   * @returns true 如果在 maxWaitMs 内服务已不可达
+   */
+  async function waitForServiceDown(baseUrl: string, maxWaitMs = 15000): Promise<boolean> {
+    const start = Date.now();
+    const interval = 500;
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(1000) });
+        // 还能连上，继续等
+      } catch {
+        // 连接失败 = 服务已关闭
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, interval));
+    }
+    return false;
+  }
+
+  /**
    * 启动本地服务前，检测端口 18900 是否已有服务运行。
    * @returns null = 没有冲突可以启动，否则返回现有服务信息
    */
@@ -3476,7 +3497,8 @@ export function App() {
     setBusy(t("status.stopping"));
     try {
       await doStopService(wsId);
-      await new Promise((r) => setTimeout(r, 500));
+      // 轮询等待旧服务完全关闭（端口释放），而非固定延时
+      await waitForServiceDown("http://127.0.0.1:18900", 15000);
     } catch { /* ignore stop errors */ }
     await doStartLocalService(wsId);
   }
@@ -3770,7 +3792,8 @@ export function App() {
                   setBusy(t("status.restarting")); setError(null);
                   try {
                     await doStopService(effectiveWsId);
-                    await new Promise((r) => setTimeout(r, 500));
+                    // 轮询等待旧服务完全关闭（端口释放），而非固定延时
+                    await waitForServiceDown("http://127.0.0.1:18900", 15000);
                     await doStartLocalService(effectiveWsId);
                   } catch (e) { setError(String(e)); } finally { setBusy(null); }
                 }} disabled={!!busy}>{t("status.restart")}</button>

@@ -1193,6 +1193,7 @@ def serve():
 
         # 启动 HTTP API 服务器（供 Setup Center Chat 页面使用）
         api_task = None
+        _api_fatal = False
         try:
             from openakita.api.server import start_api_server
             api_task = await start_api_server(
@@ -1205,7 +1206,15 @@ def serve():
         except ImportError:
             console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
         except Exception as e:
-            console.print(f"[yellow]⚠[/yellow] HTTP API 启动失败: {e}")
+            console.print(f"[red]✗[/red] HTTP API 启动失败: {e}")
+            logger.error(f"HTTP API server failed to start: {e}", exc_info=True)
+            _api_fatal = True
+
+        if _api_fatal:
+            # HTTP API 是 Setup Center 的核心依赖，启动失败时应退出进程
+            # 让 Tauri 能正确检测到进程退出并报错给用户
+            console.print("[red]HTTP API 启动失败，进程即将退出。请检查端口 18900 是否被占用。[/red]")
+            shutdown_event.set()
 
         console.print()
         console.print("[bold]服务运行中...[/bold] 按 Ctrl+C 停止")
@@ -1277,6 +1286,18 @@ def serve():
             cfg._restart_requested = False
             _reset_globals()
             settings.reload()  # 重新读取 .env 配置
+
+            # 等待端口释放（旧 uvicorn 关闭后 TCP socket 可能处于 TIME_WAIT）
+            try:
+                from openakita.api.server import API_HOST, API_PORT, wait_for_port_free
+                _api_port = int(os.environ.get("API_PORT", API_PORT))
+                console.print(f"[dim]等待端口 {_api_port} 释放...[/dim]")
+                if not wait_for_port_free(API_HOST, _api_port, timeout=15.0):
+                    console.print(f"[yellow]⚠[/yellow] 端口 {_api_port} 仍被占用，继续尝试启动...")
+                else:
+                    console.print(f"[dim]端口 {_api_port} 已就绪[/dim]")
+            except Exception as e:
+                logger.debug(f"Port wait check failed (non-critical): {e}")
 
         # 检查重启准备期间是否收到 Ctrl+C（信号处理器可能在 reload 期间触发）
         if shutdown_triggered:
