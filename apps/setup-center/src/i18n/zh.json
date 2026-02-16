@@ -72,7 +72,8 @@
     "chainCollapsed": "{{count}} 步推理过程",
     "contextCompressed": "上下文压缩: {{before}}K → {{after}}K tokens",
     "processing": "处理中...",
-    "processed": "已处理 ({{seconds}}s)"
+    "processed": "已处理 ({{seconds}}s)",
+    "deleteConversation": "删除对话"
   },
   "skills": {
     "title": "技能管理",

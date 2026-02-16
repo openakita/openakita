@@ -72,7 +72,8 @@
     "chainCollapsed": "{{count}} reasoning steps",
     "contextCompressed": "Context compressed: {{before}}K → {{after}}K tokens",
     "processing": "Processing...",
-    "processed": "Processed ({{seconds}}s)"
+    "processed": "Processed ({{seconds}}s)",
+    "deleteConversation": "Delete Conversation"
   },
   "skills": {
     "title": "Skill Manager",

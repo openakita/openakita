@@ -1504,6 +1504,32 @@ export function ChatView({
     }, ...prev]);
   }, [activeConvId, messages]);
 
+  // ── 删除对话 ──
+  const deleteConversation = useCallback((convId: string, e?: React.MouseEvent) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    // 从 localStorage 删除该对话的消息
+    try { localStorage.removeItem(STORAGE_KEY_MSGS_PREFIX + convId); } catch {}
+    // 如果删除的是当前激活的对话，切换到下一个或清空
+    if (convId === activeConvId) {
+      setConversations((prev) => {
+        const remaining = prev.filter((c) => c.id !== convId);
+        if (remaining.length > 0) {
+          setActiveConvId(remaining[0].id);
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + remaining[0].id);
+            setMessages(raw ? JSON.parse(raw) : []);
+          } catch { setMessages([]); }
+        } else {
+          setActiveConvId(null);
+          setMessages([]);
+        }
+        return remaining;
+      });
+    } else {
+      setConversations((prev) => prev.filter((c) => c.id !== convId));
+    }
+  }, [activeConvId]);
+
   // ── 发送消息（overrideText 用于 ask_user 回复等场景，绕过 inputText） ──
   const sendMessage = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? inputText).trim();
@@ -2349,7 +2375,6 @@ export function ChatView({
                 key={conv.id}
                 onClick={() => {
                   setActiveConvId(conv.id);
-                  // TODO: 从 API 加载对话消息
                 }}
                 style={{
                   padding: "10px 12px",
@@ -2357,14 +2382,41 @@ export function ChatView({
                   cursor: "pointer",
                   marginBottom: 4,
                   background: conv.id === activeConvId ? "rgba(14,165,233,0.08)" : "transparent",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 4,
                 }}
               >
-                <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {conv.title}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {conv.title}
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>
+                    {formatDate(conv.timestamp)} · {t("im.messageCount", { count: conv.messageCount })}
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>
-                  {formatDate(conv.timestamp)} · {t("im.messageCount", { count: conv.messageCount })}
-                </div>
+                <button
+                  onClick={(e) => deleteConversation(conv.id, e)}
+                  title={t("chat.deleteConversation")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 4,
+                    borderRadius: 6,
+                    opacity: 0.3,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginTop: 1,
+                    transition: "opacity 0.15s, background 0.15s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; e.currentTarget.style.background = "rgba(239,68,68,0.1)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.3"; e.currentTarget.style.background = "none"; }}
+                >
+                  <IconTrash size={13} />
+                </button>
               </div>
             ))}
             {conversations.length === 0 && (
