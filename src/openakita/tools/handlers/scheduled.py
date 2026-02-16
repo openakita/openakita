@@ -150,15 +150,11 @@ class ScheduledHandler:
 
         type_display = "📝 简单提醒" if task_type == TaskType.REMINDER else "🔧 复杂任务"
 
-        print("\n📅 定时任务已创建:")
-        print(f"   ID: {task_id}")
-        print(f"   名称: {task.name}")
-        print(f"   类型: {type_display}")
-        print(f"   触发: {task.trigger_type.value}")
-        print(f"   下次执行: {next_run}")
-        if channel_id and chat_id:
-            print(f"   通知渠道: {channel_id}/{chat_id}")
-        print()
+        logger.info(
+            "定时任务已创建: ID=%s, 名称=%s, 类型=%s, 触发=%s, 下次执行=%s%s",
+            task_id, task.name, type_display, task.trigger_type.value, next_run,
+            f", 通知渠道={channel_id}/{chat_id}" if channel_id and chat_id else "",
+        )
 
         logger.info(
             f"Created scheduled task: {task_id} ({task.name}), type={task_type.value}, next run: {next_run}"

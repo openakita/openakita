@@ -15,7 +15,7 @@ from ..types import EndpointConfig
 
 def run_cli_wizard():
     """运行 CLI 配置向导"""
-    print("\n🔧 LLM 端点配置向导\n")
+    print("\n[CONFIG] LLM 端点配置向导\n")
 
     while True:
         # 显示当前配置
@@ -47,13 +47,13 @@ def run_cli_wizard():
             _test_endpoint_interactive(endpoints)
         elif choice == "5":
             save_endpoints_config(endpoints, settings)
-            print("\n✅ 配置已保存")
+            print("\n[OK] 配置已保存")
             break
         elif choice == "0":
             print("\n已取消")
             break
         else:
-            print("\n❌ 无效选择，请重试")
+            print("\n[X] 无效选择，请重试")
 
 
 def _add_endpoint_interactive(endpoints: list[EndpointConfig]):
@@ -75,9 +75,9 @@ def _add_endpoint_interactive(endpoints: list[EndpointConfig]):
         elif idx == len(providers):
             _add_custom_endpoint(endpoints)
         else:
-            print("❌ 无效选择")
+            print("[X] 无效选择")
     except ValueError:
-        print("❌ 请输入数字")
+        print("[X] 请输入数字")
 
 
 def _add_endpoint_from_provider(endpoints: list[EndpointConfig], provider_info: ProviderInfo):
@@ -96,7 +96,7 @@ def _add_endpoint_from_provider(endpoints: list[EndpointConfig], provider_info: 
         api_key = input(f"请输入 API Key (或按 Enter 跳过，稍后设置环境变量 {env_key}): ").strip()
 
     if not api_key and not existing_key:
-        print(f"\n⚠️ 请确保稍后设置环境变量: export {env_key}=your_api_key")
+        print(f"\n[!] 请确保稍后设置环境变量: export {env_key}=your_api_key")
         api_key = "placeholder"  # 仅用于测试获取模型列表
 
     # 获取模型列表
@@ -125,13 +125,13 @@ def _add_endpoint_from_provider(endpoints: list[EndpointConfig], provider_info: 
             else:
                 model_id = input("请输入模型名称: ").strip()
         except Exception as e:
-            print(f"⚠️ 获取模型列表失败: {e}")
+            print(f"[!] 获取模型列表失败: {e}")
             model_id = input("请输入模型名称: ").strip()
     else:
         model_id = input("请输入模型名称: ").strip()
 
     if not model_id:
-        print("❌ 模型名称不能为空")
+        print("[X] 模型名称不能为空")
         return
 
     # 设置优先级
@@ -179,7 +179,7 @@ def _add_endpoint_from_provider(endpoints: list[EndpointConfig], provider_info: 
     endpoints.append(endpoint)
     endpoints.sort(key=lambda x: x.priority)
 
-    print(f"\n✅ 已添加端点: {name}")
+    print(f"\n[OK] 已添加端点: {name}")
 
 
 def _add_custom_endpoint(endpoints: list[EndpointConfig]):
@@ -191,12 +191,12 @@ def _add_custom_endpoint(endpoints: list[EndpointConfig]):
     # 基本信息
     name = input("\n端点名称 (如 my-gpt4): ").strip()
     if not name:
-        print("❌ 名称不能为空")
+        print("[X] 名称不能为空")
         return
 
     base_url = input("API Base URL (如 https://api.openai.com/v1): ").strip()
     if not base_url:
-        print("❌ URL 不能为空")
+        print("[X] URL 不能为空")
         return
 
     print("\nAPI Key 配置方式:")
@@ -213,13 +213,13 @@ def _add_custom_endpoint(endpoints: list[EndpointConfig]):
         if api_key_env:
             existing = os.environ.get(api_key_env)
             if existing:
-                print(f"  ✓ 已检测到环境变量 {api_key_env}")
+                print(f"  [OK] 已检测到环境变量 {api_key_env}")
             else:
-                print(f"  ⚠️ 请稍后设置: export {api_key_env}=your_key")
+                print(f"  [!] 请稍后设置: export {api_key_env}=your_key")
 
     model = input("模型名称 (如 gpt-4, qwen-max): ").strip()
     if not model:
-        print("❌ 模型名称不能为空")
+        print("[X] 模型名称不能为空")
         return
 
     # API 类型
@@ -270,16 +270,16 @@ def _add_custom_endpoint(endpoints: list[EndpointConfig]):
     endpoints.append(endpoint)
     endpoints.sort(key=lambda x: x.priority)
 
-    print(f"\n✅ 已添加端点: {name}")
-    print(f"   URL: {base_url}")
-    print(f"   模型: {model}")
-    print(f"   能力: {', '.join(capabilities)}")
+    print(f"\n[OK] 已添加端点: {name}")
+    print(f"     URL: {base_url}")
+    print(f"     模型: {model}")
+    print(f"     能力: {', '.join(capabilities)}")
 
 
 def _remove_endpoint_interactive(endpoints: list[EndpointConfig]):
     """交互式删除端点"""
     if not endpoints:
-        print("\n⚠️ 没有可删除的端点")
+        print("\n[!] 没有可删除的端点")
         return
 
     print("\n选择要删除的端点:")
@@ -291,17 +291,17 @@ def _remove_endpoint_interactive(endpoints: list[EndpointConfig]):
         idx = int(choice) - 1
         if 0 <= idx < len(endpoints):
             removed = endpoints.pop(idx)
-            print(f"\n✅ 已删除端点: {removed.name}")
+            print(f"\n[OK] 已删除端点: {removed.name}")
         else:
-            print("❌ 无效选择")
+            print("[X] 无效选择")
     except ValueError:
-        print("❌ 请输入数字")
+        print("[X] 请输入数字")
 
 
 def _change_priority_interactive(endpoints: list[EndpointConfig]):
     """交互式修改优先级"""
     if not endpoints:
-        print("\n⚠️ 没有可修改的端点")
+        print("\n[!] 没有可修改的端点")
         return
 
     print("\n选择要修改的端点:")
@@ -315,17 +315,17 @@ def _change_priority_interactive(endpoints: list[EndpointConfig]):
             new_priority = input("新优先级: ").strip()
             endpoints[idx].priority = int(new_priority)
             endpoints.sort(key=lambda x: x.priority)
-            print("\n✅ 已修改优先级")
+            print("\n[OK] 已修改优先级")
         else:
-            print("❌ 无效选择")
+            print("[X] 无效选择")
     except ValueError:
-        print("❌ 请输入数字")
+        print("[X] 请输入数字")
 
 
 def _test_endpoint_interactive(endpoints: list[EndpointConfig]):
     """交互式测试端点"""
     if not endpoints:
-        print("\n⚠️ 没有可测试的端点")
+        print("\n[!] 没有可测试的端点")
         return
 
     print("\n选择要测试的端点:")
@@ -360,13 +360,13 @@ def _test_endpoint_interactive(endpoints: list[EndpointConfig]):
             success, result = asyncio.run(test())
 
             if success:
-                print(f"\n✅ 测试成功: {result}")
+                print(f"\n[OK] 测试成功: {result}")
             else:
-                print(f"\n❌ 测试失败: {result}")
+                print(f"\n[FAIL] 测试失败: {result}")
         else:
-            print("❌ 无效选择")
+            print("[X] 无效选择")
     except ValueError:
-        print("❌ 请输入数字")
+        print("[X] 请输入数字")
 
 
 def quick_add_endpoint(
@@ -408,7 +408,7 @@ def quick_add_endpoint(
     endpoints.sort(key=lambda x: x.priority)
     save_endpoints_config(endpoints, settings, compiler_endpoints=compiler_eps)
 
-    print(f"✅ 已添加端点: {name}")
+    print(f"[OK] 已添加端点: {name}")
 
 
 if __name__ == "__main__":

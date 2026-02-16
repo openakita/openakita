@@ -22,6 +22,24 @@ from pathlib import Path
 from typing import Any
 
 
+def _ensure_utf8_stdout() -> None:
+    """确保 stdout 使用 UTF-8 编码（Windows 防御）。
+
+    bridge 作为独立入口 (python -m openakita.setup_center.bridge) 运行，
+    不经过 __main__.py，需要自行处理编码。
+    Tauri 端虽然会设置 PYTHONUTF8=1，但手动调用时可能没有。
+    """
+    if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _json_print(obj: Any) -> None:
     sys.stdout.write(json.dumps(obj, ensure_ascii=False))
     sys.stdout.write("\n")
@@ -720,6 +738,8 @@ def get_skill_config(workspace_dir: str, skill_name: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    _ensure_utf8_stdout()
+
     argv = list(sys.argv[1:] if argv is None else argv)
 
     p = argparse.ArgumentParser(prog="openakita.setup_center.bridge")

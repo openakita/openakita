@@ -87,6 +87,10 @@ class SubprocessBridge:
         import os
 
         env = os.environ.copy()
+        # 确保子进程 Python 使用 UTF-8 编码 stdout/stderr，
+        # 防止 json.dumps(ensure_ascii=False) 输出非 ASCII 时因 GBK 编码崩溃
+        env.setdefault("PYTHONUTF8", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
         if env_extra:
             env.update(env_extra)
 
