@@ -110,6 +110,25 @@ class VectorStore:
 
             self._initialized = True
 
+            # ── 关键：在导入 sentence_transformers 之前就配置好 HF_ENDPOINT ──
+            # sentence_transformers 导入时会触发 huggingface_hub 导入，
+            # 而 huggingface_hub 在模块级缓存 HF_ENDPOINT。
+            # 如果不提前设置，缓存值会是 https://huggingface.co，
+            # 即使后续改了 os.environ 也不会生效。
+            try:
+                from .model_hub import _resolve_source, _apply_source_env
+
+                resolved = _resolve_source(self.download_source)
+                if resolved.value == "auto":
+                    from .model_hub import detect_best_source
+                    resolved = detect_best_source()
+                _apply_source_env(resolved)
+                logger.info(
+                    f"[VectorStore] 预配置 HF_ENDPOINT (源={resolved.value})"
+                )
+            except Exception as e:
+                logger.debug(f"[VectorStore] 预配置 HF_ENDPOINT 失败 (非致命): {e}")
+
             if not _lazy_import():
                 self._enabled = False
                 return False

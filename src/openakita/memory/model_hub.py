@@ -154,15 +154,45 @@ def detect_best_source() -> ModelSource:
 
 
 def _apply_source_env(source: ModelSource) -> None:
-    """根据选择的源设置环境变量"""
+    """根据选择的源设置环境变量，并同步 huggingface_hub 内部缓存。
+
+    huggingface_hub 在模块导入时把 os.environ["HF_ENDPOINT"] 缓存到
+    huggingface_hub.constants.HF_ENDPOINT（模块级常量），后续修改 os.environ
+    不会影响这个缓存。因此这里需要同时 patch 两处。
+    """
     if source == ModelSource.HF_MIRROR:
         os.environ["HF_ENDPOINT"] = HF_MIRROR_ENDPOINT
+        _sync_hf_hub_endpoint(HF_MIRROR_ENDPOINT)
         logger.info(f"[ModelHub] 设置 HF_ENDPOINT={HF_MIRROR_ENDPOINT}")
     elif source == ModelSource.HUGGINGFACE:
         # 移除可能残留的镜像端点
-        if os.environ.get("HF_ENDPOINT"):
-            del os.environ["HF_ENDPOINT"]
-    # ModelScope 不需要设置 HF_ENDPOINT
+        os.environ.pop("HF_ENDPOINT", None)
+        _sync_hf_hub_endpoint("https://huggingface.co")
+    elif source == ModelSource.MODELSCOPE:
+        # ModelScope 使用自有 CDN，清理残留的 HF_ENDPOINT 以避免干扰
+        os.environ.pop("HF_ENDPOINT", None)
+        _sync_hf_hub_endpoint("https://huggingface.co")
+
+
+def _sync_hf_hub_endpoint(endpoint: str) -> None:
+    """同步 huggingface_hub 内部已缓存的 HF_ENDPOINT 常量。
+
+    如果 huggingface_hub 尚未导入则跳过（后续首次导入会从 os.environ 读取）。
+    """
+    import sys
+
+    hub_mod = sys.modules.get("huggingface_hub")
+    if hub_mod is None:
+        return
+
+    # patch constants 模块
+    constants = getattr(hub_mod, "constants", None)
+    if constants is not None and hasattr(constants, "HF_ENDPOINT"):
+        constants.HF_ENDPOINT = endpoint
+
+    # 部分版本在 huggingface_hub 顶层也导出了 HF_ENDPOINT
+    if hasattr(hub_mod, "HF_ENDPOINT"):
+        hub_mod.HF_ENDPOINT = endpoint
 
 
 def _resolve_source(source: str | ModelSource) -> ModelSource:
@@ -197,14 +227,17 @@ def _load_from_modelscope(model_name: str, device: str = "cpu"):
 
     except ImportError:
         logger.warning(
-            "[ModelHub] modelscope 未安装，回退到 hf-mirror。"
-            "可通过 pip install modelscope 安装。"
+            "[ModelHub] ⚠ modelscope 包未安装，无法使用 ModelScope 下载。"
+            "正在回退到 hf-mirror (国内镜像)。"
+            "如需使用 ModelScope，请安装: pip install modelscope"
         )
         _apply_source_env(ModelSource.HF_MIRROR)
         return SentenceTransformer(model_name, device=device)
 
     except Exception as e:
-        logger.warning(f"[ModelHub] ModelScope 下载失败 ({e})，回退到 hf-mirror")
+        logger.warning(
+            f"[ModelHub] ⚠ ModelScope 下载失败 ({e})，回退到 hf-mirror (国内镜像)"
+        )
         _apply_source_env(ModelSource.HF_MIRROR)
         return SentenceTransformer(model_name, device=device)
 
