@@ -1,34 +1,60 @@
 ---
 name: Feature Request
-about: Suggest an idea for this project
-title: '[FEATURE] '
-labels: enhancement
-assignees: ''
+about: Propose an improvement with clear use case and acceptance criteria
+title: "[FEATURE] "
+labels: enhancement, needs-triage
+assignees: ""
 ---
 
-## Is your feature request related to a problem?
+## Problem Statement
 
-A clear and concise description of what the problem is.
-Ex. I'm always frustrated when [...]
+What user/problem are we solving?
+Why is the current behavior insufficient?
 
-## Describe the solution you'd like
+## Proposed Solution
 
-A clear and concise description of what you want to happen.
+Describe your desired behavior clearly.
+If possible, include:
+- UI/UX changes
+- CLI/API changes
+- config/env changes
 
-## Describe alternatives you've considered
+## Use Case & Scenario
 
-A clear and concise description of any alternative solutions or features you've considered.
+Who needs this and in what workflow?
+Provide one concrete example end-to-end.
 
-## Use Case
+## Alternatives Considered
 
-Describe the use case for this feature.
+What other approaches did you evaluate?
+Why are they less suitable?
+
+## Scope
+
+### In Scope
+- ...
+
+### Out of Scope
+- ...
+
+## Acceptance Criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
+
+## Compatibility & Risk
+
+- Breaking change: [Yes / No]
+- Migration needed: [Yes / No]
+- Potential risks/perf/security impact:
 
 ## Additional Context
 
-Add any other context or screenshots about the feature request here.
+References, screenshots, mockups, links to related issues/PRs.
 
-## Would you be willing to contribute this feature?
+## Contribution
 
-- [ ] Yes, I'd like to implement this feature
+- [ ] I can submit a PR
 - [ ] I can help with testing
 - [ ] I can help with documentation

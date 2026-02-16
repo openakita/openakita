@@ -1,47 +1,76 @@
 ---
 name: Bug Report
-about: Create a report to help us improve
-title: '[BUG] '
-labels: bug
-assignees: ''
+about: Report a reproducible bug to help us fix it faster
+title: "[BUG] "
+labels: bug, needs-triage
+assignees: ""
 ---
 
-## Describe the Bug
+## Checklist
 
-A clear and concise description of what the bug is.
+- [ ] I searched existing issues and did not find a duplicate.
+- [ ] I can reproduce this issue with current latest code/release.
+- [ ] I removed sensitive data (API keys, tokens, personal info) from logs.
 
-## To Reproduce
+## Summary
 
-Steps to reproduce the behavior:
+A short description of the bug and why it matters.
 
-1. Run command '...'
-2. Enter input '...'
-3. See error
+## Steps to Reproduce
 
-## Expected Behavior
+Please provide minimal and deterministic steps:
 
-A clear and concise description of what you expected to happen.
+1. ...
+2. ...
+3. ...
 
-## Actual Behavior
+## Expected Result
+
+What should happen.
+
+## Actual Result
 
 What actually happened.
 
-## Screenshots
+## Reproducibility
 
-If applicable, add screenshots to help explain your problem.
+- Frequency: [Always / Often / Sometimes / Rarely]
+- Regression: [Yes / No / Unknown]
+- First known version (if any): [e.g. v1.10.10]
 
 ## Environment
 
-- OS: [e.g., Windows 11, Ubuntu 22.04]
-- Python version: [e.g., 3.11.5]
-- OpenAkita version: [e.g., 0.5.9]
+- OS: [e.g. macOS 14.6 / Windows 11 / Ubuntu 22.04]
+- Python: [e.g. 3.11.9]
+- OpenAkita version/commit: [e.g. v1.10.10 / abc1234]
+- Install method: [pip / source / desktop dmg / docker]
+- Runtime mode: [quick setup / full setup / remote mode]
+- Model provider + model: [e.g. OpenAI gpt-4o-mini]
 
-## Additional Context
+## Configuration (optional)
 
-Add any other context about the problem here.
+Relevant config only (redacted):
+- `.env` keys involved:
+- `llm_endpoints.json` excerpt:
 
-## Logs
+## Logs / Error Output
 
+```text
+Paste logs, stack trace, or error message here
 ```
-Paste relevant logs here
-```
+
+## Screenshots / Video (optional)
+
+Attach UI screenshots or short recordings if helpful.
+
+## Additional Notes
+
+Anything else that could help diagnose (workarounds, timing, network/proxy, etc.).
+
+## Resolution Preference
+
+How would you like this issue to be resolved? (Please select one)
+
+- [ ] Needs maintainer fix (I can't submit a PR at the moment)
+- [ ] I can fix this and submit a PR
+- [ ] Not sure / needs discussion
