@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Any
 
+from .tool_executor import OVERFLOW_MARKER
 from ..tracing.tracer import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -300,6 +301,10 @@ class ContextManager:
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
                         result_text = str(item.get("content", ""))
+                        # 含 OVERFLOW_MARKER 的为 handler 故意放行的长输出（如 get_skill_info），不压缩以免丢失技能全文
+                        if OVERFLOW_MARKER in result_text:
+                            new_content.append(item)
+                            continue
                         result_tokens = self.estimate_tokens(result_text)
                         if result_tokens > threshold:
                             target_tokens = max(int(result_tokens * COMPRESSION_RATIO), 100)

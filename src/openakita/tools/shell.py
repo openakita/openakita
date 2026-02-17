@@ -213,6 +213,7 @@ class ShellTool:
         logger.info(f"Executing: {command[:300]}")
         logger.debug(f"CWD: {work_dir}")
 
+        process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
@@ -239,8 +240,25 @@ class ShellTool:
 
             return result
 
+        except asyncio.CancelledError:
+            # 三路竞速 cancel/skip：立即杀掉子进程，实时中断
+            logger.warning(f"Command cancelled, killing subprocess: {original_command[:200]}")
+            if process and process.returncode is None:
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception:
+                    pass
+            raise  # 重新抛出，让上层三路竞速逻辑处理
+
         except TimeoutError:
             logger.error(f"Command timed out after {cmd_timeout}s")
+            if process and process.returncode is None:
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception:
+                    pass
             return CommandResult(
                 returncode=-1,
                 stdout="",

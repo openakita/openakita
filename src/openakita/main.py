@@ -400,10 +400,15 @@ async def start_im_channels(agent_or_master):
                 logger.error(f"MasterAgent handler error: {e}", exc_info=True)
                 return f"❌ 处理出错: {str(e)}"
 
-        # 透传 Agent 的停止/取消方法，供 Gateway 中断检测使用
+        # 透传 Agent 的中断控制方法，供 Gateway 中断检测使用
         if master._local_agent:
-            agent_handler.is_stop_command = master._local_agent.is_stop_command
-            agent_handler.cancel_current_task = master._local_agent.cancel_current_task
+            _la = master._local_agent
+            agent_handler.is_stop_command = _la.is_stop_command
+            agent_handler.is_skip_command = _la.is_skip_command
+            agent_handler.classify_interrupt = _la.classify_interrupt
+            agent_handler.cancel_current_task = _la.cancel_current_task
+            agent_handler.skip_current_step = _la.skip_current_step
+            agent_handler.insert_user_message = _la.insert_user_message
 
         # 设置 Brain 到 Gateway（用于模型切换命令）
         # MasterAgent 的 _local_agent 有 brain 属性
@@ -429,9 +434,13 @@ async def start_im_channels(agent_or_master):
                 logger.error(f"Agent handler error: {e}", exc_info=True)
                 return f"❌ 处理出错: {str(e)}"
 
-        # 透传 Agent 的停止/取消方法，供 Gateway 中断检测使用
+        # 透传 Agent 的中断控制方法，供 Gateway 中断检测使用
         agent_handler.is_stop_command = agent.is_stop_command
+        agent_handler.is_skip_command = agent.is_skip_command
+        agent_handler.classify_interrupt = agent.classify_interrupt
         agent_handler.cancel_current_task = agent.cancel_current_task
+        agent_handler.skip_current_step = agent.skip_current_step
+        agent_handler.insert_user_message = agent.insert_user_message
 
         # 设置 Agent 的 scheduler gateway
         agent.set_scheduler_gateway(_message_gateway)

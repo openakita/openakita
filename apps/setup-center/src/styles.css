@@ -1718,27 +1718,24 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: none;
-  background: transparent;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line, rgba(0,0,0,0.1));
+  background: var(--bg, #fff);
   color: var(--muted);
   cursor: pointer;
   border-radius: 50%;
   padding: 0;
-  margin-left: 4px;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  margin-left: 6px;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
   flex-shrink: 0;
 }
 
-.chainNarrToolStart:hover .chainToolSkipBtn {
-  opacity: 0.6;
-}
-
 .chainToolSkipBtn:hover {
-  opacity: 1 !important;
+  opacity: 1;
   background: rgba(239, 68, 68, 0.1);
+  border-color: var(--danger, #ef4444);
   color: var(--danger, #ef4444);
 }
 

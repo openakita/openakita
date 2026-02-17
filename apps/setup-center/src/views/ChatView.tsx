@@ -58,6 +58,7 @@ type StreamEvent =
   | { type: "plan_created"; plan: ChatPlan }
   | { type: "plan_step_updated"; stepId?: string; stepIdx?: number; status: string }
   | { type: "plan_completed" }
+  | { type: "plan_cancelled" }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
@@ -280,7 +281,7 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
               onClick={(e) => { e.stopPropagation(); onSkipStep(); }}
               title="Skip this step"
             >
-              <IconX size={9} />
+              <IconX size={10} />
             </button>
           )}
         </div>
@@ -1769,6 +1770,8 @@ export function ChatView({
                   currentPlan = { ...currentPlan, steps: newSteps } as ChatPlan;
                 } else if (event.type === "plan_completed" && currentPlan) {
                   currentPlan = { ...currentPlan, status: "completed" as const } as ChatPlan;
+                } else if (event.type === "plan_cancelled" && currentPlan) {
+                  currentPlan = { ...currentPlan, status: "cancelled" as unknown as "completed" } as ChatPlan;
                 }
                 if (event.type === "done") {
                   gracefulDone = true;
@@ -1952,6 +1955,11 @@ export function ChatView({
               case "plan_completed":
                 if (currentPlan) {
                   currentPlan = { ...currentPlan, status: "completed" } as ChatPlan;
+                }
+                break;
+              case "plan_cancelled":
+                if (currentPlan) {
+                  currentPlan = { ...currentPlan, status: "cancelled" as ChatPlanStep["status"] } as ChatPlan;
                 }
                 break;
               case "ask_user": {
@@ -2166,6 +2174,7 @@ export function ChatView({
     setMessageQueue(prev => [...prev, { id: genId(), text, timestamp: Date.now() }]);
     setInputText("");
     if (inputRef.current) {
+      inputRef.current.value = "";
       inputRef.current.style.height = "auto";
     }
   }, [inputText]);
@@ -2454,18 +2463,29 @@ export function ChatView({
     }
 
     if (isStreaming) {
-      // Streaming 状态: Ctrl+Enter = 立即插入, Enter = 排队
+      // Streaming 状态:
+      //   有文本 + Ctrl+Enter = 立即插入
+      //   有文本 + Enter     = 排队
+      //   空文本 + Enter     = 取队列第一条立即插入
+      // 用 DOM 真实值做前置检查，防止 React 闭包陈旧导致重复排队/插入
+      const domText = (e.target as HTMLTextAreaElement).value.trim();
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        const text = inputText.trim();
-        if (text) {
-          handleInsertMessage(text);
+        if (domText) {
+          handleInsertMessage(domText);
           setInputText("");
-          if (inputRef.current) inputRef.current.style.height = "auto";
+          if (inputRef.current) { inputRef.current.value = ""; inputRef.current.style.height = "auto"; }
         }
       } else if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        handleQueueMessage();
+        if (domText) {
+          handleQueueMessage();
+        } else if (messageQueue.length > 0) {
+          // 输入为空但队列有消息：取第一条立即插入
+          const first = messageQueue[0];
+          setMessageQueue(prev => prev.slice(1));
+          handleInsertMessage(first.text);
+        }
       }
     } else {
       // 非 Streaming 状态: Enter / Ctrl+Enter 都发送
@@ -2477,7 +2497,7 @@ export function ChatView({
         sendMessage();
       }
     }
-  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isStreaming, inputText, handleInsertMessage, handleQueueMessage]);
+  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isStreaming, inputText, handleInsertMessage, handleQueueMessage, messageQueue]);
 
   // ── 输入变化处理 ──
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2648,7 +2668,7 @@ export function ChatView({
 
         {/* 浮动 Plan 进度条 —— 贴在输入框上方，仅显示进行中的 plan */}
         {(() => {
-          const activePlan = [...messages].reverse().find((m) => m.plan && m.plan.status !== "completed" && m.plan.status !== "failed")?.plan;
+          const activePlan = [...messages].reverse().find((m) => m.plan && m.plan.status !== "completed" && m.plan.status !== "failed" && m.plan.status !== "cancelled")?.plan;
           return activePlan ? <FloatingPlanBar plan={activePlan} /> : null;
         })()}
 

@@ -133,6 +133,47 @@ def auto_close_plan(session_id: str) -> bool:
     return True
 
 
+def cancel_plan(session_id: str) -> bool:
+    """
+    用户主动取消时关闭活跃 Plan。
+
+    与 auto_close_plan 不同，此函数将计划和未完成步骤标记为 cancelled。
+
+    Returns:
+        True 如果有 Plan 被取消，False 如果没有活跃 Plan
+    """
+    if not has_active_plan(session_id):
+        return False
+
+    handler = get_plan_handler_for_session(session_id)
+    if not handler or not handler.current_plan:
+        unregister_active_plan(session_id)
+        return True
+
+    plan = handler.current_plan
+    steps = plan.get("steps", [])
+
+    for step in steps:
+        status = step.get("status", "pending")
+        if status in ("in_progress", "pending"):
+            step["status"] = "cancelled"
+            step["result"] = step.get("result") or "(用户取消)"
+            step["completed_at"] = datetime.now().isoformat()
+
+    plan["status"] = "cancelled"
+    plan["completed_at"] = datetime.now().isoformat()
+    if not plan.get("summary"):
+        plan["summary"] = "用户主动取消"
+
+    handler._add_log("计划被用户取消")
+    handler._save_plan_markdown()
+    handler.current_plan = None
+
+    logger.info(f"[Plan] Cancelled plan for session {session_id}")
+    unregister_active_plan(session_id)
+    return True
+
+
 def register_plan_handler(session_id: str, handler: "PlanHandler") -> None:
     """注册 PlanHandler 实例"""
     _session_handlers[session_id] = handler
