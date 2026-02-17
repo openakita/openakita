@@ -1586,75 +1586,87 @@ button:disabled {
   background: rgba(255, 77, 109, 0.9) !important;
 }
 
-/* ─── Queued Messages ─── */
+/* ─── Queued Messages (Cursor-style) ─── */
 
-.queuedMessageList {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 4px 6px 4px;
+.queuedContainer {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg, #fff);
+  margin: 0 4px 6px 4px;
+  overflow: hidden;
 }
 
-.queuedMessageItem {
+.queuedHeader {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
-  background: rgba(14, 165, 233, 0.05);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 12px;
-  transition: background 0.15s;
-}
-
-.queuedMessageItem:hover {
-  background: rgba(14, 165, 233, 0.1);
-}
-
-.queuedMessageOrderBtns {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  flex-shrink: 0;
-}
-
-.queuedMessageOrderBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 10px;
+  width: 100%;
+  padding: 8px 12px;
   border: none;
   background: transparent;
-  color: var(--muted);
   cursor: pointer;
-  padding: 0;
-  border-radius: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  transition: color 0.15s;
+  user-select: none;
+}
+
+.queuedHeader:hover {
+  color: var(--text);
+}
+
+.queuedHeaderChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.queuedHeaderLabel {
+  color: inherit;
+}
+
+.queuedList {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px 0;
+}
+
+.queuedItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  transition: background 0.12s;
+  position: relative;
+}
+
+.queuedItem:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.queuedItemIndicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--muted);
   opacity: 0.5;
-  transition: opacity 0.15s;
 }
 
-.queuedMessageOrderBtn:hover:not(:disabled) {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.queuedMessageOrderBtn:disabled {
-  opacity: 0.15;
-  cursor: default;
-}
-
-.queuedMessageText {
+.queuedItemText {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
-  opacity: 0.8;
 }
 
-.queuedMessageActions {
+.queuedItemActions {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1663,32 +1675,37 @@ button:disabled {
   transition: opacity 0.15s;
 }
 
-.queuedMessageItem:hover .queuedMessageActions {
+.queuedItem:hover .queuedItemActions {
   opacity: 1;
 }
 
-.queuedMessageActionBtn {
+.queuedItemBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 5px;
   padding: 0;
   transition: background 0.15s, color 0.15s;
 }
 
-.queuedMessageActionBtn:hover {
+.queuedItemBtn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
-  color: var(--brand);
+  color: var(--text);
 }
 
-.queuedMessageDeleteBtn:hover {
-  color: var(--danger, #ef4444);
+.queuedItemBtn:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+
+.queuedItemDeleteBtn:hover {
+  color: var(--danger, #ef4444) !important;
 }
 
 /* ─── Tool Step Skip Button ─── */

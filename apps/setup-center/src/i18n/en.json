@@ -83,7 +83,7 @@
     "editMessage": "Edit",
     "deleteQueued": "Remove",
     "queueHint": "Enter to queue | Ctrl+Enter to send now",
-    "queuedCount": "{{count}} queued message(s)",
+    "queuedCount": "Queued",
     "insertMessage": "Insert message"
   },
   "skills": {

@@ -83,7 +83,7 @@
     "editMessage": "编辑",
     "deleteQueued": "移除",
     "queueHint": "Enter 排队 | Ctrl+Enter 立即发送",
-    "queuedCount": "{{count}} 条排队消息",
+    "queuedCount": "排队",
     "insertMessage": "插入消息"
   },
   "skills": {

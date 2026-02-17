@@ -30,9 +30,9 @@ import {
   IconSend, IconPaperclip, IconMic, IconStopCircle,
   IconPlan, IconPlus, IconMenu, IconStop, IconX,
   IconCheck, IconLoader, IconCircle, IconPlay, IconMinus,
-  IconChevronDown, IconMessageCircle, IconChevronRight,
+  IconChevronDown, IconChevronUp, IconMessageCircle, IconChevronRight,
   IconImage, IconRefresh, IconClipboard, IconTrash, IconZap,
-  IconMask, IconBot, IconUsers, IconHelp,
+  IconMask, IconBot, IconUsers, IconHelp, IconEdit,
 } from "../icons";
 
 // ─── 排队消息类型 ───
@@ -2132,6 +2132,7 @@ export function ChatView({
 
   // ── 消息排队系统 ──
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
+  const [queueExpanded, setQueueExpanded] = useState(true);
 
   const handleSkipStep = useCallback(() => {
     fetch(`${apiBase}/api/chat/skip`, {
@@ -2683,45 +2684,58 @@ export function ChatView({
             />
           )}
 
-          {/* Queued messages list */}
+          {/* Queued messages list — Cursor style */}
           {messageQueue.length > 0 && (
-            <div className="queuedMessageList">
-              {messageQueue.map((qm, idx) => (
-                <div key={qm.id} className="queuedMessageItem">
-                  <div className="queuedMessageOrderBtns">
-                    <button
-                      className="queuedMessageOrderBtn"
-                      disabled={idx === 0}
-                      onClick={() => handleMoveQueued(qm.id, "up")}
-                      title="Move up"
-                    >
-                      <span style={{ fontSize: 9, lineHeight: 1 }}>&#9650;</span>
-                    </button>
-                    <button
-                      className="queuedMessageOrderBtn"
-                      disabled={idx === messageQueue.length - 1}
-                      onClick={() => handleMoveQueued(qm.id, "down")}
-                      title="Move down"
-                    >
-                      <span style={{ fontSize: 9, lineHeight: 1 }}>&#9660;</span>
-                    </button>
-                  </div>
-                  <span className="queuedMessageText" title={qm.text}>
-                    {qm.text.length > 60 ? qm.text.slice(0, 60) + "..." : qm.text}
-                  </span>
-                  <div className="queuedMessageActions">
-                    <button className="queuedMessageActionBtn" onClick={() => handleSendQueuedNow(qm.id)} title={t("chat.sendNow")}>
-                      <IconSend size={11} />
-                    </button>
-                    <button className="queuedMessageActionBtn" onClick={() => handleEditQueued(qm.id)} title={t("chat.editMessage")}>
-                      <IconRefresh size={11} />
-                    </button>
-                    <button className="queuedMessageActionBtn queuedMessageDeleteBtn" onClick={() => handleRemoveQueued(qm.id)} title={t("chat.deleteQueued")}>
-                      <IconTrash size={11} />
-                    </button>
-                  </div>
+            <div className="queuedContainer">
+              <button
+                className="queuedHeader"
+                onClick={() => setQueueExpanded(v => !v)}
+              >
+                <span className="queuedHeaderChevron">
+                  {queueExpanded ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+                </span>
+                <span className="queuedHeaderLabel">
+                  {messageQueue.length} {t("chat.queuedCount")}
+                </span>
+              </button>
+              {queueExpanded && (
+                <div className="queuedList">
+                  {messageQueue.map((qm, idx) => (
+                    <div key={qm.id} className="queuedItem">
+                      <span className="queuedItemIndicator">
+                        <IconCircle size={10} />
+                      </span>
+                      <span className="queuedItemText" title={qm.text}>
+                        {qm.text.length > 80 ? qm.text.slice(0, 80) + "..." : qm.text}
+                      </span>
+                      <div className="queuedItemActions">
+                        <button
+                          className="queuedItemBtn"
+                          onClick={() => handleEditQueued(qm.id)}
+                          title={t("chat.editMessage")}
+                        >
+                          <IconEdit size={13} />
+                        </button>
+                        <button
+                          className="queuedItemBtn"
+                          onClick={() => handleMoveQueued(qm.id, "up")}
+                          disabled={idx === 0}
+                          title="Move up"
+                        >
+                          <IconChevronUp size={13} />
+                        </button>
+                        <button
+                          className="queuedItemBtn queuedItemDeleteBtn"
+                          onClick={() => handleRemoveQueued(qm.id)}
+                          title={t("chat.deleteQueued")}
+                        >
+                          <IconTrash size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           )}
 
