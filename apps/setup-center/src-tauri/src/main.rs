@@ -207,6 +207,8 @@ fn find_pip_python() -> Option<PathBuf> {
         }
     }
     // 3. embedded python (python-build-standalone)
+    //    解压后可能有多层目录（如 tag/assetname/python.exe 或 tag/assetname/python/python.exe），
+    //    用 find_python_executable 递归查找，与 install_embedded_python_sync 行为一致，避免安装完成后仍“找不到”
     let runtime_dir = root.join("runtime").join("python");
     if runtime_dir.exists() {
         if let Ok(entries) = fs::read_dir(&runtime_dir) {
@@ -215,12 +217,9 @@ fn find_pip_python() -> Option<PathBuf> {
                 if let Ok(sub_entries) = fs::read_dir(entry.path()) {
                     for sub in sub_entries.flatten() {
                         if !sub.path().is_dir() { continue; }
-                        let py = if cfg!(windows) {
-                            sub.path().join("python.exe")
-                        } else {
-                            sub.path().join("bin").join("python3")
-                        };
-                        if py.exists() { return Some(py); }
+                        if let Some(py) = find_python_executable(&sub.path()) {
+                            return Some(py);
+                        }
                     }
                 }
             }
