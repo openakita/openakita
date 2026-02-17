@@ -447,13 +447,13 @@ class Agent:
 
         # 获取 cancel_event / skip_event 用于工具执行竞速取消/跳过
         _tool_cancel_event = (
-            self._state.current_task.cancel_event
-            if self._state and self._state.current_task
+            self.agent_state.current_task.cancel_event
+            if self.agent_state and self.agent_state.current_task
             else asyncio.Event()
         )
         _tool_skip_event = (
-            self._state.current_task.skip_event
-            if self._state and self._state.current_task
+            self.agent_state.current_task.skip_event
+            if self.agent_state and self.agent_state.current_task
             else asyncio.Event()
         )
 
@@ -499,8 +499,8 @@ class Agent:
                             return await self._execute_tool(tool_name, tool_input)
 
                 # 每个工具执行前清除 skip 标志
-                if self._state and self._state.current_task:
-                    self._state.current_task.clear_skip()
+                if self.agent_state and self.agent_state.current_task:
+                    self.agent_state.current_task.clear_skip()
 
                 # 将工具执行与 cancel_event / skip_event 三路竞速
                 tool_task = asyncio.create_task(_do_exec())
@@ -539,8 +539,8 @@ class Agent:
                 if skip_waiter in done_set and tool_task not in done_set:
                     # skip_event 先触发，仅跳过当前工具（不终止任务）
                     _skip_reason = (
-                        self._state.current_task.skip_reason
-                        if self._state and self._state.current_task
+                        self.agent_state.current_task.skip_reason
+                        if self.agent_state and self.agent_state.current_task
                         else "用户请求跳过"
                     )
                     logger.info(f"[SkipStep] Tool {tool_name} skipped by user: {_skip_reason}")
@@ -3171,10 +3171,10 @@ search_github → install_skill → 使用
         self._cancel_reason = ""
 
         # 重置 skip_event 和 pending_user_inserts（清空上轮残留）
-        if self._state and self._state.current_task:
-            self._state.current_task.clear_skip()
+        if self.agent_state and self.agent_state.current_task:
+            self.agent_state.current_task.clear_skip()
             # drain_user_inserts 是 async，但此处在 async 方法中可以 await
-            await self._state.current_task.drain_user_inserts()
+            await self.agent_state.current_task.drain_user_inserts()
 
         # 解析 conversation_id
         self._current_session_id = session_id
@@ -3298,9 +3298,9 @@ search_github → install_skill → 使用
         self._cancel_reason = ""
 
         # 重置 skip_event 和 pending_user_inserts（清空上轮残留）
-        if self._state and self._state.current_task:
-            self._state.current_task.clear_skip()
-            await self._state.current_task.drain_user_inserts()
+        if self.agent_state and self.agent_state.current_task:
+            self.agent_state.current_task.clear_skip()
+            await self.agent_state.current_task.drain_user_inserts()
 
         # 解析 conversation_id
         self._current_session_id = session_id
@@ -4146,8 +4146,8 @@ NEXT: 建议的下一步（如有）"""
 
         # 获取 cancel_event（用于 LLM / 工具调用竞速取消）
         _cancel_event = (
-            self._state.current_task.cancel_event
-            if self._state and self._state.current_task
+            self.agent_state.current_task.cancel_event
+            if self.agent_state and self.agent_state.current_task
             else asyncio.Event()
         )
 
@@ -4594,9 +4594,9 @@ NEXT: 建议的下一步（如有）"""
             )
 
             # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-            if self._state and self._state.current_task and self._state.current_task.skip_event.is_set():
-                _skip_reason = self._state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
-                self._state.current_task.clear_skip()
+            if self.agent_state and self.agent_state.current_task and self.agent_state.current_task.skip_event.is_set():
+                _skip_reason = self.agent_state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
+                self.agent_state.current_task.clear_skip()
                 working_messages.append({
                     "role": "user",
                     "content": (
@@ -4608,8 +4608,8 @@ NEXT: 建议的下一步（如有）"""
                 logger.info(f"[SkipReflect] Injected skip reflection prompt: {_skip_reason}")
 
             # === 检查用户插入消息 ===
-            if self._state and self._state.current_task:
-                _inserts = await self._state.current_task.drain_user_inserts()
+            if self.agent_state and self.agent_state.current_task:
+                _inserts = await self.agent_state.current_task.drain_user_inserts()
                 for _ins_text in _inserts:
                     working_messages.append({
                         "role": "user",
@@ -4814,8 +4814,8 @@ NEXT: 建议的下一步（如有）"""
         self._task_cancelled = True
         self._cancel_reason = reason
         # 触发 TaskState 的 cancel_event（通知 asyncio.wait 竞速的等待方）
-        if hasattr(self, "_state") and self._state and self._state.current_task:
-            self._state.cancel_task(reason)
+        if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
+            self.agent_state.cancel_task(reason)
         logger.info(f"[StopTask] Task cancellation requested: {reason}")
 
     def is_stop_command(self, message: str) -> bool:
@@ -4868,8 +4868,8 @@ NEXT: 建议的下一步（如有）"""
         Args:
             reason: 跳过原因
         """
-        if hasattr(self, "_state") and self._state and self._state.current_task:
-            self._state.skip_current_step(reason)
+        if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
+            self.agent_state.skip_current_step(reason)
         logger.info(f"[SkipStep] Step skip requested: {reason}")
 
     async def insert_user_message(self, text: str) -> None:
@@ -4879,8 +4879,8 @@ NEXT: 建议的下一步（如有）"""
         Args:
             text: 用户消息文本
         """
-        if hasattr(self, "_state") and self._state and self._state.current_task:
-            await self._state.insert_user_message(text)
+        if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
+            await self.agent_state.insert_user_message(text)
         logger.info(f"[UserInsert] User message queued: {text[:50]}...")
 
     async def _chat_with_tools(self, message: str) -> str:
@@ -5034,9 +5034,9 @@ NEXT: 建议的下一步（如有）"""
             messages.append({"role": "user", "content": tool_results})
 
             # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-            if self._state and self._state.current_task and self._state.current_task.skip_event.is_set():
-                _skip_reason = self._state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
-                self._state.current_task.clear_skip()
+            if self.agent_state and self.agent_state.current_task and self.agent_state.current_task.skip_event.is_set():
+                _skip_reason = self.agent_state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
+                self.agent_state.current_task.clear_skip()
                 messages.append({
                     "role": "user",
                     "content": (
@@ -5047,8 +5047,8 @@ NEXT: 建议的下一步（如有）"""
                 })
 
             # === 检查用户插入消息 ===
-            if self._state and self._state.current_task:
-                _inserts = await self._state.current_task.drain_user_inserts()
+            if self.agent_state and self.agent_state.current_task:
+                _inserts = await self.agent_state.current_task.drain_user_inserts()
                 for _ins_text in _inserts:
                     messages.append({
                         "role": "user",
@@ -5574,9 +5574,9 @@ NEXT: 建议的下一步（如有）"""
                 messages.append({"role": "user", "content": tool_results})
 
                 # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-                if self._state and self._state.current_task and self._state.current_task.skip_event.is_set():
-                    _skip_reason = self._state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
-                    self._state.current_task.clear_skip()
+                if self.agent_state and self.agent_state.current_task and self.agent_state.current_task.skip_event.is_set():
+                    _skip_reason = self.agent_state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
+                    self.agent_state.current_task.clear_skip()
                     messages.append({
                         "role": "user",
                         "content": (
@@ -5587,8 +5587,8 @@ NEXT: 建议的下一步（如有）"""
                     })
 
                 # === 检查用户插入消息 ===
-                if self._state and self._state.current_task:
-                    _inserts = await self._state.current_task.drain_user_inserts()
+                if self.agent_state and self.agent_state.current_task:
+                    _inserts = await self.agent_state.current_task.drain_user_inserts()
                     for _ins_text in _inserts:
                         messages.append({
                             "role": "user",

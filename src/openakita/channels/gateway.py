@@ -926,30 +926,29 @@ class MessageGateway:
                         logger.info(
                             f"[Interrupt] STOP command, cancelling task for {session_key}: {user_text}"
                         )
+                        # STOP 入中断队列（后续触发 farewell 流程）
+                        await self._add_interrupt_message(session_key, message)
+                        logger.info(
+                            f"[Interrupt] STOP queued for session {session_key}: {message.plain_text}"
+                        )
                     elif msg_type == "skip":
-                        # 单步跳过：只中断当前工具执行
+                        # 单步跳过：只中断当前工具执行，不入队
                         self.agent_handler.skip_current_step(f"用户发送跳过指令: {user_text}")
                         logger.info(
-                            f"[Interrupt] SKIP command for {session_key}: {user_text}"
+                            f"[Interrupt] SKIP handled directly (not queued) for {session_key}: {user_text}"
                         )
                     else:
-                        # 用户消息插入：注入到任务上下文
+                        # 用户消息插入：注入到任务上下文，不入队
                         import asyncio as _aio
                         _aio.create_task(self.agent_handler.insert_user_message(user_text))
                         logger.info(
-                            f"[Interrupt] INSERT user message for {session_key}: {user_text[:50]}"
+                            f"[Interrupt] INSERT handled directly (not queued) for {session_key}: {user_text[:50]}"
                         )
-
-                # 只有 STOP 命令入中断队列（后续触发 farewell 流程）
-                # SKIP 和 INSERT 已通过 agent 方法直接处理，不入队避免 _process_pending_interrupts 重复处理
-                if msg_type == "stop":
-                    await self._add_interrupt_message(session_key, message)
-                    logger.info(
-                        f"[Interrupt] STOP queued for session {session_key}: {message.plain_text}"
-                    )
                 else:
-                    logger.info(
-                        f"[Interrupt] {msg_type.upper()} handled directly (not queued) for {session_key}"
+                    # agent_handler 不可用时，fallback 入中断队列
+                    await self._add_interrupt_message(session_key, message)
+                    logger.warning(
+                        f"[Interrupt] No agent_handler, queued as interrupt for {session_key}: {user_text[:50]}"
                     )
                 return
 

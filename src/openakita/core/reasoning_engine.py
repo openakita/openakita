@@ -1496,6 +1496,7 @@ class ReasoningEngine:
                     tool_results_for_msg: list[dict] = []
                     _stream_cancelled = False
                     _stream_skipped = False
+                    cancel_event = state.cancel_event if state else asyncio.Event()
                     skip_event = state.skip_event if state else asyncio.Event()
                     for tc in decision.tool_calls:
                         # 每个工具执行前检查取消
