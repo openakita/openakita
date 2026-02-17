@@ -516,30 +516,32 @@ Function PageLeaveEnvCheck
  ${EndIf}
 
  ; ── 清理前先杀掉旧进程（避免文件锁定导致删除失败） ──
+ ; 使用 PowerShell -WindowStyle Hidden 避免弹黑窗
  ; 杀掉旧版 Setup Center（托盘常驻）
- ExecWait 'taskkill /IM openakita-setup-center.exe /T /F' $0
+ ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Get-Process -Name openakita-setup-center -ErrorAction SilentlyContinue | Stop-Process -Force"' $0
  ; 杀掉 openakita-server（PyInstaller 打包的后端）
- ExecWait 'taskkill /IM openakita-server.exe /T /F' $0
+ ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Get-Process -Name openakita-server -ErrorAction SilentlyContinue | Stop-Process -Force"' $0
  ; 杀掉按 pid 文件追踪的服务进程
  !insertmacro _OpenAkita_KillAllServicePids
  ; 等待进程完全退出释放文件锁
  Sleep 2000
 
  ; ── 执行环境清理 ──
- ; 注意：使用 cmd /c rd /s /q 替代 NSIS RmDir /r
- ; 因为 RmDir /r 对深层路径、只读文件、大文件会静默失败
+ ; 使用 PowerShell -WindowStyle Hidden + 环境变量传路径，避免 cmd 弹黑窗
 
  ; 总是清理 run 目录中的 stale PID 文件（运行时临时文件，不是用户数据）
  ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\run"
  ${If} ${FileExists} "$R0\*.*"
-  ExecWait 'cmd /c rd /s /q "$R0"'
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R0)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
  ${EndIf}
 
  ${If} $EnvCleanVenv != ""
   ${NSD_GetState} $EnvCleanVenv $0
   ${If} $0 = ${BST_CHECKED}
    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\venv"
-   ExecWait 'cmd /c rd /s /q "$R0"'
+   System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R0)'
+   ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ${EndIf}
  ${EndIf}
 
@@ -547,7 +549,8 @@ Function PageLeaveEnvCheck
   ${NSD_GetState} $EnvCleanRuntime $0
   ${If} $0 = ${BST_CHECKED}
    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\runtime"
-   ExecWait 'cmd /c rd /s /q "$R0"'
+   System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R0)'
+   ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ${EndIf}
  ${EndIf}
 
@@ -555,12 +558,15 @@ Function PageLeaveEnvCheck
   ${NSD_GetState} $EnvCleanModules $0
   ${If} $0 = ${BST_CHECKED}
    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\modules"
-   ExecWait 'cmd /c rd /s /q "$R0"'
+   System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R0)'
+   ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
    ; 同时清理嵌入式 Python（模块安装可能下载了它）
    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\python"
-   ExecWait 'cmd /c rd /s /q "$R0"'
+   System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R0)'
+   ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\embedded_python"
-   ExecWait 'cmd /c rd /s /q "$R0"'
+   System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R0)'
+   ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ${EndIf}
  ${EndIf}
 
@@ -568,21 +574,33 @@ Function PageLeaveEnvCheck
  ${If} $EnvCleanUserDataConfirmed = 1
   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
   ; 清理工作区数据
-  ExecWait 'cmd /c rd /s /q "$R0\workspaces"'
+  StrCpy $R8 "$R0\workspaces"
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R8)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ; 清理配置文件
   Delete "$R0\state.json"
   Delete "$R0\config.json"
   Delete "$R0\.env"
   Delete "$R0\cli.json"
   ; 清理日志
-  ExecWait 'cmd /c rd /s /q "$R0\logs"'
+  StrCpy $R8 "$R0\logs"
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R8)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ; 清理运行时 pid 文件
-  ExecWait 'cmd /c rd /s /q "$R0\run"'
+  StrCpy $R8 "$R0\run"
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R8)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ; 清理已安装的可选模块（向量记忆、whisper、浏览器自动化等）
-  ExecWait 'cmd /c rd /s /q "$R0\modules"'
+  StrCpy $R8 "$R0\modules"
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R8)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
   ; 清理嵌入式 Python 环境
-  ExecWait 'cmd /c rd /s /q "$R0\python"'
-  ExecWait 'cmd /c rd /s /q "$R0\embedded_python"'
+  StrCpy $R8 "$R0\python"
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R8)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
+  StrCpy $R8 "$R0\embedded_python"
+  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t R8)'
+  ExecWait 'powershell -NoProfile -WindowStyle Hidden -Command "Remove-Item -LiteralPath $env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
  ${EndIf}
 FunctionEnd
 
