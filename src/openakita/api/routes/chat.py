@@ -290,7 +290,11 @@ async def chat_skip(request: Request, body: ChatControlRequest):
 
 @router.post("/api/chat/insert")
 async def chat_insert(request: Request, body: ChatControlRequest):
-    """Insert a user message into the running task context."""
+    """Insert a user message into the running task context.
+
+    Smart routing: if the message is a stop/skip command, automatically
+    delegate to cancel/skip instead of blindly inserting.
+    """
     agent = getattr(request.app.state, "agent", None)
     actual_agent = _resolve_agent(agent) if agent else None
     if actual_agent is None:
@@ -298,6 +302,21 @@ async def chat_insert(request: Request, body: ChatControlRequest):
 
     if not body.message:
         return {"status": "error", "message": "Message is required for insert"}
+
+    # Classify the message: stop/skip commands should not be inserted as text
+    msg_type = actual_agent.classify_interrupt(body.message)
+
+    if msg_type == "stop":
+        reason = f"用户发送停止指令: {body.message}"
+        actual_agent.cancel_current_task(reason)
+        logger.info(f"[Chat API] Insert reclassified as STOP: {body.message[:60]}")
+        return {"status": "ok", "action": "cancel", "reason": reason}
+
+    if msg_type == "skip":
+        reason = f"用户发送跳过指令: {body.message}"
+        actual_agent.skip_current_step(reason)
+        logger.info(f"[Chat API] Insert reclassified as SKIP: {body.message[:60]}")
+        return {"status": "ok", "action": "skip", "reason": reason}
 
     await actual_agent.insert_user_message(body.message)
     logger.info(f"[Chat API] Insert requested: {body.message[:60]}")

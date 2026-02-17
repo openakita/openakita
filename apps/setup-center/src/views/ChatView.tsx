@@ -1886,7 +1886,7 @@ export function ChatView({
                   currentChainGroup = {
                     ...grp,
                     toolCalls: [...grp.toolCalls, newTc],
-                    entries: [...grp.entries, { kind: "tool_start" as const, toolId: _tcId, tool: event.tool, args: event.args, description: _desc }],
+                    entries: [...grp.entries, { kind: "tool_start" as const, toolId: _tcId, tool: event.tool, args: event.args, description: _desc, status: "running" }],
                   };
                   chainGroups = chainGroups.map((g, i) => i === chainGroups.length - 1 ? currentChainGroup! : g);
                 }
@@ -1918,7 +1918,7 @@ export function ChatView({
                     // 更新 tool_start 状态 + 追加 tool_end
                     entries: [
                       ...grp.entries.map(e => {
-                        if (e.kind === "tool_start" && !e.status) {
+                        if (e.kind === "tool_start" && (!e.status || e.status === "running")) {
                           const eIdMatch = event.id && e.toolId === event.id;
                           const eNameMatch = !event.id && e.tool === event.tool;
                           if (eIdMatch || eNameMatch) return { ...e, status: endStatus };
@@ -2165,12 +2165,25 @@ export function ChatView({
 
   const handleInsertMessage = useCallback((text: string) => {
     if (!text.trim()) return;
+    const normalized = text.trim().toLowerCase();
+    // Client-side quick check: route stop/skip commands to proper handlers
+    const STOP_WORDS = new Set(["停止","停","stop","停止执行","取消","取消任务","算了","不用了","别做了","停下","暂停","cancel","abort","quit","停止当前任务","中止","终止","不要了"]);
+    const SKIP_WORDS = new Set(["跳过","skip","下一步","next","跳过这步","跳过当前步骤","跳过当前","skip this","换个方法","太慢了"]);
+    if (STOP_WORDS.has(normalized) || STOP_WORDS.has(text.trim())) {
+      handleCancelTask();
+      return;
+    }
+    if (SKIP_WORDS.has(normalized) || SKIP_WORDS.has(text.trim())) {
+      handleSkipStep();
+      return;
+    }
+    // Regular insert — backend also has classify fallback
     fetch(`${apiBase}/api/chat/insert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: activeConvId, message: text }),
     }).catch(() => {});
-  }, [apiBase, activeConvId]);
+  }, [apiBase, activeConvId, handleCancelTask, handleSkipStep]);
 
   const handleQueueMessage = useCallback(() => {
     const text = inputText.trim();
