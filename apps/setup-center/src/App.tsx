@@ -1320,6 +1320,12 @@ export function App() {
                     }
                   }
                   if (!cancelled) {
+                    if (serviceReady) {
+                      // 启动刚完成时 HTTP 可能仍有短暂不稳定，给一段宽限期避免闪一次「不可达」
+                      visibilityGraceRef.current = true;
+                      heartbeatFailCount.current = 0;
+                      setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
+                    }
                     setBusy(null);
                     if (serviceReady) {
                       setNotice(t("topbar.autoStartSuccess"));
