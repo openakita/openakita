@@ -298,9 +298,9 @@ fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'stat
     // 仅体积大(>50MB)或有特殊二进制依赖的包才需要模块化安装。
     // 其余轻量包(文档处理/图像处理/桌面自动化/IM适配器等)已直接打包进 PyInstaller bundle。
     vec![
-        ("vector-memory", "向量记忆增强", "语义搜索与向量记忆 (sentence-transformers + chromadb)", &["sentence-transformers", "chromadb"], 500, "core"),
-        ("browser", "浏览器自动化", "Playwright 浏览器 + browser-use AI 代理", &["playwright", "browser-use", "langchain-openai"], 200, "core"),
-        ("whisper", "语音识别", "OpenAI Whisper 语音转文字", &["openai-whisper", "static-ffmpeg"], 300, "core"),
+        ("vector-memory", "向量记忆增强", "语义搜索与向量记忆 (sentence-transformers + chromadb，含 PyTorch)", &["sentence-transformers", "chromadb"], 2500, "core"),
+        ("browser", "浏览器自动化", "Playwright 浏览器 + browser-use AI 代理 (含 Chromium ~150MB)", &["playwright", "browser-use", "langchain-openai"], 350, "core"),
+        ("whisper", "语音识别", "OpenAI Whisper 语音转文字 (含 PyTorch)", &["openai-whisper", "static-ffmpeg"], 2500, "core"),
         ("orchestration", "多Agent协同", "ZeroMQ 多 Agent 协同通信", &["pyzmq"], 10, "core"),
     ]
 }
@@ -399,11 +399,59 @@ async fn install_module(
     // ── 执行 pip install（离线 vs 多源在线） ──
     let run_pip_result = |output: std::process::Output, label: &str| -> Result<String, String> {
         if output.status.success() {
+            // ── Post-install hooks (模块特定的额外安装步骤) ──
+            if module_id == "browser" {
+                let _ = app.emit("module-install-progress", serde_json::json!({
+                    "moduleId": &module_id, "status": "installing",
+                    "message": "正在下载 Chromium 浏览器引擎（约 150MB）...",
+                }));
+                let browsers_dir = modules_dir().join("browser").join("browsers");
+                let _ = fs::create_dir_all(&browsers_dir);
+                let mut pw = Command::new(&python_exe);
+                pw.env("PYTHONPATH", &target_dir);
+                pw.env("PLAYWRIGHT_BROWSERS_PATH", &browsers_dir);
+                // 国内 CDN 加速 Playwright 浏览器下载
+                pw.env("PLAYWRIGHT_DOWNLOAD_HOST", "https://cdn.npmmirror.com/binaries/playwright");
+                pw.args(["-m", "playwright", "install", "chromium"]);
+                apply_no_window(&mut pw);
+                match pw.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).output() {
+                    Ok(pw_out) if pw_out.status.success() => {
+                        let _ = app.emit("module-install-progress", serde_json::json!({
+                            "moduleId": &module_id, "status": "installing",
+                            "message": "Chromium 浏览器引擎下载完成",
+                        }));
+                    }
+                    Ok(pw_out) => {
+                        let err = String::from_utf8_lossy(&pw_out.stderr);
+                        let stdout_pw = String::from_utf8_lossy(&pw_out.stdout);
+                        let detail_pw = if err.trim().is_empty() { stdout_pw.to_string() } else { err.to_string() };
+                        let _ = app.emit("module-install-progress", serde_json::json!({
+                            "moduleId": &module_id, "status": "warning",
+                            "message": format!(
+                                "Chromium 下载失败，模块已安装但浏览器引擎缺失。可稍后手动执行: playwright install chromium\n{}",
+                                &detail_pw[..detail_pw.len().min(300)]
+                            ),
+                        }));
+                    }
+                    Err(e) => {
+                        let _ = app.emit("module-install-progress", serde_json::json!({
+                            "moduleId": &module_id, "status": "warning",
+                            "message": format!("playwright install 执行失败: {}", e),
+                        }));
+                    }
+                }
+            }
+
             let marker = modules_dir().join(&module_id).join(".installed");
             let _ = fs::write(&marker, format!("installed_at={}", now_epoch_secs()));
             let _ = app.emit("module-install-progress", serde_json::json!({
                 "moduleId": module_id, "status": "done",
                 "message": format!("{} 安装完成 ({})", module_id, label),
+            }));
+            // 提示用户重启服务以加载新安装的模块
+            let _ = app.emit("module-install-progress", serde_json::json!({
+                "moduleId": module_id, "status": "restart-hint",
+                "message": "模块已安装，建议重启 OpenAkita 服务以加载新模块",
             }));
             Ok(format!("{} 安装成功", module_id))
         } else {
@@ -2174,6 +2222,12 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
         cmd.env("OPENAKITA_MODULE_PATHS", extra_path);
     }
 
+    // Playwright 浏览器二进制路径（install_module 安装到此目录）
+    let browsers_dir = modules_dir().join("browser").join("browsers");
+    if browsers_dir.exists() {
+        cmd.env("PLAYWRIGHT_BROWSERS_PATH", &browsers_dir);
+    }
+
     // detach + redirect io
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file.try_clone().map_err(|e| format!("clone log failed: {e}"))?))
@@ -2936,15 +2990,16 @@ fn install_embedded_python_sync(python_series: Option<String>) -> Result<Embedde
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("openakita-setup-center")
+        .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| format!("http client build failed: {e}"))?;
 
-    // GitHub 在中国大陆可能不可达，使用镜像回退
+    // 国内镜像优先，GitHub 原始 URL 兜底
+    // 注意：mirror.ghproxy.com 已被 GFW 封锁（2024年末），已移除
     let latest_urls = [
-        "https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
         "https://ghp.ci/https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
-        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
+        "https://raw.githubusercontent.com/astral-sh/python-build-standalone/latest-release/latest-release.json",
     ];
     let latest: LatestReleaseInfo = get_with_mirrors(&client, &latest_urls)
         .map_err(|e| format!("fetch latest-release.json failed (all mirrors): {e}"))?
@@ -2952,8 +3007,8 @@ fn install_embedded_python_sync(python_series: Option<String>) -> Result<Embedde
         .map_err(|e| format!("parse latest-release.json failed: {e}"))?;
 
     let gh_api_urls_str = [
-        format!("https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}", latest.tag),
         format!("https://ghp.ci/https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}", latest.tag),
+        format!("https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{}", latest.tag),
     ];
     let gh_api_urls: Vec<&str> = gh_api_urls_str.iter().map(|s| s.as_str()).collect();
     let gh: GhRelease = get_with_mirrors(&client, &gh_api_urls)
@@ -2984,9 +3039,9 @@ fn install_embedded_python_sync(python_series: Option<String>) -> Result<Embedde
     }
 
     if !archive_path.exists() {
-        // 下载 Python 包，依次尝试原始 URL 和镜像
-        let dl_mirror = format!("https://ghp.ci/{}", &asset.browser_download_url);
-        let dl_urls = [asset.browser_download_url.as_str(), dl_mirror.as_str()];
+        // 下载 Python 包，国内镜像优先
+        let dl_mirror_ghp = format!("https://ghp.ci/{}", &asset.browser_download_url);
+        let dl_urls = [dl_mirror_ghp.as_str(), asset.browser_download_url.as_str()];
         let mut resp = get_with_mirrors(&client, &dl_urls)
             .map_err(|e| format!("download failed (all mirrors): {e}"))?;
         let mut out =
@@ -3226,6 +3281,13 @@ async fn pip_install(
             Ok(status)
         }
 
+        // 国内镜像兜底：前端未传 index_url 时默认使用阿里云
+        let effective_index = index_url.as_deref()
+            .unwrap_or("https://mirrors.aliyun.com/pypi/simple/");
+        let effective_host = effective_index
+            .split("//").nth(1).unwrap_or("")
+            .split('/').next().unwrap_or("");
+
         // upgrade pip first (best-effort)
         emit_stage("升级 pip（best-effort）", 40);
         let mut up = Command::new(&py);
@@ -3233,8 +3295,9 @@ async fn pip_install(
         up.env("PYTHONUTF8", "1");
         up.env("PYTHONIOENCODING", "utf-8");
         up.args(["-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]);
-        if let Some(url) = &index_url {
-            up.args(["-i", url]);
+        up.args(["-i", effective_index]);
+        if !effective_host.is_empty() {
+            up.args(["--trusted-host", effective_host]);
         }
         let _ = run_streaming(up, "pip upgrade (best-effort)", &mut log, &emit_line);
 
@@ -3244,8 +3307,9 @@ async fn pip_install(
         c.env("PYTHONUTF8", "1");
         c.env("PYTHONIOENCODING", "utf-8");
         c.args(["-m", "pip", "install", "-U", &package_spec]);
-        if let Some(url) = &index_url {
-            c.args(["-i", url]);
+        c.args(["-i", effective_index]);
+        if !effective_host.is_empty() {
+            c.args(["--trusted-host", effective_host]);
         }
         let status = run_streaming(c, "pip install", &mut log, &emit_line)?;
         if !status.success() {
@@ -3606,31 +3670,46 @@ async fn openakita_get_skill_config(
 #[tauri::command]
 async fn fetch_pypi_versions(package: String, index_url: Option<String>) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let url = if let Some(ref idx) = index_url {
-            // For custom mirrors, try the /pypi/<pkg>/json endpoint at the mirror root.
-            // e.g. https://pypi.tuna.tsinghua.edu.cn/pypi/openakita/json
-            // Strip trailing /simple or /simple/ from index-url to get mirror root.
+        // 构建候选 URL 列表，多源回退
+        // 注意：并非所有 PyPI 镜像都支持 /pypi/<pkg>/json API（阿里云不支持）
+        // 因此即使用户指定了 index_url，也要带上已验证可用的回退源
+        let mut urls: Vec<String> = Vec::new();
+        if let Some(ref idx) = index_url {
             let root = idx
                 .trim_end_matches('/')
                 .trim_end_matches("/simple")
                 .trim_end_matches("/simple/");
-            format!("{}/pypi/{}/json", root, package)
-        } else {
-            format!("https://pypi.org/pypi/{}/json", package)
-        };
+            urls.push(format!("{}/pypi/{}/json", root, package));
+        }
+        // 清华（已验证支持 JSON API）和官方 PyPI 作为回退
+        let tuna_url = format!("https://pypi.tuna.tsinghua.edu.cn/pypi/{}/json", package);
+        let pypi_url = format!("https://pypi.org/pypi/{}/json", package);
+        if !urls.iter().any(|u| u.contains("tuna.tsinghua")) {
+            urls.push(tuna_url);
+        }
+        if !urls.iter().any(|u| u.contains("pypi.org")) {
+            urls.push(pypi_url);
+        }
 
         let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(10))
             .user_agent("openakita-setup-center")
             .build()
             .map_err(|e| format!("HTTP client error: {e}"))?;
 
-        let resp = client
-            .get(&url)
-            .send()
-            .map_err(|e| format!("fetch PyPI versions failed ({}): {}", url, e))?
-            .error_for_status()
-            .map_err(|e| format!("fetch PyPI versions failed ({}): {}", url, e))?;
+        // 多源自动回退
+        let mut last_err = String::new();
+        let mut resp_ok = None;
+        for url in &urls {
+            match client.get(url).send() {
+                Ok(r) => match r.error_for_status() {
+                    Ok(r) => { resp_ok = Some(r); break; }
+                    Err(e) => { last_err = format!("fetch PyPI versions failed ({}): {}", url, e); }
+                },
+                Err(e) => { last_err = format!("fetch PyPI versions failed ({}): {}", url, e); }
+            }
+        }
+        let resp = resp_ok.ok_or(last_err)?;
 
         let body: serde_json::Value = resp
             .json()

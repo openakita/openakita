@@ -410,6 +410,17 @@ class BrowserMCP:
         # 确定是否 headless
         headless = not visible if visible is not None else self.headless
 
+        # 确保 Playwright 能找到通过设置中心安装的浏览器二进制
+        # install_module() 将 Chromium 下载到 ~/.openakita/modules/browser/browsers/
+        import os
+        from pathlib import Path
+
+        if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+            browsers_dir = Path.home() / ".openakita" / "modules" / "browser" / "browsers"
+            if browsers_dir.is_dir():
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
+                logger.info(f"[Browser] Set PLAYWRIGHT_BROWSERS_PATH={browsers_dir}")
+
         try:
             # 延迟导入 playwright
             from playwright.async_api import async_playwright

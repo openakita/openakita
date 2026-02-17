@@ -37,9 +37,11 @@ print(f"Model downloaded to: {model._model_card_text if hasattr(model, '_model_c
 """,
     },
     "browser": {
-        "description": "Browser automation (playwright)",
+        "description": "Browser automation (playwright + browser-use)",
         "packages": [
             "playwright>=1.40.0",
+            "browser-use>=0.1.0",
+            "langchain-openai>=0.1.0",
         ],
         "post_install": [sys.executable, "-m", "playwright", "install", "chromium"],
     },
@@ -160,16 +162,25 @@ def main():
     )
     parser.add_argument(
         "--mirror",
-        help="PyPI mirror URL (e.g. https://pypi.tuna.tsinghua.edu.cn/simple)",
+        default="https://mirrors.aliyun.com/pypi/simple/",
+        help="PyPI mirror URL (default: Aliyun China mirror)",
+    )
+    parser.add_argument(
+        "--no-mirror",
+        action="store_true",
+        help="Use official PyPI (disable default domestic mirror)",
     )
     args = parser.parse_args()
+
+    # --no-mirror 显式关闭国内镜像
+    if args.no_mirror:
+        args.mirror = None
 
     print(f"\n{'='*60}")
     print("  OpenAkita Optional Modules Pre-bundling")
     print(f"{'='*60}")
     print(f"  Output directory: {MODULES_DIR}")
-    if args.mirror:
-        print(f"  Mirror: {args.mirror}")
+    print(f"  Mirror: {args.mirror or '(official PyPI)'}")
 
     modules_to_bundle = [args.module] if args.module else list(MODULE_DEFS.keys())
 

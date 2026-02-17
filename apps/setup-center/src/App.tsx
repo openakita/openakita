@@ -718,9 +718,9 @@ function ProviderSearchSelect({
 }
 
 const PIP_INDEX_PRESETS: { id: "official" | "tuna" | "aliyun" | "custom"; label: string; url: string }[] = [
-  { id: "official", label: "官方 PyPI（默认）", url: "" },
+  { id: "aliyun", label: "阿里云（默认）", url: "https://mirrors.aliyun.com/pypi/simple/" },
   { id: "tuna", label: "清华 TUNA", url: "https://pypi.tuna.tsinghua.edu.cn/simple" },
-  { id: "aliyun", label: "阿里云", url: "https://mirrors.aliyun.com/pypi/simple/" },
+  { id: "official", label: "官方 PyPI", url: "https://pypi.org/simple/" },
   { id: "custom", label: "自定义…", url: "" },
 ];
 
@@ -1064,8 +1064,8 @@ export function App() {
   const [installLiveLog, setInstallLiveLog] = useState<string>("");
   const [installProgress, setInstallProgress] = useState<{ stage: string; percent: number } | null>(null);
   const [extras, setExtras] = useState<string>("all");
-  const [indexUrl, setIndexUrl] = useState<string>("");
-  const [pipIndexPresetId, setPipIndexPresetId] = useState<"official" | "tuna" | "aliyun" | "custom">("official");
+  const [indexUrl, setIndexUrl] = useState<string>("https://mirrors.aliyun.com/pypi/simple/");
+  const [pipIndexPresetId, setPipIndexPresetId] = useState<"official" | "tuna" | "aliyun" | "custom">("aliyun");
   const [customIndexUrl, setCustomIndexUrl] = useState<string>("");
   const [venvReady, setVenvReady] = useState(false);
   const [openakitaInstalled, setOpenakitaInstalled] = useState(false);
@@ -1507,7 +1507,7 @@ export function App() {
         const status = String(p.status || "");
         const moduleId = String(p.moduleId || "");
         if (msg) {
-          const prefix = status === "retrying" ? "🔄" : status === "error" ? "❌" : status === "done" ? "✅" : "📦";
+          const prefix = status === "retrying" ? "🔄" : status === "error" ? "❌" : status === "done" ? "✅" : status === "warning" ? "⚠️" : status === "restart-hint" ? "🔁" : "📦";
           setObDetailLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${prefix} [${moduleId}] ${msg}`]);
         }
       });
