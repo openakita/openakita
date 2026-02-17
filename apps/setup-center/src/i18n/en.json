@@ -76,7 +76,15 @@
     "contextCompressed": "Context compressed: {{before}}K → {{after}}K tokens",
     "processing": "Processing...",
     "processed": "Processed ({{seconds}}s)",
-    "deleteConversation": "Delete Conversation"
+    "deleteConversation": "Delete Conversation",
+    "skipStep": "Skip",
+    "queueMessage": "Queued message",
+    "sendNow": "Send now",
+    "editMessage": "Edit",
+    "deleteQueued": "Remove",
+    "queueHint": "Enter to queue | Ctrl+Enter to send now",
+    "queuedCount": "{{count}} queued message(s)",
+    "insertMessage": "Insert message"
   },
   "skills": {
     "title": "Skill Manager",

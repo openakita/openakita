@@ -35,6 +35,13 @@ import {
   IconMask, IconBot, IconUsers, IconHelp,
 } from "../icons";
 
+// ─── 排队消息类型 ───
+type QueuedMessage = {
+  id: string;
+  text: string;
+  timestamp: number;
+};
+
 // ─── SSE 事件处理 ───
 
 type StreamEvent =
@@ -245,7 +252,7 @@ function ToolResultBlock({ result }: { result: string }) {
 }
 
 /** 叙事流单条目渲染 */
-function ChainEntryLine({ entry }: { entry: ChainEntry }) {
+function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?: () => void }) {
   switch (entry.kind) {
     case "thinking":
       return (
@@ -257,6 +264,7 @@ function ChainEntryLine({ entry }: { entry: ChainEntry }) {
     case "text":
       return <div className="chainNarrText">{entry.content}</div>;
     case "tool_start": {
+      const isRunning = entry.status === "running";
       const tsIcon = entry.status === "error"
         ? <IconX size={11} />
         : entry.status === "done"
@@ -266,6 +274,15 @@ function ChainEntryLine({ entry }: { entry: ChainEntry }) {
         <div className="chainNarrToolStart">
           {tsIcon}
           <span className="chainNarrToolName">{entry.description || entry.tool}</span>
+          {isRunning && onSkipStep && (
+            <button
+              className="chainToolSkipBtn"
+              onClick={(e) => { e.stopPropagation(); onSkipStep(); }}
+              title="Skip this step"
+            >
+              <IconX size={9} />
+            </button>
+          )}
         </div>
       );
     }
@@ -292,11 +309,12 @@ function ChainEntryLine({ entry }: { entry: ChainEntry }) {
 }
 
 /** 单个迭代组: 叙事流模式 */
-function ChainGroupItem({ group, onToggle, isLast, streaming }: {
+function ChainGroupItem({ group, onToggle, isLast, streaming, onSkipStep }: {
   group: ChainGroup;
   onToggle: () => void;
   isLast: boolean;
   streaming: boolean;
+  onSkipStep?: () => void;
 }) {
   const { t } = useTranslation();
   const isActive = isLast && streaming;
@@ -335,7 +353,7 @@ function ChainGroupItem({ group, onToggle, isLast, streaming }: {
       {showContent && (
         <div className="chainNarrFlow">
           {group.entries.map((entry, i) => (
-            <ChainEntryLine key={i} entry={entry} />
+            <ChainEntryLine key={i} entry={entry} onSkipStep={onSkipStep} />
           ))}
           {isActive && group.entries.length > 0 && (
             <div className="chainNarrCursor" />
@@ -347,10 +365,11 @@ function ChainGroupItem({ group, onToggle, isLast, streaming }: {
 }
 
 /** 完整思维链组件 */
-function ThinkingChain({ chain, streaming, showChain }: {
+function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
   chain: ChainGroup[];
   streaming: boolean;
   showChain: boolean;
+  onSkipStep?: () => void;
 }) {
   const { t } = useTranslation();
   const [localChain, setLocalChain] = useState(chain);
@@ -399,6 +418,7 @@ function ThinkingChain({ chain, streaming, showChain }: {
           group={group}
           isLast={idx === localChain.length - 1}
           streaming={streaming}
+          onSkipStep={onSkipStep}
           onToggle={() => {
             setLocalChain(prev => prev.map((g, i) =>
               i === idx ? { ...g, collapsed: !g.collapsed } : g
@@ -898,11 +918,13 @@ function MessageBubble({
   onAskAnswer,
   apiBaseUrl,
   showChain = true,
+  onSkipStep,
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
   apiBaseUrl?: string;
   showChain?: boolean;
+  onSkipStep?: () => void;
 }) {
   const isUser = msg.role === "user";
   return (
@@ -938,7 +960,7 @@ function MessageBubble({
 
         {/* Thinking chain (new, Cursor-style) */}
         {msg.thinkingChain && msg.thinkingChain.length > 0 && (
-          <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} />
+          <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} onSkipStep={onSkipStep} />
         )}
 
         {/* Thinking content (legacy fallback when no chain data) */}
@@ -1068,11 +1090,13 @@ function FlatMessageItem({
   onAskAnswer,
   apiBaseUrl,
   showChain = true,
+  onSkipStep,
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
   apiBaseUrl?: string;
   showChain?: boolean;
+  onSkipStep?: () => void;
 }) {
   const isUser = msg.role === "user";
   const isSystem = msg.role === "system";
@@ -1113,7 +1137,7 @@ function FlatMessageItem({
 
           {/* Thinking chain (Cursor style timeline) */}
           {msg.thinkingChain && msg.thinkingChain.length > 0 && (
-            <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} />
+            <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} onSkipStep={onSkipStep} />
           )}
 
           {/* Legacy thinking fallback */}
@@ -2106,6 +2130,90 @@ export function ChatView({
     readerRef.current = null;
   }, []);
 
+  // ── 消息排队系统 ──
+  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
+
+  const handleSkipStep = useCallback(() => {
+    fetch(`${apiBase}/api/chat/skip`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: activeConvId, reason: "用户从界面跳过步骤" }),
+    }).catch(() => {});
+  }, [apiBase, activeConvId]);
+
+  const handleCancelTask = useCallback(() => {
+    fetch(`${apiBase}/api/chat/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: activeConvId, reason: "用户从界面取消任务" }),
+    }).catch(() => {});
+    stopStreaming();
+  }, [apiBase, activeConvId, stopStreaming]);
+
+  const handleInsertMessage = useCallback((text: string) => {
+    if (!text.trim()) return;
+    fetch(`${apiBase}/api/chat/insert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: activeConvId, message: text }),
+    }).catch(() => {});
+  }, [apiBase, activeConvId]);
+
+  const handleQueueMessage = useCallback(() => {
+    const text = inputText.trim();
+    if (!text) return;
+    setMessageQueue(prev => [...prev, { id: genId(), text, timestamp: Date.now() }]);
+    setInputText("");
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+    }
+  }, [inputText]);
+
+  const handleRemoveQueued = useCallback((id: string) => {
+    setMessageQueue(prev => prev.filter(m => m.id !== id));
+  }, []);
+
+  const handleEditQueued = useCallback((id: string) => {
+    const item = messageQueue.find(m => m.id === id);
+    if (item) {
+      setInputText(item.text);
+      setMessageQueue(prev => prev.filter(m => m.id !== id));
+      inputRef.current?.focus();
+    }
+  }, [messageQueue]);
+
+  const handleSendQueuedNow = useCallback((id: string) => {
+    const item = messageQueue.find(m => m.id === id);
+    if (item) {
+      handleInsertMessage(item.text);
+      setMessageQueue(prev => prev.filter(m => m.id !== id));
+    }
+  }, [messageQueue, handleInsertMessage]);
+
+  const handleMoveQueued = useCallback((id: string, direction: "up" | "down") => {
+    setMessageQueue(prev => {
+      const idx = prev.findIndex(m => m.id === id);
+      if (idx < 0) return prev;
+      const newIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return next;
+    });
+  }, []);
+
+  // ── 排队消息自动出队：isStreaming 变 false 时自动取第一条执行 ──
+  const autoDequeueRef = useRef(false);
+  useEffect(() => {
+    if (!isStreaming && autoDequeueRef.current && messageQueue.length > 0) {
+      const next = messageQueue[0];
+      setMessageQueue(prev => prev.slice(1));
+      // 延迟一小段时间确保 streaming 状态完全清理
+      setTimeout(() => sendMessage(next.text), 100);
+    }
+    autoDequeueRef.current = isStreaming;
+  }, [isStreaming, messageQueue, sendMessage]);
+
   // ── 文件/图片上传 ──
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -2344,17 +2452,31 @@ export function ChatView({
       return;
     }
 
-    // Ctrl+Enter or Cmd+Enter to send
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      sendMessage();
+    if (isStreaming) {
+      // Streaming 状态: Ctrl+Enter = 立即插入, Enter = 排队
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const text = inputText.trim();
+        if (text) {
+          handleInsertMessage(text);
+          setInputText("");
+          if (inputRef.current) inputRef.current.style.height = "auto";
+        }
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleQueueMessage();
+      }
+    } else {
+      // 非 Streaming 状态: Enter / Ctrl+Enter 都发送
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        sendMessage();
+      } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        sendMessage();
+      }
     }
-    // Enter without shift to send (single line mode)
-    else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage]);
+  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isStreaming, inputText, handleInsertMessage, handleQueueMessage]);
 
   // ── 输入变化处理 ──
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2515,9 +2637,9 @@ export function ChatView({
           )}
           {messages.map((msg) =>
             displayMode === "flat" ? (
-              <FlatMessageItem key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} showChain={showChain} />
+              <FlatMessageItem key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} showChain={showChain} onSkipStep={handleSkipStep} />
             ) : (
-              <MessageBubble key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} showChain={showChain} />
+              <MessageBubble key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} showChain={showChain} onSkipStep={handleSkipStep} />
             )
           )}
           <div ref={messagesEndRef} />
@@ -2559,6 +2681,48 @@ export function ChatView({
               }}
               selectedIdx={slashSelectedIdx}
             />
+          )}
+
+          {/* Queued messages list */}
+          {messageQueue.length > 0 && (
+            <div className="queuedMessageList">
+              {messageQueue.map((qm, idx) => (
+                <div key={qm.id} className="queuedMessageItem">
+                  <div className="queuedMessageOrderBtns">
+                    <button
+                      className="queuedMessageOrderBtn"
+                      disabled={idx === 0}
+                      onClick={() => handleMoveQueued(qm.id, "up")}
+                      title="Move up"
+                    >
+                      <span style={{ fontSize: 9, lineHeight: 1 }}>&#9650;</span>
+                    </button>
+                    <button
+                      className="queuedMessageOrderBtn"
+                      disabled={idx === messageQueue.length - 1}
+                      onClick={() => handleMoveQueued(qm.id, "down")}
+                      title="Move down"
+                    >
+                      <span style={{ fontSize: 9, lineHeight: 1 }}>&#9660;</span>
+                    </button>
+                  </div>
+                  <span className="queuedMessageText" title={qm.text}>
+                    {qm.text.length > 60 ? qm.text.slice(0, 60) + "..." : qm.text}
+                  </span>
+                  <div className="queuedMessageActions">
+                    <button className="queuedMessageActionBtn" onClick={() => handleSendQueuedNow(qm.id)} title={t("chat.sendNow")}>
+                      <IconSend size={11} />
+                    </button>
+                    <button className="queuedMessageActionBtn" onClick={() => handleEditQueued(qm.id)} title={t("chat.editMessage")}>
+                      <IconRefresh size={11} />
+                    </button>
+                    <button className="queuedMessageActionBtn queuedMessageDeleteBtn" onClick={() => handleRemoveQueued(qm.id)} title={t("chat.deleteQueued")}>
+                      <IconTrash size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
 
           <div className={`chatInputBox ${planMode ? "chatInputBoxPlan" : ""}`}>
@@ -2604,7 +2768,7 @@ export function ChatView({
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               onPaste={handlePaste}
-              placeholder={planMode ? `Plan ${t("chat.planMode")}` : t("chat.placeholder")}
+              placeholder={isStreaming ? t("chat.queueHint") : planMode ? `Plan ${t("chat.planMode")}` : t("chat.placeholder")}
               rows={1}
               className="chatInputTextarea"
               onInput={(e) => {
@@ -2684,9 +2848,19 @@ export function ChatView({
 
               <div className="chatInputToolbarRight">
                 {isStreaming ? (
-                  <button onClick={stopStreaming} className="chatInputSendBtn chatInputStopBtn" title={t("chat.stopGeneration")}>
-                    <IconStop size={14} />
-                  </button>
+                  inputText.trim() ? (
+                    <button
+                      onClick={handleQueueMessage}
+                      className="chatInputSendBtn"
+                      title={t("chat.queueHint")}
+                    >
+                      <IconSend size={14} />
+                    </button>
+                  ) : (
+                    <button onClick={handleCancelTask} className="chatInputSendBtn chatInputStopBtn" title={t("chat.stopGeneration")}>
+                      <IconStop size={14} />
+                    </button>
+                  )
                 ) : (
                   <button
                     onClick={() => sendMessage()}

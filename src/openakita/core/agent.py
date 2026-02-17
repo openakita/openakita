@@ -67,6 +67,7 @@ from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 from .agent_state import AgentState
 from .brain import Brain, Context
+from .errors import UserCancelledError
 from .context_manager import ContextManager
 from .identity import Identity
 from .prompt_assembler import PromptAssembler
@@ -199,6 +200,18 @@ class Agent:
         "中止",
         "终止",
         "不要了",
+    }
+
+    SKIP_COMMANDS = {
+        "跳过",
+        "skip",
+        "下一步",
+        "next",
+        "跳过这步",
+        "跳过当前",
+        "skip this",
+        "换个方法",
+        "太慢了",
     }
 
     def __init__(
@@ -432,6 +445,18 @@ class Agent:
             (not allow_interrupt_checks) or allow_parallel_with_interrupts
         )
 
+        # 获取 cancel_event / skip_event 用于工具执行竞速取消/跳过
+        _tool_cancel_event = (
+            self._state.current_task.cancel_event
+            if self._state and self._state.current_task
+            else asyncio.Event()
+        )
+        _tool_skip_event = (
+            self._state.current_task.skip_event
+            if self._state and self._state.current_task
+            else asyncio.Event()
+        )
+
         async def _run_one(tc: dict, idx: int) -> tuple[int, dict, str | None, list | None]:
             tool_name = tc.get("name", "")
             tool_input = tc.get("input") or {}
@@ -465,16 +490,77 @@ class Agent:
                 task_monitor.begin_tool_call(tool_name, tool_input)
 
             try:
-                async with self._tool_semaphore:
-                    if handler_lock:
-                        async with handler_lock:
-                            result = await self._execute_tool(tool_name, tool_input)
-                    else:
-                        result = await self._execute_tool(tool_name, tool_input)
+                async def _do_exec():
+                    async with self._tool_semaphore:
+                        if handler_lock:
+                            async with handler_lock:
+                                return await self._execute_tool(tool_name, tool_input)
+                        else:
+                            return await self._execute_tool(tool_name, tool_input)
 
+                # 每个工具执行前清除 skip 标志
+                if self._state and self._state.current_task:
+                    self._state.current_task.clear_skip()
+
+                # 将工具执行与 cancel_event / skip_event 三路竞速
+                tool_task = asyncio.create_task(_do_exec())
+                cancel_waiter = asyncio.create_task(_tool_cancel_event.wait())
+                skip_waiter = asyncio.create_task(_tool_skip_event.wait())
+
+                done_set, pending_set = await asyncio.wait(
+                    {tool_task, cancel_waiter, skip_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for t in pending_set:
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                if cancel_waiter in done_set and tool_task not in done_set:
+                    # cancel_event 先触发，工具被中断（终止整个任务）
+                    logger.info(f"[StopTask] Tool {tool_name} interrupted by user cancel")
+                    success = False
+                    result_str = f"[工具 {tool_name} 被用户中断]"
+                    return (
+                        idx,
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": result_str,
+                            "is_error": True,
+                        },
+                        None,
+                        None,
+                    )
+
+                if skip_waiter in done_set and tool_task not in done_set:
+                    # skip_event 先触发，仅跳过当前工具（不终止任务）
+                    _skip_reason = (
+                        self._state.current_task.skip_reason
+                        if self._state and self._state.current_task
+                        else "用户请求跳过"
+                    )
+                    logger.info(f"[SkipStep] Tool {tool_name} skipped by user: {_skip_reason}")
+                    success = True
+                    result_str = f"[用户跳过了此步骤: {_skip_reason}]"
+                    return (
+                        idx,
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": result_str,
+                            "is_error": False,
+                        },
+                        tool_name,
+                        None,
+                    )
+
+                result = tool_task.result()
                 result_str = str(result) if result is not None else "操作已完成"
 
-                # 终端输出工具返回结果（便于调试与观察）
                 _preview = result_str if len(result_str) <= 800 else result_str[:800] + "\n... (已截断)"
                 logger.info(f"[Tool] {tool_name} → {_preview}")
 
@@ -3084,6 +3170,12 @@ search_github → install_skill → 使用
         self._task_cancelled = False
         self._cancel_reason = ""
 
+        # 重置 skip_event 和 pending_user_inserts（清空上轮残留）
+        if self._state and self._state.current_task:
+            self._state.current_task.clear_skip()
+            # drain_user_inserts 是 async，但此处在 async 方法中可以 await
+            await self._state.current_task.drain_user_inserts()
+
         # 解析 conversation_id
         self._current_session_id = session_id
         conversation_id = self._resolve_conversation_id(session, session_id)
@@ -3204,6 +3296,11 @@ search_github → install_skill → 使用
         # 重置取消标志
         self._task_cancelled = False
         self._cancel_reason = ""
+
+        # 重置 skip_event 和 pending_user_inserts（清空上轮残留）
+        if self._state and self._state.current_task:
+            self._state.current_task.clear_skip()
+            await self._state.current_task.drain_user_inserts()
 
         # 解析 conversation_id
         self._current_session_id = session_id
@@ -3657,6 +3754,112 @@ NEXT: 建议的下一步（如有）"""
             logger.warning(f"[TaskVerify] Failed to verify: {e}, assuming INCOMPLETE")
             return False  # 验证失败时不要默认完成，交由上层计数器做兜底退出
 
+    async def _cancellable_llm_call(self, cancel_event: asyncio.Event, **kwargs) -> Any:
+        """将 LLM 调用包装为可取消的 asyncio.Task，配合 cancel_event 竞速。
+
+        当 cancel_event 先于 LLM 返回被 set() 时，抛出 UserCancelledError。
+        """
+        llm_task = asyncio.create_task(
+            asyncio.to_thread(self.brain.messages_create, **kwargs)
+        )
+        cancel_waiter = asyncio.create_task(cancel_event.wait())
+
+        done, pending = await asyncio.wait(
+            {llm_task, cancel_waiter},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if llm_task in done:
+            return llm_task.result()
+        else:
+            raise UserCancelledError(
+                reason=self._cancel_reason or "用户请求停止",
+                source="llm_call",
+            )
+
+    async def _handle_cancel_farewell(
+        self,
+        working_messages: list[dict],
+        system_prompt: str,
+        current_model: str,
+    ) -> str:
+        """取消后注入中断上下文，发起轻量 LLM 调用让模型自然收尾。
+
+        将「用户中断」作为特殊消息注入上下文，让 LLM 知晓并做出合理收尾，
+        而不是粗暴返回固定文本。LLM 的收尾回复和中断事件都会被记录到持久上下文中。
+
+        Args:
+            working_messages: 当前的工作消息列表（会被修改）
+            system_prompt: 当前的系统提示词
+            current_model: 当前使用的模型
+
+        Returns:
+            LLM 生成的收尾文本，或超时后的默认文本
+        """
+        cancel_reason = self._cancel_reason or "用户请求停止"
+        cancel_msg = (
+            f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
+            "请立即停止当前操作，简要告知用户已停止以及当前进度。"
+            "不要调用任何工具。"
+        )
+        working_messages.append({"role": "user", "content": cancel_msg})
+
+        farewell_text = "✅ 任务已停止。"
+        try:
+            farewell_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.brain.messages_create,
+                    model=current_model,
+                    max_tokens=200,
+                    system=system_prompt,
+                    tools=[],
+                    messages=working_messages,
+                ),
+                timeout=10.0,
+            )
+            # 从响应中提取文本
+            for block in farewell_response.content:
+                if block.type == "text" and block.text.strip():
+                    farewell_text = block.text.strip()
+                    break
+            logger.info(f"[StopTask] LLM farewell: {farewell_text[:100]}")
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.warning("[StopTask] LLM farewell timed out (10s), using default")
+        except Exception as e:
+            logger.warning(f"[StopTask] LLM farewell failed: {e}, using default")
+
+        # 持久化中断记录到对话上下文
+        self._persist_cancel_to_context(cancel_reason, farewell_text)
+
+        return farewell_text
+
+    def _persist_cancel_to_context(self, cancel_reason: str, farewell_text: str) -> None:
+        """将中断事件持久化到 _context.messages 对话历史。
+
+        确保后续对话中 LLM 能看到之前的中断历史。
+        """
+        try:
+            ctx = getattr(self, "_context", None)
+            if ctx and hasattr(ctx, "messages"):
+                ctx.messages.append({
+                    "role": "user",
+                    "content": f"[用户中断了上一个任务: {cancel_reason}]",
+                })
+                ctx.messages.append({
+                    "role": "assistant",
+                    "content": farewell_text,
+                })
+                logger.debug(f"[StopTask] Cancel event persisted to context (reason={cancel_reason})")
+        except Exception as e:
+            logger.warning(f"[StopTask] Failed to persist cancel to context: {e}")
+
     async def _chat_with_tools_and_context(
         self,
         messages: list[dict],
@@ -3941,6 +4144,13 @@ NEXT: 建议的下一步（如有）"""
             logger.info(f"[ModelSwitch] {msg}")
             return True
 
+        # 获取 cancel_event（用于 LLM / 工具调用竞速取消）
+        _cancel_event = (
+            self._state.current_task.cancel_event
+            if self._state and self._state.current_task
+            else asyncio.Event()
+        )
+
         for iteration in range(max_iterations):
             # C8: 每轮迭代开始时检查任务是否已被取消
             if self._task_cancelled:
@@ -4025,10 +4235,10 @@ NEXT: 建议的下一步（如有）"""
                     working_messages, system_prompt=_build_effective_system_prompt()
                 )
 
-            # 调用 Brain，传递工具列表（在线程池中执行同步调用，避免事件循环冲突）
+            # 调用 Brain，传递工具列表（可被 cancel_event 中断）
             try:
-                response = await asyncio.to_thread(
-                    self.brain.messages_create,
+                response = await self._cancellable_llm_call(
+                    _cancel_event,
                     model=current_model,
                     max_tokens=self.brain.max_tokens,
                     system=_build_effective_system_prompt(),
@@ -4040,6 +4250,12 @@ NEXT: 建议的下一步（如有）"""
                 # 成功调用，重置重试计数
                 if task_monitor:
                     task_monitor.reset_retry_count()
+
+            except UserCancelledError:
+                logger.info("[StopTask] LLM call interrupted by user cancel event")
+                return await self._handle_cancel_farewell(
+                    working_messages, _build_effective_system_prompt(), current_model
+                )
 
             except Exception as e:
                 logger.error(f"[LLM] Brain call failed: {e}")
@@ -4363,7 +4579,11 @@ NEXT: 建议的下一步（如有）"""
                 logger.info(
                     f"[StopTask] Task cancelled after tool execution: {self._cancel_reason}"
                 )
-                return "✅ 任务已停止。"
+                # 将已有的工具结果添加到上下文中，让 LLM 知道执行进度
+                working_messages.append({"role": "user", "content": tool_results})
+                return await self._handle_cancel_farewell(
+                    working_messages, _build_effective_system_prompt(), current_model
+                )
 
             # 添加工具结果
             working_messages.append(
@@ -4372,6 +4592,36 @@ NEXT: 建议的下一步（如有）"""
                     "content": tool_results,
                 }
             )
+
+            # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
+            if self._state and self._state.current_task and self._state.current_task.skip_event.is_set():
+                _skip_reason = self._state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
+                self._state.current_task.clear_skip()
+                working_messages.append({
+                    "role": "user",
+                    "content": (
+                        f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
+                        "请反思: 该步骤是否有问题？是否需要换个方法继续？"
+                        "请整理思路后继续完成任务。"
+                    ),
+                })
+                logger.info(f"[SkipReflect] Injected skip reflection prompt: {_skip_reason}")
+
+            # === 检查用户插入消息 ===
+            if self._state and self._state.current_task:
+                _inserts = await self._state.current_task.drain_user_inserts()
+                for _ins_text in _inserts:
+                    working_messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[用户插入消息] {_ins_text}\n"
+                            "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                            "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                            "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                            "如不确定，使用 ask_user 工具向用户确认。"
+                        ),
+                    })
+                    logger.info(f"[UserInsert] Injected user insert into context: {_ins_text[:60]}")
 
             # === C7: 重构循环检测 ===
             consecutive_tool_rounds += 1
@@ -4556,12 +4806,16 @@ NEXT: 建议的下一步（如有）"""
         取消当前正在执行的任务
 
         可以从外部调用此方法来停止正在运行的任务。
+        同时触发 cancel_event 以中断正在进行的 LLM 调用或工具执行。
 
         Args:
             reason: 取消原因
         """
         self._task_cancelled = True
         self._cancel_reason = reason
+        # 触发 TaskState 的 cancel_event（通知 asyncio.wait 竞速的等待方）
+        if hasattr(self, "_state") and self._state and self._state.current_task:
+            self._state.cancel_task(reason)
         logger.info(f"[StopTask] Task cancellation requested: {reason}")
 
     def is_stop_command(self, message: str) -> bool:
@@ -4576,6 +4830,58 @@ NEXT: 建议的下一步（如有）"""
         """
         msg_lower = message.strip().lower()
         return msg_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS
+
+    def is_skip_command(self, message: str) -> bool:
+        """
+        检查消息是否为跳过当前步骤指令
+
+        Args:
+            message: 用户消息
+
+        Returns:
+            是否为跳过指令
+        """
+        msg_lower = message.strip().lower()
+        return msg_lower in self.SKIP_COMMANDS or message.strip() in self.SKIP_COMMANDS
+
+    def classify_interrupt(self, message: str) -> str:
+        """
+        分类中断消息类型
+
+        Args:
+            message: 用户消息
+
+        Returns:
+            "stop" / "skip" / "insert"
+        """
+        if self.is_stop_command(message):
+            return "stop"
+        elif self.is_skip_command(message):
+            return "skip"
+        else:
+            return "insert"
+
+    def skip_current_step(self, reason: str = "用户请求跳过当前步骤") -> None:
+        """
+        跳过当前正在执行的工具/步骤（不终止整个任务）
+
+        Args:
+            reason: 跳过原因
+        """
+        if hasattr(self, "_state") and self._state and self._state.current_task:
+            self._state.skip_current_step(reason)
+        logger.info(f"[SkipStep] Step skip requested: {reason}")
+
+    async def insert_user_message(self, text: str) -> None:
+        """
+        向当前任务注入用户消息（任务执行期间的非指令消息）
+
+        Args:
+            text: 用户消息文本
+        """
+        if hasattr(self, "_state") and self._state and self._state.current_task:
+            await self._state.insert_user_message(text)
+        logger.info(f"[UserInsert] User message queued: {text[:50]}...")
 
     async def _chat_with_tools(self, message: str) -> str:
         """
@@ -4727,7 +5033,33 @@ NEXT: 建议的下一步（如有）"""
 
             messages.append({"role": "user", "content": tool_results})
 
-            # 如果检测到中断，在下一轮迭代中 LLM 会看到中断提示
+            # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
+            if self._state and self._state.current_task and self._state.current_task.skip_event.is_set():
+                _skip_reason = self._state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
+                self._state.current_task.clear_skip()
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
+                        "请反思: 该步骤是否有问题？是否需要换个方法继续？"
+                        "请整理思路后继续完成任务。"
+                    ),
+                })
+
+            # === 检查用户插入消息 ===
+            if self._state and self._state.current_task:
+                _inserts = await self._state.current_task.drain_user_inserts()
+                for _ins_text in _inserts:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[用户插入消息] {_ins_text}\n"
+                            "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                            "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                            "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                            "如不确定，使用 ask_user 工具向用户确认。"
+                        ),
+                    })
 
             # 检查是否结束
             if response.stop_reason == "end_turn":
@@ -5240,6 +5572,34 @@ NEXT: 建议的下一步（如有）"""
                 )
 
                 messages.append({"role": "user", "content": tool_results})
+
+                # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
+                if self._state and self._state.current_task and self._state.current_task.skip_event.is_set():
+                    _skip_reason = self._state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
+                    self._state.current_task.clear_skip()
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
+                            "请反思: 该步骤是否有问题？是否需要换个方法继续？"
+                            "请整理思路后继续完成任务。"
+                        ),
+                    })
+
+                # === 检查用户插入消息 ===
+                if self._state and self._state.current_task:
+                    _inserts = await self._state.current_task.drain_user_inserts()
+                    for _ins_text in _inserts:
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"[用户插入消息] {_ins_text}\n"
+                                "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                                "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                                "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                                "如不确定，使用 ask_user 工具向用户确认。"
+                            ),
+                        })
 
                 # 注意：不在工具执行后检查 stop_reason，让循环继续获取 LLM 的最终总结
             # 循环结束后，如果 final_response 为空，尝试让 LLM 生成一个总结

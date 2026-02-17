@@ -8,6 +8,7 @@ Agent 状态管理模块
 - AgentState: Agent 全局状态管理 + 状态机转换验证
 """
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -94,6 +95,15 @@ class TaskState:
     # 取消机制
     cancelled: bool = False
     cancel_reason: str = ""
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    # 单步跳过机制
+    skip_event: asyncio.Event = field(default_factory=asyncio.Event)
+    skip_reason: str = ""
+
+    # 用户消息插入队列（任务执行期间用户发送的非指令消息）
+    pending_user_inserts: list[str] = field(default_factory=list)
+    _insert_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # 模型状态
     current_model: str = ""
@@ -143,13 +153,38 @@ class TaskState:
         logger.debug(f"[State] {old_status.value} -> {new_status.value} (task={self.task_id[:8]})")
 
     def cancel(self, reason: str = "用户请求停止") -> None:
-        """取消任务"""
+        """取消任务，同时触发 cancel_event 通知所有等待方"""
         self.cancelled = True
         self.cancel_reason = reason
+        self.cancel_event.set()
         # 允许从任何活跃状态取消
         if self.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.IDLE):
             self.status = TaskStatus.CANCELLED
             logger.info(f"[State] Task {self.task_id[:8]} cancelled: {reason}")
+
+    def request_skip(self, reason: str = "用户请求跳过当前步骤") -> None:
+        """请求跳过当前正在执行的工具/步骤（不终止整个任务）"""
+        self.skip_reason = reason
+        self.skip_event.set()
+        logger.info(f"[State] Task {self.task_id[:8]} skip requested: {reason}")
+
+    def clear_skip(self) -> None:
+        """重置跳过标志（每次工具执行开始时调用）"""
+        self.skip_event.clear()
+        self.skip_reason = ""
+
+    async def add_user_insert(self, text: str) -> None:
+        """线程安全地添加用户插入消息"""
+        async with self._insert_lock:
+            self.pending_user_inserts.append(text)
+            logger.info(f"[State] User insert queued: {text[:50]}...")
+
+    async def drain_user_inserts(self) -> list[str]:
+        """取出所有待处理的用户插入消息（清空队列）"""
+        async with self._insert_lock:
+            msgs = list(self.pending_user_inserts)
+            self.pending_user_inserts.clear()
+            return msgs
 
     def reset_for_model_switch(self) -> None:
         """模型切换时重置循环相关状态"""
@@ -262,6 +297,16 @@ class AgentState:
         """取消当前任务"""
         if self.current_task:
             self.current_task.cancel(reason)
+
+    def skip_current_step(self, reason: str = "用户请求跳过当前步骤") -> None:
+        """跳过当前正在执行的步骤（不终止任务）"""
+        if self.current_task:
+            self.current_task.request_skip(reason)
+
+    async def insert_user_message(self, text: str) -> None:
+        """向当前任务注入用户消息"""
+        if self.current_task:
+            await self.current_task.add_user_insert(text)
 
     @property
     def is_task_cancelled(self) -> bool:

@@ -76,7 +76,15 @@
     "contextCompressed": "上下文压缩: {{before}}K → {{after}}K tokens",
     "processing": "处理中...",
     "processed": "已处理 ({{seconds}}s)",
-    "deleteConversation": "删除对话"
+    "deleteConversation": "删除对话",
+    "skipStep": "跳过",
+    "queueMessage": "排队消息",
+    "sendNow": "立即发送",
+    "editMessage": "编辑",
+    "deleteQueued": "移除",
+    "queueHint": "Enter 排队 | Ctrl+Enter 立即发送",
+    "queuedCount": "{{count}} 条排队消息",
+    "insertMessage": "插入消息"
   },
   "skills": {
     "title": "技能管理",

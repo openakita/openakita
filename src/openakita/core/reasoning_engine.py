@@ -31,6 +31,7 @@ from ..config import settings
 from ..tracing.tracer import get_tracer
 from .agent_state import AgentState, TaskState, TaskStatus
 from .context_manager import ContextManager
+from .errors import UserCancelledError
 from .response_handler import ResponseHandler, clean_llm_response, strip_thinking_tags
 from .tool_executor import ToolExecutor
 
@@ -1231,6 +1232,23 @@ class ReasoningEngine:
                     if task_monitor:
                         task_monitor.reset_retry_count()
 
+                except UserCancelledError as uce:
+                    # --- 用户取消中断：发起轻量 LLM 收尾 ---
+                    logger.info(f"[ReAct-Stream] LLM call interrupted by user cancel: {uce.reason}")
+                    _thinking_duration = int((time.time() - _thinking_t0) * 1000)
+                    yield {"type": "thinking_end", "duration_ms": _thinking_duration}
+
+                    self._save_react_trace(
+                        react_trace, conversation_id, session_type, "cancelled", _trace_started_at
+                    )
+                    # 流式输出收尾
+                    async for ev in self._stream_cancel_farewell(
+                        working_messages, effective_prompt, current_model, state
+                    ):
+                        yield ev
+                    yield {"type": "done"}
+                    return
+
                 except Exception as e:
                     # --- LLM Error Handling（与 run() 一致） ---
                     retry_result = self._handle_llm_error(
@@ -1474,30 +1492,94 @@ class ReasoningEngine:
                         yield {"type": "done"}
                         return
 
-                    # ---- 正常工具执行 ----
+                    # ---- 正常工具执行（支持 cancel_event / skip_event 三路竞速中断） ----
                     tool_results_for_msg: list[dict] = []
+                    _stream_cancelled = False
+                    _stream_skipped = False
+                    skip_event = state.skip_event if state else asyncio.Event()
                     for tc in decision.tool_calls:
+                        # 每个工具执行前检查取消
+                        if state and state.cancelled:
+                            _stream_cancelled = True
+                            break
+
                         tool_name = tc.get("name", "unknown")
                         tool_args = tc.get("input", tc.get("arguments", {}))
                         tool_id = tc.get("id", str(uuid.uuid4()))
 
-                        # === chain_text: 描述即将调用的工具 ===
                         _tool_desc = self._describe_tool_call(tool_name, tool_args)
                         yield {"type": "chain_text", "content": _tool_desc}
 
                         yield {"type": "tool_call_start", "tool": tool_name, "args": tool_args, "id": tool_id}
 
+                        # 每个工具执行前清除 skip 标志
+                        if state:
+                            state.clear_skip()
+
+                        # 将工具执行与 cancel_event / skip_event 三路竞速
                         try:
-                            result_text = await self._tool_executor.execute_tool(
-                                tool_name=tool_name,
-                                tool_input=tool_args if isinstance(tool_args, dict) else {},
-                                session_id=conversation_id,
+                            tool_exec_task = asyncio.create_task(
+                                self._tool_executor.execute_tool(
+                                    tool_name=tool_name,
+                                    tool_input=tool_args if isinstance(tool_args, dict) else {},
+                                    session_id=conversation_id,
+                                )
                             )
-                            result_text = str(result_text) if result_text else ""
+                            cancel_waiter = asyncio.create_task(cancel_event.wait())
+                            skip_waiter = asyncio.create_task(skip_event.wait())
+
+                            done_set, pending_set = await asyncio.wait(
+                                {tool_exec_task, cancel_waiter, skip_waiter},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+
+                            for t in pending_set:
+                                t.cancel()
+                                try:
+                                    await t
+                                except (asyncio.CancelledError, Exception):
+                                    pass
+
+                            if cancel_waiter in done_set and tool_exec_task not in done_set:
+                                result_text = f"[工具 {tool_name} 被用户中断]"
+                                _stream_cancelled = True
+                            elif skip_waiter in done_set and tool_exec_task not in done_set:
+                                _skip_reason = state.skip_reason if state else "用户请求跳过"
+                                result_text = f"[用户跳过了此步骤: {_skip_reason}]"
+                                _stream_skipped = True
+                                logger.info(f"[SkipStep-Stream] Tool {tool_name} skipped: {_skip_reason}")
+                            elif tool_exec_task in done_set:
+                                result_text = tool_exec_task.result()
+                                result_text = str(result_text) if result_text else ""
+                            else:
+                                result_text = f"[工具 {tool_name} 被用户中断]"
+                                _stream_cancelled = True
                         except Exception as exc:
                             result_text = f"Tool error: {exc}"
 
-                        yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:8000], "id": tool_id}
+                        # 跳过时发送 tool_call_skipped 事件通知前端
+                        if _stream_skipped:
+                            yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:8000], "id": tool_id, "skipped": True}
+                        else:
+                            yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:8000], "id": tool_id}
+
+                        if _stream_cancelled:
+                            tool_results_for_msg.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": result_text,
+                                "is_error": True,
+                            })
+                            break
+
+                        if _stream_skipped:
+                            tool_results_for_msg.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": result_text,
+                            })
+                            _stream_skipped = False
+                            continue
 
                         # === chain_text: 简述工具返回结果 ===
                         _result_summary = self._summarize_tool_result(tool_name, result_text)
@@ -1582,12 +1664,17 @@ class ReasoningEngine:
                             logger.info("[ReAct-Stream][Rollback] 回滚成功，将用不同方法重新推理")
                             continue
 
-                    # 取消检查
-                    if state.cancelled:
+                    # 取消检查（升级为带 LLM 收尾的取消处理）
+                    if state.cancelled or _stream_cancelled:
+                        # 将工具结果添加到上下文
+                        working_messages.append({"role": "user", "content": tool_results_for_msg})
                         self._save_react_trace(
                             react_trace, conversation_id, session_type, "cancelled", _trace_started_at
                         )
-                        yield {"type": "text_delta", "content": "✅ 任务已停止。"}
+                        async for ev in self._stream_cancel_farewell(
+                            working_messages, effective_prompt, current_model, state
+                        ):
+                            yield ev
                         yield {"type": "done"}
                         return
 
@@ -1595,6 +1682,38 @@ class ReasoningEngine:
                         "role": "user",
                         "content": tool_results_for_msg,
                     })
+
+                    # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
+                    if state and state.skip_event.is_set():
+                        _skip_reason = state.skip_reason or "用户认为该步骤耗时过长或不正确"
+                        state.clear_skip()
+                        working_messages.append({
+                            "role": "user",
+                            "content": (
+                                f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
+                                "请反思: 该步骤是否有问题？是否需要换个方法继续？"
+                                "请整理思路后继续完成任务。"
+                            ),
+                        })
+                        yield {"type": "chain_text", "content": f"用户跳过了当前步骤: {_skip_reason}"}
+                        logger.info(f"[SkipReflect-Stream] Injected skip reflection: {_skip_reason}")
+
+                    # === 检查用户插入消息 ===
+                    if state:
+                        _inserts = await state.drain_user_inserts()
+                        for _ins_text in _inserts:
+                            working_messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"[用户插入消息] {_ins_text}\n"
+                                    "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                                    "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                                    "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                                    "如不确定，使用 ask_user 工具向用户确认。"
+                                ),
+                            })
+                            yield {"type": "chain_text", "content": f"用户插入消息: {_ins_text[:60]}"}
+                            logger.info(f"[UserInsert-Stream] Injected user insert: {_ins_text[:60]}")
 
                     # --- 循环检测（与 run() 一致） ---
                     consecutive_tool_rounds += 1
@@ -1859,6 +1978,57 @@ class ReasoningEngine:
         except Exception:
             pass
 
+    # ==================== 取消收尾（流式） ====================
+
+    async def _stream_cancel_farewell(
+        self,
+        working_messages: list[dict],
+        system_prompt: str,
+        current_model: str,
+        state: TaskState | None = None,
+    ):
+        """流式场景下的取消收尾：注入中断上下文，发起轻量 LLM 调用，流式输出收尾文本。
+
+        Yields:
+            {"type": "text_delta", "content": "..."} 事件
+        """
+        cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
+        cancel_msg = (
+            f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
+            "请立即停止当前操作，简要告知用户已停止以及当前进度。"
+            "不要调用任何工具。"
+        )
+        working_messages.append({"role": "user", "content": cancel_msg})
+
+        farewell_text = "✅ 任务已停止。"
+        try:
+            farewell_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._brain.messages_create,
+                    model=current_model,
+                    max_tokens=200,
+                    system=system_prompt,
+                    tools=[],
+                    messages=working_messages,
+                ),
+                timeout=10.0,
+            )
+            for block in farewell_response.content:
+                if block.type == "text" and block.text.strip():
+                    farewell_text = block.text.strip()
+                    break
+            logger.info(f"[ReAct-Stream][StopTask] LLM farewell: {farewell_text[:100]}")
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.warning("[ReAct-Stream][StopTask] LLM farewell timed out (10s)")
+        except Exception as e:
+            logger.warning(f"[ReAct-Stream][StopTask] LLM farewell failed: {e}")
+
+        # 流式输出收尾文本
+        chunk_size = 20
+        for i in range(0, len(farewell_text), chunk_size):
+            yield {"type": "text_delta", "content": farewell_text[i:i + chunk_size]}
+            await asyncio.sleep(0.01)
+
     # ==================== 心跳保活 ====================
 
     _HEARTBEAT_INTERVAL = 15  # 秒：LLM 等待期间心跳间隔
@@ -1878,10 +2048,16 @@ class ReasoningEngine:
         包装 _reason()，在等待 LLM 响应期间每隔 HEARTBEAT_INTERVAL 秒
         产出 heartbeat 事件，防止前端 SSE idle timeout。
 
+        同时监听 cancel_event，当用户取消时立即中断 LLM 调用并抛出 UserCancelledError。
+
         Yields:
             {"type": "heartbeat"} 或 {"type": "decision", "decision": Decision}
         """
         queue: asyncio.Queue = asyncio.Queue()
+
+        # 获取 cancel_event
+        state = self._state.current_task
+        cancel_event = state.cancel_event if state else asyncio.Event()
 
         async def _do_reason():
             try:
@@ -1906,14 +2082,29 @@ class ReasoningEngine:
             except asyncio.CancelledError:
                 pass
 
+        async def _cancel_watcher():
+            """监听 cancel_event，触发时通过 queue 通知主循环"""
+            try:
+                await cancel_event.wait()
+                await queue.put(("cancelled", None))
+            except asyncio.CancelledError:
+                pass
+
         reason_task = asyncio.create_task(_do_reason())
         hb_task = asyncio.create_task(_heartbeat_loop())
+        cancel_task = asyncio.create_task(_cancel_watcher())
 
         try:
             while True:
                 typ, data = await queue.get()
                 if typ == "heartbeat":
                     yield {"type": "heartbeat"}
+                elif typ == "cancelled":
+                    cancel_reason = state.cancel_reason if state else "用户请求停止"
+                    raise UserCancelledError(
+                        reason=cancel_reason,
+                        source="llm_call_stream",
+                    )
                 elif typ == "error":
                     raise data  # 传播 _reason 的异常
                 else:
@@ -1921,6 +2112,7 @@ class ReasoningEngine:
                     break
         finally:
             hb_task.cancel()
+            cancel_task.cancel()
             if not reason_task.done():
                 reason_task.cancel()
                 try:

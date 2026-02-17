@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from ..schemas import ChatAnswerRequest, ChatRequest
+from ..schemas import ChatAnswerRequest, ChatControlRequest, ChatRequest
 
 logger = logging.getLogger(__name__)
 
@@ -258,3 +258,47 @@ async def chat_answer(request: Request, body: ChatAnswerRequest):
         "answer": body.answer,
         "hint": "Please send the answer as a new /api/chat message with the same conversation_id",
     }
+
+
+@router.post("/api/chat/cancel")
+async def chat_cancel(request: Request, body: ChatControlRequest):
+    """Cancel the current running task globally."""
+    agent = getattr(request.app.state, "agent", None)
+    actual_agent = _resolve_agent(agent) if agent else None
+    if actual_agent is None:
+        return {"status": "error", "message": "Agent not initialized"}
+
+    reason = body.reason or "用户从聊天界面取消任务"
+    actual_agent.cancel_current_task(reason)
+    logger.info(f"[Chat API] Cancel requested: {reason}")
+    return {"status": "ok", "action": "cancel", "reason": reason}
+
+
+@router.post("/api/chat/skip")
+async def chat_skip(request: Request, body: ChatControlRequest):
+    """Skip the current running tool/step (does not terminate the task)."""
+    agent = getattr(request.app.state, "agent", None)
+    actual_agent = _resolve_agent(agent) if agent else None
+    if actual_agent is None:
+        return {"status": "error", "message": "Agent not initialized"}
+
+    reason = body.reason or "用户从聊天界面跳过当前步骤"
+    actual_agent.skip_current_step(reason)
+    logger.info(f"[Chat API] Skip requested: {reason}")
+    return {"status": "ok", "action": "skip", "reason": reason}
+
+
+@router.post("/api/chat/insert")
+async def chat_insert(request: Request, body: ChatControlRequest):
+    """Insert a user message into the running task context."""
+    agent = getattr(request.app.state, "agent", None)
+    actual_agent = _resolve_agent(agent) if agent else None
+    if actual_agent is None:
+        return {"status": "error", "message": "Agent not initialized"}
+
+    if not body.message:
+        return {"status": "error", "message": "Message is required for insert"}
+
+    await actual_agent.insert_user_message(body.message)
+    logger.info(f"[Chat API] Insert requested: {body.message[:60]}")
+    return {"status": "ok", "action": "insert", "message": body.message[:100]}

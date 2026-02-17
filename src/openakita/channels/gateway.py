@@ -905,8 +905,10 @@ class MessageGateway:
         """
         消息回调（由适配器调用）
 
-        如果该会话正在处理中，将消息放入中断队列。
-        如果消息是停止指令，立即触发任务取消。
+        如果该会话正在处理中，根据消息类型做不同处理：
+        - STOP: 触发全局任务取消（cancel_event）
+        - SKIP: 触发当前步骤跳过（skip_event），不终止任务
+        - INSERT: 将用户消息注入任务上下文，让 LLM 决策如何处理
         """
         session_key = f"{message.channel}:{message.chat_id}:{message.user_id}"
 
@@ -915,20 +917,40 @@ class MessageGateway:
                 # 会话正在处理中
                 user_text = (message.plain_text or "").strip()
 
-                # C8: 检测停止指令 → 立即取消当前任务
-                if self.agent_handler and self.agent_handler.is_stop_command(user_text):
-                    self.agent_handler.cancel_current_task(f"用户发送停止指令: {user_text}")
-                    logger.info(
-                        f"[Interrupt] Stop command detected, cancelling task for {session_key}: {user_text}"
-                    )
-                    # 同时也将停止指令放入中断队列，让任务取消后处理
-                    # （agent 循环退出后会看到这条消息并立即回复确认）
+                if self.agent_handler:
+                    msg_type = self.agent_handler.classify_interrupt(user_text)
 
-                # 放入中断队列
-                await self._add_interrupt_message(session_key, message)
-                logger.info(
-                    f"[Interrupt] Message queued for session {session_key}: {message.plain_text}"
-                )
+                    if msg_type == "stop":
+                        # 全局取消：终止整个任务
+                        self.agent_handler.cancel_current_task(f"用户发送停止指令: {user_text}")
+                        logger.info(
+                            f"[Interrupt] STOP command, cancelling task for {session_key}: {user_text}"
+                        )
+                    elif msg_type == "skip":
+                        # 单步跳过：只中断当前工具执行
+                        self.agent_handler.skip_current_step(f"用户发送跳过指令: {user_text}")
+                        logger.info(
+                            f"[Interrupt] SKIP command for {session_key}: {user_text}"
+                        )
+                    else:
+                        # 用户消息插入：注入到任务上下文
+                        import asyncio as _aio
+                        _aio.create_task(self.agent_handler.insert_user_message(user_text))
+                        logger.info(
+                            f"[Interrupt] INSERT user message for {session_key}: {user_text[:50]}"
+                        )
+
+                # 只有 STOP 命令入中断队列（后续触发 farewell 流程）
+                # SKIP 和 INSERT 已通过 agent 方法直接处理，不入队避免 _process_pending_interrupts 重复处理
+                if msg_type == "stop":
+                    await self._add_interrupt_message(session_key, message)
+                    logger.info(
+                        f"[Interrupt] STOP queued for session {session_key}: {message.plain_text}"
+                    )
+                else:
+                    logger.info(
+                        f"[Interrupt] {msg_type.upper()} handled directly (not queued) for {session_key}"
+                    )
                 return
 
         # 正常入队

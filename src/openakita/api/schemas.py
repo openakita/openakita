@@ -45,6 +45,14 @@ class ChatAnswerRequest(BaseModel):
     answer: str = ""
 
 
+class ChatControlRequest(BaseModel):
+    """Request body for chat control operations (cancel/skip/insert)."""
+
+    conversation_id: str | None = Field(None, description="Conversation ID")
+    reason: str = Field("", description="Reason for the control action")
+    message: str = Field("", description="User message (only for insert)")
+
+
 class HealthCheckRequest(BaseModel):
     """Health check request."""
 
