@@ -676,6 +676,7 @@
     "install": "Install",
     "uninstall": "Uninstall",
     "installing": "Installing {{name}}...",
+    "uninstalling": "Uninstalling {{name}}...",
     "installSuccess": "{{name}} installed successfully",
     "uninstalled": "{{name}} uninstalled",
     "bundledCannotUninstall": "Bundled modules cannot be uninstalled",

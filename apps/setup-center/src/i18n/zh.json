@@ -676,6 +676,7 @@
     "install": "安装",
     "uninstall": "卸载",
     "installing": "正在安装 {{name}}...",
+    "uninstalling": "正在卸载 {{name}}...",
     "installSuccess": "{{name}} 安装成功",
     "uninstalled": "{{name}} 已卸载",
     "bundledCannotUninstall": "内置模块无法卸载",

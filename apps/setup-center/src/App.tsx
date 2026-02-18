@@ -5472,10 +5472,12 @@ export function App() {
                 {models.length === 0 && (
                   <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ opacity: 0.7 }}>{t("llm.modelManualHint")}</span>
-                    <button onClick={doFetchModels} className="btnSmall" disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}
-                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.fetchModels")}
-                    </button>
+                    {selectedProvider?.supports_model_list !== false && (
+                      <button onClick={doFetchModels} className="btnSmall" disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}
+                        style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
+                        {t("llm.fetchModels")}
+                      </button>
+                    )}
                   </div>
                 )}
                 {models.length > 0 && (
@@ -8649,6 +8651,7 @@ export function App() {
                               setModuleRestartPrompt(m.name);
                             }
                           };
+                          setBusy(t("modules.uninstalling", { name: m.name }));
                           try {
                             await doUninstall();
                           } catch (e) {
@@ -8660,9 +8663,11 @@ export function App() {
                               return;
                             }
                             setError(msg);
+                          } finally {
+                            setBusy(null);
                           }
                         }}
-                        disabled={m.bundled}
+                        disabled={m.bundled || !!busy}
                         title={m.bundled ? t("modules.bundledCannotUninstall") : t("modules.uninstall")}
                       >
                         {t("modules.uninstall")}
