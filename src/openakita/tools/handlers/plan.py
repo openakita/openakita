@@ -92,12 +92,11 @@ def auto_close_plan(session_id: str) -> bool:
         return False
 
     handler = get_plan_handler_for_session(session_id)
-    if not handler or not handler.current_plan:
-        # 有注册但无 handler/plan 数据，只清理注册
+    plan = handler.get_plan_for(session_id) if handler else None
+    if not handler or not plan:
         unregister_active_plan(session_id)
         return True
 
-    plan = handler.current_plan
     steps = plan.get("steps", [])
     auto_closed_count = 0
 
@@ -118,17 +117,17 @@ def auto_close_plan(session_id: str) -> bool:
     if not plan.get("summary"):
         plan["summary"] = "任务结束，计划自动关闭"
 
-    # 保存 & 记录日志
-    handler._add_log("计划自动关闭（任务结束时未显式 complete_plan）")
-    handler._save_plan_markdown()
-    handler.current_plan = None
+    handler._add_log("计划自动关闭（任务结束时未显式 complete_plan）", plan=plan)
+    handler._save_plan_markdown(plan=plan)
+    handler._plans_by_session.pop(session_id, None)
+    if handler.current_plan is plan:
+        handler.current_plan = None
 
     logger.info(
         f"[Plan] Auto-closed plan for session {session_id}, "
         f"auto_updated {auto_closed_count} steps"
     )
 
-    # 注销
     unregister_active_plan(session_id)
     return True
 
@@ -146,11 +145,11 @@ def cancel_plan(session_id: str) -> bool:
         return False
 
     handler = get_plan_handler_for_session(session_id)
-    if not handler or not handler.current_plan:
+    plan = handler.get_plan_for(session_id) if handler else None
+    if not handler or not plan:
         unregister_active_plan(session_id)
         return True
 
-    plan = handler.current_plan
     steps = plan.get("steps", [])
 
     for step in steps:
@@ -165,9 +164,11 @@ def cancel_plan(session_id: str) -> bool:
     if not plan.get("summary"):
         plan["summary"] = "用户主动取消"
 
-    handler._add_log("计划被用户取消")
-    handler._save_plan_markdown()
-    handler.current_plan = None
+    handler._add_log("计划被用户取消", plan=plan)
+    handler._save_plan_markdown(plan=plan)
+    handler._plans_by_session.pop(session_id, None)
+    if handler.current_plan is plan:
+        handler.current_plan = None
 
     logger.info(f"[Plan] Cancelled plan for session {session_id}")
     unregister_active_plan(session_id)
@@ -194,7 +195,7 @@ def get_active_plan_prompt(session_id: str) -> str:
     """
     handler = get_plan_handler_for_session(session_id)
     if handler:
-        return handler.get_plan_prompt_section()
+        return handler.get_plan_prompt_section(conversation_id=session_id)
     return ""
 
 
@@ -280,8 +281,40 @@ class PlanHandler:
     def __init__(self, agent: "Agent"):
         self.agent = agent
         self.current_plan: dict | None = None
+        self._plans_by_session: dict[str, dict] = {}
         self.plan_dir = Path("data/plans")
         self.plan_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_conversation_id(self) -> str:
+        return (
+            getattr(self.agent, "_current_conversation_id", None)
+            or getattr(self.agent, "_current_session_id", None)
+            or ""
+        )
+
+    def _get_current_plan(self) -> dict | None:
+        """获取当前会话的 Plan（会话隔离）"""
+        cid = self._get_conversation_id()
+        if cid:
+            return self._plans_by_session.get(cid)
+        return self.current_plan
+
+    def _set_current_plan(self, plan: dict | None) -> None:
+        """设置当前会话的 Plan（会话隔离）"""
+        cid = self._get_conversation_id()
+        if cid:
+            if plan is not None:
+                self._plans_by_session[cid] = plan
+            else:
+                self._plans_by_session.pop(cid, None)
+        else:
+            self.current_plan = plan
+
+    def get_plan_for(self, conversation_id: str) -> dict | None:
+        """按 conversation_id 获取 Plan（不依赖 agent state，供外部调用）"""
+        if conversation_id:
+            return self._plans_by_session.get(conversation_id)
+        return self.current_plan
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
@@ -298,9 +331,9 @@ class PlanHandler:
 
     async def _create_plan(self, params: dict) -> str:
         """创建任务计划"""
-        # 防止重复创建：如果已有活跃 Plan，返回当前状态
-        if self.current_plan and self.current_plan.get("status") == "in_progress":
-            plan_id = self.current_plan["id"]
+        _plan = self._get_current_plan()
+        if _plan and _plan.get("status") == "in_progress":
+            plan_id = _plan["id"]
             status = self._get_status()
             return (
                 f"⚠️ 已有活跃计划 {plan_id}，不允许重复创建。\n"
@@ -330,7 +363,7 @@ class PlanHandler:
             step.setdefault("skills", [])
             step["skills"] = self._ensure_step_skills(step)
 
-        self.current_plan = {
+        _new_plan = {
             "id": plan_id,
             "task_summary": params.get("task_summary", ""),
             "steps": steps,
@@ -339,11 +372,9 @@ class PlanHandler:
             "completed_at": None,
             "logs": [],
         }
+        self._set_current_plan(_new_plan)
 
-        # 注册活跃的 Plan（用于强制 Plan 模式检查）
-        conversation_id = getattr(self.agent, "_current_conversation_id", None) or getattr(
-            self.agent, "_current_session_id", None
-        )
+        conversation_id = self._get_conversation_id()
         if conversation_id:
             register_active_plan(conversation_id, plan_id)
             register_plan_handler(conversation_id, self)  # 注册 handler 以便查询 Plan 状态
@@ -380,7 +411,8 @@ class PlanHandler:
 
     async def _update_step(self, params: dict) -> str:
         """更新步骤状态"""
-        if not self.current_plan:
+        _plan = self._get_current_plan()
+        if not _plan:
             return "❌ 当前没有活动的计划，请先调用 create_plan"
 
         step_id = params.get("step_id", "")
@@ -389,7 +421,7 @@ class PlanHandler:
 
         # 查找并更新步骤
         step_found = False
-        for step in self.current_plan["steps"]:
+        for step in _plan["steps"]:
             if step["id"] == step_id:
                 step["status"] = status
                 step["result"] = result
@@ -423,7 +455,7 @@ class PlanHandler:
 
         # 通知用户（每个状态变化都通知）
         # 计算进度：使用步骤的位置序号（而非已完成数量）
-        steps = self.current_plan["steps"]
+        steps = _plan["steps"]
         total_count = len(steps)
 
         # 使用步骤在列表中的位置序号（1-indexed）
@@ -461,10 +493,9 @@ class PlanHandler:
 
     def _get_status(self) -> str:
         """获取计划状态"""
-        if not self.current_plan:
+        plan = self._get_current_plan()
+        if not plan:
             return "当前没有活动的计划"
-
-        plan = self.current_plan
         steps = plan["steps"]
 
         completed = sum(1 for s in steps if s["status"] == "completed")
@@ -502,17 +533,17 @@ class PlanHandler:
 
     async def _complete_plan(self, params: dict) -> str:
         """完成计划"""
-        if not self.current_plan:
+        _plan = self._get_current_plan()
+        if not _plan:
             return "❌ 当前没有活动的计划"
 
         summary = params.get("summary", "")
 
-        self.current_plan["status"] = "completed"
-        self.current_plan["completed_at"] = datetime.now().isoformat()
-        self.current_plan["summary"] = summary
+        _plan["status"] = "completed"
+        _plan["completed_at"] = datetime.now().isoformat()
+        _plan["summary"] = summary
 
-        # 统计
-        steps = self.current_plan["steps"]
+        steps = _plan["steps"]
         completed = sum(1 for s in steps if s["status"] == "completed")
         failed = sum(1 for s in steps if s["status"] == "failed")
 
@@ -544,14 +575,10 @@ class PlanHandler:
         except Exception as e:
             logger.warning(f"Failed to emit complete progress: {e}")
 
-        # 清理当前计划
-        plan_id = self.current_plan["id"]
-        self.current_plan = None
+        plan_id = _plan["id"]
+        self._set_current_plan(None)
 
-        # 注销活跃的 Plan
-        conversation_id = getattr(self.agent, "_current_conversation_id", None) or getattr(
-            self.agent, "_current_session_id", None
-        )
+        conversation_id = self._get_conversation_id()
         if conversation_id:
             unregister_active_plan(conversation_id)
 
@@ -559,10 +586,9 @@ class PlanHandler:
 
     def _format_plan_message(self) -> str:
         """格式化计划展示消息"""
-        if not self.current_plan:
+        plan = self._get_current_plan()
+        if not plan:
             return ""
-
-        plan = self.current_plan
         steps = plan["steps"]
 
         message = f"""📋 **任务计划**：{plan["task_summary"]}
@@ -580,20 +606,22 @@ class PlanHandler:
 
         return message
 
-    def get_plan_prompt_section(self) -> str:
+    def get_plan_prompt_section(self, conversation_id: str = "") -> str:
         """
         生成注入 system_prompt 的计划摘要段落。
 
         该段落放在 system_prompt 中，不随 working_messages 压缩而丢失，
         确保 LLM 在任何时候都能看到完整的计划结构和最新进度。
 
+        Args:
+            conversation_id: 指定会话 ID 以精确查找 Plan（避免依赖 agent state）
+
         Returns:
             紧凑格式的计划段落字符串；无活跃 Plan 或 Plan 已完成时返回空字符串。
         """
-        if not self.current_plan or self.current_plan.get("status") == "completed":
+        plan = self.get_plan_for(conversation_id) if conversation_id else self._get_current_plan()
+        if not plan or plan.get("status") == "completed":
             return ""
-
-        plan = self.current_plan
         steps = plan["steps"]
         total = len(steps)
         completed = sum(1 for s in steps if s["status"] in ("completed", "failed", "skipped"))
@@ -629,12 +657,12 @@ class PlanHandler:
 
         return "\n".join(lines)
 
-    def _save_plan_markdown(self) -> None:
-        """保存计划到 Markdown 文件"""
-        if not self.current_plan:
+    def _save_plan_markdown(self, plan: dict | None = None) -> None:
+        """保存计划到 Markdown 文件（可传入显式 plan 引用避免依赖 agent state）"""
+        if plan is None:
+            plan = self._get_current_plan()
+        if not plan:
             return
-
-        plan = self.current_plan
         plan_file = self.plan_dir / f"{plan['id']}.md"
 
         content = f"""# 任务计划：{plan["task_summary"]}
@@ -677,11 +705,13 @@ class PlanHandler:
         plan_file.write_text(content, encoding="utf-8")
         logger.info(f"[Plan] Saved to: {plan_file}")
 
-    def _add_log(self, message: str) -> None:
-        """添加日志"""
-        if self.current_plan:
+    def _add_log(self, message: str, plan: dict | None = None) -> None:
+        """添加日志（可传入显式 plan 引用避免依赖 agent state）"""
+        if plan is None:
+            plan = self._get_current_plan()
+        if plan:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.current_plan.setdefault("logs", []).append(f"[{timestamp}] {message}")
+            plan.setdefault("logs", []).append(f"[{timestamp}] {message}")
 
     def _ensure_step_skills(self, step: dict) -> list[str]:
         """

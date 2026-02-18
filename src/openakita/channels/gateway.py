@@ -931,12 +931,12 @@ class MessageGateway:
                 _session_matches = False
                 if _agent_session:
                     _interrupt_parts = session_key.split(":")
-                    _interrupt_user = _interrupt_parts[1] if len(_interrupt_parts) >= 2 else ""
+                    _interrupt_chat_id = _interrupt_parts[1] if len(_interrupt_parts) >= 2 else ""
                     _interrupt_channel = _interrupt_parts[0] if _interrupt_parts else ""
                     _session_matches = (
-                        bool(_interrupt_user)
-                        and _interrupt_user in _agent_session
-                        and _agent_session.startswith(_interrupt_channel)
+                        bool(_interrupt_chat_id)
+                        and _agent_session.startswith(f"{_interrupt_channel}_")
+                        and f"_{_interrupt_chat_id}_" in _agent_session
                     )
 
                 logger.debug(
@@ -948,15 +948,34 @@ class MessageGateway:
                     msg_type = self.agent_handler.classify_interrupt(user_text)
 
                     if msg_type == "stop":
-                        self.agent_handler.cancel_current_task(f"用户发送停止指令: {user_text}")
+                        _cancel_session_id = self._resolve_task_session_id(
+                            session_key, _agent_ref
+                        )
+                        if _cancel_session_id:
+                            self.agent_handler.cancel_current_task(
+                                f"用户发送停止指令: {user_text}",
+                                session_id=_cancel_session_id,
+                            )
+                        else:
+                            logger.warning(
+                                f"[Interrupt] Could not resolve task for {session_key}, "
+                                f"cancelling current_task as fallback"
+                            )
+                            self.agent_handler.cancel_current_task(
+                                f"用户发送停止指令: {user_text}",
+                            )
                         logger.info(
-                            f"[Interrupt] STOP command, cancelling task for {session_key}: {user_text}"
+                            f"[Interrupt] STOP command, cancelling task for {session_key} "
+                            f"(resolved={_cancel_session_id}): {user_text}"
                         )
                         # 不入中断队列: cancel_event 已触发取消流程，
                         # 入队会导致 _process_pending_interrupts 二次处理
                         await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
                     elif msg_type == "skip":
-                        ok = self.agent_handler.skip_current_step(f"用户发送跳过指令: {user_text}")
+                        _skip_sid = self._resolve_task_session_id(session_key, _agent_ref)
+                        ok = self.agent_handler.skip_current_step(
+                            f"用户发送跳过指令: {user_text}", session_id=_skip_sid,
+                        )
                         if ok:
                             await self._send_feedback(message, "⏭️ 收到，正在跳过当前步骤…")
                         else:
@@ -965,8 +984,11 @@ class MessageGateway:
                             f"[Interrupt] SKIP handled directly (not queued) for {session_key}: {user_text}"
                         )
                     else:
+                        _insert_sid = self._resolve_task_session_id(session_key, _agent_ref)
                         try:
-                            ok = await self.agent_handler.insert_user_message(user_text)
+                            ok = await self.agent_handler.insert_user_message(
+                                user_text, session_id=_insert_sid,
+                            )
                             if ok:
                                 await self._send_feedback(message, "💬 收到，已将消息注入当前任务。")
                             else:
@@ -1023,6 +1045,40 @@ class MessageGateway:
     def _get_session_key(self, message: UnifiedMessage) -> str:
         """获取会话标识"""
         return f"{message.channel}:{message.chat_id}:{message.user_id}"
+
+    @staticmethod
+    def _resolve_task_session_id(session_key: str, agent_ref: object) -> str | None:
+        """
+        根据 gateway session_key 找到 AgentState._tasks 中匹配的 task session_id。
+
+        session_key 格式:  "telegram:1241684312:tg_1241684312"
+                            channel : chat_id  : user_id
+        task key 格式:     "telegram_1241684312_20260219031213_xxx"
+                            channel  _ chat_id  _ timestamp      _ uuid
+        两者共享 channel 和 chat_id。
+        """
+        if not agent_ref:
+            return None
+        agent_state = getattr(agent_ref, "agent_state", None)
+        if not agent_state:
+            return None
+        parts = session_key.split(":")
+        channel = parts[0] if parts else ""
+        chat_id = parts[1] if len(parts) >= 2 else ""
+        if not channel or not chat_id:
+            return None
+        prefix = f"{channel}_"
+        chat_id_seg = f"_{chat_id}_"
+        tasks = getattr(agent_state, "_tasks", {})
+        for key in tasks:
+            task = tasks[key]
+            if key.startswith(prefix) and chat_id_seg in key:
+                if task.is_active:
+                    return key
+        for key in tasks:
+            if key.startswith(prefix) and chat_id_seg in key:
+                return key
+        return None
 
     def _mark_session_processing(self, session_key: str, processing: bool) -> None:
         """标记会话处理状态"""

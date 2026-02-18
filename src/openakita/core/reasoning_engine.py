@@ -400,16 +400,16 @@ class ReasoningEngine:
         """
         self._last_exit_reason = "normal"
 
-        state = self._state.current_task
+        _session_key = conversation_id or ""
+        state = self._state.get_task_for_session(_session_key) if _session_key else self._state.current_task
         if not state or not state.is_active or state.cancelled:
-            state = self._state.begin_task()
+            state = self._state.begin_task(session_id=_session_key)
         elif state.status == TaskStatus.ACTING:
             logger.warning(
                 f"[State] Previous task stuck in {state.status.value}, force resetting for new message"
             )
-            state = self._state.begin_task()
+            state = self._state.begin_task(session_id=_session_key)
 
-        # 安全校验：begin_task 返回的 state 不应携带取消标志
         if state.cancelled:
             logger.error(
                 f"[State] CRITICAL: fresh task {state.task_id[:8]} has cancelled=True, "
@@ -1104,22 +1104,20 @@ class ReasoningEngine:
         tools = tools or []
         self._last_exit_reason = "normal"
 
-        # 在 try 外初始化，避免 except/finally 块中 UnboundLocalError
         react_trace: list[dict] = []
         _trace_started_at = datetime.now().isoformat()
         _endpoint_switched = False
 
-        # Task state
-        state = self._state.current_task
+        _session_key = conversation_id or ""
+        state = self._state.get_task_for_session(_session_key) if _session_key else self._state.current_task
         if not state or not state.is_active or state.cancelled:
-            state = self._state.begin_task()
+            state = self._state.begin_task(session_id=_session_key)
         elif state.status == TaskStatus.ACTING:
             logger.warning(
                 f"[State] Previous task stuck in {state.status.value}, force resetting for new message"
             )
-            state = self._state.begin_task()
+            state = self._state.begin_task(session_id=_session_key)
 
-        # 安全校验：begin_task 返回的 state 不应携带取消标志
         if state.cancelled:
             logger.error(
                 f"[State] CRITICAL: fresh task {state.task_id[:8]} has cancelled=True, "
@@ -1182,6 +1180,9 @@ class ReasoningEngine:
                         current_model = _provider.model
 
             # === 与 run() 一致的循环控制变量 ===
+            state.original_user_messages = [
+                msg for msg in messages if self._is_human_user_message(msg)
+            ]
             max_iterations = settings.max_iterations
             working_messages = list(messages)
 
@@ -2066,7 +2067,38 @@ class ReasoningEngine:
         except Exception:
             pass
 
-    # ==================== 取消收尾（非流式） ====================
+    # ==================== 取消收尾工具 ====================
+
+    @staticmethod
+    def _sanitize_messages_for_farewell(messages: list[dict]) -> list[dict]:
+        """
+        清理 working_messages 使其可安全发送给 LLM 的 farewell 调用。
+
+        问题：如果最后一条 assistant 消息包含 tool_calls（工具被中断还未产出 tool result），
+        LLM API 会返回 400：'tool_calls must be followed by tool messages'。
+
+        策略：从尾部开始，移除所有未闭合的 assistant(tool_calls) + tool 对，
+        或为未闭合的 tool_calls 补充虚拟 tool result。
+        """
+        if not messages:
+            return messages
+
+        result = list(messages)
+        while result:
+            last = result[-1]
+            role = last.get("role", "")
+            if role == "tool":
+                result.pop()
+                continue
+            if role == "assistant" and last.get("tool_calls"):
+                result.pop()
+                continue
+            break
+
+        if not result:
+            result = [{"role": "user", "content": "（对话上下文不可用）"}]
+
+        return result
 
     async def _cancel_farewell(
         self,
@@ -2087,7 +2119,7 @@ class ReasoningEngine:
             "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"
             "不要调用任何工具。"
         )
-        farewell_messages = list(working_messages)
+        farewell_messages = self._sanitize_messages_for_farewell(list(working_messages))
         farewell_messages.append({"role": "user", "content": cancel_msg})
 
         farewell_text = "✅ 好的，已停止当前任务。"
@@ -2150,12 +2182,13 @@ class ReasoningEngine:
             "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"
             "不要调用任何工具。"
         )
-        working_messages.append({"role": "user", "content": cancel_msg})
+        farewell_messages = self._sanitize_messages_for_farewell(list(working_messages))
+        farewell_messages.append({"role": "user", "content": cancel_msg})
 
         farewell_text = "✅ 好的，已停止当前任务。"
         logger.info(
             f"[ReAct-Stream][CancelFarewell] 发起 LLM 收尾调用 (timeout=5s), "
-            f"working_messages count={len(working_messages)}"
+            f"farewell_messages count={len(farewell_messages)}"
         )
         try:
             farewell_response = await asyncio.wait_for(
@@ -2164,7 +2197,7 @@ class ReasoningEngine:
                     max_tokens=200,
                     system=system_prompt,
                     tools=[],
-                    messages=working_messages,
+                    messages=farewell_messages,
                 ),
                 timeout=5.0,
             )
@@ -2772,8 +2805,9 @@ class ReasoningEngine:
             from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan
             if conversation_id and has_active_plan(conversation_id):
                 handler = get_plan_handler_for_session(conversation_id)
-                if handler and handler.current_plan:
-                    steps = handler.current_plan.get("steps", [])
+                plan = handler.get_plan_for(conversation_id) if handler else None
+                if plan:
+                    steps = plan.get("steps", [])
                     pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
                     return bool(pending)
         except Exception:

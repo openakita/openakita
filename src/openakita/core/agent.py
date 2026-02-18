@@ -3167,8 +3167,12 @@ search_github → install_skill → 使用
         self.agent_state.current_session = None
         self._current_task_monitor = None
         # 重置任务状态，避免已取消/已完成的任务泄漏到下一次会话
-        if self.agent_state.current_task and not self.agent_state.current_task.is_active:
-            self.agent_state.reset_task()
+        _sid = getattr(self, "_current_session_id", None)
+        _task = (
+            self.agent_state.get_task_for_session(_sid) if _sid and self.agent_state else None
+        ) or (self.agent_state.current_task if self.agent_state else None)
+        if _task and not _task.is_active:
+            self.agent_state.reset_task(session_id=_sid)
 
     async def chat_with_session(
         self,
@@ -3205,24 +3209,25 @@ search_github → install_skill → 使用
         # === 停止指令检测 ===
         message_lower = message.strip().lower()
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
-            self.cancel_current_task(f"用户发送停止指令: {message}")
-            logger.info(f"[StopTask] User requested to stop: {message}")
+            self.cancel_current_task(f"用户发送停止指令: {message}", session_id=session_id)
+            logger.info(f"[StopTask] User requested to stop (session={session_id}): {message}")
             return "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？"
 
-        # 清理上一轮残留的任务状态（尤其是 cancelled 标志），防止新任务被误判为已取消
-        if self.agent_state and self.agent_state.current_task:
-            if self.agent_state.current_task.cancelled or not self.agent_state.current_task.is_active:
+        # 清理上一轮残留的任务状态（按 session 隔离）
+        _prev_task = (
+            self.agent_state.get_task_for_session(session_id) if session_id and self.agent_state else None
+        ) or (self.agent_state.current_task if self.agent_state else None)
+        if _prev_task:
+            if _prev_task.cancelled or not _prev_task.is_active:
                 logger.info(
                     f"[Session:{session_id}] Resetting stale task "
-                    f"(cancelled={self.agent_state.current_task.cancelled}, "
-                    f"status={self.agent_state.current_task.status.value})"
+                    f"(cancelled={_prev_task.cancelled}, status={_prev_task.status.value})"
                 )
-                self.agent_state.reset_task()
+                self.agent_state.reset_task(session_id=session_id)
             else:
-                self.agent_state.current_task.clear_skip()
-                await self.agent_state.current_task.drain_user_inserts()
+                _prev_task.clear_skip()
+                await _prev_task.drain_user_inserts()
 
-        # 解析 conversation_id
         self._current_session_id = session_id
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
@@ -3332,25 +3337,27 @@ search_github → install_skill → 使用
         # === 停止指令检测 ===
         message_lower = message.strip().lower()
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
-            self.cancel_current_task(f"用户发送停止指令: {message}")
-            logger.info(f"[StopTask] User requested to stop: {message}")
+            self.cancel_current_task(f"用户发送停止指令: {message}", session_id=session_id)
+            logger.info(f"[StopTask] User requested to stop (session={session_id}): {message}")
             yield {"type": "plan_cancelled"}
             yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？"}
             yield {"type": "done"}
             return
 
-        # 清理上一轮残留的任务状态（尤其是 cancelled 标志），防止新任务被误判为已取消
-        if self.agent_state and self.agent_state.current_task:
-            if self.agent_state.current_task.cancelled or not self.agent_state.current_task.is_active:
+        # 清理上一轮残留的任务状态（按 session 隔离）
+        _prev_task = (
+            self.agent_state.get_task_for_session(session_id) if session_id and self.agent_state else None
+        ) or (self.agent_state.current_task if self.agent_state else None)
+        if _prev_task:
+            if _prev_task.cancelled or not _prev_task.is_active:
                 logger.info(
                     f"[Session:{session_id}] Resetting stale task "
-                    f"(cancelled={self.agent_state.current_task.cancelled}, "
-                    f"status={self.agent_state.current_task.status.value})"
+                    f"(cancelled={_prev_task.cancelled}, status={_prev_task.status.value})"
                 )
-                self.agent_state.reset_task()
+                self.agent_state.reset_task(session_id=session_id)
             else:
-                self.agent_state.current_task.clear_skip()
-                await self.agent_state.current_task.drain_user_inserts()
+                _prev_task.clear_skip()
+                await _prev_task.drain_user_inserts()
 
         # 解析 conversation_id
         self._current_session_id = session_id
@@ -3727,21 +3734,19 @@ search_github → install_skill → 使用
         )
         if conversation_id and has_active_plan(conversation_id):
             handler = get_plan_handler_for_session(conversation_id)
-            if handler and handler.current_plan:
-                steps = handler.current_plan.get("steps", [])
+            plan = handler.get_plan_for(conversation_id) if handler else None
+            if plan:
+                steps = plan.get("steps", [])
                 pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
 
                 if pending:
                     pending_ids = [s.get("id", "?") for s in pending[:3]]
-                    # 提问暂停由 ask_user 工具在 ReasoningEngine 中拦截处理
                     logger.info(
                         f"[TaskVerify] Plan has {len(pending)} pending steps: {pending_ids}, forcing continue"
                     )
-                    return False  # 还有未完成步骤，强制继续执行
+                    return False
 
-                # 所有步骤完成但 Plan 未关闭 - 宽松处理，继续 LLM 验证
-                # (不再强制返回 False，因为实际任务可能已完成)
-                if handler.current_plan.get("status") != "completed":
+                if plan.get("status") != "completed":
                     logger.info(
                         "[TaskVerify] All plan steps done but plan not formally completed, proceeding to LLM verification"
                     )
@@ -4482,8 +4487,9 @@ NEXT: 建议的下一步（如有）"""
                                 )
                                 if conversation_id and has_active_plan(conversation_id):
                                     handler = get_plan_handler_for_session(conversation_id)
-                                    if handler and handler.current_plan:
-                                        steps = handler.current_plan.get("steps", [])
+                                    _plan = handler.get_plan_for(conversation_id) if handler else None
+                                    if _plan:
+                                        steps = _plan.get("steps", [])
                                         pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
                                         if pending:
                                             has_active_plan_pending = True
@@ -4818,34 +4824,52 @@ NEXT: 建议的下一步（如有）"""
         self._interrupt_enabled = enabled
         logger.info(f"Interrupt check {'enabled' if enabled else 'disabled'}")
 
-    def cancel_current_task(self, reason: str = "用户请求停止") -> None:
+    def cancel_current_task(self, reason: str = "用户请求停止", session_id: str | None = None) -> None:
         """
-        取消当前正在执行的任务
+        取消正在执行的任务。
 
-        可以从外部调用此方法来停止正在运行的任务。
-        同时触发 cancel_event 以中断正在进行的 LLM 调用或工具执行。
-        如果有活跃计划，将计划标记为 cancelled。
+        如果指定 session_id，仅取消该会话的任务和计划；否则取消所有。
 
         Args:
             reason: 取消原因
+            session_id: 可选会话 ID，实现跨通道隔离
         """
         has_state = hasattr(self, "agent_state") and self.agent_state
-        has_task = has_state and self.agent_state.current_task is not None
-        task_status = self.agent_state.current_task.status.value if has_task else "N/A"
-        logger.info(
-            f"[StopTask] cancel_current_task 被调用: reason={reason!r}, "
-            f"has_state={has_state}, has_task={has_task}, task_status={task_status}"
-        )
 
-        if has_state:
+        if session_id and has_state:
+            task = self.agent_state.get_task_for_session(session_id)
+            task_status = task.status.value if task else "N/A"
+            logger.info(
+                f"[StopTask] cancel_current_task 被调用: reason={reason!r}, "
+                f"session_id={session_id}, task_status={task_status}"
+            )
+            if task:
+                self.agent_state.cancel_task(reason, session_id=session_id)
+            else:
+                logger.warning(
+                    f"[StopTask] No task found for session {session_id}, "
+                    f"falling back to cancel current_task"
+                )
+                self.agent_state.cancel_task(reason)
+        elif has_state:
+            has_task = self.agent_state.current_task is not None
+            task_status = self.agent_state.current_task.status.value if has_task else "N/A"
+            logger.info(
+                f"[StopTask] cancel_current_task 被调用: reason={reason!r}, "
+                f"has_state={has_state}, has_task={has_task}, task_status={task_status}"
+            )
             self.agent_state.cancel_task(reason)
 
         try:
             from ..tools.handlers.plan import cancel_plan
-            from ..tools.handlers.plan import _session_active_plans
-            for sid in list(_session_active_plans.keys()):
-                if cancel_plan(sid):
-                    logger.info(f"[StopTask] Cancelled active plan for session {sid}")
+            if session_id:
+                if cancel_plan(session_id):
+                    logger.info(f"[StopTask] Cancelled active plan for session {session_id}")
+            else:
+                from ..tools.handlers.plan import _session_active_plans
+                for sid in list(_session_active_plans.keys()):
+                    if cancel_plan(sid):
+                        logger.info(f"[StopTask] Cancelled active plan for session {sid}")
         except Exception as e:
             logger.warning(f"[StopTask] Failed to cancel plan: {e}")
 
@@ -4894,37 +4918,49 @@ NEXT: 建议的下一步（如有）"""
         else:
             return "insert"
 
-    def skip_current_step(self, reason: str = "用户请求跳过当前步骤") -> bool:
+    def skip_current_step(self, reason: str = "用户请求跳过当前步骤", session_id: str | None = None) -> bool:
         """
         跳过当前正在执行的工具/步骤（不终止整个任务）
 
         Args:
             reason: 跳过原因
+            session_id: 可选会话 ID，实现跨通道隔离
 
         Returns:
             是否成功设置 skip（False 表示无活跃任务）
         """
-        if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
-            self.agent_state.skip_current_step(reason)
-            logger.info(f"[SkipStep] Step skip requested: {reason}")
-            return True
+        _sid = session_id or getattr(self, "_current_session_id", None)
+        if hasattr(self, "agent_state") and self.agent_state:
+            task = (
+                self.agent_state.get_task_for_session(_sid) if _sid else None
+            ) or self.agent_state.current_task
+            if task:
+                self.agent_state.skip_current_step(reason, session_id=_sid)
+                logger.info(f"[SkipStep] Step skip requested: {reason} (session={_sid})")
+                return True
         logger.warning(f"[SkipStep] No active task to skip: {reason}")
         return False
 
-    async def insert_user_message(self, text: str) -> bool:
+    async def insert_user_message(self, text: str, session_id: str | None = None) -> bool:
         """
         向当前任务注入用户消息（任务执行期间的非指令消息）
 
         Args:
             text: 用户消息文本
+            session_id: 可选会话 ID，实现跨通道隔离
 
         Returns:
             是否成功入队（False 表示无活跃任务，消息被丢弃）
         """
-        if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
-            await self.agent_state.insert_user_message(text)
-            logger.info(f"[UserInsert] User message queued: {text[:50]}...")
-            return True
+        _sid = session_id or getattr(self, "_current_session_id", None)
+        if hasattr(self, "agent_state") and self.agent_state:
+            task = (
+                self.agent_state.get_task_for_session(_sid) if _sid else None
+            ) or self.agent_state.current_task
+            if task:
+                await self.agent_state.insert_user_message(text, session_id=_sid)
+                logger.info(f"[UserInsert] User message queued: {text[:50]}... (session={_sid})")
+                return True
         logger.warning(f"[UserInsert] No active task, message dropped: {text[:50]}...")
         return False
 

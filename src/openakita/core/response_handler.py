@@ -170,8 +170,9 @@ class ResponseHandler:
 
             if conversation_id and has_active_plan(conversation_id):
                 handler = get_plan_handler_for_session(conversation_id)
-                if handler and handler.current_plan:
-                    steps = handler.current_plan.get("steps", [])
+                plan = handler.get_plan_for(conversation_id) if handler else None
+                if plan:
+                    steps = plan.get("steps", [])
                     pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
                     if pending:
                         pending_ids = [s.get("id", "?") for s in pending[:3]]

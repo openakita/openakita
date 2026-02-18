@@ -277,22 +277,46 @@ class AgentState:
 
     集中管理所有散落在 Agent 实例中的状态变量，
     提供带验证的状态转换方法。
+
+    支持多会话并发任务：通过 _tasks 字典按 session_id 隔离，
+    current_task 属性保持向后兼容（返回最近创建的任务）。
     """
 
     def __init__(self) -> None:
-        # 当前任务状态
-        self.current_task: TaskState | None = None
+        self._tasks: dict[str, TaskState] = {}
+        self._last_task_key: str = ""
 
-        # 全局控制标志
         self.interrupt_enabled: bool = True
         self.initialized: bool = False
         self.running: bool = False
 
-        # 当前会话引用（用于中断检查）
         self.current_session: Any = None
-
-        # 当前任务监控器
         self.current_task_monitor: Any = None
+
+    @property
+    def current_task(self) -> TaskState | None:
+        """向后兼容：返回最近创建 / 唯一的任务"""
+        if self._last_task_key and self._last_task_key in self._tasks:
+            return self._tasks[self._last_task_key]
+        if len(self._tasks) == 1:
+            return next(iter(self._tasks.values()))
+        return None
+
+    @current_task.setter
+    def current_task(self, value: TaskState | None) -> None:
+        """向后兼容：直接赋值（仅用于旧代码 / reset_task）"""
+        if value is None:
+            if self._last_task_key in self._tasks:
+                self._tasks.pop(self._last_task_key, None)
+            self._last_task_key = ""
+        else:
+            key = value.session_id or value.task_id
+            self._tasks[key] = value
+            self._last_task_key = key
+
+    def get_task_for_session(self, session_id: str) -> TaskState | None:
+        """获取指定会话的任务"""
+        return self._tasks.get(session_id)
 
     def begin_task(
         self,
@@ -303,7 +327,7 @@ class AgentState:
         """
         开始新任务，创建 TaskState。
 
-        始终先清理旧任务再创建新任务，避免已取消/已完成的任务状态泄漏到新任务。
+        如果同一 session_id 已有旧任务，先清理它（不影响其他 session 的任务）。
 
         Args:
             session_id: 会话 ID
@@ -313,56 +337,93 @@ class AgentState:
         Returns:
             新创建的 TaskState
         """
-        if self.current_task:
-            old_status = self.current_task.status.value
-            old_cancelled = self.current_task.cancelled
-            if self.current_task.is_active:
+        _tid = task_id or str(uuid.uuid4())
+        key = session_id or _tid
+
+        old = self._tasks.get(key)
+        if old:
+            old_status = old.status.value
+            old_cancelled = old.cancelled
+            if old.is_active:
                 logger.warning(
-                    f"[State] Starting new task while previous task {self.current_task.task_id[:8]} "
-                    f"is still {old_status}. Force resetting."
+                    f"[State] Starting new task while previous task {old.task_id[:8]} "
+                    f"is still {old_status} (session={key}). Force resetting."
                 )
             else:
                 logger.info(
-                    f"[State] Cleaning up previous task {self.current_task.task_id[:8]} "
+                    f"[State] Cleaning up previous task {old.task_id[:8]} "
                     f"(status={old_status}, cancelled={old_cancelled}) before new task"
                 )
-            self.reset_task()
+            self._tasks.pop(key, None)
 
-        self.current_task = TaskState(
-            task_id=task_id or str(uuid.uuid4()),
+        task = TaskState(
+            task_id=_tid,
             session_id=session_id,
             conversation_id=conversation_id,
         )
+        self._tasks[key] = task
+        self._last_task_key = key
         logger.info(
-            f"[State] New task created: {self.current_task.task_id[:8]} "
-            f"(cancelled={self.current_task.cancelled})"
+            f"[State] New task created: {task.task_id[:8]} "
+            f"(session={key}, cancelled={task.cancelled})"
         )
-        return self.current_task
+        return task
 
-    def reset_task(self) -> None:
-        """重置当前任务状态（任务结束后调用）"""
-        if self.current_task:
+    def reset_task(self, session_id: str | None = None) -> None:
+        """重置任务状态（任务结束后调用）"""
+        session_id = session_id or None
+        if session_id and session_id in self._tasks:
+            task = self._tasks.pop(session_id)
             logger.debug(
-                f"[State] Task {self.current_task.task_id[:8]} reset "
-                f"(was {self.current_task.status.value})"
+                f"[State] Task {task.task_id[:8]} reset "
+                f"(was {task.status.value}, session={session_id})"
             )
-        self.current_task = None
+            if self._last_task_key == session_id:
+                self._last_task_key = ""
+        elif not session_id:
+            task = self.current_task
+            if task:
+                key = task.session_id or task.task_id
+                self._tasks.pop(key, None)
+                if self._last_task_key == key:
+                    self._last_task_key = ""
+                logger.debug(
+                    f"[State] Task {task.task_id[:8]} reset "
+                    f"(was {task.status.value}, key={key})"
+                )
         self.current_task_monitor = None
 
-    def cancel_task(self, reason: str = "用户请求停止") -> None:
-        """取消当前任务"""
-        if self.current_task:
+    def cancel_task(self, reason: str = "用户请求停止", session_id: str | None = None) -> None:
+        """取消任务。如果指定 session_id，仅取消该会话的任务。"""
+        session_id = session_id or None
+        if session_id:
+            task = self._tasks.get(session_id)
+            if task:
+                task.cancel(reason)
+                logger.info(
+                    f"[State] Cancelled task {task.task_id[:8]} for session {session_id}"
+                )
+            else:
+                logger.warning(
+                    f"[State] cancel_task: no task found for session {session_id}, "
+                    f"active sessions: {list(self._tasks.keys())}"
+                )
+        elif self.current_task:
             self.current_task.cancel(reason)
 
-    def skip_current_step(self, reason: str = "用户请求跳过当前步骤") -> None:
+    def skip_current_step(self, reason: str = "用户请求跳过当前步骤", session_id: str | None = None) -> None:
         """跳过当前正在执行的步骤（不终止任务）"""
-        if self.current_task:
-            self.current_task.request_skip(reason)
+        session_id = session_id or None
+        task = self._tasks.get(session_id) if session_id else self.current_task
+        if task:
+            task.request_skip(reason)
 
-    async def insert_user_message(self, text: str) -> None:
-        """向当前任务注入用户消息"""
-        if self.current_task:
-            await self.current_task.add_user_insert(text)
+    async def insert_user_message(self, text: str, session_id: str | None = None) -> None:
+        """向任务注入用户消息"""
+        session_id = session_id or None
+        task = self._tasks.get(session_id) if session_id else self.current_task
+        if task:
+            await task.add_user_insert(text)
 
     @property
     def is_task_cancelled(self) -> bool:
