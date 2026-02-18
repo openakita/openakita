@@ -472,7 +472,7 @@
     "addCompiler": "Add Compiler Endpoint",
     "noCompiler": "No compiler endpoints configured",
     "stt": "Speech-to-Text Endpoints (STT)",
-    "sttHint": "Online speech recognition service, supports OpenAI Whisper API / DashScope Paraformer. Falls back to local Whisper if not configured.",
+    "sttHint": "Online speech recognition, supports OpenAI Whisper / DashScope Qwen-ASR / Groq / SiliconFlow. Falls back to local Whisper if not configured.",
     "addStt": "Add STT Endpoint",
     "noStt": "No STT endpoints configured (will use local Whisper)",
     "apiKeyEnv": "API Key Env Var Name",

@@ -74,10 +74,10 @@
 
   "compiler_endpoints": [],
 
-  "_doc_stt_endpoints": "语音识别(STT)端点配置。使用 OpenAI 兼容的 /audio/transcriptions API。",
+  "_doc_stt_endpoints": "语音识别(STT)端点配置。支持两种协议: 1) OpenAI /audio/transcriptions (whisper-1, gpt-4o-transcribe 等); 2) DashScope Qwen-ASR (qwen3-asr-flash，自动走 /chat/completions 协议)。注意: qwen3-asr-flash-realtime 是 WebSocket 实时流模型，不适用于文件识别。",
   "_doc_stt_examples": [
     {
-      "_doc": "示例: OpenAI Whisper API",
+      "_doc": "示例: OpenAI Whisper API (走 /audio/transcriptions 协议)",
       "name": "openai-stt",
       "provider": "openai",
       "api_type": "openai",
@@ -87,13 +87,13 @@
       "priority": 1
     },
     {
-      "_doc": "示例: DashScope Paraformer",
+      "_doc": "示例: DashScope Qwen-ASR (自动走 /chat/completions + base64 协议，≤5分钟音频)",
       "name": "dashscope-stt",
       "provider": "dashscope",
       "api_type": "openai",
       "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "api_key_env": "DASHSCOPE_API_KEY",
-      "model": "paraformer-v2",
+      "model": "qwen3-asr-flash",
       "priority": 2
     }
   ],

@@ -84,6 +84,16 @@ function localProviderPlaceholderKey(p: ProviderInfo | null | undefined): string
   return p?.slug || "local";
 }
 
+/** STT 推荐模型（按 provider slug 索引） */
+const STT_RECOMMENDED_MODELS: Record<string, { id: string; note: string }[]> = {
+  "openai":          [{ id: "gpt-4o-transcribe", note: "推荐" }, { id: "whisper-1", note: "" }],
+  "dashscope":       [{ id: "qwen3-asr-flash", note: "推荐 (文件识别 ≤5min)" }],
+  "dashscope-intl":  [{ id: "qwen3-asr-flash", note: "recommended (file ≤5min)" }],
+  "groq":            [{ id: "whisper-large-v3-turbo", note: "推荐" }, { id: "whisper-large-v3", note: "" }],
+  "siliconflow":     [{ id: "FunAudioLLM/SenseVoiceSmall", note: "推荐" }, { id: "TeleAI/TeleSpeechASR", note: "" }],
+  "siliconflow-intl":[{ id: "FunAudioLLM/SenseVoiceSmall", note: "推荐" }, { id: "TeleAI/TeleSpeechASR", note: "" }],
+};
+
 /**
  * 将模型拉取的原始错误转换为用户友好的提示信息。
  * @param rawError 原始错误字符串
@@ -5961,6 +5971,8 @@ export function App() {
                       setSttBaseUrl("");
                       setSttApiKeyEnv("CUSTOM_STT_API_KEY");
                       setSttApiKeyValue("");
+                      setSttModels([]);
+                      setSttModel("");
                     } else {
                       const p = providers.find((x) => x.slug === slug);
                       if (p) {
@@ -5975,6 +5987,14 @@ export function App() {
                         } else {
                           setSttApiKeyValue("");
                         }
+                      }
+                      const rec = STT_RECOMMENDED_MODELS[slug];
+                      if (rec?.length) {
+                        setSttModels(rec.map((m) => ({ id: m.id, name: m.id, capabilities: {} })));
+                        setSttModel(rec[0].id);
+                      } else {
+                        setSttModels([]);
+                        setSttModel("");
                       }
                     }
                   }}
@@ -6012,13 +6032,27 @@ export function App() {
                 )}
                 {sttModels.length > 0 && (
                   <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: sttModels.length })}</span>
+                    <span style={{ opacity: 0.6 }}>{STT_RECOMMENDED_MODELS[sttProviderSlug] ? "" : t("llm.modelFetched", { count: sttModels.length })}</span>
                     <button onClick={doFetchSttModels} className="btnSmall" disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}
                       style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.refetch")}
+                      {t("llm.fetchModels")}
                     </button>
                   </div>
                 )}
+                {(() => {
+                  const rec = STT_RECOMMENDED_MODELS[sttProviderSlug];
+                  if (!rec?.length) return null;
+                  return (
+                    <div className="help" style={{ marginTop: 4, paddingLeft: 2, fontSize: 11, opacity: 0.7, lineHeight: 1.6 }}>
+                      {rec.map((m) => (
+                        <span key={m.id} style={{ marginRight: 12 }}>
+                          <code style={{ background: "rgba(0,0,0,0.05)", padding: "1px 5px", borderRadius: 4, cursor: "pointer" }} onClick={() => setSttModel(m.id)}>{m.id}</code>
+                          {m.note && <span style={{ marginLeft: 3, color: "var(--brand)" }}>{m.note}</span>}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
               <div className="dialogSection">
                 <div className="dialogLabel">{t("llm.endpointName")} <span style={{ color: "var(--muted)", fontSize: 11 }}>({t("common.optional")})</span></div>

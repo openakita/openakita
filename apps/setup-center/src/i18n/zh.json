@@ -472,7 +472,7 @@
     "addCompiler": "添加编译端点",
     "noCompiler": "未配置编译端点",
     "stt": "语音识别端点 (STT)",
-    "sttHint": "在线语音识别服务，支持 OpenAI Whisper API / DashScope Paraformer 等。如未配置则使用本地 Whisper。",
+    "sttHint": "在线语音识别服务，支持 OpenAI Whisper / DashScope Qwen-ASR / Groq / SiliconFlow 等。如未配置则使用本地 Whisper。",
     "addStt": "添加 STT 端点",
     "noStt": "未配置 STT 端点（将使用本地 Whisper）",
     "apiKeyEnv": "API Key 环境变量名",
