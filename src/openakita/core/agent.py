@@ -334,9 +334,8 @@ class Agent:
         self._current_session = None  # 当前会话引用
         self._interrupt_enabled = True  # 是否启用中断检查
 
-        # 任务取消机制
-        self._task_cancelled = False  # 任务是否被用户取消
-        self._cancel_reason = ""  # 取消原因
+        # 任务取消机制 — 统一使用 TaskState.cancelled / agent_state.is_task_cancelled
+        # (旧 self._task_cancelled 已废弃，取消状态绑定到 TaskState 实例，避免全局竞态)
 
         # 当前任务监控器（仅在 IM 任务执行期间设置；供 system 工具动态调整超时策略）
         self._current_task_monitor = None
@@ -498,11 +497,8 @@ class Agent:
                         else:
                             return await self._execute_tool(tool_name, tool_input)
 
-                # 每个工具执行前清除 skip 标志
-                if self.agent_state and self.agent_state.current_task:
-                    self.agent_state.current_task.clear_skip()
-
                 # 将工具执行与 cancel_event / skip_event 三路竞速
+                # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
                 tool_task = asyncio.create_task(_do_exec())
                 cancel_waiter = asyncio.create_task(_tool_cancel_event.wait())
                 skip_waiter = asyncio.create_task(_tool_skip_event.wait())
@@ -543,6 +539,8 @@ class Agent:
                         if self.agent_state and self.agent_state.current_task
                         else "用户请求跳过"
                     )
+                    if self.agent_state and self.agent_state.current_task:
+                        self.agent_state.current_task.clear_skip()
                     logger.info(f"[SkipStep] Tool {tool_name} skipped by user: {_skip_reason}")
                     success = True
                     result_str = f"[用户跳过了此步骤: {_skip_reason}]"
@@ -2285,6 +2283,39 @@ search_github → install_skill → 使用
                 result.append(msg)
         return result
 
+    async def _cancellable_await(self, coro, cancel_event: asyncio.Event | None = None):
+        """将任意协程包装为可被 cancel_event 立即中断的操作。
+
+        如果 cancel_event 先于 coro 完成，抛出 UserCancelledError。
+        如果 cancel_event 为 None 或任务无活跃 task，直接 await coro。
+        """
+        if cancel_event is None:
+            if self.agent_state and self.agent_state.current_task:
+                cancel_event = self.agent_state.current_task.cancel_event
+            else:
+                return await coro
+
+        task = asyncio.create_task(coro) if not isinstance(coro, asyncio.Task) else coro
+        cancel_waiter = asyncio.create_task(cancel_event.wait())
+
+        done, pending = await asyncio.wait(
+            {task, cancel_waiter},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if task in done:
+            return task.result()
+        raise UserCancelledError(
+            reason=self._cancel_reason or "用户请求停止",
+            source="cancellable_await",
+        )
+
     async def _llm_compress_text(
         self, text: str, target_tokens: int, context_type: str = "general"
     ) -> str:
@@ -2326,18 +2357,20 @@ search_github → install_skill → 使用
             )
 
         try:
-            response = await asyncio.to_thread(
-                self.brain.messages_create,
-                model=self.brain.model,
-                max_tokens=target_tokens,
-                system=system_prompt,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
-                    }
-                ],
-                use_thinking=False,  # 压缩不需要 thinking，避免结果被放入 thinking 块
+            response = await self._cancellable_await(
+                asyncio.to_thread(
+                    self.brain.messages_create,
+                    model=self.brain.model,
+                    max_tokens=target_tokens,
+                    system=system_prompt,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
+                        }
+                    ],
+                    use_thinking=False,
+                )
             )
 
             summary = ""
@@ -2363,9 +2396,10 @@ search_github → install_skill → 使用
 
             return summary.strip()
 
+        except UserCancelledError:
+            raise
         except Exception as e:
             logger.warning(f"LLM compression failed: {e}")
-            # 回退: 硬截断保留头尾
             if len(text) > target_chars:
                 head = int(target_chars * 0.7)
                 tail = int(target_chars * 0.2)
@@ -2465,30 +2499,32 @@ search_github → install_skill → 使用
             chunk_target = max(int(target_tokens / len(chunks)), 100)
 
             try:
-                response = await asyncio.to_thread(
-                    self.brain.messages_create,
-                    model=self.brain.model,
-                    max_tokens=chunk_target,
-                    system=(
-                        "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
-                        "要求：\n"
-                        "1. 保留用户的原始意图和关键指令\n"
-                        "2. 保留工具调用的名称、关键参数和执行结果（成功/失败/关键输出）\n"
-                        "3. 保留重要的状态变化和决策\n"
-                        "4. 去掉重复信息、冗余输出和中间过程细节\n"
-                        "5. 使用简练的描述，不需要保留原文格式"
-                    ),
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": (
-                                f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
-                                f"约 {chunk_tokens} tokens）压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内:\n\n"
-                                f"{chunk}"
-                            ),
-                        }
-                    ],
-                    use_thinking=False,  # 压缩不需要 thinking，避免结果被放入 thinking 块
+                response = await self._cancellable_await(
+                    asyncio.to_thread(
+                        self.brain.messages_create,
+                        model=self.brain.model,
+                        max_tokens=chunk_target,
+                        system=(
+                            "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
+                            "要求：\n"
+                            "1. 保留用户的原始意图和关键指令\n"
+                            "2. 保留工具调用的名称、关键参数和执行结果（成功/失败/关键输出）\n"
+                            "3. 保留重要的状态变化和决策\n"
+                            "4. 去掉重复信息、冗余输出和中间过程细节\n"
+                            "5. 使用简练的描述，不需要保留原文格式"
+                        ),
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
+                                    f"约 {chunk_tokens} tokens）压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内:\n\n"
+                                    f"{chunk}"
+                                ),
+                            }
+                        ],
+                        use_thinking=False,
+                    )
                 )
 
                 summary = ""
@@ -2517,9 +2553,10 @@ search_github → install_skill → 使用
                         f"~{self._estimate_tokens(summary)} tokens"
                     )
 
+            except UserCancelledError:
+                raise
             except Exception as e:
                 logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
-                # 回退: 硬截断
                 max_chars = chunk_target * CHARS_PER_TOKEN
                 if len(chunk) > max_chars:
                     chunk_summaries.append(
@@ -3165,19 +3202,13 @@ search_github → install_skill → 使用
         # === 停止指令检测 ===
         message_lower = message.strip().lower()
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
-            self._task_cancelled = True
-            self._cancel_reason = f"用户发送停止指令: {message}"
+            self.cancel_current_task(f"用户发送停止指令: {message}")
             logger.info(f"[StopTask] User requested to stop: {message}")
             return "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？"
-
-        # 重置取消标志
-        self._task_cancelled = False
-        self._cancel_reason = ""
 
         # 重置 skip_event 和 pending_user_inserts（清空上轮残留）
         if self.agent_state and self.agent_state.current_task:
             self.agent_state.current_task.clear_skip()
-            # drain_user_inserts 是 async，但此处在 async 方法中可以 await
             await self.agent_state.current_task.drain_user_inserts()
 
         # 解析 conversation_id
@@ -3290,18 +3321,12 @@ search_github → install_skill → 使用
         # === 停止指令检测 ===
         message_lower = message.strip().lower()
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
-            self._task_cancelled = True
-            self._cancel_reason = f"用户发送停止指令: {message}"
-            self.cancel_current_task(self._cancel_reason)  # 同时取消计划
+            self.cancel_current_task(f"用户发送停止指令: {message}")
             logger.info(f"[StopTask] User requested to stop: {message}")
             yield {"type": "plan_cancelled"}
             yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？"}
             yield {"type": "done"}
             return
-
-        # 重置取消标志
-        self._task_cancelled = False
-        self._cancel_reason = ""
 
         # 重置 skip_event 和 pending_user_inserts（清空上轮残留）
         if self.agent_state and self.agent_state.current_task:
@@ -3810,14 +3835,41 @@ NEXT: 建议的下一步（如有）"""
             LLM 生成的收尾文本，或超时后的默认文本
         """
         cancel_reason = self._cancel_reason or "用户请求停止"
-        farewell_text = "✅ 好的，已停止当前任务。"
+        default_farewell = "✅ 好的，已停止当前任务。"
 
-        # 直接停止，不再做额外 LLM 调用——用户要求实时响应
-        logger.info(f"[StopTask] Immediate stop: {cancel_reason}")
+        # 将中断信息注入上下文，让 LLM 知道发生了什么
+        cancel_msg = (
+            f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
+            "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"
+            "不要调用任何工具。"
+        )
+        working_messages.append({"role": "user", "content": cancel_msg})
 
-        # 持久化中断记录到对话上下文
+        # 短超时 LLM 调用，让模型生成有上下文的收尾
+        farewell_text = default_farewell
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.brain.messages_create,
+                    model=current_model,
+                    max_tokens=200,
+                    system=system_prompt,
+                    tools=[],
+                    messages=working_messages,
+                ),
+                timeout=5.0,
+            )
+            for block in response.content:
+                if block.type == "text" and block.text.strip():
+                    farewell_text = block.text.strip()
+                    break
+            logger.info(f"[StopTask] LLM farewell: {farewell_text[:100]}")
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.warning("[StopTask] LLM farewell timed out (5s), using default")
+        except Exception as e:
+            logger.warning(f"[StopTask] LLM farewell failed: {e}, using default")
+
         self._persist_cancel_to_context(cancel_reason, farewell_text)
-
         return farewell_text
 
     def _persist_cancel_to_context(self, cancel_reason: str, farewell_text: str) -> None:
@@ -4209,14 +4261,14 @@ NEXT: 建议的下一步（如有）"""
                         }
                     )
 
-            # 每次迭代前检查上下文大小
-            if iteration > 0:
-                working_messages = await self._compress_context(
-                    working_messages, system_prompt=_build_effective_system_prompt()
-                )
-
-            # 调用 Brain，传递工具列表（可被 cancel_event 中断）
             try:
+                # 每次迭代前检查上下文大小
+                if iteration > 0:
+                    working_messages = await self._compress_context(
+                        working_messages, system_prompt=_build_effective_system_prompt()
+                    )
+
+                # 调用 Brain，传递工具列表（可被 cancel_event 中断）
                 response = await self._cancellable_llm_call(
                     _cancel_event,
                     model=current_model,
@@ -4249,7 +4301,12 @@ NEXT: 建议的下一步（如有）"""
                         logger.info(
                             f"[LLM] Will retry (attempt {task_monitor.retry_count}/{task_monitor.retry_before_switch})"
                         )
-                        await asyncio.sleep(2)  # 等待 2 秒后重试
+                        try:
+                            await self._cancellable_await(asyncio.sleep(2), _cancel_event)
+                        except UserCancelledError:
+                            return await self._handle_cancel_farewell(
+                                working_messages, _build_effective_system_prompt(), current_model
+                            )
                         continue
                     else:
                         # 重试次数用尽，切换模型
@@ -4573,35 +4630,9 @@ NEXT: 建议的下一步（如有）"""
                 }
             )
 
-            # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-            if self.agent_state and self.agent_state.current_task and self.agent_state.current_task.skip_event.is_set():
-                _skip_reason = self.agent_state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
-                self.agent_state.current_task.clear_skip()
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
-                        "请反思: 该步骤是否有问题？是否需要换个方法继续？"
-                        "请整理思路后继续完成任务。"
-                    ),
-                })
-                logger.info(f"[SkipReflect] Injected skip reflection prompt: {_skip_reason}")
-
-            # === 检查用户插入消息 ===
+            # === 统一处理 skip 反思 + 用户插入消息 ===
             if self.agent_state and self.agent_state.current_task:
-                _inserts = await self.agent_state.current_task.drain_user_inserts()
-                for _ins_text in _inserts:
-                    working_messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[用户插入消息] {_ins_text}\n"
-                            "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                            "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                            "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                            "如不确定，使用 ask_user 工具向用户确认。"
-                        ),
-                    })
-                    logger.info(f"[UserInsert] Injected user insert into context: {_ins_text[:60]}")
+                await self.agent_state.current_task.process_post_tool_signals(working_messages)
 
             # === C7: 重构循环检测 ===
             consecutive_tool_rounds += 1
@@ -4717,59 +4748,23 @@ NEXT: 建议的下一步（如有）"""
 
         return "已达到最大工具调用次数，请重新描述您的需求。"
 
-    # ==================== 消息中断机制 ====================
+    # ==================== 取消状态代理属性 ====================
 
-    async def _check_interrupt(self) -> str | None:
-        """
-        检查是否有需要插入的中断消息
+    @property
+    def _task_cancelled(self) -> bool:
+        """统一的取消状态查询（委托到 TaskState，兼容旧代码引用）"""
+        return (
+            hasattr(self, "agent_state")
+            and self.agent_state is not None
+            and self.agent_state.is_task_cancelled
+        )
 
-        在工具调用间隙调用此方法，检查是否有新消息需要处理
-
-        Returns:
-            如果有中断消息，返回消息文本；否则返回 None
-        """
-        if not self._interrupt_enabled or not self._current_session:
-            return None
-
-        # 从 session metadata 获取 gateway 引用
-        gateway = self._current_session.get_metadata("_gateway")
-        session_key = self._current_session.get_metadata("_session_key")
-
-        if not gateway or not session_key:
-            return None
-
-        # 检查是否有待处理的中断消息
-        if gateway.has_pending_interrupt(session_key):
-            interrupt_count = gateway.get_interrupt_count(session_key)
-            logger.info(
-                f"[Interrupt] Detected {interrupt_count} pending message(s) for session {session_key}"
-            )
-            return f"[系统提示: 用户发送了 {interrupt_count} 条新消息，请在完成当前工具调用后处理]"
-
-        return None
-
-    async def _get_interrupt_message(self) -> str | None:
-        """
-        获取并返回中断消息的内容
-
-        Returns:
-            中断消息文本，如果没有则返回 None
-        """
-        if not self._current_session:
-            return None
-
-        gateway = self._current_session.get_metadata("_gateway")
-        session_key = self._current_session.get_metadata("_session_key")
-
-        if not gateway or not session_key:
-            return None
-
-        # 获取中断消息
-        interrupt_msg = await gateway.check_interrupt(session_key)
-        if interrupt_msg:
-            return interrupt_msg.plain_text
-
-        return None
+    @property
+    def _cancel_reason(self) -> str:
+        """统一的取消原因查询（委托到 TaskState，兼容旧代码引用）"""
+        if hasattr(self, "agent_state") and self.agent_state:
+            return self.agent_state.task_cancel_reason
+        return ""
 
     def set_interrupt_enabled(self, enabled: bool) -> None:
         """
@@ -4792,10 +4787,7 @@ NEXT: 建议的下一步（如有）"""
         Args:
             reason: 取消原因
         """
-        self._task_cancelled = True
-        self._cancel_reason = reason
-        # 触发 TaskState 的 cancel_event（通知 asyncio.wait 竞速的等待方）
-        if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
+        if hasattr(self, "agent_state") and self.agent_state:
             self.agent_state.cancel_task(reason)
 
         # 取消活跃计划（标记为 cancelled，不挂在输入框上面）
@@ -4855,27 +4847,39 @@ NEXT: 建议的下一步（如有）"""
         else:
             return "insert"
 
-    def skip_current_step(self, reason: str = "用户请求跳过当前步骤") -> None:
+    def skip_current_step(self, reason: str = "用户请求跳过当前步骤") -> bool:
         """
         跳过当前正在执行的工具/步骤（不终止整个任务）
 
         Args:
             reason: 跳过原因
+
+        Returns:
+            是否成功设置 skip（False 表示无活跃任务）
         """
         if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
             self.agent_state.skip_current_step(reason)
-        logger.info(f"[SkipStep] Step skip requested: {reason}")
+            logger.info(f"[SkipStep] Step skip requested: {reason}")
+            return True
+        logger.warning(f"[SkipStep] No active task to skip: {reason}")
+        return False
 
-    async def insert_user_message(self, text: str) -> None:
+    async def insert_user_message(self, text: str) -> bool:
         """
         向当前任务注入用户消息（任务执行期间的非指令消息）
 
         Args:
             text: 用户消息文本
+
+        Returns:
+            是否成功入队（False 表示无活跃任务，消息被丢弃）
         """
         if hasattr(self, "agent_state") and self.agent_state and self.agent_state.current_task:
             await self.agent_state.insert_user_message(text)
-        logger.info(f"[UserInsert] User message queued: {text[:50]}...")
+            logger.info(f"[UserInsert] User message queued: {text[:50]}...")
+            return True
+        logger.warning(f"[UserInsert] No active task, message dropped: {text[:50]}...")
+        return False
 
     async def _chat_with_tools(self, message: str) -> str:
         """
@@ -4922,27 +4926,40 @@ NEXT: 建议的下一步（如有）"""
         recent_tool_calls: list[str] = []
         max_repeated_calls = 3
 
+        # 获取 cancel_event（用于 LLM 调用竞速取消）
+        _cancel_event = (
+            self.agent_state.current_task.cancel_event
+            if self.agent_state and self.agent_state.current_task
+            else asyncio.Event()
+        )
+
         for iteration in range(max_iterations):
             # C8: 每轮迭代检查取消
             if self._task_cancelled:
                 logger.info(f"[StopTask] Task cancelled in _chat_with_tools: {self._cancel_reason}")
                 return "✅ 任务已停止。"
 
-            # 每次迭代前检查上下文大小（工具调用可能产生大量输出）
-            if iteration > 0:
-                messages = await self._compress_context(
-                    messages, system_prompt=_build_effective_system_prompt_cli()
-                )
+            try:
+                # 每次迭代前检查上下文大小（工具调用可能产生大量输出）
+                if iteration > 0:
+                    messages = await self._compress_context(
+                        messages, system_prompt=_build_effective_system_prompt_cli()
+                    )
 
-            # 调用 Brain，传递工具列表（在线程池中执行同步调用）
-            response = await asyncio.to_thread(
-                self.brain.messages_create,
-                model=self.brain.model,
-                max_tokens=self.brain.max_tokens,
-                system=_build_effective_system_prompt_cli(),
-                tools=self._tools,
-                messages=messages,
-            )
+                # 调用 Brain（可被 cancel_event 中断）
+                response = await self._cancellable_llm_call(
+                    _cancel_event,
+                    model=self.brain.model,
+                    max_tokens=self.brain.max_tokens,
+                    system=_build_effective_system_prompt_cli(),
+                    tools=self._tools,
+                    messages=messages,
+                )
+            except UserCancelledError:
+                logger.info("[StopTask] LLM call interrupted by user cancel in _chat_with_tools")
+                return await self._handle_cancel_farewell(
+                    messages, _build_effective_system_prompt_cli(), self.brain.model
+                )
 
             # 检测 max_tokens 截断
             _cli_stop = getattr(response, "stop_reason", "")
@@ -5027,33 +5044,9 @@ NEXT: 建议的下一步（如有）"""
 
             messages.append({"role": "user", "content": tool_results})
 
-            # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-            if self.agent_state and self.agent_state.current_task and self.agent_state.current_task.skip_event.is_set():
-                _skip_reason = self.agent_state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
-                self.agent_state.current_task.clear_skip()
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
-                        "请反思: 该步骤是否有问题？是否需要换个方法继续？"
-                        "请整理思路后继续完成任务。"
-                    ),
-                })
-
-            # === 检查用户插入消息 ===
+            # === 统一处理 skip 反思 + 用户插入消息 ===
             if self.agent_state and self.agent_state.current_task:
-                _inserts = await self.agent_state.current_task.drain_user_inserts()
-                for _ins_text in _inserts:
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[用户插入消息] {_ins_text}\n"
-                            "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                            "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                            "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                            "如不确定，使用 ask_user 工具向用户确认。"
-                        ),
-                    })
+                await self.agent_state.current_task.process_post_tool_signals(messages)
 
             # 检查是否结束
             if response.stop_reason == "end_turn":
@@ -5262,6 +5255,13 @@ NEXT: 建议的下一步（如有）"""
         no_tool_call_count = 0
         max_no_tool_retries = max(0, int(getattr(settings, "force_tool_call_max_retries", 1)))
 
+        # 获取 cancel_event（用于 LLM 调用竞速取消）
+        _cancel_event = (
+            self.agent_state.current_task.cancel_event
+            if self.agent_state and self.agent_state.current_task
+            else asyncio.Event()
+        )
+
         try:
             while iteration < max_tool_iterations:
                 # C8: 每轮迭代开始时检查任务是否被取消
@@ -5344,16 +5344,16 @@ NEXT: 建议的下一步（如有）"""
                     # 重置循环检测
                     recent_tool_calls.clear()
 
-                # 检查并压缩上下文（任务执行可能产生大量工具输出）
-                if iteration > 1:
-                    messages = await self._compress_context(
-                        messages, system_prompt=_build_effective_system_prompt_task()
-                    )
-
-                # 调用 Brain（在线程池中执行同步调用）
                 try:
-                    response = await asyncio.to_thread(
-                        self.brain.messages_create,
+                    # 检查并压缩上下文（任务执行可能产生大量工具输出）
+                    if iteration > 1:
+                        messages = await self._compress_context(
+                            messages, system_prompt=_build_effective_system_prompt_task()
+                        )
+
+                    # 调用 Brain（可被 cancel_event 中断）
+                    response = await self._cancellable_llm_call(
+                        _cancel_event,
                         max_tokens=self.brain.max_tokens,
                         system=_build_effective_system_prompt_task(),
                         tools=self._tools,
@@ -5364,6 +5364,12 @@ NEXT: 建议的下一步（如有）"""
                     # 成功调用，重置重试计数
                     task_monitor.reset_retry_count()
 
+                except UserCancelledError:
+                    logger.info(f"[StopTask] LLM call interrupted by user cancel in execute_task {task.id}")
+                    return await self._handle_cancel_farewell(
+                        messages, _build_effective_system_prompt_task(), current_model
+                    )
+
                 except Exception as e:
                     logger.error(f"[LLM] Brain call failed in task {task.id}: {e}")
 
@@ -5371,11 +5377,15 @@ NEXT: 建议的下一步（如有）"""
                     should_retry = task_monitor.record_error(str(e))
 
                     if should_retry:
-                        # 继续重试
                         logger.info(
                             f"[LLM] Will retry (attempt {task_monitor.retry_count}/{task_monitor.retry_before_switch})"
                         )
-                        await asyncio.sleep(2)
+                        try:
+                            await self._cancellable_await(asyncio.sleep(2), _cancel_event)
+                        except UserCancelledError:
+                            return await self._handle_cancel_farewell(
+                                messages, _build_effective_system_prompt_task(), current_model
+                            )
                         continue
                     else:
                         # 重试次数用尽，切换模型（per-conversation override）
@@ -5567,33 +5577,9 @@ NEXT: 建议的下一步（如有）"""
 
                 messages.append({"role": "user", "content": tool_results})
 
-                # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-                if self.agent_state and self.agent_state.current_task and self.agent_state.current_task.skip_event.is_set():
-                    _skip_reason = self.agent_state.current_task.skip_reason or "用户认为该步骤耗时过长或不正确"
-                    self.agent_state.current_task.clear_skip()
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
-                            "请反思: 该步骤是否有问题？是否需要换个方法继续？"
-                            "请整理思路后继续完成任务。"
-                        ),
-                    })
-
-                # === 检查用户插入消息 ===
+                # === 统一处理 skip 反思 + 用户插入消息 ===
                 if self.agent_state and self.agent_state.current_task:
-                    _inserts = await self.agent_state.current_task.drain_user_inserts()
-                    for _ins_text in _inserts:
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                f"[用户插入消息] {_ins_text}\n"
-                                "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                                "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                                "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                                "如不确定，使用 ask_user 工具向用户确认。"
-                            ),
-                        })
+                    await self.agent_state.current_task.process_post_tool_signals(messages)
 
                 # 注意：不在工具执行后检查 stop_reason，让循环继续获取 LLM 的最终总结
             # 循环结束后，如果 final_response 为空，尝试让 LLM 生成一个总结
@@ -5607,17 +5593,22 @@ NEXT: 建议的下一步（如有）"""
                             "content": "任务执行完毕。请简要总结一下执行结果和完成情况。",
                         }
                     )
-                    summary_response = await asyncio.to_thread(
-                        self.brain.messages_create,
-                        max_tokens=1000,
-                        system=_build_effective_system_prompt_task(),
-                        messages=messages,
-                        conversation_id=conversation_id,
+                    summary_response = await self._cancellable_await(
+                        asyncio.to_thread(
+                            self.brain.messages_create,
+                            max_tokens=1000,
+                            system=_build_effective_system_prompt_task(),
+                            messages=messages,
+                            conversation_id=conversation_id,
+                        ),
+                        _cancel_event,
                     )
                     for block in summary_response.content:
                         if block.type == "text":
                             final_response = clean_llm_response(block.text)
                             break
+                except UserCancelledError:
+                    final_response = "✅ 任务已停止。"
                 except Exception as e:
                     logger.warning(f"Failed to get summary: {e}")
                     final_response = "任务已执行完成。"

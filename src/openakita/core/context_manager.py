@@ -29,6 +29,11 @@ CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
 LARGE_TOOL_RESULT_THRESHOLD = 5000  # 单条 tool_result 超过此 token 数时独立压缩
 
 
+class _CancelledError(Exception):
+    """ContextManager 内部使用的取消信号，向上传播后由 Agent 层转换为 UserCancelledError。"""
+    pass
+
+
 class ContextManager:
     """
     上下文压缩和管理器。
@@ -37,12 +42,38 @@ class ContextManager:
     使用 LLM 分块摘要压缩早期对话，保留最近的工具交互完整性。
     """
 
-    def __init__(self, brain: Any) -> None:
+    def __init__(self, brain: Any, cancel_event: asyncio.Event | None = None) -> None:
         """
         Args:
             brain: Brain 实例，用于 LLM 调用
+            cancel_event: 可选的取消事件，set 时中断压缩 LLM 调用
         """
         self._brain = brain
+        self._cancel_event = cancel_event
+
+    def set_cancel_event(self, event: asyncio.Event | None) -> None:
+        """更新 cancel_event（每次任务开始时由 Agent 设置）"""
+        self._cancel_event = event
+
+    async def _cancellable_to_thread(self, func, *args, **kwargs):
+        """包装 asyncio.to_thread 使其可被 cancel_event 中断"""
+        coro = asyncio.to_thread(func, *args, **kwargs)
+        if not self._cancel_event:
+            return await coro
+        task = asyncio.create_task(coro)
+        cancel_waiter = asyncio.create_task(self._cancel_event.wait())
+        done, pending = await asyncio.wait(
+            {task, cancel_waiter}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+        if task in done:
+            return task.result()
+        raise _CancelledError("Context compression cancelled by user")
 
     def get_max_context_tokens(self) -> int:
         """
@@ -369,7 +400,7 @@ class ContextManager:
             )
 
         try:
-            response = await asyncio.to_thread(
+            response = await self._cancellable_to_thread(
                 self._brain.messages_create,
                 model=self._brain.model,
                 max_tokens=target_tokens,
@@ -401,6 +432,8 @@ class ContextManager:
 
             return summary.strip()
 
+        except _CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"LLM compression failed: {e}")
             if len(text) > target_chars:
@@ -479,7 +512,7 @@ class ContextManager:
             chunk_target = max(int(target_tokens / len(chunks)), 100)
 
             try:
-                response = await asyncio.to_thread(
+                response = await self._cancellable_to_thread(
                     self._brain.messages_create,
                     model=self._brain.model,
                     max_tokens=chunk_target,
@@ -529,6 +562,8 @@ class ContextManager:
                         f"~{self.estimate_tokens(summary)} tokens"
                     )
 
+            except _CancelledError:
+                raise
             except Exception as e:
                 logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
                 max_chars = chunk_target * CHARS_PER_TOKEN

@@ -917,33 +917,51 @@ class MessageGateway:
                 # 会话正在处理中
                 user_text = (message.plain_text or "").strip()
 
-                if self.agent_handler:
+                # 会话隔离校验：只有当 agent 正在处理本会话的任务时，
+                # cancel/skip/insert 操作才应生效（防止 A 用户误杀 B 用户的任务）
+                _agent_session = getattr(self.agent_handler, "_current_session_id", None) if self.agent_handler else None
+                _session_matches = _agent_session and session_key.endswith(_agent_session)
+
+                if self.agent_handler and _session_matches:
                     msg_type = self.agent_handler.classify_interrupt(user_text)
 
                     if msg_type == "stop":
-                        # 全局取消：终止整个任务
                         self.agent_handler.cancel_current_task(f"用户发送停止指令: {user_text}")
                         logger.info(
                             f"[Interrupt] STOP command, cancelling task for {session_key}: {user_text}"
                         )
-                        # STOP 入中断队列（后续触发 farewell 流程）
-                        await self._add_interrupt_message(session_key, message)
-                        logger.info(
-                            f"[Interrupt] STOP queued for session {session_key}: {message.plain_text}"
-                        )
+                        # 不入中断队列: cancel_event 已触发取消流程，
+                        # 入队会导致 _process_pending_interrupts 二次处理
+                        await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
                     elif msg_type == "skip":
-                        # 单步跳过：只中断当前工具执行，不入队
-                        self.agent_handler.skip_current_step(f"用户发送跳过指令: {user_text}")
+                        ok = self.agent_handler.skip_current_step(f"用户发送跳过指令: {user_text}")
+                        if ok:
+                            await self._send_feedback(message, "⏭️ 收到，正在跳过当前步骤…")
+                        else:
+                            await self._send_feedback(message, "⚠️ 当前没有可跳过的步骤。")
                         logger.info(
                             f"[Interrupt] SKIP handled directly (not queued) for {session_key}: {user_text}"
                         )
                     else:
-                        # 用户消息插入：注入到任务上下文，不入队
-                        import asyncio as _aio
-                        _aio.create_task(self.agent_handler.insert_user_message(user_text))
+                        try:
+                            ok = await self.agent_handler.insert_user_message(user_text)
+                            if ok:
+                                await self._send_feedback(message, "💬 收到，已将消息注入当前任务。")
+                            else:
+                                await self._send_feedback(message, "⚠️ 当前没有正在执行的任务，消息未能注入。")
+                        except Exception as e:
+                            logger.error(f"[Interrupt] INSERT failed for {session_key}: {e}")
+                            await self._send_feedback(message, "❌ 消息注入失败，请稍后再试。")
                         logger.info(
-                            f"[Interrupt] INSERT handled directly (not queued) for {session_key}: {user_text[:50]}"
+                            f"[Interrupt] INSERT handled for {session_key}: {user_text[:50]}"
                         )
+                elif self.agent_handler and not _session_matches:
+                    # Agent 正在处理其他会话的任务，不执行中断操作
+                    await self._add_interrupt_message(session_key, message)
+                    logger.info(
+                        f"[Interrupt] Session mismatch (agent={_agent_session}, interrupt={session_key}), "
+                        f"queued for later: {user_text[:50]}"
+                    )
                 else:
                     # agent_handler 不可用时，fallback 入中断队列
                     await self._add_interrupt_message(session_key, message)
@@ -1385,6 +1403,19 @@ class MessageGateway:
                 await adapter.send_typing(message.chat_id)
             except Exception:
                 pass  # 忽略 typing 发送失败
+
+    async def _send_feedback(self, message: UnifiedMessage, text: str) -> None:
+        """向 IM 用户发送轻量反馈消息（中断操作确认等）"""
+        adapter = self._adapters.get(message.channel)
+        if adapter and hasattr(adapter, "send_text"):
+            try:
+                await adapter.send_text(
+                    chat_id=message.chat_id,
+                    text=text,
+                    reply_to=message.channel_message_id,
+                )
+            except Exception as e:
+                logger.warning(f"[Feedback] Failed to send feedback to {message.channel}: {e}")
 
     async def _call_agent_with_typing(self, session: Session, message: UnifiedMessage) -> str:
         """

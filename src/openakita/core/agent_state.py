@@ -186,6 +186,44 @@ class TaskState:
             self.pending_user_inserts.clear()
             return msgs
 
+    async def process_post_tool_signals(self, working_messages: list[dict]) -> None:
+        """工具执行后的统一信号处理：skip 反思提示 + 用户插入消息注入。
+
+        各执行循环在每轮工具执行完毕后调用此方法，
+        避免在 4+ 个地方重复同样的逻辑。
+
+        Args:
+            working_messages: 当前工作消息列表（会被就地追加）
+        """
+        # 1) 检查 skip: 如果本轮有工具被跳过，注入反思提示
+        if self.skip_event.is_set():
+            _skip_reason = self.skip_reason or "用户认为该步骤耗时过长或不正确"
+            self.clear_skip()
+            working_messages.append({
+                "role": "user",
+                "content": (
+                    f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
+                    "请反思: 该步骤是否有问题？是否需要换个方法继续？"
+                    "请整理思路后继续完成任务。"
+                ),
+            })
+            logger.info(f"[SkipReflect] Injected skip reflection prompt: {_skip_reason}")
+
+        # 2) 检查用户插入消息
+        _inserts = await self.drain_user_inserts()
+        for _ins_text in _inserts:
+            working_messages.append({
+                "role": "user",
+                "content": (
+                    f"[用户插入消息] {_ins_text}\n"
+                    "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                    "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                    "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                    "如不确定，使用 ask_user 工具向用户确认。"
+                ),
+            })
+            logger.info(f"[UserInsert] Injected user insert into context: {_ins_text[:60]}")
+
     def reset_for_model_switch(self) -> None:
         """模型切换时重置循环相关状态"""
         self.no_tool_call_count = 0
@@ -312,6 +350,13 @@ class AgentState:
     def is_task_cancelled(self) -> bool:
         """当前任务是否已取消"""
         return self.current_task is not None and self.current_task.cancelled
+
+    @property
+    def task_cancel_reason(self) -> str:
+        """当前任务的取消原因（无任务时返回空字符串）"""
+        if self.current_task and self.current_task.cancelled:
+            return self.current_task.cancel_reason
+        return ""
 
     @property
     def has_active_task(self) -> bool:

@@ -2155,35 +2155,31 @@ export function ChatView({
   }, [apiBase, activeConvId]);
 
   const handleCancelTask = useCallback(() => {
+    // 只通知后端取消，不断开 SSE 连接。
+    // 后端会通过 SSE 流发送 LLM 收尾文本 + done 事件，前端自然结束。
     fetch(`${apiBase}/api/chat/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: activeConvId, reason: "用户从界面取消任务" }),
-    }).catch(() => {});
-    stopStreaming();
+    }).then(() => {
+      // 兜底：如果 8 秒后 SSE 还没结束（后端卡住），强制断开
+      setTimeout(() => { if (readerRef.current) stopStreaming(); }, 8000);
+    }).catch(() => {
+      stopStreaming();
+    });
   }, [apiBase, activeConvId, stopStreaming]);
 
   const handleInsertMessage = useCallback((text: string) => {
     if (!text.trim()) return;
-    const normalized = text.trim().toLowerCase();
-    // Client-side quick check: route stop/skip commands to proper handlers
-    const STOP_WORDS = new Set(["停止","停","stop","停止执行","取消","取消任务","算了","不用了","别做了","停下","暂停","cancel","abort","quit","停止当前任务","中止","终止","不要了"]);
-    const SKIP_WORDS = new Set(["跳过","skip","下一步","next","跳过这步","跳过当前步骤","跳过当前","skip this","换个方法","太慢了"]);
-    if (STOP_WORDS.has(normalized) || STOP_WORDS.has(text.trim())) {
-      handleCancelTask();
-      return;
-    }
-    if (SKIP_WORDS.has(normalized) || SKIP_WORDS.has(text.trim())) {
-      handleSkipStep();
-      return;
-    }
-    // Regular insert — backend also has classify fallback
+    // All classification is handled by the backend classify_interrupt endpoint;
+    // the backend will route stop/skip commands to cancel/skip handlers automatically.
+    // 不需要前端断 SSE——后端会通过 SSE 流发送 LLM 收尾/响应 + done 事件。
     fetch(`${apiBase}/api/chat/insert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: activeConvId, message: text }),
     }).catch(() => {});
-  }, [apiBase, activeConvId, handleCancelTask, handleSkipStep]);
+  }, [apiBase, activeConvId]);
 
   const handleQueueMessage = useCallback(() => {
     const text = inputText.trim();

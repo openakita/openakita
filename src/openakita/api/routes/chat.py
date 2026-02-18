@@ -314,10 +314,14 @@ async def chat_insert(request: Request, body: ChatControlRequest):
 
     if msg_type == "skip":
         reason = f"用户发送跳过指令: {body.message}"
-        actual_agent.skip_current_step(reason)
+        ok = actual_agent.skip_current_step(reason)
         logger.info(f"[Chat API] Insert reclassified as SKIP: {body.message[:60]}")
+        if not ok:
+            return {"status": "warning", "action": "skip", "reason": reason, "message": "No active task to skip"}
         return {"status": "ok", "action": "skip", "reason": reason}
 
-    await actual_agent.insert_user_message(body.message)
+    ok = await actual_agent.insert_user_message(body.message)
     logger.info(f"[Chat API] Insert requested: {body.message[:60]}")
+    if not ok:
+        return {"status": "warning", "action": "insert", "message": "No active task, message dropped"}
     return {"status": "ok", "action": "insert", "message": body.message[:100]}

@@ -30,7 +30,7 @@ from typing import Any
 from ..config import settings
 from ..tracing.tracer import get_tracer
 from .agent_state import AgentState, TaskState, TaskStatus
-from .context_manager import ContextManager
+from .context_manager import ContextManager, _CancelledError as _CtxCancelledError
 from .errors import UserCancelledError
 from .response_handler import ResponseHandler, clean_llm_response, strip_thinking_tags
 from .tool_executor import ToolExecutor
@@ -402,16 +402,15 @@ class ReasoningEngine:
 
         state = self._state.current_task
         if not state or not state.is_active:
-            # 无任务 或 上一个任务已结束（COMPLETED/FAILED/CANCELLED/IDLE），需新建
             state = self._state.begin_task()
         elif state.status == TaskStatus.ACTING:
-            # 上次任务卡在 ACTING（工具执行中途异常），强制重置避免状态机死锁
             logger.warning(
                 f"[State] Previous task stuck in {state.status.value}, force resetting for new message"
             )
             state = self._state.begin_task()
 
-        # 启动 Trace（非上下文管理器，因为 run() 有多个 return 路径）
+        self._context_manager.set_cancel_event(state.cancel_event)
+
         tracer = get_tracer()
         tracer.begin_trace(session_id=state.session_id, metadata={
             "task_description": task_description[:200] if task_description else "",
@@ -532,15 +531,17 @@ class ReasoningEngine:
                     recent_tool_signatures = []
                     no_confirmation_text_count = 0
 
-            # 上下文压缩（不限 iteration > 0，只要有足够消息就检查）
             _ctx_compressed_info: dict | None = None
             if len(working_messages) > 2:
                 _before_tokens = self._context_manager.estimate_messages_tokens(working_messages)
-                working_messages = await self._context_manager.compress_if_needed(
-                    working_messages,
-                    system_prompt=_build_effective_system_prompt(),
-                    tools=tools,
-                )
+                try:
+                    working_messages = await self._context_manager.compress_if_needed(
+                        working_messages,
+                        system_prompt=_build_effective_system_prompt(),
+                        tools=tools,
+                    )
+                except _CtxCancelledError:
+                    raise UserCancelledError(reason=state.cancel_reason or "用户请求停止", source="context_compress")
                 _after_tokens = self._context_manager.estimate_messages_tokens(working_messages)
                 if _after_tokens < _before_tokens:
                     _ctx_compressed_info = {
@@ -574,13 +575,26 @@ class ReasoningEngine:
                 if task_monitor:
                     task_monitor.reset_retry_count()
 
+            except UserCancelledError:
+                raise
             except Exception as e:
                 logger.error(f"[LLM] Brain call failed: {e}")
                 retry_result = self._handle_llm_error(
                     e, task_monitor, state, working_messages, current_model
                 )
                 if retry_result == "retry":
-                    await asyncio.sleep(2)
+                    # sleep 可被 cancel_event 中断
+                    _sleep = asyncio.create_task(asyncio.sleep(2))
+                    _cw = asyncio.create_task(cancel_event.wait())
+                    _done, _pend = await asyncio.wait({_sleep, _cw}, return_when=asyncio.FIRST_COMPLETED)
+                    for _t in _pend:
+                        _t.cancel()
+                        try:
+                            await _t
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    if _cw in _done:
+                        raise UserCancelledError(reason=state.cancel_reason or "用户请求停止", source="retry_sleep")
                     continue
                 elif isinstance(retry_result, tuple):
                     current_model, working_messages = retry_result
@@ -595,7 +609,7 @@ class ReasoningEngine:
                 else:
                     raise
 
-            _thinking_duration_ms = int((time.time() - _thinking_t0) * 1000)  # 思维链: 计算 thinking 耗时
+            _thinking_duration_ms = int((time.time() - _thinking_t0) * 1000)
 
             # === IM 进度: thinking 内容 ===
             if decision.thinking_content:
@@ -1039,11 +1053,12 @@ class ReasoningEngine:
         if not state or not state.is_active:
             state = self._state.begin_task()
         elif state.status == TaskStatus.ACTING:
-            # 上次任务卡在 ACTING（工具执行中途异常），强制重置避免状态机死锁
             logger.warning(
                 f"[State] Previous task stuck in {state.status.value}, force resetting for new message"
             )
             state = self._state.begin_task()
+
+        self._context_manager.set_cancel_event(state.cancel_event)
 
         try:
             # === 动态 System Prompt（追加活跃 Plan） ===
@@ -1179,16 +1194,23 @@ class ReasoningEngine:
                 if state.status != TaskStatus.REASONING:
                     state.transition(TaskStatus.REASONING)
 
-                # --- 上下文压缩（不限 iteration > 0，只要有足够消息就检查） ---
                 _ctx_compressed_info: dict | None = None
                 if len(working_messages) > 2:
-                    effective_prompt = _build_effective_prompt()  # 每轮刷新 Plan
+                    effective_prompt = _build_effective_prompt()
                     _before_tokens = self._context_manager.estimate_messages_tokens(working_messages)
-                    working_messages = await self._context_manager.compress_if_needed(
-                        working_messages,
-                        system_prompt=effective_prompt,
-                        tools=tools,
-                    )
+                    try:
+                        working_messages = await self._context_manager.compress_if_needed(
+                            working_messages,
+                            system_prompt=effective_prompt,
+                            tools=tools,
+                        )
+                    except _CtxCancelledError:
+                        async for ev in self._stream_cancel_farewell(
+                            working_messages, effective_prompt, current_model, state
+                        ):
+                            yield ev
+                        yield {"type": "done"}
+                        return
                     _after_tokens = self._context_manager.estimate_messages_tokens(working_messages)
                     if _after_tokens < _before_tokens:
                         _ctx_compressed_info = {
@@ -1258,7 +1280,22 @@ class ReasoningEngine:
                     yield {"type": "thinking_end", "duration_ms": _thinking_duration}
 
                     if retry_result == "retry":
-                        await asyncio.sleep(2)
+                        _sleep = asyncio.create_task(asyncio.sleep(2))
+                        _cw = asyncio.create_task(cancel_event.wait())
+                        _done, _pend = await asyncio.wait({_sleep, _cw}, return_when=asyncio.FIRST_COMPLETED)
+                        for _t in _pend:
+                            _t.cancel()
+                            try:
+                                await _t
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                        if _cw in _done:
+                            async for ev in self._stream_cancel_farewell(
+                                working_messages, effective_prompt, current_model, state
+                            ):
+                                yield ev
+                            yield {"type": "done"}
+                            return
                         continue
                     elif isinstance(retry_result, tuple):
                         current_model, working_messages = retry_result
@@ -1513,11 +1550,8 @@ class ReasoningEngine:
 
                         yield {"type": "tool_call_start", "tool": tool_name, "args": tool_args, "id": tool_id}
 
-                        # 每个工具执行前清除 skip 标志
-                        if state:
-                            state.clear_skip()
-
                         # 将工具执行与 cancel_event / skip_event 三路竞速
+                        # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
                         try:
                             tool_exec_task = asyncio.create_task(
                                 self._tool_executor.execute_tool(
@@ -1546,6 +1580,8 @@ class ReasoningEngine:
                                 _stream_cancelled = True
                             elif skip_waiter in done_set and tool_exec_task not in done_set:
                                 _skip_reason = state.skip_reason if state else "用户请求跳过"
+                                if state:
+                                    state.clear_skip()
                                 result_text = f"[用户跳过了此步骤: {_skip_reason}]"
                                 _stream_skipped = True
                                 logger.info(f"[SkipStep-Stream] Tool {tool_name} skipped: {_skip_reason}")
@@ -1684,37 +1720,17 @@ class ReasoningEngine:
                         "content": tool_results_for_msg,
                     })
 
-                    # === 检查 skip: 如果本轮有工具被跳过，注入反思提示 ===
-                    if state and state.skip_event.is_set():
-                        _skip_reason = state.skip_reason or "用户认为该步骤耗时过长或不正确"
-                        state.clear_skip()
-                        working_messages.append({
-                            "role": "user",
-                            "content": (
-                                f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
-                                "请反思: 该步骤是否有问题？是否需要换个方法继续？"
-                                "请整理思路后继续完成任务。"
-                            ),
-                        })
-                        yield {"type": "chain_text", "content": f"用户跳过了当前步骤: {_skip_reason}"}
-                        logger.info(f"[SkipReflect-Stream] Injected skip reflection: {_skip_reason}")
-
-                    # === 检查用户插入消息 ===
+                    # === 统一处理 skip 反思 + 用户插入消息 ===
                     if state:
-                        _inserts = await state.drain_user_inserts()
-                        for _ins_text in _inserts:
-                            working_messages.append({
-                                "role": "user",
-                                "content": (
-                                    f"[用户插入消息] {_ins_text}\n"
-                                    "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                                    "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                                    "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                                    "如不确定，使用 ask_user 工具向用户确认。"
-                                ),
-                            })
-                            yield {"type": "chain_text", "content": f"用户插入消息: {_ins_text[:60]}"}
-                            logger.info(f"[UserInsert-Stream] Injected user insert: {_ins_text[:60]}")
+                        _msg_count_before = len(working_messages)
+                        await state.process_post_tool_signals(working_messages)
+                        for _new_msg in working_messages[_msg_count_before:]:
+                            _content = _new_msg.get("content", "")
+                            if "[系统提示-用户跳过步骤]" in _content:
+                                yield {"type": "chain_text", "content": f"用户跳过了当前步骤"}
+                            elif "[用户插入消息]" in _content:
+                                _preview = _content.split("]")[1].split("\n")[0].strip() if "]" in _content else _content[:60]
+                                yield {"type": "chain_text", "content": f"用户插入消息: {_preview[:60]}"}
 
                     # --- 循环检测（与 run() 一致） ---
                     consecutive_tool_rounds += 1
@@ -1996,12 +2012,12 @@ class ReasoningEngine:
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         cancel_msg = (
             f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
-            "请立即停止当前操作，简要告知用户已停止以及当前进度。"
+            "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"
             "不要调用任何工具。"
         )
         working_messages.append({"role": "user", "content": cancel_msg})
 
-        farewell_text = "✅ 任务已停止。"
+        farewell_text = "✅ 好的，已停止当前任务。"
         try:
             farewell_response = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -2012,7 +2028,7 @@ class ReasoningEngine:
                     tools=[],
                     messages=working_messages,
                 ),
-                timeout=10.0,
+                timeout=5.0,
             )
             for block in farewell_response.content:
                 if block.type == "text" and block.text.strip():
@@ -2020,11 +2036,10 @@ class ReasoningEngine:
                     break
             logger.info(f"[ReAct-Stream][StopTask] LLM farewell: {farewell_text[:100]}")
         except (TimeoutError, asyncio.TimeoutError):
-            logger.warning("[ReAct-Stream][StopTask] LLM farewell timed out (10s)")
+            logger.warning("[ReAct-Stream][StopTask] LLM farewell timed out (5s)")
         except Exception as e:
             logger.warning(f"[ReAct-Stream][StopTask] LLM farewell failed: {e}")
 
-        # 流式输出收尾文本
         chunk_size = 20
         for i in range(0, len(farewell_text), chunk_size):
             yield {"type": "text_delta", "content": farewell_text[i:i + chunk_size]}
