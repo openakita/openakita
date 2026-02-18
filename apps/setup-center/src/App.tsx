@@ -944,6 +944,8 @@ export function App() {
   const [obStep, setObStep] = useState<OnboardingStep>("ob-welcome");
   const [obModules, setObModules] = useState<ModuleInfo[]>([]);
   const [obSelectedModules, setObSelectedModules] = useState<Set<string>>(new Set(["vector-memory", "browser", "whisper"]));
+  /** 卸载因“拒绝访问”失败时，可先停止后端再卸载的待处理模块 */
+  const [moduleUninstallPending, setModuleUninstallPending] = useState<{ id: string; name: string } | null>(null);
   const obModulesDefaultsApplied = useRef(false);
   const [obInstallLog, setObInstallLog] = useState<string[]>([]);
   const [obInstalling, setObInstalling] = useState(false);
@@ -8592,6 +8594,37 @@ export function App() {
         <div className="card">
           <h2 className="cardTitle">{t("modules.title")}</h2>
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{t("modules.desc")}</p>
+          {moduleUninstallPending && currentWorkspaceId && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 12px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>
+              <span style={{ flex: 1, fontSize: 13 }}>{t("modules.uninstallFailInUse")}</span>
+              <button
+                type="button"
+                className="btnPrimary btnSmall"
+                disabled={!!busy}
+                onClick={async () => {
+                  const { id, name } = moduleUninstallPending;
+                  setBusy(t("status.stopping"));
+                  setError(null);
+                  try {
+                    const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_stop", { workspaceId: currentWorkspaceId });
+                    setServiceStatus(ss);
+                    await new Promise((r) => setTimeout(r, 1500));
+                    await invoke("uninstall_module", { moduleId: id });
+                    setNotice(t("modules.uninstalled", { name }));
+                    setModuleUninstallPending(null);
+                    obLoadModules();
+                  } catch (e) {
+                    setError(String(e));
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                {t("modules.stopAndUninstall")}
+              </button>
+              <button type="button" className="btnSmall" onClick={() => { setModuleUninstallPending(null); setError(null); }}>{t("common.cancel")}</button>
+            </div>
+          )}
           <div className="obModuleList">
             {obModules.map((m) => (
               <div key={m.id} className={`obModuleItem ${m.installed || m.bundled ? "obModuleInstalled" : ""}`}>
@@ -8608,15 +8641,25 @@ export function App() {
                         className="btnSmall"
                         style={{ color: "#ef4444" }}
                         onClick={async () => {
-                          try {
+                          const doUninstall = async () => {
                             await invoke("uninstall_module", { moduleId: m.id });
                             setNotice(t("modules.uninstalled", { name: m.name }));
                             obLoadModules();
                             if (serviceStatus?.running) {
                               setModuleRestartPrompt(m.name);
                             }
+                          };
+                          try {
+                            await doUninstall();
                           } catch (e) {
-                            setError(String(e));
+                            const msg = String(e);
+                            const isAccessDenied = /拒绝访问|Access denied|os error 5/i.test(msg);
+                            if (isAccessDenied && serviceStatus?.running && currentWorkspaceId) {
+                              setError(t("modules.uninstallFailInUse"));
+                              setModuleUninstallPending({ id: m.id, name: m.name });
+                              return;
+                            }
+                            setError(msg);
                           }
                         }}
                         disabled={m.bundled}

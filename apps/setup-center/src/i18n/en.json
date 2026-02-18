@@ -684,6 +684,8 @@
     "restartTitle": "Restart Required",
     "restartDesc": "Module \"{{name}}\" changes are complete. A backend restart is needed for changes to take effect. Restart now?",
     "restartNow": "Restart Now",
-    "restartLater": "Later"
+    "restartLater": "Later",
+    "uninstallFailInUse": "Uninstall failed: module files may be in use by the backend. Stop the backend service first, then try again.",
+    "stopAndUninstall": "Stop backend and uninstall"
   }
 }

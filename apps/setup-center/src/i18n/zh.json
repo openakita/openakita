@@ -684,6 +684,8 @@
     "restartTitle": "需要重启服务",
     "restartDesc": "模块「{{name}}」变更已完成。需要重启后端服务才能生效，是否立即重启？",
     "restartNow": "立即重启",
-    "restartLater": "稍后再说"
+    "restartLater": "稍后再说",
+    "uninstallFailInUse": "卸载失败：模块文件可能正被后端使用。请先停止后端服务后再试卸载。",
+    "stopAndUninstall": "停止后端并卸载"
   }
 }

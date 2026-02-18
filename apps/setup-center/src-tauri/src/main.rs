@@ -641,7 +641,7 @@ async fn install_module(
 fn uninstall_module(module_id: String) -> Result<String, String> {
     let module_path = modules_dir().join(&module_id);
     if module_path.exists() {
-        fs::remove_dir_all(&module_path)
+        force_remove_dir(&module_path)
             .map_err(|e| format!("删除模块目录失败: {e}"))?;
     }
     Ok(format!("{} 已卸载", module_id))
