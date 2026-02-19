@@ -226,6 +226,7 @@ type EndpointDraft = {
   timeout: number;
   capabilities: string[];
   note?: string | null;
+  pricing_tiers?: { max_input: number; input_price: number; output_price: number }[];
 };
 
 type PythonCandidate = {
@@ -5604,38 +5605,36 @@ export function App() {
               {/* Advanced (collapsed) */}
               <details className="dialogDetails">
                 <summary>{t("llm.advanced")}</summary>
-                <div>
-                  <div style={{ marginBottom: 10 }}>
-                    <div className="dialogLabel">API Type</div>
-                    <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 140, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div>
+                    <div className="dialogLabel">{t("llm.advApiType")}</div>
+                    <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 180, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
                       <option value="openai">openai</option>
                       <option value="anthropic">anthropic</option>
                     </select>
                   </div>
-                  <div style={{ marginBottom: 10 }}>
-                    <div className="dialogLabel">Key Env Name</div>
+                  <div>
+                    <div className="dialogLabel">{t("llm.advKeyEnv")}</div>
                     <input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                   </div>
                   <div>
-                    <div className="dialogLabel">Priority</div>
-                    <input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} style={{ width: 80, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="dialogLabel">{t("llm.advPriority")}</div>
+                    <input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} style={{ width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 10 }}>
-                    <div>
-                      <div className="dialogLabel">Max Tokens</div>
-                      <input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                      <div className="help" style={{ fontSize: 11, marginTop: 2 }}>0 = 使用模型默认值</div>
-                    </div>
-                    <div>
-                      <div className="dialogLabel">Context Window</div>
-                      <input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 150000))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                      <div className="help" style={{ fontSize: 11, marginTop: 2 }}>上下文窗口 (tokens)</div>
-                    </div>
-                    <div>
-                      <div className="dialogLabel">Timeout (s)</div>
-                      <input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                      <div className="help" style={{ fontSize: 11, marginTop: 2 }}>请求超时 (秒)</div>
-                    </div>
+                  <div>
+                    <div className="dialogLabel">{t("llm.advMaxTokens")}</div>
+                    <input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advMaxTokensHint")}</div>
+                  </div>
+                  <div>
+                    <div className="dialogLabel">{t("llm.advContextWindow")}</div>
+                    <input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 150000))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advContextWindowHint")}</div>
+                  </div>
+                  <div>
+                    <div className="dialogLabel">{t("llm.advTimeout")}</div>
+                    <input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advTimeoutHint")}</div>
                   </div>
                 </div>
               </details>
@@ -5652,11 +5651,11 @@ export function App() {
 
               {/* Footer — fixed at bottom */}
               <div className="dialogFooter">
-                <button className="btnSmall" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8 }}>
+                <button className="btnSmall" style={{ padding: "8px 18px" }} onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <button
                     className="btnSmall"
-                    style={{ padding: "8px 16px", borderRadius: 8 }}
+                    style={{ padding: "8px 18px" }}
                     disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || connTesting}
                     onClick={() => doTestConnection({ testApiType: apiType, testBaseUrl: baseUrl, testApiKey: apiKeyValue.trim() || (isLocalProvider(selectedProvider) ? localProviderPlaceholderKey(selectedProvider) : ""), testProviderSlug: selectedProvider?.slug })}
                   >
@@ -5672,7 +5671,7 @@ export function App() {
                     const btnDisabled = missing.length > 0 || !!busy;
                     return (
                       <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                        <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
+                        <button className="btnPrimary" style={{ padding: "8px 18px" }} onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
                           {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
                         </button>
                         {btnDisabled && !busy && missing.length > 0 && (
@@ -5781,38 +5780,36 @@ export function App() {
                 <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--fg-secondary, #888)", userSelect: "none", padding: "4px 0" }}>
                   ⚙ {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
                 </summary>
-                <div style={{ padding: "8px 0 4px 0" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
-                    <div className="dialogSection" style={{ margin: 0 }}>
-                      <div className="dialogLabel" style={{ fontSize: 12 }}>API Type</div>
-                      <select value={editDraft.apiType} onChange={(e) => setEditDraft({ ...editDraft, apiType: e.target.value as any })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
-                        <option value="openai">openai</option>
-                        <option value="anthropic">anthropic</option>
-                      </select>
-                    </div>
-                    <div className="dialogSection" style={{ margin: 0 }}>
-                      <div className="dialogLabel" style={{ fontSize: 12 }}>Key Env Name</div>
-                      <input value={editDraft.apiKeyEnv} onChange={(e) => setEditDraft({ ...editDraft, apiKeyEnv: e.target.value })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "8px 0 4px 0" }}>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advApiType")}</div>
+                    <select value={editDraft.apiType} onChange={(e) => setEditDraft({ ...editDraft, apiType: e.target.value as any })} style={{ width: 180, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
+                      <option value="openai">openai</option>
+                      <option value="anthropic">anthropic</option>
+                    </select>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
-                    <div className="dialogSection" style={{ margin: 0 }}>
-                      <div className="dialogLabel" style={{ fontSize: 12 }}>Priority</div>
-                      <input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    </div>
-                    <div className="dialogSection" style={{ margin: 0 }}>
-                      <div className="dialogLabel" style={{ fontSize: 12 }}>Max Tokens</div>
-                      <input type="number" min={0} value={editDraft.maxTokens} onChange={(e) => setEditDraft({ ...editDraft, maxTokens: Math.max(0, parseInt(e.target.value) || 0) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                      <div className="help" style={{ fontSize: 11, marginTop: 2 }}>0 = 默认</div>
-                    </div>
-                    <div className="dialogSection" style={{ margin: 0 }}>
-                      <div className="dialogLabel" style={{ fontSize: 12 }}>Context Window</div>
-                      <input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 150000) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    </div>
-                    <div className="dialogSection" style={{ margin: 0 }}>
-                      <div className="dialogLabel" style={{ fontSize: 12 }}>Timeout (s)</div>
-                      <input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    </div>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advKeyEnv")}</div>
+                    <input value={editDraft.apiKeyEnv} onChange={(e) => setEditDraft({ ...editDraft, apiKeyEnv: e.target.value })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  </div>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advPriority")}</div>
+                    <input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} style={{ width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  </div>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advMaxTokens")}</div>
+                    <input type="number" min={0} value={editDraft.maxTokens} onChange={(e) => setEditDraft({ ...editDraft, maxTokens: Math.max(0, parseInt(e.target.value) || 0) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advMaxTokensHint")}</div>
+                  </div>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advContextWindow")}</div>
+                    <input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 150000) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advContextWindowHint")}</div>
+                  </div>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advTimeout")}</div>
+                    <input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advTimeoutHint")}</div>
                   </div>
                 </div>
               </details>
@@ -5880,11 +5877,11 @@ export function App() {
               )}
 
               <div className="dialogFooter">
-                <button className="btnSmall" onClick={() => { resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8 }}>
+                <button className="btnSmall" style={{ padding: "8px 18px" }} onClick={() => { resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <button
                     className="btnSmall"
-                    style={{ padding: "8px 16px", borderRadius: 8 }}
+                    style={{ padding: "8px 18px" }}
                     disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(envDraft[editDraft.apiKeyEnv || ""] || "").trim()) || !(editDraft.baseUrl || "").trim() || connTesting}
                     onClick={() => { const _ep = providers.find((p) => p.slug === editDraft.providerSlug); doTestConnection({
                       testApiType: editDraft.apiType || "openai",
@@ -5895,7 +5892,7 @@ export function App() {
                   >
                     {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
                   </button>
-                  <button className="btnPrimary" style={{ padding: "8px 20px", borderRadius: 8 }} onClick={async () => { await doSaveEditedEndpoint(); setConnTestResult(null); }} disabled={!!busy}>{t("common.save")}</button>
+                  <button className="btnPrimary" style={{ padding: "8px 18px" }} onClick={async () => { await doSaveEditedEndpoint(); setConnTestResult(null); }} disabled={!!busy}>{t("common.save")}</button>
                 </div>
               </div>
             </div>
