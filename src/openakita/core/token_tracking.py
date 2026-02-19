@@ -127,6 +127,28 @@ def _writer_loop(db_path: str) -> None:
         conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                session_id TEXT,
+                endpoint_name TEXT,
+                model TEXT,
+                operation_type TEXT,
+                operation_detail TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_creation_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0,
+                context_tokens INTEGER DEFAULT 0,
+                iteration INTEGER DEFAULT 0,
+                channel TEXT,
+                user_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
+        """)
     except Exception as e:
         logger.error(f"[TokenTracking] Failed to open database: {e}")
         return

@@ -155,6 +155,10 @@ async def _stream_chat(
 
             event_type = event.get("type", "")
 
+            # 拦截 done 事件：不在此处转发，等 usage 收集完毕后统一发送
+            if event_type == "done":
+                continue
+
             # 捕获 ask_user 问题文本和选项（用于 session 保存）
             if event_type == "ask_user":
                 _ask_user_question = event.get("question", "")
