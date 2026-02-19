@@ -1,30 +1,107 @@
 """
-记忆提取器 - 使用 AI 从对话中自动提取记忆
+记忆提取器 (v2)
 
 功能:
-1. AI 判断提取: 让 LLM 判断是否值得记录
-2. 任务完成提取: 从任务结果中提取经验
-3. 批量整理提取: 归纳对话历史精华
-4. 去重合并: 避免重复记忆
+1. AI 判断提取 (v2: 工具感知, 实体-属性结构, 更新检测)
+2. 情节生成: 从对话轮次生成 Episode
+3. 草稿本更新: 基于最新 Episode 更新 Scratchpad
+4. 快速规则提取: 上下文压缩前低延迟提取
+5. 任务完成提取 (保留)
+6. 批量整理提取 (保留)
+7. 去重合并 (保留)
 """
+
+from __future__ import annotations
 
 import json
 import logging
 import re
+import uuid
+from datetime import datetime
 
-from .types import ConversationTurn, Memory, MemoryPriority, MemoryType
+from .types import (
+    ActionNode,
+    ConversationTurn,
+    Episode,
+    Memory,
+    MemoryPriority,
+    MemoryType,
+    Scratchpad,
+    SemanticMemory,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor:
-    """
-    AI 驱动的记忆提取器
+    """AI 驱动的记忆提取器 (v2)"""
 
-    不再使用简单的关键词规则，而是让 LLM 判断是否值得记录
-    """
+    EXTRACTION_PROMPT_V2 = """分析这轮对话，提取值得记住的信息。
 
-    # AI 判断提取的 prompt
+对话内容:
+[{role}]: {content}
+{tool_context}
+{extra_context}
+
+对于每条值得记录的信息，用 JSON 输出:
+[
+  {{
+    "type": "FACT|PREFERENCE|RULE|SKILL|ERROR",
+    "subject": "实体主语 (谁/什么)",
+    "predicate": "属性/关系 (偏好/版本/位于/...)",
+    "content": "完整描述",
+    "importance": 0.5-1.0,
+    "is_update": false,
+    "update_hint": ""
+  }}
+]
+
+如果没有值得记录的信息, 只输出: NONE
+
+注意:
+- subject 是"关于谁/什么"的, 如 "用户", "项目X", "Python"
+- predicate 是属性关系, 如 "偏好", "版本", "使用工具"
+- content 要精简, 不要照抄原文
+- is_update: 如果是对已知事实的更新(如版本升级), 设为 true
+- 最多输出 3 条记忆"""
+
+    EPISODE_PROMPT = """基于以下对话轮次，生成一个情节摘要。
+
+对话:
+{conversation}
+
+请用 JSON 格式输出:
+{{
+  "summary": "一段话描述发生了什么 (100-200字)",
+  "goal": "用户的目标/意图",
+  "outcome": "success|partial|failed|ongoing",
+  "entities": ["涉及的实体: 文件路径、项目名、概念等"],
+  "tools_used": ["使用的工具名列表"]
+}}"""
+
+    SCRATCHPAD_PROMPT = """你是 AI agent 的工作记忆管理器。基于最新的交互情节，更新工作记忆草稿本。
+
+当前草稿本内容:
+{current_scratchpad}
+
+最新情节:
+{episode_summary}
+
+请输出更新后的完整草稿本 (Markdown 格式, 不超过 2000 字符):
+
+## 当前项目
+- ...
+
+## 近期进展
+- ...
+
+## 未解决的问题
+- ...
+
+## 下一步
+- ..."""
+
+    # 保留 v1 prompt 用于向后兼容
     EXTRACTION_PROMPT = """分析这轮对话，判断是否包含值得长期记住的信息。
 
 对话内容:
@@ -54,39 +131,364 @@ class MemoryExtractor:
 - 最多输出 3 条记忆"""
 
     def __init__(self, brain=None):
-        """
-        Args:
-            brain: LLM 大脑实例 (用于 AI 判断提取)
-        """
         self.brain = brain
+
+    # ==================================================================
+    # v2: Entity-Attribute Extraction with Tool Awareness
+    # ==================================================================
+
+    async def extract_from_turn_v2(
+        self,
+        turn: ConversationTurn,
+        context: str = "",
+    ) -> list[dict]:
+        """
+        v2 提取: 感知工具调用, 输出实体-属性结构
+
+        Returns:
+            List of dicts with keys: type, subject, predicate, content,
+            importance, is_update, update_hint
+        """
+        if not self.brain:
+            return []
+
+        content = turn.content or ""
+        if len(content.strip()) < 10 and not turn.tool_calls:
+            return []
+
+        tool_context = self._build_tool_context(turn.tool_calls, turn.tool_results)
+        extra = f"上下文: {context}" if context else ""
+
+        prompt = self.EXTRACTION_PROMPT_V2.format(
+            role=turn.role,
+            content=content,
+            tool_context=tool_context,
+            extra_context=extra,
+        )
+
+        try:
+            response = await self._call_brain(
+                prompt, system="你是记忆提取专家。只输出 NONE 或 JSON 数组。",
+            )
+
+            text = (getattr(response, "content", None) or str(response)).strip()
+            if "NONE" in text.upper() or not text:
+                return []
+
+            json_match = re.search(r"\[[\s\S]*\]", text)
+            if not json_match:
+                return []
+
+            data = json.loads(json_match.group())
+            if not isinstance(data, list):
+                return []
+
+            results = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                c = (item.get("content") or "").strip()
+                if len(c) < 5:
+                    continue
+                results.append({
+                    "type": (item.get("type") or "FACT").upper(),
+                    "subject": (item.get("subject") or "").strip(),
+                    "predicate": (item.get("predicate") or "").strip(),
+                    "content": c,
+                    "importance": max(0.1, min(1.0, float(item.get("importance", 0.5)))),
+                    "is_update": bool(item.get("is_update", False)),
+                    "update_hint": (item.get("update_hint") or "").strip(),
+                })
+
+            if results:
+                logger.info(f"[Extractor v2] Extracted {len(results)} items from {turn.role}")
+            return results
+
+        except Exception as e:
+            logger.error(f"[Extractor v2] Extraction failed: {e}")
+            return []
+
+    def _build_tool_context(
+        self,
+        tool_calls: list[dict] | None,
+        tool_results: list[dict] | None,
+    ) -> str:
+        if not tool_calls:
+            return ""
+
+        lines = ["\n工具调用:"]
+        for tc in (tool_calls or [])[:5]:
+            name = tc.get("name", "unknown")
+            inp = tc.get("input", {})
+            key_params = {k: v for k, v in inp.items() if k in (
+                "command", "path", "query", "url", "content", "filename"
+            )} if isinstance(inp, dict) else {}
+            lines.append(f"  - {name}({json.dumps(key_params, ensure_ascii=False)[:200]})")
+
+        if tool_results:
+            for tr in tool_results[:3]:
+                content = tr.get("content", "")
+                is_err = tr.get("is_error", False)
+                summary = content[:150] if isinstance(content, str) else str(content)[:150]
+                prefix = "错误" if is_err else "结果"
+                lines.append(f"  {prefix}: {summary}")
+
+        return "\n".join(lines)
+
+    # ==================================================================
+    # v2: Episode Generation
+    # ==================================================================
+
+    async def generate_episode(
+        self,
+        turns: list[ConversationTurn],
+        session_id: str,
+        source: str = "session_end",
+    ) -> Episode | None:
+        """从对话轮次生成情节记忆"""
+        if not turns:
+            return None
+
+        action_nodes = self._extract_action_nodes(turns)
+
+        conv_text = "\n".join(
+            f"[{t.role}]: {(t.content or '')[:300]}"
+            + (f" [调用了 {len(t.tool_calls)} 个工具]" if t.tool_calls else "")
+            for t in turns[-20:]
+        )
+
+        episode = Episode(
+            session_id=session_id,
+            started_at=turns[0].timestamp,
+            ended_at=turns[-1].timestamp,
+            action_nodes=action_nodes,
+            tools_used=list({n.tool_name for n in action_nodes}),
+            source=source,
+        )
+
+        if self.brain:
+            try:
+                prompt = self.EPISODE_PROMPT.format(conversation=conv_text)
+                resp = await self._call_brain(
+                    prompt, system="你是交互情节分析专家。只输出 JSON。"
+                )
+                text = (getattr(resp, "content", None) or str(resp)).strip()
+                json_match = re.search(r"\{[\s\S]*\}", text)
+                if json_match:
+                    data = json.loads(json_match.group())
+                    episode.summary = data.get("summary", "")
+                    episode.goal = data.get("goal", "")
+                    episode.outcome = data.get("outcome", "completed")
+                    episode.entities = data.get("entities", [])
+                    if data.get("tools_used"):
+                        episode.tools_used = list(set(episode.tools_used + data["tools_used"]))
+            except Exception as e:
+                logger.warning(f"[Extractor] Episode LLM generation failed: {e}")
+
+        if not episode.summary:
+            episode.summary = self._generate_fallback_summary(turns)
+            episode.goal = turns[0].content[:100] if turns[0].content else ""
+            episode.entities = self._extract_entities(turns)
+
+        return episode
+
+    def _extract_action_nodes(self, turns: list[ConversationTurn]) -> list[ActionNode]:
+        nodes = []
+        for turn in turns:
+            if not turn.tool_calls:
+                continue
+            for tc in turn.tool_calls:
+                name = tc.get("name", "")
+                inp = tc.get("input", {})
+                key_params = {}
+                if isinstance(inp, dict):
+                    for k in ("command", "path", "query", "url", "filename"):
+                        if k in inp:
+                            key_params[k] = str(inp[k])[:200]
+
+                result_summary = ""
+                success = True
+                error_msg = None
+                tc_id = tc.get("id", "")
+                for tr in turn.tool_results:
+                    if tr.get("tool_use_id") == tc_id or not tc_id:
+                        content = tr.get("content", "")
+                        result_summary = (content if isinstance(content, str) else str(content))[:200]
+                        if tr.get("is_error"):
+                            success = False
+                            error_msg = result_summary
+                        break
+
+                nodes.append(ActionNode(
+                    tool_name=name,
+                    key_params=key_params,
+                    result_summary=result_summary,
+                    success=success,
+                    error_message=error_msg,
+                    timestamp=turn.timestamp,
+                ))
+        return nodes
+
+    def _generate_fallback_summary(self, turns: list[ConversationTurn]) -> str:
+        user_msgs = [t.content[:100] for t in turns if t.role == "user" and t.content]
+        if user_msgs:
+            return f"对话涉及: {'; '.join(user_msgs[:3])}"
+        return f"共 {len(turns)} 轮对话"
+
+    def _extract_entities(self, turns: list[ConversationTurn]) -> list[str]:
+        entities = set()
+        for turn in turns:
+            text = turn.content or ""
+            for m in re.finditer(r'[A-Za-z]:[\\\/][^\s"\']+', text):
+                entities.add(m.group(0))
+            for m in re.finditer(r'[\w-]+\.(?:py|js|ts|md|json|yaml|toml|sh)\b', text):
+                entities.add(m.group(0))
+        return list(entities)[:20]
+
+    # ==================================================================
+    # v2: Scratchpad Update
+    # ==================================================================
+
+    async def update_scratchpad(
+        self,
+        current: Scratchpad | None,
+        episode: Episode,
+    ) -> Scratchpad:
+        """基于最新情节更新草稿本"""
+        current_content = current.content if current else "(空白)"
+        user_id = current.user_id if current else "default"
+
+        if self.brain:
+            try:
+                prompt = self.SCRATCHPAD_PROMPT.format(
+                    current_scratchpad=current_content,
+                    episode_summary=episode.summary or episode.to_markdown(),
+                )
+                resp = await self._call_brain(prompt)
+                text = (getattr(resp, "content", None) or str(resp)).strip()
+
+                return Scratchpad(
+                    user_id=user_id,
+                    content=text[:2000],
+                    active_projects=self._parse_list_section(text, "当前项目"),
+                    current_focus=self._parse_first_item(text, "当前项目"),
+                    open_questions=self._parse_list_section(text, "未解决的问题"),
+                    next_steps=self._parse_list_section(text, "下一步"),
+                    updated_at=datetime.now(),
+                )
+            except Exception as e:
+                logger.warning(f"[Extractor] Scratchpad LLM update failed: {e}")
+
+        pad = current or Scratchpad(user_id=user_id)
+        if episode.summary:
+            date_str = episode.ended_at.strftime("%m/%d")
+            progress = f"- {date_str}: {episode.summary[:100]}"
+            pad.content = self._append_to_section(
+                pad.content, "近期进展", progress
+            )
+        pad.updated_at = datetime.now()
+        return pad
+
+    @staticmethod
+    def _parse_list_section(text: str, section: str) -> list[str]:
+        pattern = rf"##\s*{re.escape(section)}\s*\n((?:- .+\n?)*)"
+        m = re.search(pattern, text)
+        if not m:
+            return []
+        items = []
+        for line in m.group(1).strip().split("\n"):
+            line = line.strip()
+            if line.startswith("- "):
+                items.append(line[2:].strip())
+        return items[:10]
+
+    @staticmethod
+    def _parse_first_item(text: str, section: str) -> str:
+        pattern = rf"##\s*{re.escape(section)}\s*\n- (.+)"
+        m = re.search(pattern, text)
+        return m.group(1).strip() if m else ""
+
+    @staticmethod
+    def _append_to_section(content: str, section: str, item: str) -> str:
+        pattern = rf"(##\s*{re.escape(section)}\s*\n)"
+        m = re.search(pattern, content)
+        if m:
+            insert_pos = m.end()
+            return content[:insert_pos] + item + "\n" + content[insert_pos:]
+        return content + f"\n\n## {section}\n{item}\n"
+
+    # ==================================================================
+    # v2: Quick Facts (rule-based, for context compression)
+    # ==================================================================
+
+    def extract_quick_facts(self, messages: list[dict]) -> list[SemanticMemory]:
+        """
+        快速规则提取 — 用于上下文压缩前, 不调用 LLM
+        只提取强信号: 偏好、规则、路径
+        """
+        facts: list[SemanticMemory] = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role != "user" or not content or len(content) < 10:
+                continue
+
+            if any(k in content for k in ("我喜欢", "我更喜欢", "我习惯", "我偏好")):
+                facts.append(SemanticMemory(
+                    type=MemoryType.PREFERENCE,
+                    priority=MemoryPriority.LONG_TERM,
+                    subject="用户",
+                    predicate="偏好",
+                    content=content[:200],
+                    source="quick_extract",
+                    importance_score=0.7,
+                    tags=["preference"],
+                ))
+
+            if any(k in content for k in ("不要", "必须", "禁止", "永远不要")):
+                facts.append(SemanticMemory(
+                    type=MemoryType.RULE,
+                    priority=MemoryPriority.LONG_TERM,
+                    subject="用户",
+                    predicate="规则",
+                    content=content[:200],
+                    source="quick_extract",
+                    importance_score=0.8,
+                    tags=["rule"],
+                ))
+
+            m = re.search(r"[A-Za-z]:\\[^\s\"']{3,}", content)
+            if m:
+                facts.append(SemanticMemory(
+                    type=MemoryType.FACT,
+                    priority=MemoryPriority.LONG_TERM,
+                    subject="用户",
+                    predicate="路径",
+                    content=f"用户提到路径: {m.group(0)}",
+                    source="quick_extract",
+                    importance_score=0.6,
+                    tags=["path"],
+                ))
+
+        return facts[:5]
+
+    # ==================================================================
+    # v1 Backward Compatible Methods
+    # ==================================================================
 
     async def extract_from_turn_with_ai(
         self,
         turn: ConversationTurn,
         context: str = "",
     ) -> list[Memory]:
-        """
-        使用 AI 判断是否应该从这轮对话中提取记忆
-
-        这是主要的提取方法，替代之前的关键词规则
-
-        Args:
-            turn: 对话轮次
-            context: 额外上下文（可选）
-
-        Returns:
-            提取的记忆列表（可能为空）
-        """
+        """v1 兼容: 使用 AI 判断是否应该提取记忆"""
         if not self.brain:
-            logger.debug("No brain available for AI extraction")
             return []
 
-        # 太短的消息不需要提取
-        if len(turn.content.strip()) < 10:
+        if len((turn.content or "").strip()) < 10:
             return []
 
         try:
-            # 构建 prompt
             context_text = f"上下文: {context}" if context else ""
             prompt = self.EXTRACTION_PROMPT.format(
                 role=turn.role,
@@ -94,52 +496,39 @@ class MemoryExtractor:
                 context=context_text,
             )
 
-            # 调用 LLM（优先使用编译端点，不与主推理争抢资源）
-            if hasattr(self.brain, "think_lightweight"):
-                response = await self.brain.think_lightweight(
-                    prompt,
-                    system="你是记忆提取专家。只输出 NONE 或 JSON 数组，不要其他内容。",
-                )
-            else:
-                response = await self.brain.think(
-                    prompt,
-                    system="你是记忆提取专家。只输出 NONE 或 JSON 数组，不要其他内容。",
-                )
+            response = await self._call_brain(
+                prompt,
+                system="你是记忆提取专家。只输出 NONE 或 JSON 数组，不要其他内容。",
+            )
 
-            # 解析响应
-            if isinstance(response, str):
-                response_text = response.strip()
-            else:
-                response_text = (getattr(response, "content", "") or "").strip()
-
+            response_text = (getattr(response, "content", "") or str(response)).strip()
             if "NONE" in response_text.upper() or not response_text:
                 return []
 
-            # 尝试解析 JSON
             memories = self._parse_json_response(response_text, turn.role)
-
             if memories:
                 logger.info(f"AI extracted {len(memories)} memories from {turn.role} message")
-
             return memories
 
         except Exception as e:
             logger.error(f"AI extraction failed: {e}")
             return []
 
+    async def _call_brain(self, prompt: str, system: str = "", max_tokens: int | None = None):
+        """Call brain with think_lightweight fallback to think."""
+        kwargs: dict = {"system": system} if system else {}
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        think_lw = getattr(self.brain, "think_lightweight", None)
+        if think_lw and callable(think_lw):
+            try:
+                return await think_lw(prompt, **kwargs)
+            except Exception:
+                pass
+        return await self.brain.think(prompt, **kwargs)
+
     def extract_from_turn(self, turn: ConversationTurn) -> list[Memory]:
-        """
-        从单个对话轮次提取记忆（同步版本，向后兼容）
-
-        该方法用于：
-        - 没有 running loop / 没有可用 brain 时的**最低保真提取**
-        - 批量归纳/离线整理时作为兜底（避免完全为 0）
-
-        重要说明：
-        - 主路径仍以 `extract_from_turn_with_ai()` 为准（质量更高、噪声更低）
-        - 本方法只做少量**强信号**规则提取，避免噪声写入
-        """
-        # 只从用户消息做强信号提取；assistant 内容容易引入“自我循环记忆”
+        """同步规则提取 (向后兼容)"""
         if turn.role != "user":
             return []
 
@@ -149,162 +538,100 @@ class MemoryExtractor:
 
         memories: list[Memory] = []
 
-        # 1) 用户偏好（强信号）
         if any(k in text for k in ("我喜欢", "我更喜欢", "我习惯", "我偏好", "请以后", "以后请")):
-            memories.append(
-                Memory(
-                    type=MemoryType.PREFERENCE,
-                    priority=MemoryPriority.LONG_TERM,
-                    content=text[:200],
-                    source="turn_sync",
-                    importance_score=0.7,
-                    tags=["preference"],
-                )
-            )
+            memories.append(Memory(
+                type=MemoryType.PREFERENCE,
+                priority=MemoryPriority.LONG_TERM,
+                content=text[:200],
+                source="turn_sync",
+                importance_score=0.7,
+                tags=["preference"],
+            ))
 
-        # 2) 规则/约束（强信号）
         if any(k in text for k in ("不要", "必须", "禁止", "永远不要", "务必")):
-            memories.append(
-                Memory(
-                    type=MemoryType.RULE,
-                    priority=MemoryPriority.LONG_TERM,
-                    content=text[:200],
-                    source="turn_sync",
-                    importance_score=0.8 if "永远不要" in text else 0.7,
-                    tags=["rule"],
-                )
-            )
+            memories.append(Memory(
+                type=MemoryType.RULE,
+                priority=MemoryPriority.LONG_TERM,
+                content=text[:200],
+                source="turn_sync",
+                importance_score=0.8 if "永远不要" in text else 0.7,
+                tags=["rule"],
+            ))
 
-        # 3) 路径/环境事实（强信号）
-        # - Windows 路径：D:\xxx\yyy
-        m = re.search(r"[A-Za-z]:\\\\[^\\s\"']{3,}", text)
+        m = re.search(r"[A-Za-z]:\\\\[^\s\"']{3,}", text)
         if m:
-            memories.append(
-                Memory(
-                    type=MemoryType.FACT,
-                    priority=MemoryPriority.LONG_TERM,
-                    content=f"用户提到路径: {m.group(0)}",
-                    source="turn_sync",
-                    importance_score=0.6,
-                    tags=["path", "fact"],
-                )
-            )
+            memories.append(Memory(
+                type=MemoryType.FACT,
+                priority=MemoryPriority.LONG_TERM,
+                content=f"用户提到路径: {m.group(0)}",
+                source="turn_sync",
+                importance_score=0.6,
+                tags=["path", "fact"],
+            ))
 
-        # 控制数量，避免噪声
         return memories[:2]
 
     def extract_from_task_completion(
-        self,
-        task_description: str,
-        success: bool,
-        tool_calls: list[dict],
-        errors: list[str],
+        self, task_description: str, success: bool,
+        tool_calls: list[dict], errors: list[str],
     ) -> list[Memory]:
-        """
-        从任务完成结果中提取记忆
-
-        这是重要的记忆来源，记录任务执行的经验
-
-        Args:
-            task_description: 任务描述
-            success: 是否成功
-            tool_calls: 工具调用列表
-            errors: 错误列表
-
-        Returns:
-            提取的记忆列表
-        """
+        """从任务完成结果中提取记忆 (保留)"""
         memories = []
-
-        # 过滤掉空的或太短的任务描述
         if not task_description or len(task_description.strip()) < 10:
             return memories
 
         if success:
-            # 记录成功模式（只记录有意义的任务）
-            if len(task_description) > 20:  # 避免记录太简单的任务
-                memory = Memory(
+            if len(task_description) > 20:
+                memories.append(Memory(
                     type=MemoryType.SKILL,
                     priority=MemoryPriority.LONG_TERM,
                     content=f"成功完成: {task_description}",
                     source="task_completion",
                     importance_score=0.7,
                     tags=["success", "task"],
-                )
-                memories.append(memory)
-
-            # 提取使用的工具组合（如果有多个工具）
+                ))
             if tool_calls and len(tool_calls) >= 3:
                 tools_used = list({tc.get("name", "") for tc in tool_calls if tc.get("name")})
                 if len(tools_used) >= 2:
-                    memory = Memory(
+                    memories.append(Memory(
                         type=MemoryType.SKILL,
                         priority=MemoryPriority.SHORT_TERM,
                         content=f"任务 '{task_description}' 使用工具组合: {', '.join(tools_used)}",
                         source="task_completion",
                         importance_score=0.5,
                         tags=["tools", "pattern"],
-                    )
-                    memories.append(memory)
+                    ))
         else:
-            # 记录失败教训
-            memory = Memory(
+            memories.append(Memory(
                 type=MemoryType.ERROR,
                 priority=MemoryPriority.LONG_TERM,
                 content=f"任务失败: {task_description}",
                 source="task_completion",
                 importance_score=0.7,
                 tags=["failure"],
-            )
-            memories.append(memory)
-
-            # 记录具体错误
+            ))
             for error in errors:
-                if len(error) > 20:  # 过滤太短的错误
-                    memory = Memory(
+                if len(error) > 20:
+                    memories.append(Memory(
                         type=MemoryType.ERROR,
                         priority=MemoryPriority.LONG_TERM,
                         content=f"错误教训: {error}",
                         source="task_completion",
                         importance_score=0.8,
                         tags=["error", "lesson"],
-                    )
-                    memories.append(memory)
+                    ))
 
         return memories
 
     async def extract_with_llm(
-        self,
-        conversation: list[ConversationTurn],
-        context: str = "",
+        self, conversation: list[ConversationTurn], context: str = "",
     ) -> list[Memory]:
-        """
-        使用 LLM 批量提取对话中的记忆
-
-        适用于:
-        - 每日凌晨批量整理对话历史
-        - 提取复杂的隐含信息
-
-        Args:
-            conversation: 对话历史
-            context: 额外上下文
-
-        Returns:
-            提取的记忆列表
-        """
-        if not self.brain:
-            logger.warning("LLM brain not available for batch extraction")
+        """使用 LLM 批量提取 (保留)"""
+        if not self.brain or not conversation:
             return []
 
-        if not conversation:
-            return []
-
-        # 构建对话文本
         conv_text = "\n".join(
-            [
-                f"[{turn.role}]: {turn.content}"
-                for turn in conversation[-30:]  # 最近 30 轮
-            ]
+            f"[{t.role}]: {t.content}" for t in conversation[-30:]
         )
 
         prompt = f"""分析以下对话，提取值得长期记住的信息。
@@ -315,11 +642,11 @@ class MemoryExtractor:
 {f"上下文: {context}" if context else ""}
 
 请提取以下类型的信息:
-1. **用户偏好** (PREFERENCE): 用户明确表达喜欢或不喜欢什么
-2. **事实信息** (FACT): 关于用户或项目的重要事实
-3. **成功模式** (SKILL): 有效的解决方案或方法
-4. **错误教训** (ERROR): 需要避免的错误
-5. **规则约束** (RULE): 用户设定的必须遵守的规则
+1. **用户偏好** (PREFERENCE)
+2. **事实信息** (FACT)
+3. **成功模式** (SKILL)
+4. **错误教训** (ERROR)
+5. **规则约束** (RULE)
 
 用 JSON 格式输出:
 [
@@ -327,79 +654,54 @@ class MemoryExtractor:
 ]
 
 如果没有值得记录的信息，输出空数组: []
-
-注意:
-- 只提取真正有价值的信息，不要提取显而易见的内容
-- content 要精简概括，不要照抄原文
-- 最多输出 10 条记忆"""
+最多输出 10 条记忆"""
 
         try:
             response = await self.brain.think(
                 prompt,
-                system="你是记忆提取专家，擅长从对话中识别关键信息。只输出 JSON 数组。",
+                system="你是记忆提取专家。只输出 JSON 数组。",
                 max_tokens=1000,
             )
-
             return self._parse_json_response(response.content)
-
         except Exception as e:
             logger.error(f"LLM batch extraction failed: {e}")
             return []
 
     def _parse_json_response(self, response: str, source: str = "llm_extraction") -> list[Memory]:
-        """
-        解析 LLM 返回的 JSON 格式响应
-
-        Args:
-            response: LLM 响应
-            source: 记忆来源
-
-        Returns:
-            记忆列表
-        """
         memories = []
-
         try:
-            # 提取 JSON 数组
             json_match = re.search(r"\[[\s\S]*\]", response)
             if not json_match:
                 return []
-
             data = json.loads(json_match.group())
-
             if not isinstance(data, list):
                 return []
+
+            type_map = {
+                "PREFERENCE": MemoryType.PREFERENCE,
+                "FACT": MemoryType.FACT,
+                "SKILL": MemoryType.SKILL,
+                "ERROR": MemoryType.ERROR,
+                "RULE": MemoryType.RULE,
+                "CONTEXT": MemoryType.CONTEXT,
+                "PERSONA_TRAIT": MemoryType.PERSONA_TRAIT,
+            }
 
             for item in data:
                 if not isinstance(item, dict):
                     continue
-
-                # 解析类型
-                type_str = item.get("type", "FACT").upper()
-                type_map = {
-                    "PREFERENCE": MemoryType.PREFERENCE,
-                    "FACT": MemoryType.FACT,
-                    "SKILL": MemoryType.SKILL,
-                    "ERROR": MemoryType.ERROR,
-                    "RULE": MemoryType.RULE,
-                    "CONTEXT": MemoryType.CONTEXT,
-                    "PERSONA_TRAIT": MemoryType.PERSONA_TRAIT,
-                }
-                mem_type = type_map.get(type_str, MemoryType.FACT)
-
-                # 解析内容
-                content = item.get("content", "").strip()
-                if not content or len(content) < 5:
+                content = (item.get("content") or "").strip()
+                if len(content) < 5:
                     continue
 
-                # 解析重要性
+                type_str = (item.get("type") or "FACT").upper()
+                mem_type = type_map.get(type_str, MemoryType.FACT)
+
                 try:
-                    importance = float(item.get("importance", 0.5))
-                    importance = max(0.1, min(1.0, importance))  # 限制范围
+                    importance = max(0.1, min(1.0, float(item.get("importance", 0.5))))
                 except (ValueError, TypeError):
                     importance = 0.5
 
-                # 根据重要性和类型确定优先级
                 if importance >= 0.85 or mem_type == MemoryType.RULE:
                     priority = MemoryPriority.PERMANENT
                 elif importance >= 0.6:
@@ -407,15 +709,16 @@ class MemoryExtractor:
                 else:
                     priority = MemoryPriority.SHORT_TERM
 
-                memory = Memory(
+                memories.append(Memory(
                     type=mem_type,
                     priority=priority,
                     content=content,
                     source=source,
                     importance_score=importance,
+                    subject=item.get("subject", ""),
+                    predicate=item.get("predicate", ""),
                     tags=item.get("tags", []),
-                )
-                memories.append(memory)
+                ))
 
         except json.JSONDecodeError as e:
             logger.debug(f"Failed to parse JSON response: {e}")
@@ -424,76 +727,13 @@ class MemoryExtractor:
 
         return memories
 
-    def _parse_llm_response(self, response: str) -> list[Memory]:
-        """
-        解析旧格式的 LLM 响应（向后兼容）
-
-        格式: - [类型] 内容 | 重要性 | 标签
-        """
-        memories = []
-
-        # 匹配格式: - [类型] 内容 | 重要性 | 标签
-        pattern = r"-\s*\[(\w+)\]\s*(.+?)\s*\|\s*([\d.]+)\s*\|\s*(.+)"
-
-        for match in re.finditer(pattern, response):
-            type_str, content, importance, tags_str = match.groups()
-
-            type_map = {
-                "PREFERENCE": MemoryType.PREFERENCE,
-                "FACT": MemoryType.FACT,
-                "SKILL": MemoryType.SKILL,
-                "ERROR": MemoryType.ERROR,
-                "RULE": MemoryType.RULE,
-                "PERSONA_TRAIT": MemoryType.PERSONA_TRAIT,
-            }
-
-            mem_type = type_map.get(type_str.upper(), MemoryType.FACT)
-            tags = [t.strip() for t in tags_str.split(",") if t.strip()]
-
-            try:
-                importance_score = float(importance)
-            except ValueError:
-                importance_score = 0.5
-
-            if importance_score >= 0.8:
-                priority = MemoryPriority.PERMANENT
-            elif importance_score >= 0.6:
-                priority = MemoryPriority.LONG_TERM
-            else:
-                priority = MemoryPriority.SHORT_TERM
-
-            memory = Memory(
-                type=mem_type,
-                priority=priority,
-                content=content.strip(),
-                source="llm_extraction",
-                importance_score=importance_score,
-                tags=tags,
-            )
-            memories.append(memory)
-
-        return memories
-
     def deduplicate(self, memories: list[Memory], existing: list[Memory]) -> list[Memory]:
-        """
-        去重合并记忆
-
-        避免存储重复或相似的记忆
-
-        Args:
-            memories: 新记忆列表
-            existing: 已有记忆列表
-
-        Returns:
-            去重后的新记忆列表
-        """
+        """去重合并记忆 (保留)"""
         unique = []
         existing_contents = {m.content.lower() for m in existing}
-
         for memory in memories:
             content_key = memory.content.lower()
             if content_key not in existing_contents:
                 unique.append(memory)
                 existing_contents.add(content_key)
-
         return unique

@@ -278,6 +278,9 @@ class Session:
         dropped = messages[:-keep_count]
         kept = messages[-keep_count:]
 
+        # v2: 标记被截断的消息需要记忆提取
+        self._mark_dropped_for_extraction(dropped)
+
         summary_parts: list[str] = []
         for msg in dropped:
             role = msg.get("role", "?")
@@ -290,9 +293,8 @@ class Session:
         if summary_parts:
             summary_text = (
                 "[早期对话摘要（已截断的消息概要）]\n"
-                + "\n".join(summary_parts[-20:])  # 最多保留 20 条摘要行
+                + "\n".join(summary_parts[-20:])
             )
-            # 确保消息交替：如果 kept 的第一条已是 user，用 assistant 占位分隔
             if kept and kept[0].get("role") == "user":
                 kept.insert(0, {"role": "assistant", "content": "好的，我已了解之前的对话概要。"})
             kept.insert(0, {"role": "user", "content": summary_text})
@@ -302,6 +304,33 @@ class Session:
             f"Session {self.id}: truncated history — "
             f"dropped {len(dropped)}, kept {len(kept)} messages"
         )
+
+    def _mark_dropped_for_extraction(self, dropped: list[dict]) -> None:
+        """v2: 将被截断的消息标记为需要提取。
+
+        通过 metadata["_memory_manager"] 或回调机制通知记忆系统。
+        如果记忆系统不可用, 静默跳过 (不影响截断流程)。
+        """
+        memory_manager = self.metadata.get("_memory_manager")
+        if memory_manager is None:
+            return
+        store = getattr(memory_manager, "store", None)
+        if store is None:
+            return
+        try:
+            for i, msg in enumerate(dropped):
+                content = msg.get("content", "")
+                if not content or not isinstance(content, str) or len(content) < 10:
+                    continue
+                store.enqueue_extraction(
+                    session_id=self.id,
+                    turn_index=i,
+                    content=content,
+                    tool_calls=msg.get("tool_calls"),
+                    tool_results=msg.get("tool_results"),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to enqueue dropped messages for extraction: {e}")
 
     def to_dict(self) -> dict:
         """序列化"""

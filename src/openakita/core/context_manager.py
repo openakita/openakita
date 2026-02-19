@@ -218,11 +218,13 @@ class ContextManager:
         system_prompt: str = "",
         tools: list | None = None,
         max_tokens: int | None = None,
+        memory_manager: object | None = None,
     ) -> list[dict]:
         """
         如果上下文接近限制，执行压缩。
 
         策略:
+        0. 压缩前: 快速规则提取 + 通知 MemoryManager
         1. 先对单条过大的 tool_result 独立 LLM 压缩
         2. 按工具交互组分组
         3. 保留最近组，早期组 LLM 摘要压缩
@@ -233,6 +235,7 @@ class ContextManager:
             system_prompt: 系统提示词（用于估算 token 占用）
             tools: 工具定义列表（用于估算 token 占用）
             max_tokens: 最大 token 数
+            memory_manager: MemoryManager 实例 (v2: 压缩前提取记忆)
 
         Returns:
             压缩后的消息列表
@@ -268,6 +271,15 @@ class ContextManager:
 
         if current_tokens <= soft_limit:
             return messages
+
+        # v2: 压缩前记忆提取 — 确保即将被压缩的消息先保存到记忆
+        if memory_manager is not None:
+            try:
+                on_compressing = getattr(memory_manager, "on_context_compressing", None)
+                if on_compressing:
+                    await on_compressing(messages)
+            except Exception as e:
+                logger.warning(f"[Compress] Memory extraction before compression failed: {e}")
 
         tracer = get_tracer()
         from ..tracing.tracer import SpanType

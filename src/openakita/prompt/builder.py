@@ -447,17 +447,89 @@ def _build_memory_section(
     task_description: str,
     budget_tokens: int,
 ) -> str:
-    """构建 Memory 层（记忆检索）"""
+    """
+    构建 Memory 层 — 三层注入:
+    1. Scratchpad (工作记忆, ~200 tok)
+    2. Core Memory (MEMORY.md, ~200 tok)
+    3. Dynamic Memories (RetrievalEngine 检索, ~300 tok)
+    """
     if not memory_manager:
         return ""
 
-    memory_context = retrieve_memory(
-        query=task_description,
-        memory_manager=memory_manager,
-        max_tokens=budget_tokens,
-    )
+    parts: list[str] = []
 
-    return memory_context
+    # Layer 1: Scratchpad
+    scratchpad_text = _build_scratchpad_section(memory_manager)
+    if scratchpad_text:
+        parts.append(scratchpad_text)
+
+    # Layer 2: Core Memory (MEMORY.md)
+    core_budget = min(budget_tokens // 3, 200)
+    core_memory = _get_core_memory(memory_manager, max_chars=core_budget * 3)
+    if core_memory:
+        parts.append(f"## 核心记忆\n\n{core_memory}")
+
+    # Layer 3: Dynamic Memories (via RetrievalEngine or legacy)
+    dynamic_budget = budget_tokens - sum(len(p) // 3 for p in parts)
+    retrieval_engine = getattr(memory_manager, "retrieval_engine", None)
+    if retrieval_engine and task_description:
+        recent = getattr(memory_manager, "_recent_messages", None)
+        dynamic_text = retrieval_engine.retrieve(
+            query=task_description,
+            recent_messages=recent,
+            max_tokens=max(100, dynamic_budget),
+        )
+        if dynamic_text:
+            parts.append(f"## 相关记忆\n\n{dynamic_text}")
+    elif task_description:
+        legacy_text = retrieve_memory(
+            query=task_description,
+            memory_manager=memory_manager,
+            max_tokens=max(100, dynamic_budget),
+        )
+        if legacy_text:
+            parts.append(legacy_text)
+
+    return "\n\n".join(parts)
+
+
+def _build_scratchpad_section(memory_manager: Optional["MemoryManager"]) -> str:
+    """从 UnifiedStore 读取 Scratchpad 注入"""
+    store = getattr(memory_manager, "store", None)
+    if store is None:
+        return ""
+    try:
+        pad = store.get_scratchpad()
+        if pad and pad.content:
+            content = pad.content[:600]
+            return f"## 工作记忆\n\n{content}"
+    except Exception:
+        pass
+    return ""
+
+
+def _get_core_memory(memory_manager: Optional["MemoryManager"], max_chars: int = 600) -> str:
+    """获取 MEMORY.md 核心记忆"""
+    memory_path = getattr(memory_manager, "memory_md_path", None)
+    if not memory_path or not memory_path.exists():
+        return ""
+    try:
+        content = memory_path.read_text(encoding="utf-8").strip()
+        if not content:
+            return ""
+        if len(content) > max_chars:
+            lines = content.split("\n")
+            result_lines: list[str] = []
+            current_len = 0
+            for line in reversed(lines):
+                if current_len + len(line) + 1 > max_chars:
+                    break
+                result_lines.insert(0, line)
+                current_len += len(line) + 1
+            return "\n".join(result_lines)
+        return content
+    except Exception:
+        return ""
 
 
 def _build_user_section(

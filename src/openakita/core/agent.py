@@ -278,6 +278,10 @@ class Agent:
             embedding_model=settings.embedding_model,
             embedding_device=settings.embedding_device,
             model_download_source=settings.model_download_source,
+            search_backend=settings.search_backend,
+            embedding_api_provider=settings.embedding_api_provider,
+            embedding_api_key=settings.embedding_api_key,
+            embedding_api_model=settings.embedding_api_model,
         )
 
         # 用户档案管理器
@@ -2081,6 +2085,141 @@ search_github → install_skill → 使用
 
         return groups
 
+    # ==================== Attachment Memory Helpers ====================
+
+    def _record_inbound_attachments(
+        self,
+        session_id: str,
+        pending_images: list | None,
+        pending_videos: list | None,
+        pending_audio: list | None,
+        pending_files: list | None,
+        desktop_attachments: list | None,
+    ) -> None:
+        """将本轮用户发送的媒体/文件记录到记忆系统"""
+        if not self.memory_manager:
+            return
+
+        if pending_images:
+            for img in pending_images:
+                src = img.get("source") or {}
+                img_url = img.get("image_url")
+                self.memory_manager.record_attachment(
+                    filename=img.get("filename", src.get("media_type", "image")),
+                    mime_type=src.get("media_type", "image/jpeg"),
+                    local_path=img.get("local_path", ""),
+                    url=img_url.get("url", "") if isinstance(img_url, dict) else "",
+                    description=img.get("description", ""),
+                    direction="inbound",
+                    file_size=img.get("file_size", 0),
+                )
+
+        if pending_videos:
+            for vid in pending_videos:
+                src = vid.get("source") or {}
+                vid_url = vid.get("video_url")
+                self.memory_manager.record_attachment(
+                    filename=vid.get("filename", "video"),
+                    mime_type=src.get("media_type", "video/mp4"),
+                    local_path=vid.get("local_path", ""),
+                    url=vid_url.get("url", "") if isinstance(vid_url, dict) else "",
+                    description=vid.get("description", ""),
+                    direction="inbound",
+                    file_size=vid.get("file_size", 0),
+                )
+
+        if pending_audio:
+            for aud in pending_audio:
+                self.memory_manager.record_attachment(
+                    filename=aud.get("filename", "audio"),
+                    mime_type=aud.get("mime_type", "audio/wav"),
+                    local_path=aud.get("local_path", ""),
+                    transcription=aud.get("transcription", ""),
+                    direction="inbound",
+                    file_size=aud.get("file_size", 0),
+                )
+
+        if pending_files:
+            for fdata in pending_files:
+                self.memory_manager.record_attachment(
+                    filename=fdata.get("filename", "file"),
+                    mime_type=fdata.get("mime_type", "application/octet-stream"),
+                    local_path=fdata.get("local_path", ""),
+                    extracted_text=fdata.get("extracted_text", ""),
+                    direction="inbound",
+                    file_size=fdata.get("file_size", 0),
+                )
+
+        if desktop_attachments:
+            for att in desktop_attachments:
+                att_type = getattr(att, "type", None) or ""
+                att_name = getattr(att, "name", None) or "file"
+                att_url = getattr(att, "url", None) or ""
+                att_mime = getattr(att, "mime_type", None) or att_type
+                self.memory_manager.record_attachment(
+                    filename=att_name,
+                    mime_type=att_mime,
+                    url=att_url,
+                    direction="inbound",
+                )
+
+    @staticmethod
+    def _extract_outbound_attachments(
+        tool_calls: list[dict], tool_results: list[dict],
+    ) -> list[dict]:
+        """从 assistant 工具调用中提取生成的文件"""
+        attachments: list[dict] = []
+        _FILE_TOOLS = {"write_file", "save_file", "create_file", "download_file"}
+        _MEDIA_EXTENSIONS = {
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+            ".mp4", ".webm", ".mov", ".avi",
+            ".mp3", ".wav", ".ogg", ".flac",
+            ".pdf", ".docx", ".xlsx", ".pptx", ".csv",
+        }
+        import mimetypes as _mt
+
+        for tc in tool_calls:
+            name = tc.get("name", tc.get("function", {}).get("name", ""))
+            args = tc.get("arguments", tc.get("function", {}).get("arguments", {}))
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+
+            if name in _FILE_TOOLS:
+                path = args.get("path", args.get("file_path", ""))
+                if path:
+                    mime = _mt.guess_type(path)[0] or "application/octet-stream"
+                    attachments.append({
+                        "filename": Path(path).name,
+                        "local_path": path,
+                        "mime_type": mime,
+                        "direction": "outbound",
+                    })
+
+        for tr in tool_results:
+            result_str = str(tr.get("result", tr.get("content", "")))
+            for token in result_str.split():
+                p = Path(token)
+                if p.suffix.lower() in _MEDIA_EXTENSIONS and len(token) < 500:
+                    mime = _mt.guess_type(token)[0] or "application/octet-stream"
+                    attachments.append({
+                        "filename": p.name,
+                        "local_path": token,
+                        "mime_type": mime,
+                        "direction": "outbound",
+                    })
+
+        seen = set()
+        unique = []
+        for a in attachments:
+            key = a.get("local_path") or a.get("filename", "")
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(a)
+        return unique
+
     async def _compress_context(
         self, messages: list[dict], max_tokens: int = None, system_prompt: str = None
     ) -> list[dict]:
@@ -2093,6 +2232,7 @@ search_github → install_skill → 使用
             system_prompt=_sp,
             tools=_tools,
             max_tokens=max_tokens,
+            memory_manager=self.memory_manager,
         )
         if len(result) != _msg_count_before:
             logger.info(
@@ -2982,6 +3122,12 @@ search_github → install_skill → 使用
             # 普通文本消息
             messages.append({"role": "user", "content": compiled_message})
 
+        # 10.5. Record incoming attachments (images/videos/files) to memory
+        self._record_inbound_attachments(
+            session_id, pending_images, pending_videos,
+            pending_audio, pending_files, attachments,
+        )
+
         # 11. Context compression
         messages = await self._compress_context(messages)
 
@@ -3053,10 +3199,12 @@ search_github → install_skill → 使用
             f"tool_calls={len(_all_tool_calls)}, tool_results={len(_all_tool_results)}, "
             f"trace_iterations={len(_trace)}"
         )
+        outbound_attachments = self._extract_outbound_attachments(_all_tool_calls, _all_tool_results)
         self.memory_manager.record_turn(
             "assistant", response_text,
             tool_calls=_all_tool_calls,
             tool_results=_all_tool_results,
+            attachments=outbound_attachments or None,
         )
         try:
             logger.info(f"[Session:{session_id}] Agent: {response_text}")

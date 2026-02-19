@@ -167,6 +167,24 @@ class Settings(BaseSettings):
         description="Embedding 模型运行设备 (cpu 或 cuda)",
     )
 
+    # === 搜索后端配置 (v2) ===
+    search_backend: str = Field(
+        default="fts5",
+        description="记忆搜索后端: fts5(默认,零依赖) | chromadb(可选,本地向量) | api_embedding(可选,在线API)",
+    )
+    embedding_api_provider: str = Field(
+        default="",
+        description="在线 Embedding API 提供商: dashscope | openai (仅 search_backend=api_embedding 时需要)",
+    )
+    embedding_api_key: str = Field(
+        default="",
+        description="在线 Embedding API Key (仅 search_backend=api_embedding 时需要)",
+    )
+    embedding_api_model: str = Field(
+        default="text-embedding-v3",
+        description="在线 Embedding 模型名称 (如 text-embedding-v3, text-embedding-3-small)",
+    )
+
     # === 记忆系统配置 ===
     memory_history_days: int = Field(default=30, description="记忆保留天数")
     memory_max_history_files: int = Field(default=1000, description="最大历史文件数")

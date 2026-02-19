@@ -1,434 +1,320 @@
 """
-Prompt Compiler - 从源 md 文件编译摘要
+Prompt Compiler (v2) — LLM 辅助编译 + 缓存 + 规则降级
 
-编译规则:
-- SOUL.md -> soul.summary.md (<=120 tokens): 保留核心原则，丢弃长叙事
-- AGENT.md -> agent.core.md (<=200 tokens): 保留 Ralph 循环原则
-- AGENT.md -> agent.tooling.md (<=220 tokens): 保留工具使用原则
-- USER.md -> user.summary.md (<=120 tokens): 仅保留已学习字段
+编译流程:
+1. 检查源文件是否变更 (mtime 比较)
+2. 如果未变更, 跳过 (使用缓存)
+3. 如果变更, 用 LLM 生成高质量摘要
+4. LLM 不可用时回退到规则编译 (清理 HTML 残留)
+5. 写入 compiled/ 目录
 
-编译可以使用 LLM 辅助，也可以手动编辑编译产物。
+编译目标:
+- SOUL.md -> soul.summary.md (<=150 tokens)
+- AGENT.md -> agent.core.md (<=250 tokens)
+- AGENT.md -> agent.tooling.md (<=200 tokens)
+- USER.md -> user.summary.md (<=120 tokens)
+- personas/user_custom.md -> persona.custom.md (<=150 tokens)
 """
 
+from __future__ import annotations
+
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
+# =========================================================================
+# LLM Compilation Prompts
+# =========================================================================
+
+_COMPILE_PROMPTS: dict[str, dict] = {
+    "soul": {
+        "system": "你是一个文本精简专家。",
+        "user": """将以下 AI 身份文档精简为核心原则摘要。
+
+要求:
+- 保留所有核心价值观和行为原则
+- 保留关键的"做/不做"清单
+- 删除叙事性段落、示例和比喻
+- 删除 HTML 注释和格式噪声
+- 输出纯 Markdown，不超过 {max_tokens} tokens
+- 使用紧凑的列表格式
+
+原文:
+{content}""",
+        "max_tokens": 150,
+    },
+    "agent_core": {
+        "system": "你是一个文本精简专家。",
+        "user": """将以下 AI 行为规范文档精简为核心执行原则。
+
+要求:
+- 保留 Ralph Wiggum 核心循环逻辑
+- 保留任务执行流程
+- 保留禁止行为清单
+- 删除配置示例、命令列表、架构说明等参考信息
+- 输出纯 Markdown，不超过 {max_tokens} tokens
+
+原文:
+{content}""",
+        "max_tokens": 250,
+    },
+    "agent_tooling": {
+        "system": "你是一个文本精简专家。",
+        "user": """从以下文档中提取工具使用原则。
+
+要求:
+- 保留工具选择优先级
+- 保留禁止的敷衍响应模式
+- 保留渐进式披露机制说明
+- 删除具体工具列表（运行时通过 tools 参数注入）
+- 输出纯 Markdown，不超过 {max_tokens} tokens
+
+原文:
+{content}""",
+        "max_tokens": 200,
+    },
+    "user": {
+        "system": "你是一个文本精简专家。",
+        "user": """从以下用户档案中提取已知信息。
+
+要求:
+- 只保留有实际内容的字段（跳过"[待学习]"等占位符）
+- 保留用户称呼、技术栈、偏好、工作习惯等已知信息
+- 输出紧凑的列表格式，不超过 {max_tokens} tokens
+- 如果没有任何已知信息，输出空字符串
+
+原文:
+{content}""",
+        "max_tokens": 120,
+    },
+    "persona_custom": {
+        "system": "你是一个文本精简专家。",
+        "user": """从以下用户自定义人格偏好中提取已归集的信息。
+
+要求:
+- 只保留有实际内容的偏好（跳过空白占位内容）
+- 保留沟通风格、情感偏好等特质
+- 输出紧凑的列表格式，不超过 {max_tokens} tokens
+- 如果没有有效内容，输出空字符串
+
+原文:
+{content}""",
+        "max_tokens": 150,
+    },
+}
+
+_SOURCE_MAP: dict[str, str] = {
+    "soul": "SOUL.md",
+    "agent_core": "AGENT.md",
+    "agent_tooling": "AGENT.md",
+    "user": "USER.md",
+    "persona_custom": "personas/user_custom.md",
+}
+
+_OUTPUT_MAP: dict[str, str] = {
+    "soul": "soul.summary.md",
+    "agent_core": "agent.core.md",
+    "agent_tooling": "agent.tooling.md",
+    "user": "user.summary.md",
+    "persona_custom": "persona.custom.md",
+}
+
+
+# =========================================================================
+# Main API (async, LLM-assisted)
+# =========================================================================
+
+
+class PromptCompiler:
+    """LLM 辅助的 Prompt 编译器"""
+
+    def __init__(self, brain=None):
+        self.brain = brain
+
+    async def compile_all(self, identity_dir: Path) -> dict[str, Path]:
+        """编译所有 identity 文件, 使用 LLM 辅助 + 缓存"""
+        compiled_dir = identity_dir / "compiled"
+        compiled_dir.mkdir(exist_ok=True)
+        results: dict[str, Path] = {}
+
+        for target, config in _COMPILE_PROMPTS.items():
+            source_path = identity_dir / _SOURCE_MAP[target]
+            if not source_path.exists():
+                logger.debug(f"[Compiler] Source not found: {source_path}")
+                continue
+
+            output_path = compiled_dir / _OUTPUT_MAP[target]
+
+            if _is_up_to_date(source_path, output_path):
+                results[target] = output_path
+                continue
+
+            source_content = source_path.read_text(encoding="utf-8")
+            compiled = await self._compile_with_llm(source_content, config)
+
+            if compiled and compiled.strip():
+                output_path.write_text(compiled, encoding="utf-8")
+                results[target] = output_path
+                logger.info(f"[Compiler] LLM compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}")
+
+        (compiled_dir / ".compiled_at").write_text(
+            datetime.now().isoformat(), encoding="utf-8"
+        )
+        return results
+
+    async def _compile_with_llm(self, content: str, config: dict) -> str:
+        """Try LLM compilation, fall back to rules if unavailable."""
+        if self.brain:
+            try:
+                prompt = config["user"].format(
+                    content=content, max_tokens=config["max_tokens"]
+                )
+                if hasattr(self.brain, "think_lightweight"):
+                    response = await self.brain.think_lightweight(
+                        prompt, system=config["system"]
+                    )
+                else:
+                    response = await self.brain.think(
+                        prompt, system=config["system"]
+                    )
+                result = (getattr(response, "content", None) or str(response)).strip()
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"[Compiler] LLM compilation failed, using rules: {e}")
+
+        return _compile_with_rules(content, config)
+
+
+# =========================================================================
+# Sync API (backward compatible)
+# =========================================================================
+
+
 def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
     """
-    编译所有源文件到 compiled/ 目录
+    同步编译所有源文件 (向后兼容)
 
-    Args:
-        identity_dir: identity 目录路径
-        use_llm: 是否使用 LLM 辅助编译（默认 False，使用规则编译）
-
-    Returns:
-        编译产物路径字典
+    如果需要 LLM 辅助, 使用 PromptCompiler.compile_all() 异步版本。
     """
     compiled_dir = identity_dir / "compiled"
     compiled_dir.mkdir(exist_ok=True)
+    results: dict[str, Path] = {}
 
-    results = {}
+    for target in _COMPILE_PROMPTS:
+        source_path = identity_dir / _SOURCE_MAP[target]
+        if not source_path.exists():
+            continue
 
-    # 1. 编译 SOUL.md
-    soul_path = identity_dir / "SOUL.md"
-    if soul_path.exists():
-        soul_content = soul_path.read_text(encoding="utf-8")
-        soul_summary = compile_soul(soul_content)
-        soul_out = compiled_dir / "soul.summary.md"
-        soul_out.write_text(soul_summary, encoding="utf-8")
-        results["soul"] = soul_out
-        logger.info(f"Compiled SOUL.md -> {soul_out}")
-    else:
-        logger.warning("SOUL.md not found, skipping")
+        output_path = compiled_dir / _OUTPUT_MAP[target]
 
-    # 2. 编译 AGENT.md -> agent.core.md
-    agent_path = identity_dir / "AGENT.md"
-    if agent_path.exists():
-        agent_content = agent_path.read_text(encoding="utf-8")
+        if _is_up_to_date(source_path, output_path):
+            results[target] = output_path
+            continue
 
-        # 编译核心原则
-        agent_core = compile_agent_core(agent_content)
-        core_out = compiled_dir / "agent.core.md"
-        core_out.write_text(agent_core, encoding="utf-8")
-        results["agent_core"] = core_out
-        logger.info(f"Compiled AGENT.md -> {core_out}")
+        source_content = source_path.read_text(encoding="utf-8")
+        config = _COMPILE_PROMPTS[target]
+        compiled = _compile_with_rules(source_content, config)
 
-        # 编译工具使用原则
-        agent_tooling = compile_agent_tooling(agent_content)
-        tooling_out = compiled_dir / "agent.tooling.md"
-        tooling_out.write_text(agent_tooling, encoding="utf-8")
-        results["agent_tooling"] = tooling_out
-        logger.info(f"Compiled AGENT.md -> {tooling_out}")
-    else:
-        logger.warning("AGENT.md not found, skipping")
+        if compiled and compiled.strip():
+            output_path.write_text(compiled, encoding="utf-8")
+            results[target] = output_path
+            logger.info(f"[Compiler] Rule compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}")
 
-    # 3. 编译 USER.md
-    user_path = identity_dir / "USER.md"
-    if user_path.exists():
-        user_content = user_path.read_text(encoding="utf-8")
-        user_summary = compile_user(user_content)
-        if user_summary.strip():  # 只有非空才写入
-            user_out = compiled_dir / "user.summary.md"
-            user_out.write_text(user_summary, encoding="utf-8")
-            results["user"] = user_out
-            logger.info(f"Compiled USER.md -> {user_out}")
-        else:
-            logger.info("USER.md has no learned fields, skipping")
-    else:
-        logger.warning("USER.md not found, skipping")
-
-    # 4. 编译 personas/user_custom.md
-    persona_custom_path = identity_dir / "personas" / "user_custom.md"
-    if persona_custom_path.exists():
-        persona_content = persona_custom_path.read_text(encoding="utf-8")
-        persona_summary = compile_persona(persona_content)
-        if persona_summary.strip():
-            persona_out = compiled_dir / "persona.custom.md"
-            persona_out.write_text(persona_summary, encoding="utf-8")
-            results["persona_custom"] = persona_out
-            logger.info(f"Compiled user_custom.md -> {persona_out}")
-        else:
-            logger.info("user_custom.md has no learned preferences, skipping")
-    else:
-        logger.debug("personas/user_custom.md not found, skipping")
-
-    # 写入编译时间戳
-    timestamp_file = compiled_dir / ".compiled_at"
-    timestamp_file.write_text(datetime.now().isoformat(), encoding="utf-8")
-
+    (compiled_dir / ".compiled_at").write_text(
+        datetime.now().isoformat(), encoding="utf-8"
+    )
     return results
 
 
-def compile_soul(soul_content: str) -> str:
-    """
-    SOUL.md -> soul.summary.md
+# =========================================================================
+# Rule-based Compilation (fallback)
+# =========================================================================
 
-    保留核心原则，丢弃长叙事段落。
-    目标: <=120 tokens (~480 字符)
-    """
-    # 提取关键原则
-    principles = []
 
-    # 匹配常见的原则格式
-    # 1. "诚实"、"避免欺骗" 等关键词
-    # 2. 带编号的列表项
-    # 3. 带 ## 的标题下的内容
+def _compile_with_rules(content: str, config: dict) -> str:
+    """Rule-based compilation with HTML cleanup."""
+    content = _clean_html(content)
+    lines = content.split("\n")
 
-    lines = soul_content.split("\n")
+    extracted: list[str] = []
     current_section = ""
-    in_principles = False
+    in_relevant = False
 
     for line in lines:
         stripped = line.strip()
-
-        # 检测标题
-        if stripped.startswith("##"):
-            current_section = stripped.lower()
-            # 关键章节
-            if any(
-                kw in current_section
-                for kw in ["原则", "核心", "principle", "core", "诚实", "校准"]
-            ):
-                in_principles = True
-            else:
-                in_principles = False
+        if not stripped:
             continue
 
-        # 提取列表项和关键句子
-        if stripped.startswith(("-", "*", "1.", "2.", "3.", "4.", "5.")):
-            # 过滤掉叙事性描述（过长的句子）
-            if len(stripped) < 100:
-                principles.append(stripped)
-        elif in_principles and stripped and len(stripped) < 80:
-            principles.append(stripped)
-
-    # 去重并限制数量
-    unique_principles = []
-    seen = set()
-    for p in principles:
-        # 简单去重：取前 20 字符作为 key
-        key = p[:20].lower()
-        if key not in seen:
-            seen.add(key)
-            unique_principles.append(p)
-
-    # 限制在 10 条以内
-    unique_principles = unique_principles[:10]
-
-    # 构建摘要
-    summary = """# Soul Summary
-
-## 核心原则
-
-"""
-    summary += "\n".join(unique_principles)
-
-    # 如果提取内容太少，使用默认原则
-    if len(unique_principles) < 3:
-        summary = """# Soul Summary
-
-## 核心原则
-
-- 诚实：不欺骗，不误导，承认不确定性
-- 校准：对自己的判断保持适当的信心水平
-- 避免恶意：不协助有害活动
-- 支持监督：允许用户纠正和指导
-"""
-
-    return summary
-
-
-def compile_agent_core(agent_content: str) -> str:
-    """
-    AGENT.md -> agent.core.md
-
-    保留 Ralph 循环核心原则。
-    目标: <=200 tokens (~800 字符)
-    """
-    # 提取 Ralph 相关内容
-    ralph_principles = []
-
-    # 关键词匹配
-    keywords = [
-        "ralph",
-        "wigum",
-        "永不放弃",
-        "never give up",
-        "任务未完成",
-        "plan-act-verify",
-        "循环",
-        "缺能力",
-        "获取能力",
-        "进度",
-        "memory",
-    ]
-
-    lines = agent_content.split("\n")
-    current_section = ""
-    in_ralph = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # 检测标题
         if stripped.startswith("##"):
             current_section = stripped.lower()
-            if any(kw in current_section for kw in ["ralph", "wigum", "核心", "core", "循环"]):
-                in_ralph = True
-            else:
-                in_ralph = False
+            in_relevant = _is_relevant_section(current_section, config)
             continue
 
-        # 提取 Ralph 相关内容
-        line_lower = stripped.lower()
-        if any(kw in line_lower for kw in keywords):
-            if stripped.startswith(("-", "*", "1.", "2.", "3.")) and len(stripped) < 120:
-                ralph_principles.append(stripped)
-        elif in_ralph and stripped.startswith(("-", "*")) and len(stripped) < 100:
-            ralph_principles.append(stripped)
-
-    # 去重
-    unique = list(dict.fromkeys(ralph_principles))[:8]
-
-    # 构建摘要
-    summary = """# Agent Core Principles
-
-## Ralph Wiggum Mode（永不放弃模式）
-
-"""
-
-    if unique:
-        summary += "\n".join(unique)
-    else:
-        # 默认原则
-        summary += """- 任务未完成不退出，持续尝试直到成功
-- Plan-Act-Verify 循环：规划 → 执行 → 验证
-- 缺少能力？搜索/安装/创建工具获取
-- 保存进度到 MEMORY.md，防止丢失
-- 失败不报错，换方法再试
-"""
-
-    return summary
-
-
-def compile_agent_tooling(agent_content: str) -> str:
-    """
-    AGENT.md -> agent.tooling.md
-
-    保留工具使用原则。
-    目标: <=220 tokens (~880 字符)
-    """
-    # 关键词匹配
-    tooling_keywords = [
-        "工具",
-        "tool",
-        "脚本",
-        "script",
-        "敷衍",
-        "禁止",
-        "skill",
-        "技能",
-        "mcp",
-        "浏览器",
-        "browser",
-    ]
-
-    tooling_principles = []
-    lines = agent_content.split("\n")
-    current_section = ""
-    in_tooling = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # 检测标题
-        if stripped.startswith("##"):
-            current_section = stripped.lower()
-            if any(kw in current_section for kw in ["工具", "tool", "技能", "skill", "mcp"]):
-                in_tooling = True
-            else:
-                in_tooling = False
-            continue
-
-        # 提取工具相关内容
-        line_lower = stripped.lower()
-        if any(kw in line_lower for kw in tooling_keywords):
-            if stripped.startswith(("-", "*", "1.", "2.", "3.")) and len(stripped) < 120:
-                tooling_principles.append(stripped)
-        elif in_tooling and stripped.startswith(("-", "*")) and len(stripped) < 100:
-            tooling_principles.append(stripped)
-
-    # 去重
-    unique = list(dict.fromkeys(tooling_principles))[:10]
-
-    # 构建摘要
-    summary = """# Agent Tooling Principles
-
-## 工具使用原则
-
-"""
-
-    if unique:
-        summary += "\n".join(unique)
-    else:
-        # 默认原则
-        summary += """- 需要执行操作的请求使用工具完成；纯问答/闲聊直接文字回复
-- 禁止敷衍响应：不能只说"好的"而不执行
-- 工具优先级：系统工具 > Skills 技能 > MCP 外部服务
-- 缺少现成工具时可组合 write_file + run_shell 或 skill-creator
-- 提醒/定时任务必须调用 schedule_task 工具
-- Plan 模式：超过 2 步的任务先 create_plan
-- 任务完成后用简洁文字告知用户结果，不要继续调用工具
-"""
-
-    return summary
-
-
-def compile_user(user_content: str) -> str:
-    """
-    USER.md -> user.summary.md
-
-    仅保留已学习字段（非 [待学习]）。
-    目标: <=120 tokens (~480 字符)
-    """
-    learned_items = []
-
-    lines = user_content.split("\n")
-
-    for line in lines:
-        stripped = line.strip()
-
-        # 检测标题
         if stripped.startswith("#"):
             continue
 
-        # 跳过待学习条目
-        if "[待学习]" in stripped or "[未知]" in stripped or "[待填写]" in stripped:
-            continue
+        if stripped.startswith(("-", "*")) or re.match(r"^\d+\.", stripped):
+            if len(stripped) < 150:
+                extracted.append(stripped)
+        elif in_relevant and stripped and len(stripped) < 100:
+            extracted.append(f"- {stripped}")
+        elif not extracted and stripped and len(stripped) < 200:
+            extracted.append(f"- {stripped}")
 
-        # 提取有内容的条目
-        if stripped.startswith(("-", "*")) and ":" in stripped:
-            # 检查冒号后面是否有实际内容
-            parts = stripped.split(":", 1)
-            if len(parts) == 2 and parts[1].strip() and parts[1].strip() != "-":
-                learned_items.append(stripped)
-
-    # 如果没有已学习内容，返回空
-    if not learned_items:
-        return ""
-
-    # 构建摘要
-    summary = """# User Profile Summary
-
-## 已了解的用户信息
-
-"""
-    summary += "\n".join(learned_items[:15])  # 限制 15 条
-
-    return summary
+    unique = list(dict.fromkeys(extracted))
+    max_items = max(config.get("max_tokens", 150) // 10, 3)
+    return "\n".join(unique[:max_items])
 
 
-def compile_persona(persona_content: str) -> str:
-    """
-    personas/user_custom.md -> persona.custom.md
+def _clean_html(content: str) -> str:
+    """Remove HTML comments and artifacts."""
+    content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+    content = re.sub(r"^\s*-->\s*$", "", content, flags=re.MULTILINE)
+    content = re.sub(r"^\s*<!--\s*$", "", content, flags=re.MULTILINE)
+    return content
 
-    保留已归集的用户偏好，跳过空白占位内容。
-    目标: <=150 tokens (~600 字符)
-    """
-    # 如果内容是占位符/空白，跳过
-    if "尚未收集" in persona_content or len(persona_content.strip()) < 100:
-        return ""
 
-    # 提取有实质内容的条目
-    items = []
-    lines = persona_content.split("\n")
+def _is_relevant_section(section: str, config: dict) -> bool:
+    """Check if a section heading is relevant for this compilation target."""
+    relevance_keywords = {
+        150: ["原则", "核心", "principle", "core", "诚实", "校准", "价值"],
+        250: ["ralph", "wigum", "核心", "core", "循环", "任务", "执行"],
+        200: ["工具", "tool", "技能", "skill", "mcp", "敷衍"],
+        120: ["基本", "技术", "偏好", "profile"],
+    }
+    max_tokens = config.get("max_tokens", 150)
+    keywords = relevance_keywords.get(max_tokens, [])
+    return any(kw in section for kw in keywords)
 
-    for line in lines:
-        stripped = line.strip()
 
-        # 跳过标题和注释
-        if stripped.startswith("#") or stripped.startswith("<!--") or stripped.startswith(">"):
-            continue
+# =========================================================================
+# Utilities (backward compatible)
+# =========================================================================
 
-        # 提取有内容的条目
-        if stripped.startswith("-") and ":" in stripped:
-            # 检查冒号后面是否有实际内容
-            parts = stripped.split(":", 1)
-            if len(parts) == 2 and parts[1].strip():
-                items.append(stripped)
 
-    if not items:
-        return ""
-
-    summary = "# User Persona Preferences\n\n"
-    summary += "\n".join(items[:15])  # 限制 15 条
-
-    return summary
+def _is_up_to_date(source: Path, output: Path) -> bool:
+    if not output.exists():
+        return False
+    try:
+        return output.stat().st_mtime > source.stat().st_mtime
+    except Exception:
+        return False
 
 
 def check_compiled_outdated(identity_dir: Path, max_age_hours: int = 24) -> bool:
-    """
-    检查编译产物是否过期
-
-    Args:
-        identity_dir: identity 目录路径
-        max_age_hours: 最大有效时间（小时）
-
-    Returns:
-        True 如果过期或不存在
-    """
     compiled_dir = identity_dir / "compiled"
     timestamp_file = compiled_dir / ".compiled_at"
-
     if not timestamp_file.exists():
         return True
-
     try:
-        compiled_at = datetime.fromisoformat(timestamp_file.read_text(encoding="utf-8").strip())
+        compiled_at = datetime.fromisoformat(
+            timestamp_file.read_text(encoding="utf-8").strip()
+        )
         age = datetime.now() - compiled_at
         return age.total_seconds() > max_age_hours * 3600
     except Exception:
@@ -436,30 +322,29 @@ def check_compiled_outdated(identity_dir: Path, max_age_hours: int = 24) -> bool
 
 
 def get_compiled_content(identity_dir: Path) -> dict[str, str]:
-    """
-    获取所有编译产物内容
-
-    Args:
-        identity_dir: identity 目录路径
-
-    Returns:
-        编译产物内容字典
-    """
     compiled_dir = identity_dir / "compiled"
-    results = {}
-
-    files = [
-        ("soul", "soul.summary.md"),
-        ("agent_core", "agent.core.md"),
-        ("agent_tooling", "agent.tooling.md"),
-        ("user", "user.summary.md"),
-    ]
-
-    for key, filename in files:
+    results: dict[str, str] = {}
+    for key, filename in _OUTPUT_MAP.items():
         filepath = compiled_dir / filename
         if filepath.exists():
             results[key] = filepath.read_text(encoding="utf-8")
         else:
             results[key] = ""
-
     return results
+
+
+# Legacy function names (backward compat)
+def compile_soul(content: str) -> str:
+    return _compile_with_rules(content, _COMPILE_PROMPTS["soul"])
+
+def compile_agent_core(content: str) -> str:
+    return _compile_with_rules(content, _COMPILE_PROMPTS["agent_core"])
+
+def compile_agent_tooling(content: str) -> str:
+    return _compile_with_rules(content, _COMPILE_PROMPTS["agent_tooling"])
+
+def compile_user(content: str) -> str:
+    return _compile_with_rules(content, _COMPILE_PROMPTS["user"])
+
+def compile_persona(content: str) -> str:
+    return _compile_with_rules(content, _COMPILE_PROMPTS["persona_custom"])
