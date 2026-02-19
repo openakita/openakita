@@ -82,6 +82,7 @@ def record_usage(
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
     context_tokens: int = 0,
+    estimated_cost: float = 0.0,
 ) -> None:
     """将一次 LLM 调用的 token 用量投递到写入队列（非阻塞）。"""
     if not _initialized:
@@ -101,6 +102,7 @@ def record_usage(
         "iteration": ctx.iteration if ctx else 0,
         "channel": ctx.channel if ctx else "",
         "user_id": ctx.user_id if ctx else "",
+        "estimated_cost": estimated_cost,
     })
 
 
@@ -110,14 +112,14 @@ _INSERT_SQL = """
 INSERT INTO token_usage (
     session_id, endpoint_name, model, operation_type, operation_detail,
     input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-    context_tokens, iteration, channel, user_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    context_tokens, iteration, channel, user_id, estimated_cost
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _COLUMN_ORDER = (
     "session_id", "endpoint_name", "model", "operation_type", "operation_detail",
     "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
-    "context_tokens", "iteration", "channel", "user_id",
+    "context_tokens", "iteration", "channel", "user_id", "estimated_cost",
 )
 
 
@@ -143,12 +145,19 @@ def _writer_loop(db_path: str) -> None:
                 context_tokens INTEGER DEFAULT 0,
                 iteration INTEGER DEFAULT 0,
                 channel TEXT,
-                user_id TEXT
+                user_id TEXT,
+                estimated_cost REAL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
             CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
             CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
         """)
+        # Migration: 为旧数据库添加 estimated_cost 列
+        try:
+            conn.execute("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL DEFAULT 0")
+            conn.commit()
+        except Exception:
+            pass  # 列已存在则忽略
     except Exception as e:
         logger.error(f"[TokenTracking] Failed to open database: {e}")
         return

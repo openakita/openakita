@@ -458,13 +458,24 @@ class Brain:
             if not usage:
                 return
             ep_info = self.get_current_endpoint_info()
+            ep_name = ep_info.get("name", "")
+            cost = 0.0
+            for ep in self._llm_client.endpoints:
+                if ep.name == ep_name:
+                    cost = ep.calculate_cost(
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cache_read_tokens=usage.cache_read_input_tokens,
+                    )
+                    break
             _record_token_usage(
                 model=response.model or "",
-                endpoint_name=ep_info.get("name", ""),
+                endpoint_name=ep_name,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cache_creation_tokens=usage.cache_creation_input_tokens,
                 cache_read_tokens=usage.cache_read_input_tokens,
+                estimated_cost=cost,
             )
         except Exception as e:
             logger.debug(f"[Brain] _record_usage failed (non-fatal): {e}")

@@ -1162,6 +1162,7 @@ export function App() {
     maxTokens: number;
     contextWindow: number;
     timeout: number;
+    pricingTiers: { max_input: number; input_price: number; output_price: number }[];
   } | null>(null);
   const dragNameRef = useRef<string | null>(null);
   const [editModels, setEditModels] = useState<ListedModel[]>([]); // models fetched inside the edit modal
@@ -2897,6 +2898,11 @@ export function App() {
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
       contextWindow: typeof ep.context_window === "number" ? ep.context_window : 150000,
       timeout: typeof ep.timeout === "number" ? ep.timeout : 180,
+      pricingTiers: Array.isArray(ep.pricing_tiers) ? ep.pricing_tiers.map((t: any) => ({
+        max_input: Number(t.max_input ?? 0),
+        input_price: Number(t.input_price ?? 0),
+        output_price: Number(t.output_price ?? 0),
+      })) : [],
     });
     setEditModalOpen(true);
     setConnTestResult(null);
@@ -3005,7 +3011,10 @@ export function App() {
         throw new Error(`端点名称已存在：${editDraft.name.trim()}（请换一个）`);
       }
       const idx = endpoints.findIndex((e: any) => String(e?.name || "") === editingOriginalName);
-      const next = {
+      const validTiers = (editDraft.pricingTiers || []).filter(
+        (t) => t.input_price > 0 || t.output_price > 0
+      );
+      const next: Record<string, any> = {
         name: editDraft.name.trim().slice(0, 64),
         provider: editDraft.providerSlug || "custom",
         api_type: editDraft.apiType,
@@ -3022,8 +3031,15 @@ export function App() {
             ? { enable_thinking: true }
             : undefined,
       };
-      if (idx >= 0) endpoints[idx] = next;
-      else endpoints.push(next);
+      next.pricing_tiers = validTiers.length > 0 ? validTiers : undefined;
+      if (idx >= 0) {
+        const prev = endpoints[idx] || {};
+        const merged = { ...prev, ...next };
+        if (!next.pricing_tiers) delete merged.pricing_tiers;
+        endpoints[idx] = merged;
+      } else {
+        endpoints.push(next);
+      }
       endpoints.sort((a: any, b: any) => (Number(a?.priority) || 999) - (Number(b?.priority) || 999));
       await writeEndpointsJson(endpoints, settings);
       setNotice("端点已更新");
@@ -3147,10 +3163,10 @@ export function App() {
           const original = editingOriginalName || name;
           const idx = base.endpoints.findIndex((e: any) => String(e?.name || "") === original);
           if (idx < 0) {
-            // if missing, fall back to append
             base.endpoints.push(endpoint);
           } else {
-            base.endpoints[idx] = endpoint;
+            const prev = base.endpoints[idx] || {};
+            base.endpoints[idx] = { ...prev, ...endpoint };
           }
         } else {
           // 默认行为：不覆盖同名端点；自动改名后直接追加，实现“主端点 + 备份端点”
@@ -5798,6 +5814,58 @@ export function App() {
                       <input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                     </div>
                   </div>
+                </div>
+              </details>
+              </div>
+
+              {/* 阶梯定价配置 */}
+              <div style={{ marginTop: 12 }}>
+              <details>
+                <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8 }}>
+                  定价配置（可选，用于费用估算）
+                </summary>
+                <div style={{ padding: "8px 0" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
+                    阶梯定价：按每次请求的 input_tokens 匹配档位，价格单位为每百万 token（CNY）
+                  </div>
+                  {(editDraft.pricingTiers || []).map((tier, idx) => (
+                    <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 32px", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                      <div>
+                        {idx === 0 && <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>最大输入 tokens</div>}
+                        <input type="number" min={0} placeholder="128000" value={tier.max_input || ""} onChange={(e) => {
+                          const tiers = [...(editDraft.pricingTiers || [])];
+                          tiers[idx] = { ...tiers[idx], max_input: parseInt(e.target.value) || 0 };
+                          setEditDraft({ ...editDraft, pricingTiers: tiers });
+                        }} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", fontSize: 12 }} />
+                      </div>
+                      <div>
+                        {idx === 0 && <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>输入价格/M</div>}
+                        <input type="number" min={0} step={0.01} placeholder="1.2" value={tier.input_price || ""} onChange={(e) => {
+                          const tiers = [...(editDraft.pricingTiers || [])];
+                          tiers[idx] = { ...tiers[idx], input_price: parseFloat(e.target.value) || 0 };
+                          setEditDraft({ ...editDraft, pricingTiers: tiers });
+                        }} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", fontSize: 12 }} />
+                      </div>
+                      <div>
+                        {idx === 0 && <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>输出价格/M</div>}
+                        <input type="number" min={0} step={0.01} placeholder="7.2" value={tier.output_price || ""} onChange={(e) => {
+                          const tiers = [...(editDraft.pricingTiers || [])];
+                          tiers[idx] = { ...tiers[idx], output_price: parseFloat(e.target.value) || 0 };
+                          setEditDraft({ ...editDraft, pricingTiers: tiers });
+                        }} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", fontSize: 12 }} />
+                      </div>
+                      <button onClick={() => {
+                        const tiers = (editDraft.pricingTiers || []).filter((_, i) => i !== idx);
+                        setEditDraft({ ...editDraft, pricingTiers: tiers });
+                      }} style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid var(--line)", background: "var(--bg)", cursor: "pointer", fontSize: 12, color: "var(--text-secondary)", marginTop: idx === 0 ? 16 : 0 }}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={() => {
+                    const tiers = [...(editDraft.pricingTiers || []), { max_input: 0, input_price: 0, output_price: 0 }];
+                    setEditDraft({ ...editDraft, pricingTiers: tiers });
+                  }} style={{ padding: "4px 12px", borderRadius: 6, border: "1px dashed var(--line)", background: "var(--bg)", cursor: "pointer", fontSize: 11, color: "var(--text-secondary)" }}>
+                    + 添加档位
+                  </button>
                 </div>
               </details>
               </div>

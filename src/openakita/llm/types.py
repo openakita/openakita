@@ -437,6 +437,8 @@ class EndpointConfig:
     capabilities: list[str] | None = None  # 能力列表
     extra_params: dict | None = None  # 额外参数
     note: str | None = None  # 备注
+    pricing_tiers: list[dict] | None = None  # 阶梯定价 [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
+    price_currency: str = "CNY"  # 价格货币单位
 
     def __post_init__(self):
         if self.capabilities is None:
@@ -487,6 +489,36 @@ class EndpointConfig:
             return os.environ.get(self.api_key_env)
         return None
 
+    def calculate_cost(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+    ) -> float:
+        """根据阶梯定价计算本次请求的费用（单位: price_currency）。
+
+        pricing_tiers 格式: [{"max_input": N, "input_price": P, "output_price": P}, ...]
+        price 为每百万 token 的价格。max_input=-1 表示无上限。
+        按 max_input 升序匹配，取第一个 input_tokens <= max_input 的档位。
+        """
+        tiers = self.pricing_tiers
+        if not tiers:
+            return 0.0
+        sorted_tiers = sorted(tiers, key=lambda t: (t.get("max_input") or 0) if t.get("max_input", -1) != -1 else float("inf"))
+        matched = sorted_tiers[-1]
+        for tier in sorted_tiers:
+            cap = tier.get("max_input", -1)
+            if cap == -1:
+                continue
+            if input_tokens <= cap:
+                matched = tier
+                break
+        ip = matched.get("input_price", 0)
+        op = matched.get("output_price", 0)
+        crp = matched.get("cache_read_price", ip * 0.1) if cache_read_tokens else 0
+        cost = (input_tokens * ip + output_tokens * op + cache_read_tokens * crp) / 1_000_000
+        return round(cost, 8)
+
     @classmethod
     def from_dict(cls, data: dict) -> "EndpointConfig":
         return cls(
@@ -504,6 +536,8 @@ class EndpointConfig:
             capabilities=data.get("capabilities"),
             extra_params=data.get("extra_params"),
             note=data.get("note"),
+            pricing_tiers=data.get("pricing_tiers"),
+            price_currency=data.get("price_currency", "CNY"),
         )
 
     def to_dict(self) -> dict:
@@ -529,6 +563,10 @@ class EndpointConfig:
             result["extra_params"] = self.extra_params
         if self.note:
             result["note"] = self.note
+        if self.pricing_tiers:
+            result["pricing_tiers"] = self.pricing_tiers
+        if self.price_currency and self.price_currency != "CNY":
+            result["price_currency"] = self.price_currency
         return result
 
 

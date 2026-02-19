@@ -12,6 +12,7 @@ type SummaryRow = {
   total_cache_creation: number;
   total_cache_read: number;
   request_count: number;
+  total_cost: number;
 };
 
 type TimelineRow = {
@@ -29,6 +30,7 @@ type TotalRow = {
   total_cache_creation: number;
   total_cache_read: number;
   request_count: number;
+  total_cost: number;
 };
 
 type SessionRow = {
@@ -41,6 +43,7 @@ type SessionRow = {
   request_count: number;
   operation_types: string;
   endpoints: string;
+  total_cost: number;
 };
 
 const PERIODS: { key: PeriodKey; label: string }[] = [
@@ -56,6 +59,13 @@ function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function fmtCost(n: number): string {
+  if (!n || n === 0) return "-";
+  if (n >= 1) return `¥${n.toFixed(2)}`;
+  if (n >= 0.01) return `¥${n.toFixed(4)}`;
+  return `¥${n.toFixed(6)}`;
 }
 
 function MiniBar({ value, max, color = "var(--brand)" }: { value: number; max: number; color?: string }) {
@@ -159,17 +169,18 @@ export function TokenStatsView({
       {total && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 24 }}>
           {[
-            { label: t("tokenStats.totalTokens", "总 Token"), value: total.total_tokens, color: "var(--brand)" },
-            { label: t("tokenStats.inputTokens", "输入"), value: total.total_input, color: "#3b82f6" },
-            { label: t("tokenStats.outputTokens", "输出"), value: total.total_output, color: "#10b981" },
-            { label: t("tokenStats.requests", "请求数"), value: total.request_count, color: "#8b5cf6" },
+            { label: t("tokenStats.totalTokens", "总 Token"), value: fmtNum(total.total_tokens), color: "var(--brand)" },
+            { label: t("tokenStats.inputTokens", "输入"), value: fmtNum(total.total_input), color: "#3b82f6" },
+            { label: t("tokenStats.outputTokens", "输出"), value: fmtNum(total.total_output), color: "#10b981" },
+            { label: t("tokenStats.requests", "请求数"), value: fmtNum(total.request_count), color: "#8b5cf6" },
+            { label: t("tokenStats.estimatedCost", "预估费用"), value: fmtCost(total.total_cost), color: "#f59e0b" },
           ].map((card) => (
             <div key={card.label} style={{
               padding: "14px 16px", borderRadius: 10, border: "1px solid var(--line)",
               background: "var(--bg)",
             }}>
               <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{card.label}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: card.color }}>{fmtNum(card.value)}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: card.color }}>{card.value}</div>
             </div>
           ))}
         </div>
@@ -226,7 +237,10 @@ export function TokenStatsView({
               <div key={row.group_key} style={{ marginBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
                   <span style={{ fontWeight: 600 }}>{row.group_key || "(unknown)"}</span>
-                  <span style={{ color: "var(--text-secondary)" }}>{fmtNum(row.total_tokens)}</span>
+                  <span style={{ color: "var(--text-secondary)" }}>
+                    {fmtNum(row.total_tokens)}
+                    {row.total_cost > 0 && <span style={{ marginLeft: 6, color: "#f59e0b" }}>{fmtCost(row.total_cost)}</span>}
+                  </span>
                 </div>
                 <MiniBar value={row.total_tokens} max={maxRow} />
               </div>
@@ -271,6 +285,7 @@ export function TokenStatsView({
                   <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 600 }}>Output</th>
                   <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 600 }}>Total</th>
                   <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 600 }}>Reqs</th>
+                  <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 600 }}>Cost</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>Endpoints</th>
                   <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>Last</th>
                 </tr>
@@ -283,6 +298,7 @@ export function TokenStatsView({
                     <td style={{ padding: "5px 8px", textAlign: "right" }}>{fmtNum(s.total_output)}</td>
                     <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{fmtNum(s.total_tokens)}</td>
                     <td style={{ padding: "5px 8px", textAlign: "right" }}>{s.request_count}</td>
+                    <td style={{ padding: "5px 8px", textAlign: "right", color: "#f59e0b", fontSize: 10 }}>{fmtCost(s.total_cost)}</td>
                     <td style={{ padding: "5px 8px", fontSize: 10 }}>{s.endpoints}</td>
                     <td style={{ padding: "5px 8px", fontSize: 10, color: "var(--text-secondary)" }}>{s.last_call?.replace("T", " ").slice(0, 16)}</td>
                   </tr>

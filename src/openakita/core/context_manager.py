@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # 上下文管理常量
 DEFAULT_MAX_CONTEXT_TOKENS = 124000
 CHARS_PER_TOKEN = 2  # JSON 序列化后约 2 字符 = 1 token
-MIN_RECENT_TURNS = 4  # 至少保留最近 4 轮对话
+MIN_RECENT_TURNS = 8  # 至少保留最近 8 组对话（工具密集型对话需要更多上下文）
 COMPRESSION_RATIO = 0.15  # 目标压缩到原上下文的 15%
 CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
 LARGE_TOOL_RESULT_THRESHOLD = 5000  # 单条 tool_result 超过此 token 数时独立压缩
@@ -101,7 +101,7 @@ class ContextManager:
                         ctx = FALLBACK_CONTEXT_WINDOW
                     output_reserve = ep.max_tokens or 4096
                     output_reserve = min(output_reserve, ctx // 2)
-                    result = int((ctx - output_reserve) * 0.85)
+                    result = int((ctx - output_reserve) * 0.90)
                     if result < 4096:
                         return DEFAULT_MAX_CONTEXT_TOKENS
                     return result
@@ -257,7 +257,7 @@ class ContextManager:
                 f"Falling back to 4096."
             )
             hard_limit = 4096
-        soft_limit = int(hard_limit * 0.7)
+        soft_limit = int(hard_limit * 0.80)
 
         current_tokens = self.estimate_messages_tokens(messages)
 
@@ -298,6 +298,17 @@ class ContextManager:
 
         # Step 2: 按工具交互组分组
         groups = self.group_messages(messages)
+
+        # 末尾问答对保护：如果最后 2 个 group 是 [assistant text, user short text]，
+        # 合并为一组以防止 AI 的提问被压掉而用户的简短回答变成孤立无头信息
+        if (len(groups) >= 2
+                and len(groups[-1]) == 1 and groups[-1][0].get("role") == "user"
+                and len(groups[-2]) == 1 and groups[-2][0].get("role") == "assistant"
+                and self.estimate_messages_tokens(groups[-1]) < 200):
+            merged = groups[-2] + groups[-1]
+            groups = groups[:-2] + [merged]
+            logger.debug("[Compress] Merged trailing assistant-question + user-answer into one group")
+
         recent_group_count = min(MIN_RECENT_TURNS, len(groups))
 
         if len(groups) <= recent_group_count:
@@ -320,13 +331,7 @@ class ContextManager:
         target_summary_tokens = max(int(early_tokens * COMPRESSION_RATIO), 200)
         summary = await self._summarize_messages_chunked(early_messages, target_summary_tokens)
 
-        compressed = []
-        if summary:
-            compressed.append({"role": "user", "content": f"[之前的对话摘要]\n{summary}"})
-            compressed.append(
-                {"role": "assistant", "content": "好的，我已了解之前的对话内容，请继续。"}
-            )
-        compressed.extend(recent_messages)
+        compressed = self._inject_summary_into_recent(summary, recent_messages)
 
         compressed_tokens = self.estimate_messages_tokens(compressed)
         if compressed_tokens <= soft_limit:
@@ -415,8 +420,10 @@ class ContextManager:
             )
         else:
             system_prompt = (
-                "你是一个对话压缩助手。请将以下对话内容压缩为简洁摘要，"
-                "保留用户意图、关键决策、执行结果和当前状态。"
+                "你是一个对话压缩助手。请将以下对话内容压缩为结构化摘要，"
+                "必须保留：用户原始目标、已完成的步骤及结果、当前任务进度、"
+                "待处理的问题（AI 的提问和用户的回答）、所有具体数值和配置信息"
+                "（端口号、路径、密钥等，不要用模糊描述代替具体值）、下一步计划。"
             )
 
         _tt = set_tracking_context(TokenTrackingContext(
@@ -545,13 +552,16 @@ class ContextManager:
                     model=self._brain.model,
                     max_tokens=chunk_target,
                     system=(
-                        "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
-                        "要求：\n"
-                        "1. 保留用户的原始意图和关键指令\n"
-                        "2. 保留工具调用的名称、关键参数和执行结果\n"
-                        "3. 保留重要的状态变化和决策\n"
-                        "4. 去掉重复信息和中间过程细节\n"
-                        "5. 使用简练的描述"
+                        "你是一个对话压缩助手。请将以下对话片段压缩为结构化摘要。\n"
+                        "必须包含以下部分（如有相关内容）：\n"
+                        "1. **对话背景**: 用户的原始目标\n"
+                        "2. **用户需求**: 用户明确提出的要求和指令\n"
+                        "3. **已完成的步骤**: 执行了哪些操作，结果如何（成功/失败/错误信息）\n"
+                        "4. **当前任务进度**: 进行到哪一步了\n"
+                        "5. **待处理的问题**: AI 向用户提出了什么问题，用户是否已回答（保留原文）\n"
+                        "6. **关键配置/数值**: 端口号、路径、密钥、版本号等具体值（必须保留原始数值）\n"
+                        "7. **下一步计划**: 接下来要做什么\n\n"
+                        "重要：保留所有具体数值和配置信息，不要用模糊描述代替具体值。"
                     ),
                     messages=[
                         {
@@ -622,7 +632,7 @@ class ContextManager:
             return messages
 
         groups = self.group_messages(messages)
-        recent_group_count = min(2, len(groups))
+        recent_group_count = min(4, len(groups))
 
         if len(groups) <= recent_group_count:
             logger.warning("Cannot compress further, attempting final tool_result compression")
@@ -638,17 +648,36 @@ class ContextManager:
         target = max(int(early_tokens * COMPRESSION_RATIO), 100)
         summary = await self._summarize_messages_chunked(early_messages, target)
 
-        compressed = []
-        if summary:
-            compressed.append({"role": "user", "content": f"[之前的对话摘要]\n{summary}"})
-            compressed.append(
-                {"role": "assistant", "content": "好的，我已了解之前的对话内容，请继续。"}
-            )
-        compressed.extend(recent_messages)
+        compressed = self._inject_summary_into_recent(summary, recent_messages)
 
         compressed_tokens = self.estimate_messages_tokens(compressed)
         logger.info(f"Further compressed from {current_tokens} to {compressed_tokens} tokens")
         return compressed
+
+    @staticmethod
+    def _inject_summary_into_recent(summary: str, recent_messages: list[dict]) -> list[dict]:
+        """将摘要注入到 recent_messages 中，避免插入假 assistant 回复。
+
+        策略：找到 recent_messages 中第一条 user 消息，将摘要作为前缀注入。
+        如果第一条不是 user，则在最前面插入一条 user 摘要消息。
+        """
+        if not summary:
+            return list(recent_messages)
+
+        summary_prefix = f"[之前的对话摘要]\n{summary}\n\n---\n"
+        result = list(recent_messages)
+
+        if result and result[0].get("role") == "user":
+            first = result[0]
+            content = first.get("content", "")
+            if isinstance(content, str):
+                result[0] = {**first, "content": summary_prefix + content}
+            else:
+                result.insert(0, {"role": "user", "content": summary_prefix.rstrip()})
+        else:
+            result.insert(0, {"role": "user", "content": summary_prefix.rstrip()})
+
+        return result
 
     def _hard_truncate_if_needed(self, messages: list[dict], hard_limit: int) -> list[dict]:
         """硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断"""

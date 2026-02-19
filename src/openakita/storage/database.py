@@ -215,7 +215,8 @@ class Database:
                 context_tokens INTEGER DEFAULT 0,
                 iteration INTEGER DEFAULT 0,
                 channel TEXT,
-                user_id TEXT
+                user_id TEXT,
+                estimated_cost REAL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
@@ -224,6 +225,15 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_token_usage_op ON token_usage(operation_type);
         """)
         await self._connection.commit()
+
+        # Migration: 为旧数据库添加 estimated_cost 列
+        try:
+            await self._connection.execute(
+                "ALTER TABLE token_usage ADD COLUMN estimated_cost REAL DEFAULT 0"
+            )
+            await self._connection.commit()
+        except Exception:
+            pass  # 列已存在则忽略
 
     # ===== 对话相关 =====
 
@@ -569,7 +579,8 @@ class Database:
                    SUM(input_tokens + output_tokens) AS total_tokens,
                    SUM(cache_creation_tokens) AS total_cache_creation,
                    SUM(cache_read_tokens) AS total_cache_read,
-                   COUNT(*) AS request_count
+                   COUNT(*) AS request_count,
+                   COALESCE(SUM(estimated_cost), 0) AS total_cost
             FROM token_usage
             WHERE {' AND '.join(where)}
             GROUP BY {group_by}
@@ -628,7 +639,8 @@ class Database:
                    SUM(input_tokens + output_tokens) AS total_tokens,
                    COUNT(*) AS request_count,
                    GROUP_CONCAT(DISTINCT operation_type) AS operation_types,
-                   GROUP_CONCAT(DISTINCT endpoint_name) AS endpoints
+                   GROUP_CONCAT(DISTINCT endpoint_name) AS endpoints,
+                   COALESCE(SUM(estimated_cost), 0) AS total_cost
             FROM token_usage
             WHERE timestamp >= ? AND timestamp <= ? AND session_id != ''
             GROUP BY session_id
@@ -653,7 +665,8 @@ class Database:
                    COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
                    COALESCE(SUM(cache_creation_tokens), 0) AS total_cache_creation,
                    COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read,
-                   COUNT(*) AS request_count
+                   COUNT(*) AS request_count,
+                   COALESCE(SUM(estimated_cost), 0) AS total_cost
             FROM token_usage
             WHERE timestamp >= ? AND timestamp <= ?
         """
