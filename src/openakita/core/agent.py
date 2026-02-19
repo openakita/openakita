@@ -2950,10 +2950,14 @@ search_github → install_skill → 使用
         if history_messages and history_messages[-1].get("role") == "user":
             history_messages = history_messages[:-1]
 
+        _TOOL_SUMMARY_MARKER = "\n\n[执行摘要]"
+
         messages: list[dict] = []
         for msg in history_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
+            if role == "assistant" and _TOOL_SUMMARY_MARKER in content:
+                content = content[:content.index(_TOOL_SUMMARY_MARKER)]
             if role in ("user", "assistant") and content:
                 if messages and messages[-1]["role"] == role:
                     messages[-1]["content"] += "\n" + content
