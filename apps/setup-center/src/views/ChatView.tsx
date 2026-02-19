@@ -54,7 +54,7 @@ type StreamEvent =
   | { type: "chain_text"; content: string }
   | { type: "text_delta"; content: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
-  | { type: "tool_call_end"; tool: string; result: string; id?: string }
+  | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean }
   | { type: "plan_created"; plan: ChatPlan }
   | { type: "plan_step_updated"; stepId?: string; stepIdx?: number; status: string }
   | { type: "plan_completed" }
@@ -1955,7 +1955,7 @@ export function ChatView({
                 if (currentChainGroup) {
                   const grp: ChainGroup = currentChainGroup;
                   let chainMatched = false;
-                  const isError = (event.result || "").includes("❌") || (event.result || "").includes("Tool error");
+                  const isError = event.is_error === true || (event.result || "").startsWith("Tool error");
                   const endStatus = isError ? "error" as const : "done" as const;
                   currentChainGroup = {
                     ...grp,

@@ -1540,6 +1540,7 @@ class ReasoningEngine:
                             # chain_text: 工具描述
                             yield {"type": "chain_text", "content": self._describe_tool_call(t_name, t_args)}
                             yield {"type": "tool_call_start", "tool": t_name, "args": t_args, "id": t_id}
+                            _tool_is_error = False
                             try:
                                 r = await self._tool_executor.execute_tool(
                                     tool_name=t_name,
@@ -1549,7 +1550,8 @@ class ReasoningEngine:
                                 r = str(r) if r else ""
                             except Exception as exc:
                                 r = f"Tool error: {exc}"
-                            yield {"type": "tool_call_end", "tool": t_name, "result": r[:_SSE_RESULT_PREVIEW_CHARS], "id": t_id}
+                                _tool_is_error = True
+                            yield {"type": "tool_call_end", "tool": t_name, "result": r[:_SSE_RESULT_PREVIEW_CHARS], "id": t_id, "is_error": _tool_is_error}
                             # chain_text: 结果摘要
                             _ask_result_summary = self._summarize_tool_result(t_name, r)
                             if _ask_result_summary:
@@ -1671,11 +1673,12 @@ class ReasoningEngine:
                         except Exception as exc:
                             result_text = f"Tool error: {exc}"
 
+                        _tool_is_error = result_text.startswith("Tool error:")
                         # 跳过时发送 tool_call_skipped 事件通知前端
                         if _stream_skipped:
-                            yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:_SSE_RESULT_PREVIEW_CHARS], "id": tool_id, "skipped": True}
+                            yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:_SSE_RESULT_PREVIEW_CHARS], "id": tool_id, "skipped": True, "is_error": False}
                         else:
-                            yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:_SSE_RESULT_PREVIEW_CHARS], "id": tool_id}
+                            yield {"type": "tool_call_end", "tool": tool_name, "result": result_text[:_SSE_RESULT_PREVIEW_CHARS], "id": tool_id, "is_error": _tool_is_error}
 
                         if _stream_cancelled:
                             tool_results_for_msg.append({
