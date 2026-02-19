@@ -56,6 +56,8 @@ async def _stream_chat(
     _done_sent = False
     _client_disconnected = False
     _ask_user_question = ""
+    _ask_user_options: list[dict] = []
+    _ask_user_questions: list[dict] = []
 
     async def _check_disconnected() -> bool:
         nonlocal _client_disconnected
@@ -153,9 +155,11 @@ async def _stream_chat(
 
             event_type = event.get("type", "")
 
-            # 捕获 ask_user 问题文本（用于 session 保存）
+            # 捕获 ask_user 问题文本和选项（用于 session 保存）
             if event_type == "ask_user":
                 _ask_user_question = event.get("question", "")
+                _ask_user_options = event.get("options", [])
+                _ask_user_questions = event.get("questions", [])
 
             # Inject artifact events for deliver_artifacts results
             yield _sse(event_type, {k: v for k, v in event.items() if k != "type"})
@@ -188,7 +192,21 @@ async def _stream_chat(
         # --- Save assistant response to session ---
         assistant_text_to_save = _full_reply
         if not assistant_text_to_save and _ask_user_question:
-            assistant_text_to_save = f"[向用户提问] {_ask_user_question}"
+            parts = [_ask_user_question]
+            if _ask_user_questions:
+                for q in _ask_user_questions:
+                    q_prompt = q.get("prompt", "")
+                    q_opts = q.get("options", [])
+                    if q_prompt:
+                        parts.append(f"\n{q_prompt}")
+                    if q_opts:
+                        for o in q_opts:
+                            parts.append(f"  - {o.get('id', '')}: {o.get('label', '')}")
+            elif _ask_user_options:
+                parts.append("\n选项：")
+                for o in _ask_user_options:
+                    parts.append(f"  - {o.get('id', '')}: {o.get('label', '')}")
+            assistant_text_to_save = "\n".join(parts)
         if session and assistant_text_to_save:
             try:
                 session.add_message("assistant", assistant_text_to_save)

@@ -813,7 +813,8 @@ class ReasoningEngine:
                         other_tool_results = other_results if other_results else []
 
                     # 提取 ask_user 的问题文本
-                    question = ask_user_calls[0].get("input", {}).get("question", "")
+                    ask_input = ask_user_calls[0].get("input", {})
+                    question = ask_input.get("question", "")
                     ask_tool_id = ask_user_calls[0].get("id", "ask_user_0")
 
                     # 合并 LLM 的文本回复 + 问题
@@ -824,6 +825,16 @@ class ReasoningEngine:
                         final_text = question
                     else:
                         final_text = text_part or "（等待用户回复）"
+
+                    # IM 通道：将结构化选项追加到问题文本
+                    ask_opts = ask_input.get("options", [])
+                    if ask_opts and isinstance(ask_opts, list):
+                        opt_lines = []
+                        for o in ask_opts:
+                            if isinstance(o, dict) and o.get("id") and o.get("label"):
+                                opt_lines.append(f"  {o['id']}: {o['label']}")
+                        if opt_lines:
+                            final_text += "\n\n选项：\n" + "\n".join(opt_lines)
 
                     try:
                         state.transition(TaskStatus.WAITING_USER)
