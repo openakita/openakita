@@ -28,10 +28,21 @@ struct ManagedProcess {
     child: std::process::Child,
     workspace_id: String,
     pid: u32,
-    started_at: u64,
 }
 
 static MANAGED_CHILD: Lazy<Mutex<Option<ManagedProcess>>> = Lazy::new(|| Mutex::new(None));
+
+#[derive(Debug, Clone)]
+struct WindowFloatingRestoreState {
+    size: tauri::PhysicalSize<u32>,
+    position: tauri::PhysicalPosition<i32>,
+    decorated: bool,
+    always_on_top: bool,
+    resizable: bool,
+}
+
+static FLOATING_RESTORE_STATE: Lazy<Mutex<Option<WindowFloatingRestoreState>>> =
+    Lazy::new(|| Mutex::new(None));
 
 /// Rust 自动启动后端时置 true，启动完成（成功/失败）后置 false。
 /// 前端可查询该标记以显示"正在自动启动服务"并禁用启动/重启按钮。
@@ -43,12 +54,38 @@ struct PlatformInfo {
     os: String,
     arch: String,
     home_dir: String,
-    openakita_root_dir: String,
+    oap_root_dir: String,
 }
 
-fn default_openakita_root() -> String {
-    let home = home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    home.join(".openakita").to_string_lossy().to_string()
+/// Resolve the OAP root directory. Priority:
+/// 1. `OAP_ROOT` env var
+/// 2. `~/.oap-root` file (single line: custom path)
+/// 3. Default `~/.openakita`
+fn resolve_oap_root() -> PathBuf {
+    // 1. env var
+    if let Ok(v) = std::env::var("OAP_ROOT") {
+        let p = PathBuf::from(v.trim());
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+    // 2. config file
+    let cfg = home.join(".oap-root");
+    if cfg.exists() {
+        if let Ok(content) = fs::read_to_string(&cfg) {
+            let line = content.trim();
+            if !line.is_empty() {
+                return PathBuf::from(line);
+            }
+        }
+    }
+    // 3. default
+    home.join(".openakita")
+}
+
+fn default_oap_root() -> String {
+    resolve_oap_root().to_string_lossy().to_string()
 }
 
 #[tauri::command]
@@ -58,7 +95,7 @@ fn get_platform_info() -> PlatformInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         home_dir: home.to_string_lossy().to_string(),
-        openakita_root_dir: default_openakita_root(),
+        oap_root_dir: default_oap_root(),
     }
 }
 
@@ -88,10 +125,47 @@ struct AppStateFile {
     install_mode: Option<String>,
     #[serde(default)]
     auto_update: Option<bool>,
+    #[serde(default)]
+    floating_ui: Option<FloatingUiPrefs>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FloatingUiPrefs {
+    always_on_top: bool,
+    opacity: f64,
+    selected_endpoint: Option<String>,
+}
+
+fn default_floating_ui_prefs() -> FloatingUiPrefs {
+    FloatingUiPrefs {
+        always_on_top: false,
+        opacity: 0.92,
+        selected_endpoint: None,
+    }
 }
 
 fn default_config_version() -> u32 {
     migrations::CURRENT_CONFIG_VERSION
+}
+
+/// Set a custom OAP root directory. Writes to `~/.oap-root`.
+#[tauri::command]
+fn set_oap_root(path: String) -> Result<String, String> {
+    let home = home_dir().ok_or("Cannot determine home directory")?;
+    let cfg = home.join(".oap-root");
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        // Remove override → revert to default
+        let _ = fs::remove_file(&cfg);
+        return Ok(default_oap_root());
+    }
+    let p = Path::new(trimmed);
+    if !p.exists() {
+        fs::create_dir_all(p).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    fs::write(&cfg, trimmed).map_err(|e| format!("写入 ~/.oap-root 失败: {e}"))?;
+    Ok(trimmed.to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -102,9 +176,7 @@ struct WorkspaceMeta {
 }
 
 fn openakita_root_dir() -> PathBuf {
-    home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".openakita")
+    resolve_oap_root()
 }
 
 fn run_dir() -> PathBuf {
@@ -137,7 +209,7 @@ fn start_onboarding_log(date_label: String) -> Result<String, String> {
         .write(true)
         .open(&path)
         .map_err(|e| format!("open onboarding log failed: {e}"))?;
-    let header = format!("OpenAkita 安装配置日志 开始于 {}\n", date_label);
+    let header = format!("OAP 安装配置日志 开始于 {}\n", date_label);
     f.write_all(header.as_bytes())
         .map_err(|e| format!("write onboarding log header failed: {e}"))?;
     f.flush().map_err(|e| format!("flush failed: {e}"))?;
@@ -180,6 +252,28 @@ fn append_onboarding_log_lines(log_path: String, lines: Vec<String>) -> Result<(
 
 fn modules_dir() -> PathBuf {
     openakita_root_dir().join("modules")
+}
+
+/// 在源码开发模式下，优先使用仓库本地 `src/` 作为 Python 导入路径。
+/// 打包产物运行时该路径通常不存在，会自动返回 None。
+fn local_repo_src_dir() -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("src");
+    if p.join("openakita").join("__init__.py").exists() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+fn join_pythonpath(head: &Path, tail: Option<String>) -> String {
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    match tail {
+        Some(t) if !t.trim().is_empty() => format!("{}{}{}", head.to_string_lossy(), sep, t),
+        _ => head.to_string_lossy().to_string(),
+    }
 }
 
 /// 获取内嵌 PyInstaller 打包后端的目录
@@ -520,7 +614,7 @@ async fn install_module(
             // 提示用户重启服务以加载新安装的模块
             let _ = app.emit("module-install-progress", serde_json::json!({
                 "moduleId": module_id, "status": "restart-hint",
-                "message": "模块已安装，建议重启 OpenAkita 服务以加载新模块",
+                "message": "模块已安装，建议重启 OAP 服务以加载新模块",
             }));
             Ok(format!("{} 安装成功", module_id))
         } else {
@@ -731,9 +825,6 @@ fn check_environment() -> EnvironmentCheck {
         }
     }
 
-    // Calculate disk usage
-    let disk_usage_mb = dir_size_bytes(&root) / (1024 * 1024);
-
     // 如果内嵌后端存在，自动清理旧 venv/runtime（它们已经被打包替代，不再需要）
     let bundled_exists = bundled_backend_dir().exists();
     let mut auto_cleaned = Vec::new();
@@ -764,7 +855,7 @@ fn check_environment() -> EnvironmentCheck {
         conflicts.push("旧 Python 运行时 (runtime) 清理失败，请手动删除".to_string());
     }
     if !running.is_empty() {
-        conflicts.push(format!("检测到 {} 个正在运行的 OpenAkita 进程", running.len()));
+        conflicts.push(format!("检测到 {} 个正在运行的 OAP 进程", running.len()));
     }
 
     // Recalculate disk usage after cleanup
@@ -1656,7 +1747,7 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
     let env_path = dir.join(".env");
     if !env_path.exists() {
         let content = [
-            "# OpenAkita 工作区环境变量（由 Setup Center 生成）",
+            "# OAP 工作区环境变量（由 Setup Center 生成）",
             "#",
             "# 规则：",
             "# - 只会写入你在 Setup Center 里“填写/修改过”的键",
@@ -1937,6 +2028,18 @@ fn main() {
                 }
             }
 
+            // ── 应用悬浮聊天窗口偏好（置顶/透明度） ──
+            if let Some(w) = app.get_webview_window("main") {
+                let prefs = read_state_file()
+                    .floating_ui
+                    .unwrap_or_else(default_floating_ui_prefs);
+                let _ = w.set_always_on_top(prefs.always_on_top);
+                // NOTE:
+                // tauri 2.10 的 WebviewWindow 在当前依赖组合下不提供 set_opacity API，
+                // 因此透明度在前端通过 CSS opacity 实现；这里仅保留置顶原生能力。
+                let _ = prefs.opacity;
+            }
+
             // ── 自动拉起后端（所有启动模式都生效） ──
             // 如果有已配置的工作区且后端未在运行，则自动启动后端。
             // 前端通过 is_backend_auto_starting 查询此状态，
@@ -1973,12 +2076,19 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_platform_info,
+            set_oap_root,
             list_workspaces,
             create_workspace,
             set_current_workspace,
             get_current_workspace_id,
             workspace_read_file,
+            workspace_list_dir,
             workspace_write_file,
+            workspace_read_file_base64,
+            workspace_make_dir,
+            workspace_delete_path,
+            workspace_rename_path,
+            workspace_copy_in,
             workspace_update_env,
             detect_python,
             check_python_for_pip,
@@ -2000,6 +2110,11 @@ fn main() {
             set_auto_start_backend,
             get_auto_update,
             set_auto_update,
+            set_window_always_on_top,
+            set_window_opacity,
+            set_minimal_floating_mode,
+            get_floating_ui_prefs,
+            set_floating_ui_prefs,
             openakita_list_skills,
             openakita_list_providers,
             openakita_list_models,
@@ -2325,6 +2440,13 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     if let Some(extra_path) = build_modules_pythonpath() {
         cmd.env("OPENAKITA_MODULE_PATHS", extra_path);
     }
+    // 开发模式：venv 回退启动时优先导入仓库源码，避免读到旧 site-packages 版本。
+    if backend_args.len() >= 3 && backend_args[0] == "-m" && backend_args[1] == "openakita.main" {
+        if let Some(src_dir) = local_repo_src_dir() {
+            let merged = join_pythonpath(&src_dir, std::env::var("PYTHONPATH").ok());
+            cmd.env("PYTHONPATH", merged);
+        }
+    }
 
     // Playwright 浏览器二进制路径（install_module 安装到此目录）
     let browsers_dir = modules_dir().join("browser").join("browsers");
@@ -2345,8 +2467,6 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 
     let child = cmd.spawn().map_err(|e| format!("spawn openakita serve failed: {e}"))?;
     let pid = child.id();
-    let started_at = now_epoch_secs();
-
     // ── 3. 写 JSON PID 文件 ──
     write_pid_file(&workspace_id, pid, "tauri")?;
 
@@ -2357,7 +2477,6 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
             child,
             workspace_id: workspace_id.clone(),
             pid,
-            started_at,
         });
     }
 
@@ -2382,7 +2501,7 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
             })
             .unwrap_or_default();
         return Err(format!(
-            "openakita serve 似乎启动后立即退出（PID={pid}）。\n请查看服务日志：{}\n\n--- log tail ---\n{}",
+            "oap serve 似乎启动后立即退出（PID={pid}）。\n请查看服务日志：{}\n\n--- log tail ---\n{}",
             log_path.to_string_lossy(),
             tail
         ));
@@ -2533,15 +2652,150 @@ fn set_auto_update(enabled: bool) -> Result<(), String> {
     write_state_file(&state)
 }
 
+#[tauri::command]
+fn set_window_always_on_top(app: tauri::AppHandle, always_on_top: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+    window
+        .set_always_on_top(always_on_top)
+        .map_err(|e| format!("set always on top failed: {e}"))
+}
+
+#[tauri::command]
+fn set_window_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(), String> {
+    let _window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+    // NOTE:
+    // 当前 tauri::WebviewWindow 不支持原生 set_opacity，
+    // 这里保留命令接口以维持前后端契约，透明度由前端样式控制。
+    let _ = opacity.clamp(0.35, 1.0);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_minimal_floating_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+
+    if enabled {
+        let mut restore = FLOATING_RESTORE_STATE
+            .lock()
+            .map_err(|_| "lock floating restore state failed".to_string())?;
+        if restore.is_none() {
+            let size = window
+                .outer_size()
+                .map_err(|e| format!("get window size failed: {e}"))?;
+            let position = window
+                .outer_position()
+                .map_err(|e| format!("get window position failed: {e}"))?;
+            let decorated = window
+                .is_decorated()
+                .map_err(|e| format!("get decorated failed: {e}"))?;
+            let always_on_top = window
+                .is_always_on_top()
+                .map_err(|e| format!("get always on top failed: {e}"))?;
+            let resizable = window
+                .is_resizable()
+                .map_err(|e| format!("get resizable failed: {e}"))?;
+            *restore = Some(WindowFloatingRestoreState {
+                size,
+                position,
+                decorated,
+                always_on_top,
+                resizable,
+            });
+        }
+
+        // 与前端 `FloatingChatView` 的 COMPACT_DEFAULT_WIDTH 同步：
+        // 1290 * 0.7 = 903，避免只改一侧导致“外框与白窗宽度体感不一致”。
+        let target_width = 903u32;
+        let target_height = 60u32;
+        let target_pos = if let Ok(Some(monitor)) = window.current_monitor() {
+            let mon_pos = monitor.position();
+            let mon_size = monitor.size();
+            let x = mon_pos.x + (((mon_size.width as i32) - (target_width as i32)) / 2).max(0);
+            let y = mon_pos.y + 72;
+            tauri::PhysicalPosition::new(x, y)
+        } else {
+            tauri::PhysicalPosition::new(120, 80)
+        };
+
+        window
+            .set_decorations(false)
+            .map_err(|e| format!("set decorations failed: {e}"))?;
+        window
+            .set_resizable(false)
+            .map_err(|e| format!("set resizable failed: {e}"))?;
+        window
+            .set_always_on_top(true)
+            .map_err(|e| format!("set always on top failed: {e}"))?;
+        window
+            .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+                target_width,
+                target_height,
+            )))
+            .map_err(|e| format!("set size failed: {e}"))?;
+        window
+            .set_position(tauri::Position::Physical(target_pos))
+            .map_err(|e| format!("set position failed: {e}"))?;
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let mut restore = FLOATING_RESTORE_STATE
+        .lock()
+        .map_err(|_| "lock floating restore state failed".to_string())?;
+    if let Some(prev) = restore.take() {
+        window
+            .set_decorations(prev.decorated)
+            .map_err(|e| format!("restore decorations failed: {e}"))?;
+        window
+            .set_resizable(prev.resizable)
+            .map_err(|e| format!("restore resizable failed: {e}"))?;
+        window
+            .set_always_on_top(prev.always_on_top)
+            .map_err(|e| format!("restore always on top failed: {e}"))?;
+        window
+            .set_size(tauri::Size::Physical(prev.size))
+            .map_err(|e| format!("restore size failed: {e}"))?;
+        window
+            .set_position(tauri::Position::Physical(prev.position))
+            .map_err(|e| format!("restore position failed: {e}"))?;
+        let _ = window.show();
+        let _ = window.unminimize();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_floating_ui_prefs() -> Result<FloatingUiPrefs, String> {
+    let state = read_state_file();
+    Ok(state.floating_ui.unwrap_or_else(default_floating_ui_prefs))
+}
+
+#[tauri::command]
+fn set_floating_ui_prefs(prefs: FloatingUiPrefs) -> Result<(), String> {
+    let mut state = read_state_file();
+    let mut next = prefs;
+    next.opacity = next.opacity.clamp(0.35, 1.0);
+    state.floating_ui = Some(next);
+    write_state_file(&state)
+}
+
 /// 前端心跳检测到后端状态变化时调用，更新托盘 tooltip
 /// status: "alive" | "degraded" | "dead"
 #[tauri::command]
 fn set_tray_backend_status(app: tauri::AppHandle, status: String) -> Result<(), String> {
     let tooltip = match status.as_str() {
-        "alive" => "OpenAkita - Running",
-        "degraded" => "OpenAkita - Backend Unresponsive",
-        "dead" => "OpenAkita - Backend Stopped",
-        _ => "OpenAkita",
+        "alive" => "OAP - Running",
+        "degraded" => "OAP - Backend Unresponsive",
+        "dead" => "OAP - Backend Stopped",
+        _ => "OAP",
     };
     // 更新所有 tray icon 的 tooltip
     if let Some(tray) = app.tray_by_id("main_tray") {
@@ -2560,13 +2814,13 @@ fn set_tray_backend_status(app: tauri::AppHandle, status: String) -> Result<(), 
             cmd.args([
                 "-NoProfile", "-NonInteractive", "-Command",
                 "try { \
-                    $aumid = 'com.openakita.setupcenter'; \
+                    $aumid = 'com.oap.setupcenter'; \
                     $rp = \"HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\$aumid\"; \
-                    if (!(Test-Path $rp)) { New-Item $rp -Force | Out-Null; Set-ItemProperty $rp -Name DisplayName -Value 'OpenAkita Desktop' }; \
+                    if (!(Test-Path $rp)) { New-Item $rp -Force | Out-Null; Set-ItemProperty $rp -Name DisplayName -Value 'OAP Desktop' }; \
                     [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; \
                     $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); \
                     $t = $xml.GetElementsByTagName('text'); \
-                    $t[0].AppendChild($xml.CreateTextNode('OpenAkita')) | Out-Null; \
+                    $t[0].AppendChild($xml.CreateTextNode('OAP')) | Out-Null; \
                     $t[1].AppendChild($xml.CreateTextNode('Backend service has stopped')) | Out-Null; \
                     $n = [Windows.UI.Notifications.ToastNotification]::new($xml); \
                     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($n) \
@@ -2579,7 +2833,7 @@ fn set_tray_backend_status(app: tauri::AppHandle, status: String) -> Result<(), 
         {
             // macOS: use osascript
             let _ = Command::new("osascript")
-                .args(["-e", "display notification \"Backend service has stopped\" with title \"OpenAkita\""])
+                .args(["-e", "display notification \"Backend service has stopped\" with title \"OAP\""])
                 .spawn();
         }
     }
@@ -2599,7 +2853,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     TrayIconBuilder::with_id("main_tray")
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("OpenAkita")
+        .tooltip("OAP")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
@@ -2748,6 +3002,41 @@ fn workspace_read_file(workspace_id: String, relative_path: String) -> Result<St
     fs::read_to_string(&path).map_err(|e| format!("read failed: {e}"))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirEntry {
+    name: String,
+    is_dir: bool,
+    size: u64,
+}
+
+#[tauri::command]
+fn workspace_list_dir(workspace_id: String, relative_path: String) -> Result<Vec<DirEntry>, String> {
+    let base = workspace_dir(&workspace_id);
+    let target = if relative_path.is_empty() {
+        base.clone()
+    } else {
+        let rel = Path::new(&relative_path);
+        use std::path::Component;
+        if rel.is_absolute() || rel.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err("invalid path".into());
+        }
+        base.join(rel)
+    };
+    let rd = fs::read_dir(&target).map_err(|e| format!("read_dir failed: {e}"))?;
+    let mut entries: Vec<DirEntry> = Vec::new();
+    for entry in rd.flatten() {
+        let meta = entry.metadata();
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        if let Some(name) = entry.file_name().to_str() {
+            entries.push(DirEntry { name: name.to_string(), is_dir, size });
+        }
+    }
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+    Ok(entries)
+}
+
 #[tauri::command]
 fn workspace_write_file(
     workspace_id: String,
@@ -2759,6 +3048,106 @@ fn workspace_write_file(
         fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
     }
     fs::write(&path, content).map_err(|e| format!("write failed: {e}"))
+}
+
+fn guess_mime_from_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        _ => "application/octet-stream",
+    }
+}
+
+#[tauri::command]
+fn workspace_read_file_base64(workspace_id: String, relative_path: String) -> Result<String, String> {
+    let path = workspace_file_path(&workspace_id, &relative_path)?;
+    let data = fs::read(&path).map_err(|e| format!("read failed: {e}"))?;
+    let mime = guess_mime_from_path(&path);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+#[tauri::command]
+fn workspace_make_dir(workspace_id: String, relative_path: String) -> Result<(), String> {
+    let path = workspace_file_path(&workspace_id, &relative_path)?;
+    fs::create_dir_all(&path).map_err(|e| format!("mkdir failed: {e}"))
+}
+
+#[tauri::command]
+fn workspace_delete_path(workspace_id: String, relative_path: String, recursive: Option<bool>) -> Result<(), String> {
+    let path = workspace_file_path(&workspace_id, &relative_path)?;
+    let meta = fs::metadata(&path).map_err(|e| format!("stat failed: {e}"))?;
+    if meta.is_dir() {
+        if recursive.unwrap_or(true) {
+            fs::remove_dir_all(&path).map_err(|e| format!("remove dir failed: {e}"))?;
+        } else {
+            fs::remove_dir(&path).map_err(|e| format!("remove dir failed: {e}"))?;
+        }
+    } else {
+        fs::remove_file(&path).map_err(|e| format!("remove file failed: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn workspace_rename_path(
+    workspace_id: String,
+    from_relative_path: String,
+    to_relative_path: String,
+) -> Result<(), String> {
+    let from = workspace_file_path(&workspace_id, &from_relative_path)?;
+    let to = workspace_file_path(&workspace_id, &to_relative_path)?;
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
+    }
+    fs::rename(from, to).map_err(|e| format!("rename failed: {e}"))
+}
+
+#[tauri::command]
+fn workspace_copy_in(
+    workspace_id: String,
+    src_path: String,
+    target_dir_relative_path: Option<String>,
+) -> Result<String, String> {
+    let src = PathBuf::from(&src_path);
+    if !src.exists() {
+        return Err(format!("source not found: {src_path}"));
+    }
+    if src.is_dir() {
+        return Err("source directory is not supported".into());
+    }
+    let target_dir = workspace_file_path(
+        &workspace_id,
+        target_dir_relative_path.as_deref().unwrap_or(""),
+    )?;
+    fs::create_dir_all(&target_dir).map_err(|e| format!("create target dir failed: {e}"))?;
+    let name = src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "invalid source filename".to_string())?
+        .to_string();
+    let dst = target_dir.join(&name);
+    fs::copy(&src, &dst).map_err(|e| format!("copy failed: {e}"))?;
+    let rel = target_dir_relative_path
+        .unwrap_or_default()
+        .trim_matches('/')
+        .trim_matches('\\')
+        .to_string();
+    Ok(if rel.is_empty() { name } else { format!("{rel}/{name}") })
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -3111,7 +3500,7 @@ fn install_embedded_python_sync(
     let log_path = log_path.as_deref();
 
     let client = reqwest::blocking::Client::builder()
-        .user_agent("openakita-setup-center")
+        .user_agent("oap-setup-center")
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(120))
         .build()
@@ -3173,7 +3562,7 @@ fn install_embedded_python_sync(
     if !archive_path.exists() {
         append_to_onboarding_log(log_path, "[嵌入式 Python] 开始下载安装包（约 20–50 MB）...");
         let download_client = reqwest::blocking::Client::builder()
-            .user_agent("openakita-setup-center")
+            .user_agent("oap-setup-center")
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(3600))
             .build()
@@ -3233,7 +3622,6 @@ fn install_embedded_python_sync(
                                     break;
                                 }
                             }
-                            Ok(Ok(_)) => {}
                             Ok(Err(e)) => {
                                 write_err = Some(e);
                                 break;
@@ -3527,7 +3915,7 @@ async fn pip_install(
         }
         let _ = run_streaming(up, "pip upgrade (best-effort)", &mut log, &emit_line);
 
-        emit_stage("安装 openakita（pip）", 70);
+        emit_stage("安装 oap（pip）", 70);
         let mut c = Command::new(&py);
         apply_no_window(&mut c);
         c.env("PYTHONUTF8", "1");
@@ -3558,12 +3946,12 @@ async fn pip_install(
             "-c",
             "import openakita; import openakita.setup_center.bridge; print(getattr(openakita,'__version__',''))",
         ]);
-        let v = verify.output().map_err(|e| format!("verify openakita failed: {e}"))?;
+        let v = verify.output().map_err(|e| format!("verify oap failed: {e}"))?;
         if !v.status.success() {
             let stdout = String::from_utf8_lossy(&v.stdout).to_string();
             let stderr = String::from_utf8_lossy(&v.stderr).to_string();
             return Err(format!(
-                "openakita 已安装，但缺少 Setup Center 所需模块（openakita.setup_center.bridge）。\n这通常意味着你安装的 openakita 版本过旧或来源不包含该模块。\nstdout:\n{}\nstderr:\n{}",
+                "OAP 已安装，但缺少 Setup Center 所需模块（openakita.setup_center.bridge）。\n这通常意味着你安装的版本过旧或来源不包含该模块。\nstdout:\n{}\nstderr:\n{}",
                 stdout, stderr
             ));
         }
@@ -3723,6 +4111,10 @@ async fn openakita_version(venv_dir: String) -> Result<String, String> {
         c.env("PYTHONIOENCODING", "utf-8");
         if let Some(ref pp) = pythonpath {
             c.env("PYTHONPATH", pp);
+        }
+        if let Some(src_dir) = local_repo_src_dir() {
+            let base = pythonpath.clone().or_else(|| std::env::var("PYTHONPATH").ok());
+            c.env("PYTHONPATH", join_pythonpath(&src_dir, base));
         }
         c.args([
             "-c",
@@ -3919,7 +4311,7 @@ async fn fetch_pypi_versions(package: String, index_url: Option<String>) -> Resu
 
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent("openakita-setup-center")
+            .user_agent("oap-setup-center")
             .build()
             .map_err(|e| format!("HTTP client error: {e}"))?;
 
@@ -3985,7 +4377,7 @@ async fn http_get_json(url: String) -> Result<String, String> {
     spawn_blocking_result(move || {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
-            .user_agent("openakita-desktop/1.0")
+            .user_agent("oap-desktop/1.0")
             .build()
             .map_err(|e| format!("HTTP client error: {e}"))?;
 
@@ -4022,7 +4414,7 @@ async fn http_proxy_request(
         let timeout = timeout_secs.unwrap_or(30);
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(timeout))
-            .user_agent("openakita-desktop/1.0")
+            .user_agent("oap-desktop/1.0")
             .build()
             .map_err(|e| format!("HTTP client error: {e}"))?;
 
@@ -4070,25 +4462,7 @@ async fn read_file_base64(path: String) -> Result<String, String> {
         return Err(format!("File not found: {}", path));
     }
     let data = std::fs::read(p).map_err(|e| format!("Failed to read {}: {}", path, e))?;
-    let mime = match p
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase()
-        .as_str()
-    {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "svg" => "image/svg+xml",
-        "pdf" => "application/pdf",
-        "txt" | "md" => "text/plain",
-        "json" => "application/json",
-        "csv" => "text/csv",
-        _ => "application/octet-stream",
-    };
+    let mime = guess_mime_from_path(p);
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
     Ok(format!("data:{};base64,{}", mime, b64))
 }
@@ -4227,7 +4601,7 @@ fn cli_backend_exe_path() -> Result<PathBuf, String> {
     if venv_py.exists() {
         return Ok(venv_py);
     }
-    Err("未找到后端可执行文件（openakita-server 或 venv python）".into())
+    Err("未找到后端可执行文件（oap-server 或 venv python）".into())
 }
 
 /// 读取 CLI 配置文件
@@ -4261,7 +4635,7 @@ fn generate_wrapper_content(backend_exe: &Path) -> String {
     {
         let exe_path = backend_exe.to_string_lossy();
         format!(
-            "#!/bin/sh\n# OpenAkita CLI wrapper - managed by OpenAkita Desktop\nexec \"{}\" \"$@\"\n",
+            "#!/bin/sh\n# OAP CLI wrapper - managed by OAP Desktop\nexec \"{}\" \"$@\"\n",
             exe_path
         )
     }
