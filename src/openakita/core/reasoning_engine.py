@@ -33,6 +33,7 @@ from .agent_state import AgentState, TaskState, TaskStatus
 from .context_manager import ContextManager, _CancelledError as _CtxCancelledError
 from .errors import UserCancelledError
 from .response_handler import ResponseHandler, clean_llm_response, strip_thinking_tags
+from .token_tracking import TokenTrackingContext, set_tracking_context, reset_tracking_context
 from .tool_executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -2160,6 +2161,9 @@ class ReasoningEngine:
         farewell_messages.append({"role": "user", "content": cancel_msg})
 
         farewell_text = "✅ 好的，已停止当前任务。"
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="farewell", channel="api",
+        ))
         try:
             farewell_response = await asyncio.wait_for(
                 self._brain.messages_create_async(
@@ -2184,6 +2188,8 @@ class ReasoningEngine:
                 exc_info=True,
             )
             self._reset_structural_cooldown_after_farewell()
+        finally:
+            reset_tracking_context(_tt)
         return farewell_text
 
     # ==================== 取消收尾（流式） ====================
@@ -2232,6 +2238,9 @@ class ReasoningEngine:
             f"[ReAct-Stream][CancelFarewell] 发起 LLM 收尾调用 (timeout=5s), "
             f"farewell_messages count={len(farewell_messages)}"
         )
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="farewell", channel="api",
+        ))
         try:
             farewell_response = await asyncio.wait_for(
                 self._brain.messages_create_async(
@@ -2266,6 +2275,8 @@ class ReasoningEngine:
                 exc_info=True,
             )
             self._reset_structural_cooldown_after_farewell()
+        finally:
+            reset_tracking_context(_tt)
 
         logger.info(f"[ReAct-Stream][CancelFarewell] 最终输出文本: {farewell_text[:120]}")
         chunk_size = 20
@@ -2394,16 +2405,25 @@ class ReasoningEngine:
 
         tracer = get_tracer()
         with tracer.llm_span(model=current_model) as span:
-            response = await self._brain.messages_create_async(
-                use_thinking=use_thinking,
-                thinking_depth=thinking_depth,
-                model=current_model,
-                max_tokens=self._brain.max_tokens,
-                system=system_prompt,
-                tools=tools,
-                messages=messages,
-                conversation_id=conversation_id,
-            )
+            _tt = set_tracking_context(TokenTrackingContext(
+                session_id=conversation_id or "",
+                operation_type="chat_react_iteration",
+                channel="api",
+                iteration=iteration,
+            ))
+            try:
+                response = await self._brain.messages_create_async(
+                    use_thinking=use_thinking,
+                    thinking_depth=thinking_depth,
+                    model=current_model,
+                    max_tokens=self._brain.max_tokens,
+                    system=system_prompt,
+                    tools=tools,
+                    messages=messages,
+                    conversation_id=conversation_id,
+                )
+            finally:
+                reset_tracking_context(_tt)
 
             # 记录 token 使用
             if hasattr(response, "usage"):

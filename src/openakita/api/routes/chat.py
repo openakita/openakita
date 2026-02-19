@@ -197,7 +197,33 @@ async def _stream_chat(
             except Exception:
                 pass
 
-        yield _sse("done", {"usage": None})
+        # Collect usage from the last react trace
+        _usage_data: dict | None = None
+        try:
+            re = getattr(actual_agent, "reasoning_engine", None)
+            trace = getattr(re, "_last_react_trace", []) if re else []
+            if trace:
+                total_in = sum(t.get("in_tokens", 0) for t in trace)
+                total_out = sum(t.get("out_tokens", 0) for t in trace)
+                _usage_data = {
+                    "input_tokens": total_in,
+                    "output_tokens": total_out,
+                    "total_tokens": total_in + total_out,
+                }
+            ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(re, "_context_manager", None)
+            if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
+                _max_ctx = ctx_mgr.get_max_context_tokens()
+                _cur_ctx = ctx_mgr.estimate_messages_tokens(
+                    getattr(getattr(actual_agent, "_context", None), "messages", [])
+                ) if ctx_mgr else 0
+                if _usage_data is None:
+                    _usage_data = {}
+                _usage_data["context_tokens"] = _cur_ctx
+                _usage_data["context_limit"] = _max_ctx
+        except Exception:
+            pass
+
+        yield _sse("done", {"usage": _usage_data})
 
     except Exception as e:
         logger.error(f"Chat stream error: {e}", exc_info=True)

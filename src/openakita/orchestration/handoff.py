@@ -43,6 +43,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..core.token_tracking import TokenTrackingContext, set_tracking_context, reset_tracking_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -321,6 +323,10 @@ class HandoffOrchestrator:
         all_tools = list(handoff_tools)
 
         for _iter in range(agent.max_iterations):
+            _tt = set_tracking_context(TokenTrackingContext(
+                operation_type="handoff",
+                operation_detail=agent.name,
+            ))
             try:
                 response = await asyncio.to_thread(
                     self._brain.messages_create,
@@ -333,6 +339,8 @@ class HandoffOrchestrator:
             except Exception as e:
                 logger.error(f"[Handoff] Agent '{agent.name}' LLM error: {e}")
                 return f"❌ Agent '{agent.name}' 推理失败: {e}"
+            finally:
+                reset_tracking_context(_tt)
 
             # 解析响应
             stop_reason = getattr(response, "stop_reason", "end_turn")

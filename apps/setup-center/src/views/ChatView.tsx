@@ -64,7 +64,7 @@ type StreamEvent =
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
   | { type: "error"; message: string }
-  | { type: "done"; usage?: { input_tokens: number; output_tokens: number } };
+  | { type: "done"; usage?: { input_tokens: number; output_tokens: number; total_tokens?: number; context_tokens?: number; context_limit?: number } };
 
 // ─── 思维链工具函数 ───
 
@@ -1303,6 +1303,11 @@ export function ChatView({
   useEffect(() => { try { localStorage.setItem("chat_thinkingMode", thinkingMode); } catch {} }, [thinkingMode]);
   useEffect(() => { try { localStorage.setItem("chat_thinkingDepth", thinkingDepth); } catch {} }, [thinkingDepth]);
 
+  // ── 上下文占用追踪 ──
+  const [contextTokens, setContextTokens] = useState(0);
+  const [contextLimit, setContextLimit] = useState(0);
+  const [contextTooltipVisible, setContextTooltipVisible] = useState(false);
+
   // ── 持久化会话列表 & 当前对话 ID ──
   useEffect(() => {
     try {
@@ -1369,6 +1374,23 @@ export function ChatView({
   const abortRef = useRef<AbortController | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Fetch initial context size on mount / when service starts
+  useEffect(() => {
+    if (!serviceRunning) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/stats/tokens/context`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (typeof data.context_tokens === "number") setContextTokens(data.context_tokens);
+        if (typeof data.context_limit === "number") setContextLimit(data.context_limit);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [serviceRunning, apiBaseUrl]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -2055,6 +2077,11 @@ export function ChatView({
                 break;
               case "done":
                 gracefulDone = true;
+                // 更新上下文用量
+                if (event.usage) {
+                  if (typeof event.usage.context_tokens === "number") setContextTokens(event.usage.context_tokens);
+                  if (typeof event.usage.context_limit === "number") setContextLimit(event.usage.context_limit);
+                }
                 // 任务结束时，如果当前 Plan 仍在进行中，自动标记为 completed
                 if (currentPlan && currentPlan.status === "in_progress") {
                   currentPlan = { ...(currentPlan as ChatPlan), status: "completed" as const };
@@ -2937,6 +2964,39 @@ export function ChatView({
               </div>
 
               <div className="chatInputToolbarRight">
+                {/* Context usage ring */}
+                {contextLimit > 0 && (() => {
+                  const pct = Math.min(contextTokens / contextLimit, 1);
+                  const pctLabel = (pct * 100).toFixed(1);
+                  const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+                  const r = 9; const sw = 2; const circ = 2 * Math.PI * r;
+                  const offset = circ * (1 - pct);
+                  const color = pct > 0.95 ? "#ef4444" : pct > 0.8 ? "#f59e0b" : pct > 0.5 ? "#3b82f6" : "#999";
+                  return (
+                    <div
+                      style={{ position: "relative", display: "inline-flex", alignItems: "center", cursor: "default", marginRight: 4 }}
+                      onMouseEnter={() => setContextTooltipVisible(true)}
+                      onMouseLeave={() => setContextTooltipVisible(false)}
+                    >
+                      <svg width={22} height={22} viewBox="0 0 22 22">
+                        <circle cx={11} cy={11} r={r} fill="none" stroke="var(--line)" strokeWidth={sw} />
+                        <circle cx={11} cy={11} r={r} fill="none" stroke={color} strokeWidth={sw}
+                          strokeDasharray={circ} strokeDashoffset={offset}
+                          strokeLinecap="round" transform="rotate(-90 11 11)" style={{ transition: "stroke-dashoffset 0.4s ease" }} />
+                      </svg>
+                      {contextTooltipVisible && (
+                        <div style={{
+                          position: "absolute", bottom: "calc(100% + 6px)", right: 0,
+                          background: "rgba(0,0,0,0.82)", color: "#fff", fontSize: 11, fontWeight: 500,
+                          padding: "4px 8px", borderRadius: 6, whiteSpace: "nowrap", pointerEvents: "none",
+                          zIndex: 100,
+                        }}>
+                          {pctLabel}% · {fmtK(contextTokens)} / {fmtK(contextLimit)} context used
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {isStreaming ? (
                   inputText.trim() ? (
                     <button

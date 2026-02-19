@@ -9,6 +9,7 @@
     "skills": "Skills",
     "modules": "Modules",
     "status": "Status",
+    "tokenStats": "Token Stats",
     "config": "Config",
     "configProgress": "{{done}}/{{total}}",
     "collapse": "Collapse sidebar",
@@ -30,6 +31,21 @@
     "startFail": "Service failed to start. Check config.",
     "disconnect": "Disconnect",
     "disconnected": "Disconnected from service"
+  },
+  "tokenStats": {
+    "serviceNotRunning": "Service not running, unable to view stats",
+    "title": "Token Usage Statistics",
+    "refresh": "Refresh",
+    "totalTokens": "Total Tokens",
+    "inputTokens": "Input",
+    "outputTokens": "Output",
+    "requests": "Requests",
+    "timeline": "Timeline",
+    "byEndpoint": "By Endpoint",
+    "byOperation": "By Operation Type",
+    "noData": "No data",
+    "sessions": "By Session",
+    "disclaimer": "⚠ Local token counts may differ from provider billing. Actual usage is subject to the provider's data. Stats here are for reference only."
   },
   "chat": {
     "placeholder": "Type a message... (Enter to send, Shift+Enter for newline)",

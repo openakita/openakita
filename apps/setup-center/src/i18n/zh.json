@@ -9,6 +9,7 @@
     "skills": "技能",
     "modules": "模块",
     "status": "状态",
+    "tokenStats": "Token 统计",
     "config": "配置",
     "configProgress": "{{done}}/{{total}}",
     "collapse": "收起侧栏",
@@ -30,6 +31,21 @@
     "startFail": "服务启动失败，请检查配置",
     "disconnect": "断开",
     "disconnected": "已断开服务连接"
+  },
+  "tokenStats": {
+    "serviceNotRunning": "服务未运行，无法查看统计",
+    "title": "Token 用量统计",
+    "refresh": "刷新",
+    "totalTokens": "总 Token",
+    "inputTokens": "输入",
+    "outputTokens": "输出",
+    "requests": "请求数",
+    "timeline": "时间线",
+    "byEndpoint": "按端点",
+    "byOperation": "按操作类型",
+    "noData": "暂无数据",
+    "sessions": "按会话",
+    "disclaimer": "⚠ 本地 token 计算与服务商算法无法保证完全一致，实际用量以服务商账单为准，此处统计仅供参考。"
   },
   "chat": {
     "placeholder": "输入消息... (Enter 发送, Shift+Enter 换行)",

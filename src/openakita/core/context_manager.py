@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 from .tool_executor import OVERFLOW_MARKER
+from .token_tracking import TokenTrackingContext, set_tracking_context, reset_tracking_context
 from ..tracing.tracer import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -402,6 +403,10 @@ class ContextManager:
                 "保留用户意图、关键决策、执行结果和当前状态。"
             )
 
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="context_compress",
+            operation_detail=context_type,
+        ))
         try:
             response = await self._cancellable_llm(
                 model=self._brain.model,
@@ -443,6 +448,8 @@ class ContextManager:
                 tail = int(target_chars * 0.2)
                 return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
             return text
+        finally:
+            reset_tracking_context(_tt)
 
     def _extract_message_text(self, msg: dict) -> str:
         """从消息中提取文本内容（包括 tool_use/tool_result 结构化信息）"""
@@ -513,6 +520,10 @@ class ContextManager:
             chunk_tokens = self.estimate_tokens(chunk)
             chunk_target = max(int(target_tokens / len(chunks)), 100)
 
+            _tt2 = set_tracking_context(TokenTrackingContext(
+                operation_type="context_compress",
+                operation_detail=f"chunk_{i}",
+            ))
             try:
                 response = await self._cancellable_llm(
                     model=self._brain.model,
@@ -574,6 +585,8 @@ class ContextManager:
                     )
                 else:
                     chunk_summaries.append(chunk)
+            finally:
+                reset_tracking_context(_tt2)
 
         combined = "\n---\n".join(chunk_summaries)
         combined_tokens = self.estimate_tokens(combined)

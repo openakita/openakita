@@ -69,6 +69,12 @@ from .agent_state import AgentState
 from .brain import Brain, Context
 from .errors import UserCancelledError
 from .context_manager import ContextManager
+from .token_tracking import (
+    TokenTrackingContext,
+    init_token_tracking,
+    set_tracking_context,
+    reset_tracking_context,
+)
 from .identity import Identity
 from .prompt_assembler import PromptAssembler
 from .ralph import RalphLoop, Task, TaskResult
@@ -637,6 +643,9 @@ class Agent:
         """
         if self._initialized:
             return
+
+        # 初始化 token 用量追踪
+        init_token_tracking(str(settings.db_full_path))
 
         # 加载身份文档
         self.identity.load()
@@ -2356,6 +2365,10 @@ search_github → install_skill → 使用
                 "保留用户意图、关键决策、执行结果和当前状态。"
             )
 
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="context_compress",
+            operation_detail=context_type,
+        ))
         try:
             response = await self._cancellable_await(
                 asyncio.to_thread(
@@ -2405,6 +2418,8 @@ search_github → install_skill → 使用
                 tail = int(target_chars * 0.2)
                 return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
             return text
+        finally:
+            reset_tracking_context(_tt)
 
     def _extract_message_text(self, msg: dict) -> str:
         """
@@ -2498,6 +2513,10 @@ search_github → install_skill → 使用
             # 每块的目标 = 总目标 / 块数（均分）
             chunk_target = max(int(target_tokens / len(chunks)), 100)
 
+            _tt2 = set_tracking_context(TokenTrackingContext(
+                operation_type="context_compress",
+                operation_detail=f"chunk_{i}",
+            ))
             try:
                 response = await self._cancellable_await(
                     asyncio.to_thread(
@@ -2564,6 +2583,8 @@ search_github → install_skill → 使用
                     )
                 else:
                     chunk_summaries.append(chunk)
+            finally:
+                reset_tracking_context(_tt2)
 
         # 拼接所有块摘要
         combined = "\n---\n".join(chunk_summaries)
@@ -3815,33 +3836,41 @@ NEXT: 建议的下一步（如有）"""
         当 cancel_event 先于 LLM 返回被 set() 时，抛出 UserCancelledError。
         """
         logger.info(f"[CancellableLLM] 发起可取消 LLM 调用, cancel_event.is_set={cancel_event.is_set()}")
-        llm_task = asyncio.create_task(
-            self.brain.messages_create_async(**kwargs)
-        )
-        cancel_waiter = asyncio.create_task(cancel_event.wait())
-
-        done, pending = await asyncio.wait(
-            {llm_task, cancel_waiter},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        for t in pending:
-            t.cancel()
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        if llm_task in done:
-            logger.info("[CancellableLLM] LLM 调用先完成，正常返回")
-            return llm_task.result()
-        else:
-            reason = self._cancel_reason or "用户请求停止"
-            logger.info(f"[CancellableLLM] cancel_event 先触发，抛出 UserCancelledError: {reason!r}")
-            raise UserCancelledError(
-                reason=reason,
-                source="llm_call",
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="chat",
+            session_id=kwargs.get("conversation_id", ""),
+            channel="cli",
+        ))
+        try:
+            llm_task = asyncio.create_task(
+                self.brain.messages_create_async(**kwargs)
             )
+            cancel_waiter = asyncio.create_task(cancel_event.wait())
+
+            done, pending = await asyncio.wait(
+                {llm_task, cancel_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            if llm_task in done:
+                logger.info("[CancellableLLM] LLM 调用先完成，正常返回")
+                return llm_task.result()
+            else:
+                reason = self._cancel_reason or "用户请求停止"
+                logger.info(f"[CancellableLLM] cancel_event 先触发，抛出 UserCancelledError: {reason!r}")
+                raise UserCancelledError(
+                    reason=reason,
+                    source="llm_call",
+                )
+        finally:
+            reset_tracking_context(_tt)
 
     async def _handle_cancel_farewell(
         self,
@@ -3882,6 +3911,9 @@ NEXT: 建议的下一步（如有）"""
             f"[StopTask][CancelFarewell] 发起 LLM 收尾调用 (timeout=5s), "
             f"working_messages count={len(working_messages)}"
         )
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="farewell", channel="api",
+        ))
         try:
             response = await asyncio.wait_for(
                 self.brain.messages_create_async(
@@ -3915,6 +3947,8 @@ NEXT: 建议的下一步（如有）"""
                 f"{type(e).__name__}: {e}，使用默认文本",
                 exc_info=True,
             )
+        finally:
+            reset_tracking_context(_tt)
 
         self._persist_cancel_to_context(cancel_reason, farewell_text)
         return farewell_text
@@ -5676,16 +5710,24 @@ NEXT: 建议的下一步（如有）"""
                             "content": "任务执行完毕。请简要总结一下执行结果和完成情况。",
                         }
                     )
-                    summary_response = await self._cancellable_await(
-                        asyncio.to_thread(
-                            self.brain.messages_create,
-                            max_tokens=1000,
-                            system=_build_effective_system_prompt_task(),
-                            messages=messages,
-                            conversation_id=conversation_id,
-                        ),
-                        _cancel_event,
-                    )
+                    _tt_sum = set_tracking_context(TokenTrackingContext(
+                        operation_type="task_summary",
+                        session_id=conversation_id or "",
+                        channel="scheduler",
+                    ))
+                    try:
+                        summary_response = await self._cancellable_await(
+                            asyncio.to_thread(
+                                self.brain.messages_create,
+                                max_tokens=1000,
+                                system=_build_effective_system_prompt_task(),
+                                messages=messages,
+                                conversation_id=conversation_id,
+                            ),
+                            _cancel_event,
+                        )
+                    finally:
+                        reset_tracking_context(_tt_sum)
                     for block in summary_response.content:
                         if block.type == "text":
                             final_response = clean_llm_response(block.text)

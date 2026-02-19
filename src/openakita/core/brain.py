@@ -23,6 +23,7 @@ from anthropic.types import Usage as AnthropicUsage
 from ..config import settings
 from ..llm.client import LLMClient
 from ..llm.config import get_default_config_path, load_endpoints_config
+from .token_tracking import record_usage as _record_token_usage
 from ..llm.types import (
     AudioBlock,
     AudioContent,
@@ -192,6 +193,7 @@ class Brain:
                     enable_thinking=False,
                     max_tokens=2048,
                 )
+                self._record_usage(response)
                 return self._llm_response_to_response(response)
             except Exception as e:
                 logger.warning(f"Compiler LLM failed, falling back to main model: {e}")
@@ -203,6 +205,7 @@ class Brain:
             enable_thinking=False,
             max_tokens=2048,
         )
+        self._record_usage(response)
         return self._llm_response_to_response(response)
 
     async def think_lightweight(
@@ -263,6 +266,7 @@ class Brain:
         # 保存响应
         self._dump_llm_response(response, caller=f"think_lightweight_{client_name}", request_id=req_id)
 
+        self._record_usage(response)
         return self._llm_response_to_response(response)
 
     def _llm_response_to_response(self, llm_response: LLMResponse) -> Response:
@@ -387,6 +391,9 @@ class Brain:
         # 保存响应到调试文件
         self._dump_llm_response(response, caller="messages_create", request_id=req_id)
 
+        # 记录 token 用量
+        self._record_usage(response)
+
         # 转换响应: LLMClient -> Anthropic Message
         return self._convert_response_to_anthropic(response)
 
@@ -434,7 +441,33 @@ class Brain:
             raise
 
         self._dump_llm_response(response, caller="messages_create_async", request_id=req_id)
+
+        # 记录 token 用量
+        self._record_usage(response)
+
         return self._convert_response_to_anthropic(response)
+
+    # ========================================================================
+    # Token 用量记录
+    # ========================================================================
+
+    def _record_usage(self, response: LLMResponse) -> None:
+        """从 LLMResponse 提取 token 用量并投递到追踪队列。"""
+        try:
+            usage = response.usage
+            if not usage:
+                return
+            ep_info = self.get_current_endpoint_info()
+            _record_token_usage(
+                model=response.model or "",
+                endpoint_name=ep_info.get("name", ""),
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_creation_tokens=usage.cache_creation_input_tokens,
+                cache_read_tokens=usage.cache_read_input_tokens,
+            )
+        except Exception as e:
+            logger.debug(f"[Brain] _record_usage failed (non-fatal): {e}")
 
     # ========================================================================
     # 格式转换方法
@@ -777,6 +810,8 @@ class Brain:
 
         # 保存响应到调试文件
         self._dump_llm_response(response, caller="_chat_with_llm_client", request_id=req_id)
+
+        self._record_usage(response)
 
         # 转换响应
         content = response.text

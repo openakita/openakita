@@ -9,6 +9,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { ChatView } from "./views/ChatView";
 import { SkillManager } from "./views/SkillManager";
 import { IMView } from "./views/IMView";
+import { TokenStatsView } from "./views/TokenStatsView";
 import type { EndpointSummary as EndpointSummaryType } from "./types";
 import {
   IconChat, IconIM, IconSkills, IconStatus, IconConfig,
@@ -909,7 +910,7 @@ export function App() {
     [configMode, t],
   );
 
-  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules">("wizard");
+  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats">("wizard");
   const [appInitializing, setAppInitializing] = useState(true); // 首次加载检测中，防止闪烁
   const [configExpanded, setConfigExpanded] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -8625,6 +8626,9 @@ export function App() {
     if (view === "im") {
       return <IMView serviceRunning={serviceStatus?.running ?? false} />;
     }
+    if (view === "token_stats") {
+      return <TokenStatsView serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl} />;
+    }
     if (view === "modules") {
       return (
         <div className="card">
@@ -8852,6 +8856,9 @@ export function App() {
           </div>
           <div className={`navItem ${view === "status" ? "navItemActive" : ""}`} onClick={async () => { setView("status"); try { await refreshStatus(); } catch { /* ignore */ } }} role="button" tabIndex={0} title={t("sidebar.status")}>
             <IconStatus size={16} /> {!sidebarCollapsed && <span>{t("sidebar.status")}</span>}
+          </div>
+          <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => setView("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats", "Token 统计")}>
+            <IconZap size={16} /> {!sidebarCollapsed && <span>{t("sidebar.tokenStats", "Token 统计")}</span>}
           </div>
         </div>
 

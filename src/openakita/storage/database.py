@@ -197,6 +197,31 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_task_executions_task ON task_executions(task_id);
             CREATE INDEX IF NOT EXISTS idx_user_bindings_channel ON user_bindings(channel, channel_user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel, chat_id);
+
+            -- ========== Token 用量追踪表 ==========
+
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                session_id TEXT,
+                endpoint_name TEXT,
+                model TEXT,
+                operation_type TEXT,
+                operation_detail TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_creation_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0,
+                context_tokens INTEGER DEFAULT 0,
+                iteration INTEGER DEFAULT 0,
+                channel TEXT,
+                user_id TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_op ON token_usage(operation_type);
         """)
         await self._connection.commit()
 
@@ -512,3 +537,128 @@ class Database:
         rows = await cursor.fetchall()
 
         return {row["key"]: json.loads(row["value"]) for row in rows}
+
+    # ===== Token 用量统计 =====
+
+    async def get_token_usage_summary(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        group_by: str = "endpoint_name",
+        endpoint_name: str | None = None,
+        operation_type: str | None = None,
+    ) -> list[dict]:
+        """按维度聚合 token 用量"""
+        allowed = {"endpoint_name", "operation_type", "model", "session_id", "channel"}
+        if group_by not in allowed:
+            group_by = "endpoint_name"
+
+        where = ["timestamp >= ?", "timestamp <= ?"]
+        params: list[Any] = [start_time.isoformat(), end_time.isoformat()]
+        if endpoint_name:
+            where.append("endpoint_name = ?")
+            params.append(endpoint_name)
+        if operation_type:
+            where.append("operation_type = ?")
+            params.append(operation_type)
+
+        sql = f"""
+            SELECT {group_by} AS group_key,
+                   SUM(input_tokens) AS total_input,
+                   SUM(output_tokens) AS total_output,
+                   SUM(input_tokens + output_tokens) AS total_tokens,
+                   SUM(cache_creation_tokens) AS total_cache_creation,
+                   SUM(cache_read_tokens) AS total_cache_read,
+                   COUNT(*) AS request_count
+            FROM token_usage
+            WHERE {' AND '.join(where)}
+            GROUP BY {group_by}
+            ORDER BY total_tokens DESC
+        """
+        cursor = await self._connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_token_usage_timeline(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        interval: str = "hour",
+        endpoint_name: str | None = None,
+    ) -> list[dict]:
+        """按时间线聚合 token 用量（折线图用）"""
+        fmt_map = {"hour": "%Y-%m-%d %H:00", "day": "%Y-%m-%d", "week": "%Y-W%W"}
+        time_fmt = fmt_map.get(interval, "%Y-%m-%d %H:00")
+
+        where = ["timestamp >= ?", "timestamp <= ?"]
+        params: list[Any] = [start_time.isoformat(), end_time.isoformat()]
+        if endpoint_name:
+            where.append("endpoint_name = ?")
+            params.append(endpoint_name)
+
+        sql = f"""
+            SELECT strftime('{time_fmt}', timestamp) AS time_bucket,
+                   SUM(input_tokens) AS total_input,
+                   SUM(output_tokens) AS total_output,
+                   SUM(input_tokens + output_tokens) AS total_tokens,
+                   COUNT(*) AS request_count
+            FROM token_usage
+            WHERE {' AND '.join(where)}
+            GROUP BY time_bucket
+            ORDER BY time_bucket
+        """
+        cursor = await self._connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_token_usage_sessions(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """按会话列出 token 消耗"""
+        sql = """
+            SELECT session_id,
+                   MIN(timestamp) AS first_call,
+                   MAX(timestamp) AS last_call,
+                   SUM(input_tokens) AS total_input,
+                   SUM(output_tokens) AS total_output,
+                   SUM(input_tokens + output_tokens) AS total_tokens,
+                   COUNT(*) AS request_count,
+                   GROUP_CONCAT(DISTINCT operation_type) AS operation_types,
+                   GROUP_CONCAT(DISTINCT endpoint_name) AS endpoints
+            FROM token_usage
+            WHERE timestamp >= ? AND timestamp <= ? AND session_id != ''
+            GROUP BY session_id
+            ORDER BY last_call DESC
+            LIMIT ? OFFSET ?
+        """
+        cursor = await self._connection.execute(
+            sql, (start_time.isoformat(), end_time.isoformat(), limit, offset)
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_token_usage_total(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict:
+        """获取总计 token 用量"""
+        sql = """
+            SELECT COALESCE(SUM(input_tokens), 0) AS total_input,
+                   COALESCE(SUM(output_tokens), 0) AS total_output,
+                   COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
+                   COALESCE(SUM(cache_creation_tokens), 0) AS total_cache_creation,
+                   COALESCE(SUM(cache_read_tokens), 0) AS total_cache_read,
+                   COUNT(*) AS request_count
+            FROM token_usage
+            WHERE timestamp >= ? AND timestamp <= ?
+        """
+        cursor = await self._connection.execute(
+            sql, (start_time.isoformat(), end_time.isoformat())
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else {}

@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..core.token_tracking import TokenTrackingContext, set_tracking_context, reset_tracking_context
+
 logger = logging.getLogger(__name__)
 
 JUDGE_PROMPT = """你是一个 AI Agent 评估专家。请根据以下 Agent 执行记录，评估该 Agent 的表现。
@@ -132,6 +134,9 @@ class Judge:
 
         prompt = JUDGE_PROMPT.format(trace_summary=trace_summary)
 
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="evaluation",
+        ))
         try:
             model = self._model or self._brain.model
             response = await asyncio.to_thread(
@@ -159,6 +164,8 @@ class Judge:
                 trace_id=getattr(trace, "trace_id", ""),
                 reasoning=f"评估失败: {e}",
             )
+        finally:
+            reset_tracking_context(_tt)
 
     async def evaluate_batch(self, traces: list[Any]) -> list[JudgeResult]:
         """批量评估多个 Trace。"""
