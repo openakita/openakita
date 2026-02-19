@@ -203,8 +203,8 @@ async def _stream_chat(
             re = getattr(actual_agent, "reasoning_engine", None)
             trace = getattr(re, "_last_react_trace", []) if re else []
             if trace:
-                total_in = sum(t.get("in_tokens", 0) for t in trace)
-                total_out = sum(t.get("out_tokens", 0) for t in trace)
+                total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
+                total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
                 _usage_data = {
                     "input_tokens": total_in,
                     "output_tokens": total_out,
@@ -213,9 +213,10 @@ async def _stream_chat(
             ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(re, "_context_manager", None)
             if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
                 _max_ctx = ctx_mgr.get_max_context_tokens()
-                _cur_ctx = ctx_mgr.estimate_messages_tokens(
-                    getattr(getattr(actual_agent, "_context", None), "messages", [])
-                ) if ctx_mgr else 0
+                _msgs = getattr(re, "_last_working_messages", None) or getattr(
+                    getattr(actual_agent, "_context", None), "messages", []
+                )
+                _cur_ctx = ctx_mgr.estimate_messages_tokens(_msgs) if _msgs else 0
                 if _usage_data is None:
                     _usage_data = {}
                 _usage_data["context_tokens"] = _cur_ctx

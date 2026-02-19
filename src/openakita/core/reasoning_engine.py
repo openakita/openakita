@@ -113,6 +113,9 @@ class ReasoningEngine:
         # 思维链: 暂存最近一次推理的 react_trace，供 agent_handler 读取
         self._last_react_trace: list[dict] = []
 
+        # 暂存最近一次推理结束时的 working_messages，供 token 统计读取
+        self._last_working_messages: list[dict] = []
+
         # 上一次推理的退出原因：normal / ask_user
         # _finalize_session 据此决定是否自动关闭 Plan
         self._last_exit_reason: str = "normal"
@@ -518,6 +521,7 @@ class ReasoningEngine:
         _trace_started_at = datetime.now().isoformat()
 
         for iteration in range(max_iterations):
+            self._last_working_messages = working_messages
             state.iteration = iteration
 
             # 检查取消
@@ -1059,6 +1063,7 @@ class ReasoningEngine:
                 if loop_result == "disable_force":
                     max_no_tool_retries = 0
 
+        self._last_working_messages = working_messages
         self._save_react_trace(react_trace, conversation_id, session_type, "max_iterations", _trace_started_at)
         try:
             state.transition(TaskStatus.FAILED)
@@ -1236,6 +1241,7 @@ class ReasoningEngine:
             )
 
             for _iteration in range(max_iterations):
+                self._last_working_messages = working_messages
                 state.iteration = _iteration
 
                 # --- 取消检查 ---
@@ -1869,6 +1875,7 @@ class ReasoningEngine:
                     continue  # Next iteration
 
             # max_iterations
+            self._last_working_messages = working_messages
             self._save_react_trace(
                 react_trace, conversation_id, session_type, "max_iterations", _trace_started_at
             )
@@ -1882,6 +1889,7 @@ class ReasoningEngine:
 
         except Exception as e:
             logger.error(f"reason_stream error: {e}", exc_info=True)
+            self._last_working_messages = working_messages
             self._save_react_trace(
                 react_trace, conversation_id, session_type,
                 f"error: {str(e)[:100]}", _trace_started_at,
@@ -2001,16 +2009,20 @@ class ReasoningEngine:
         session_type: str,
         result: str,
         started_at: str,
+        working_messages: list[dict] | None = None,
     ) -> None:
         """
         保存完整的 ReAct 推理链到文件。
 
         同时暂存到 self._last_react_trace 供 agent_handler 读取（思维链功能）。
+        若传入 working_messages，一并暂存供 token 统计读取。
 
         路径: data/react_traces/{date}/trace_{conversation_id}_{timestamp}.json
         """
         # 思维链: 暂存 trace 供外部读取（即使为空也更新，清除旧数据）
         self._last_react_trace = react_trace or []
+        if working_messages is not None:
+            self._last_working_messages = working_messages
 
         if not react_trace:
             return

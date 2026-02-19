@@ -149,7 +149,9 @@ async def context(request: Request):
         ctx_mgr = getattr(actual, "context_manager", None) or getattr(re, "_context_manager", None)
         if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
             max_ctx = ctx_mgr.get_max_context_tokens()
-            messages = getattr(getattr(actual, "_context", None), "messages", [])
+            messages = getattr(re, "_last_working_messages", None) or getattr(
+                getattr(actual, "_context", None), "messages", []
+            )
             cur_ctx = ctx_mgr.estimate_messages_tokens(messages) if messages else 0
             return {
                 "context_tokens": cur_ctx,
