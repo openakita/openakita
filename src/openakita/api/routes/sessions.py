@@ -95,11 +95,15 @@ async def get_session_history(
             except Exception:
                 pass
 
-        result.append({
+        entry: dict = {
             "id": f"restored-{conversation_id}-{i}",
             "role": role,
             "content": content,
             "timestamp": epoch_ms or int(session.last_active.timestamp() * 1000),
-        })
+        }
+        chain_summary = msg.get("chain_summary")
+        if chain_summary:
+            entry["chain_summary"] = chain_summary
+        result.append(entry)
 
     return {"messages": result}

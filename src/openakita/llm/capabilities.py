@@ -635,6 +635,20 @@ MODEL_CAPABILITIES = {
     },
     "siliconflow": {
         # 硅基流动 - 主要提供开源模型
+        # 天然思考模型（始终思考，不支持 enable_thinking 切换）
+        "moonshotai/Kimi-K2-Thinking": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
+        "deepseek-ai/DeepSeek-R1": {"text": True, "vision": False, "video": False, "tools": False, "thinking": True, "thinking_only": True},
+        "Qwen/QwQ-32B": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
+        # 可切换思考模式的模型（支持 enable_thinking）
+        "Qwen/Qwen3-235B-A22B": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
+        "Qwen/Qwen3-32B": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
+        "Qwen/Qwen3-14B": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
+        "Qwen/Qwen3-8B": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
+        "deepseek-ai/DeepSeek-V3": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
+        "deepseek-ai/DeepSeek-V3.1": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
+        "deepseek-ai/DeepSeek-V3.2": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
+        "moonshotai/Kimi-K2-Instruct": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
+        "moonshotai/Kimi-K2.5": {"text": True, "vision": True, "video": True, "tools": True, "thinking": False},
     },
     "volcengine": {
         # 火山引擎 (Volcengine / 火山方舟 Ark) - 字节跳动
@@ -758,6 +772,10 @@ def infer_capabilities(
     # Thinking 推断
     if any(kw in model_lower for kw in ["thinking", "r1", "qwq", "qvq", "o1"]):
         caps["thinking"] = True
+        # 天然思考模型：名称含 -Thinking 后缀、R1、QwQ 等，始终处于思考模式
+        # 这些模型不支持通过 API 参数切换思考开关（如 SiliconFlow 的 enable_thinking）
+        if any(kw in model_lower for kw in ["-thinking", "-r1", "/r1", "qwq", "qvq", "o1-", "o3-"]):
+            caps["thinking_only"] = True
 
     # Tools 推断 (大部分主流模型都支持)
     if any(

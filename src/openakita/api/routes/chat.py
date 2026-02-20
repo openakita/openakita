@@ -239,9 +239,21 @@ async def _stream_chat(
         except Exception:
             pass
 
+        _chain_summary = None
+        if session:
+            try:
+                _chain_summary = session.get_metadata("_last_chain_summary")
+                session.set_metadata("_last_chain_summary", None)
+            except Exception:
+                pass
+
         if session and assistant_text_to_save:
             try:
-                session.add_message("assistant", assistant_text_to_save)
+                session.add_message(
+                    "assistant",
+                    assistant_text_to_save,
+                    **({"chain_summary": _chain_summary} if _chain_summary else {}),
+                )
                 if session_manager:
                     session_manager.mark_dirty()
             except Exception:

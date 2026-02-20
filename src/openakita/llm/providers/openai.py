@@ -312,7 +312,49 @@ class OpenAIProvider(LLMProvider):
             elif not request.enable_thinking:
                 body.pop("thinking_budget", None)
 
-        # OpenAI 兼容端点思考模式（非 DashScope，覆盖火山引擎/硅基流动/vLLM/OpenRouter 等）
+        # SiliconFlow 思考模式
+        #
+        # SiliconFlow API 有两类思考模型（参考官方文档）：
+        #
+        # A 类 - 双模模型（支持 enable_thinking 切换）：
+        #   Qwen3 系列, Hunyuan-A13B, GLM-4.6V/4.5V, DeepSeek-V3.1/V3.2 系列
+        #   → 发送 enable_thinking (bool) + thinking_budget
+        #
+        # B 类 - 天然思考模型（始终思考，不接受 enable_thinking）：
+        #   Kimi-K2-Thinking, DeepSeek-R1, QwQ-32B, GLM-Z1 系列
+        #   → 只发送 thinking_budget 控制深度，不发送 enable_thinking
+        #   → 向这些模型发送 enable_thinking 会导致 400:
+        #     "Value error, current model does not support parameter enable_thinking"
+        #
+        # 两类模型都不支持 OpenAI 风格的 thinking: {"type": "enabled"} + reasoning_effort
+        elif self.config.provider in ("siliconflow", "siliconflow-intl") and self.config.has_capability("thinking"):
+            from ..capabilities import is_thinking_only
+            is_always_thinking = is_thinking_only(self.config.model, provider_slug=self.config.provider)
+
+            if is_always_thinking:
+                # B 类：天然思考模型 — 只允许 thinking_budget 控制深度
+                if request.thinking_depth:
+                    budget_map = {"low": 1024, "medium": 4096, "high": 16384}
+                    budget = budget_map.get(request.thinking_depth)
+                    if budget:
+                        body["thinking_budget"] = budget
+            else:
+                # A 类：双模模型 — enable_thinking 切换 + thinking_budget
+                body["enable_thinking"] = bool(request.enable_thinking)
+                if request.enable_thinking:
+                    if request.thinking_depth:
+                        budget_map = {"low": 1024, "medium": 4096, "high": 16384}
+                        budget = budget_map.get(request.thinking_depth)
+                        if budget:
+                            body["thinking_budget"] = budget
+                else:
+                    body.pop("thinking_budget", None)
+
+            # 清理不适用于 SiliconFlow 的 OpenAI 风格参数（可能由 extra_params 引入）
+            body.pop("thinking", None)
+            body.pop("reasoning_effort", None)
+
+        # OpenAI 兼容端点思考模式（火山引擎/DeepSeek/vLLM/OpenRouter 等）
         #
         # 背景：
         # - 原生 OpenAI o1/o3 系列天然就是思考模型，只需 reasoning_effort 控制深度
@@ -321,13 +363,9 @@ class OpenAIProvider(LLMProvider):
         # - 如果只传 reasoning_effort 而不启用 thinking，火山引擎等 API 会返回 400:
         #   "Invalid combination of reasoning_effort and thinking type: medium + disabled"
         #
-        # 排除本地端点（Ollama / LM Studio 等）：
-        # - Ollama 的 OpenAI 兼容 API 不支持 thinking: {"type": "enabled"} 参数
-        # - 本地模型的思考能力通过模型自身的 <think> 标签实现，无需 API 参数
-        # - 向 Ollama 发送此参数会导致 400: "model does not support thinking"
-        if (
-            self.config.provider != "dashscope"
-            and self.config.has_capability("thinking")
+        # 排除: DashScope（上面已处理）、SiliconFlow（上面已处理）、本地端点
+        elif (
+            self.config.has_capability("thinking")
             and not is_local
         ):
             if request.enable_thinking:

@@ -3039,7 +3039,8 @@ export function App() {
         timeout: editDraft.timeout ?? 180,
         capabilities: editDraft.caps?.length ? editDraft.caps : ["text"],
         extra_params:
-          (editDraft.caps || []).includes("thinking") && editDraft.providerSlug === "dashscope"
+          (editDraft.caps || []).includes("thinking") &&
+          ["dashscope", "siliconflow", "siliconflow-intl"].includes(editDraft.providerSlug || "")
             ? { enable_thinking: true }
             : undefined,
       };
@@ -3164,9 +3165,10 @@ export function App() {
           context_window: addEpContextWindow,
           timeout: addEpTimeout,
           capabilities: capList,
-          // DashScope 思考模式：OpenAkita 的 OpenAI provider 会识别 enable_thinking
+          // DashScope / SiliconFlow 思考模式：使用 enable_thinking 布尔参数
           extra_params:
-            capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope"
+            capList.includes("thinking") &&
+            ["dashscope", "siliconflow", "siliconflow-intl"].includes(providerSlug || selectedProvider?.slug || "")
               ? { enable_thinking: true }
               : undefined,
         };

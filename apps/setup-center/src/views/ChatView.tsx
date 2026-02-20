@@ -25,6 +25,7 @@ import type {
   ChainGroup,
   ChainToolCall,
   ChainEntry,
+  ChainSummaryItem,
   ChatDisplayMode,
 } from "../types";
 import { genId, formatTime, formatDate } from "../utils";
@@ -43,6 +44,87 @@ type QueuedMessage = {
   text: string;
   timestamp: number;
 };
+
+// ─── 从后端 chain_summary 重建前端 ChainGroup ───
+function buildChainFromSummary(summary: ChainSummaryItem[]): ChainGroup[] {
+  return summary.map((s) => {
+    const entries: ChainEntry[] = [];
+    if (s.thinking_preview) {
+      entries.push({ kind: "thinking", content: s.thinking_preview });
+    }
+    for (const t of s.tools) {
+      entries.push({
+        kind: "tool_end",
+        toolId: `restored-${s.iteration}-${t.name}`,
+        tool: t.name,
+        result: t.input_preview,
+        status: "done",
+      });
+    }
+    if (s.context_compressed) {
+      entries.push({
+        kind: "compressed",
+        beforeTokens: s.context_compressed.before_tokens,
+        afterTokens: s.context_compressed.after_tokens,
+      });
+    }
+    return {
+      iteration: s.iteration,
+      entries,
+      durationMs: s.thinking_duration_ms,
+      hasThinking: !!s.thinking_preview,
+      collapsed: true,
+      toolCalls: s.tools.map((t) => ({
+        toolId: `restored-${s.iteration}-${t.name}`,
+        tool: t.name,
+        args: {},
+        result: t.input_preview,
+        status: "done" as const,
+        description: t.input_preview,
+      })),
+    };
+  });
+}
+
+/** 用后端数据补全本地消息中缺失的 content / thinkingChain */
+function patchMessagesWithBackend(
+  localMsgs: ChatMessage[],
+  backendMsgs: { role: string; content: string; chain_summary?: ChainSummaryItem[] }[],
+): ChatMessage[] {
+  const backendAssistant = backendMsgs.filter((m) => m.role === "assistant");
+  let aIdx = 0;
+  let changed = false;
+  const patched = localMsgs.map((m) => {
+    if (m.role !== "assistant") return m;
+    const backend = backendAssistant[aIdx++];
+    if (!backend) return m;
+
+    const patches: Partial<ChatMessage> = {};
+
+    if (!m.content && backend.content) {
+      patches.content = backend.content;
+    }
+
+    const hasBrokenChain = m.thinkingChain?.some((g) => !g.entries.length && !g.durationMs);
+    if (backend.chain_summary?.length && (!m.thinkingChain?.length || hasBrokenChain)) {
+      patches.thinkingChain = buildChainFromSummary(backend.chain_summary);
+    }
+
+    if (m.thinkingChain && !patches.thinkingChain) {
+      const cleaned = m.thinkingChain.filter((g) => g.entries.length > 0 || g.durationMs);
+      if (cleaned.length !== m.thinkingChain.length) {
+        patches.thinkingChain = cleaned.length > 0 ? cleaned : undefined;
+      }
+    }
+
+    if (Object.keys(patches).length > 0) {
+      changed = true;
+      return { ...m, ...patches };
+    }
+    return m;
+  });
+  return changed ? patched : localMsgs;
+}
 
 // ─── SSE 事件处理 ───
 
@@ -1372,11 +1454,12 @@ export function ChatView({
                 .then((r) => r.ok ? r.json() : null)
                 .then((data) => {
                   if (!data?.messages?.length) return;
-                  const restored: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
+                  const restored: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[] }) => ({
                     id: m.id,
                     role: m.role as "user" | "assistant" | "system",
                     content: m.content,
                     timestamp: m.timestamp,
+                    ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
                   }));
                   setMessages(restored);
                 })
@@ -1445,11 +1528,12 @@ export function ChatView({
         const histRes = await fetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(firstConvId)}/history`);
         if (!histRes.ok || cancelled) return;
         const histData = await histRes.json();
-        const restoredMsgs: ChatMessage[] = (histData.messages || []).map((m: { id: string; role: string; content: string; timestamp: number }) => ({
+        const restoredMsgs: ChatMessage[] = (histData.messages || []).map((m: { id: string; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[] }) => ({
           id: m.id,
           role: m.role as "user" | "assistant" | "system",
           content: m.content,
           timestamp: m.timestamp,
+          ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
         }));
         if (restoredMsgs.length > 0) {
           skipConvLoadRef.current = true;
@@ -1459,6 +1543,34 @@ export function ChatView({
     })();
     return () => { cancelled = true; };
   }, [serviceRunning, apiBaseUrl, conversations.length]);
+
+  // ── 消息补全：用后端数据修复 localStorage 中不完整的消息（中断的流式传输等）──
+  const patchedConvsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!serviceRunning || !activeConvId || isStreaming) return;
+    if (patchedConvsRef.current.has(activeConvId)) return;
+
+    const hasIncomplete = messages.some(
+      (m) => m.role === "assistant" && (
+        !m.content ||
+        m.thinkingChain?.some((g) => !g.entries.length && !g.durationMs)
+      ),
+    );
+    if (!hasIncomplete) return;
+
+    patchedConvsRef.current.add(activeConvId);
+    const convId = activeConvId;
+
+    fetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.messages?.length) return;
+        setMessages((prev) => patchMessagesWithBackend(prev, data.messages));
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceRunning, activeConvId, isStreaming, apiBaseUrl, messages.length]);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
