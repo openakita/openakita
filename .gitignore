@@ -91,10 +91,13 @@ data/*
 !data/.gitkeep
 !data/*.example
 
-# Identity files (local only, auto-generated from .example templates)
-identity/*.md
-!identity/*.md.example
+# Identity — 模板/策略/人格/编译产物入库，用户定制文件不入库
+identity/SOUL.md
+identity/AGENT.md
+identity/USER.md
+identity/MEMORY.md
 identity/personas/user_custom.md
+identity/compiled/.compiled_at
 
 # External/downloaded skills (keep structure)
 skills/*
@@ -110,10 +113,6 @@ tests/__pycache__/
 tests/**/__pycache__/
 .pytest_cache/
 
-# Identity (only keep examples and personas)
-identity/*
-!identity/*.example
-!identity/personas/
 
 # Media files
 *.mp3
