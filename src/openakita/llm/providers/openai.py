@@ -333,6 +333,8 @@ class OpenAIProvider(LLMProvider):
 
             if is_always_thinking:
                 # B 类：天然思考模型 — 只允许 thinking_budget 控制深度
+                # 必须清理 extra_params 可能泄漏的 enable_thinking
+                body.pop("enable_thinking", None)
                 if request.thinking_depth:
                     budget_map = {"low": 1024, "medium": 4096, "high": 16384}
                     budget = budget_map.get(request.thinking_depth)
@@ -368,6 +370,10 @@ class OpenAIProvider(LLMProvider):
             self.config.has_capability("thinking")
             and not is_local
         ):
+            # 清理 DashScope 风格参数（可能由 extra_params 泄漏）
+            # 此分支使用 OpenAI 风格 thinking: {"type": "enabled"}，不使用 enable_thinking
+            body.pop("enable_thinking", None)
+
             if request.enable_thinking:
                 # 显式启用思考（DeepSeek/vLLM/火山引擎等 OpenAI-compatible 标准）
                 # 对于原生 OpenAI o1/o3 模型，此参数会被忽略（它们天然就是思考模型）

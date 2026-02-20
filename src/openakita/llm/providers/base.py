@@ -216,17 +216,20 @@ class LLMProvider(ABC):
             self._error_category = ""
 
     def reset_cooldown(self):
-        """重置冷静期（不改变健康标记，仅允许立即重新尝试）
+        """重置冷静期，允许端点立即被重新尝试
 
         用于全局故障恢复 / "最后防线旁路" 场景：所有端点同时失败后，
         绕过冷静期让所有端点都可被重新尝试（对齐 Portkey 设计）。
 
         注意：不重置连续失败计数，因为全局故障重置不代表端点真正恢复。
+        如果端点确实有问题，下次请求会再次 mark_unhealthy。
         """
-        if self._cooldown_until > 0 or self._is_extended_cooldown:
+        if self._cooldown_until > 0 or self._is_extended_cooldown or not self._healthy:
             self._cooldown_until = 0
             self._is_extended_cooldown = False
-            # 不清除 _healthy=False，让下次 is_healthy 检查时自然恢复
+            self._healthy = True
+            self._last_error = None
+            self._error_category = ""
 
     def shorten_cooldown(self, seconds: int):
         """缩短冷静期到指定秒数（如果当前冷静期更长的话）
