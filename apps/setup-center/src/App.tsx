@@ -1128,6 +1128,7 @@ export function App() {
   const [savedSttEndpoints, setSavedSttEndpoints] = useState<EndpointDraft[]>([]);
   const [apiKeyEnvTouched, setApiKeyEnvTouched] = useState(false);
   const [endpointNameTouched, setEndpointNameTouched] = useState(false);
+  const [baseUrlTouched, setBaseUrlTouched] = useState(false);
   const [llmAdvancedOpen, setLlmAdvancedOpen] = useState(false);
   const [addEpMaxTokens, setAddEpMaxTokens] = useState(0);
   const [addEpContextWindow, setAddEpContextWindow] = useState(150000);
@@ -1965,13 +1966,13 @@ export function App() {
     // Coding Plan 固定为 Anthropic 兼容协议，URL 与协议一致
     if (codingPlanMode && selectedProvider.coding_plan_base_url) {
       setApiType("anthropic");
-      setBaseUrl(selectedProvider.coding_plan_base_url);
+      if (!baseUrlTouched) setBaseUrl(selectedProvider.coding_plan_base_url);
       setAddEpContextWindow(150000);
       setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 8192);
     } else {
       const t = (selectedProvider.api_type as "openai" | "anthropic") || "openai";
       setApiType(t);
-      setBaseUrl(selectedProvider.default_base_url || "");
+      if (!baseUrlTouched) setBaseUrl(selectedProvider.default_base_url || "");
       setAddEpContextWindow((selectedProvider as ProviderInfo).default_context_window ?? 150000);
       setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 0);
     }
@@ -1990,7 +1991,7 @@ export function App() {
     if (isLocalProvider(selectedProvider) && !apiKeyValue.trim()) {
       setApiKeyValue(localProviderPlaceholderKey(selectedProvider));
     }
-  }, [selectedProvider, selectedModelId, envDraft, savedEndpoints, apiKeyEnvTouched, endpointNameTouched, codingPlanMode]);
+  }, [selectedProvider, selectedModelId, envDraft, savedEndpoints, apiKeyEnvTouched, endpointNameTouched, baseUrlTouched, codingPlanMode]);
 
   // When user switches provider via dropdown, reset auto-naming to follow the new provider.
   useEffect(() => {
@@ -1998,6 +1999,7 @@ export function App() {
     if (editModalOpen) return;
     setApiKeyEnvTouched(false);
     setEndpointNameTouched(false);
+    setBaseUrlTouched(false);
     setCodingPlanMode(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerSlug]);
@@ -5522,7 +5524,7 @@ export function App() {
                     <input
                       type="checkbox"
                       checked={codingPlanMode}
-                      onChange={(e) => setCodingPlanMode(e.target.checked)}
+                      onChange={(e) => { setCodingPlanMode(e.target.checked); setBaseUrlTouched(false); }}
                       style={{ width: 16, height: 16, accentColor: "var(--brand)" }}
                     />
                     <span style={{ fontSize: 13, fontWeight: 500 }}>{t("llm.codingPlan")}</span>
@@ -5536,7 +5538,7 @@ export function App() {
                 <div className="dialogLabel">{t("llm.baseUrl")}</div>
                 <input
                   value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
+                  onChange={(e) => { setBaseUrl(e.target.value); setBaseUrlTouched(true); }}
                   placeholder={selectedProvider?.default_base_url || "https://api.example.com/v1"}
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}
                 />
