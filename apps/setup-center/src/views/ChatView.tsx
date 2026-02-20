@@ -35,7 +35,7 @@ import {
   IconCheck, IconLoader, IconCircle, IconPlay, IconMinus,
   IconChevronDown, IconChevronUp, IconMessageCircle, IconChevronRight,
   IconImage, IconRefresh, IconClipboard, IconTrash, IconZap,
-  IconMask, IconBot, IconUsers, IconHelp, IconEdit,
+  IconMask, IconBot, IconUsers, IconHelp, IconEdit, IconDownload,
 } from "../icons";
 
 // ─── 排队消息类型 ───
@@ -1093,7 +1093,7 @@ function MessageBubble({
                 : `${apiBaseUrl || ""}${art.file_url}`;
               if (art.artifact_type === "image") {
                 return (
-                  <div key={i} style={{ marginBottom: 8 }}>
+                  <div key={i} style={{ marginBottom: 8, position: "relative", display: "inline-block" }}>
                     <img
                       src={fullUrl}
                       alt={art.caption || art.name}
@@ -1102,10 +1102,35 @@ function MessageBubble({
                         maxHeight: 400,
                         borderRadius: 8,
                         border: "1px solid var(--line)",
-                        cursor: "pointer",
+                        display: "block",
                       }}
-                      onClick={() => window.open(fullUrl, "_blank")}
                     />
+                    <button
+                      title={t("chat.downloadImage") || "保存图片"}
+                      style={{
+                        position: "absolute", top: 8, right: 8,
+                        background: "rgba(0,0,0,0.55)", color: "#fff",
+                        border: "none", borderRadius: 6, width: 32, height: 32,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        cursor: "pointer", opacity: 0.8, transition: "opacity 0.15s",
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.8"; }}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const savedPath = await invoke<string>("download_file", {
+                            url: fullUrl,
+                            filename: art.name || `image-${Date.now()}.png`,
+                          });
+                          await invoke("show_item_in_folder", { path: savedPath });
+                        } catch (err) {
+                          console.error("图片下载失败:", err);
+                        }
+                      }}
+                    >
+                      <IconDownload size={16} />
+                    </button>
                     {art.caption && (
                       <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
                     )}
@@ -1135,13 +1160,12 @@ function MessageBubble({
                   transition: "background 0.15s",
                 }}
                   onClick={async () => {
-                    // Use Tauri command to download file (WebView2 doesn't support <a download>)
                     try {
                       const savedPath = await invoke<string>("download_file", {
                         url: fullUrl,
                         filename: art.name || "file",
                       });
-                      console.log("文件已保存:", savedPath);
+                      await invoke("show_item_in_folder", { path: savedPath });
                     } catch (err) {
                       console.error("文件下载失败:", err);
                     }
@@ -1270,13 +1294,38 @@ function FlatMessageItem({
                   : `${apiBaseUrl || ""}${art.file_url}`;
                 if (art.artifact_type === "image") {
                   return (
-                    <div key={i} style={{ marginBottom: 8 }}>
+                    <div key={i} style={{ marginBottom: 8, position: "relative", display: "inline-block" }}>
                       <img
                         src={fullUrl}
                         alt={art.caption || art.name}
-                        style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}
-                        onClick={() => window.open(fullUrl, "_blank")}
+                        style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, border: "1px solid var(--line)", display: "block" }}
                       />
+                      <button
+                        title={t("chat.downloadImage") || "保存图片"}
+                        style={{
+                          position: "absolute", top: 8, right: 8,
+                          background: "rgba(0,0,0,0.55)", color: "#fff",
+                          border: "none", borderRadius: 6, width: 32, height: 32,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          cursor: "pointer", opacity: 0.8, transition: "opacity 0.15s",
+                        }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.8"; }}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const savedPath = await invoke<string>("download_file", {
+                              url: fullUrl,
+                              filename: art.name || `image-${Date.now()}.png`,
+                            });
+                            await invoke("show_item_in_folder", { path: savedPath });
+                          } catch (err) {
+                            console.error("图片下载失败:", err);
+                          }
+                        }}
+                      >
+                        <IconDownload size={16} />
+                      </button>
                     </div>
                   );
                 }

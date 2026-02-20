@@ -100,7 +100,8 @@
     "deleteQueued": "Remove",
     "queueHint": "Enter to queue | Ctrl+Enter to send now",
     "queuedCount": "Queued",
-    "insertMessage": "Insert message"
+    "insertMessage": "Insert message",
+    "downloadImage": "Save image"
   },
   "skills": {
     "title": "Skill Manager",

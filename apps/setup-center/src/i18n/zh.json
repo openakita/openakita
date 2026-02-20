@@ -100,7 +100,8 @@
     "deleteQueued": "移除",
     "queueHint": "Enter 排队 | Ctrl+Enter 立即发送",
     "queuedCount": "排队",
-    "insertMessage": "插入消息"
+    "insertMessage": "插入消息",
+    "downloadImage": "保存图片"
   },
   "skills": {
     "title": "技能管理",

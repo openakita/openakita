@@ -198,6 +198,10 @@ hidden_imports_core = [
     "playwright.async_api",
     "playwright._impl",
     "browser_use",              # browser-use AI 代理 (~5MB)
+    "browser_use.agent",
+    "browser_use.agent.prompts",
+    "browser_use.agent.system_prompts",  # importlib.resources.files() 需要此包可导入
+    "browser_use.code_use",
     "langchain_openai",         # LangChain OpenAI adapter (~3MB)
     "langchain_core",           # LangChain 核心 (browser-use 依赖)
     "langchain_core.language_models",
@@ -381,6 +385,25 @@ try:
         print(f"[spec] Bundling fake_useragent data: {_fua_data_dir}")
 except ImportError:
     print("[spec] WARNING: fake_useragent not installed, data files not bundled")
+
+# browser_use 数据文件 (system prompt .md 模板)
+# browser_use 使用 importlib.resources.files('browser_use.agent.system_prompts') 加载 .md 模板，
+# PyInstaller 默认只打包 .py，必须显式将 .md 文件作为 data 打包。
+try:
+    import browser_use as _bu
+    _bu_pkg_dir = Path(_bu.__file__).parent
+    # agent/system_prompts/*.md
+    _bu_prompts_dir = _bu_pkg_dir / "agent" / "system_prompts"
+    if _bu_prompts_dir.exists():
+        datas.append((str(_bu_prompts_dir), "browser_use/agent/system_prompts"))
+        print(f"[spec] Bundling browser_use prompt templates: {_bu_prompts_dir}")
+    # code_use/system_prompt.md
+    _bu_code_prompt = _bu_pkg_dir / "code_use" / "system_prompt.md"
+    if _bu_code_prompt.exists():
+        datas.append((str(_bu_code_prompt), "browser_use/code_use"))
+        print(f"[spec] Bundling browser_use code_use prompt: {_bu_code_prompt}")
+except ImportError:
+    print("[spec] WARNING: browser_use not installed, prompt templates not bundled")
 
 # Provider list (single source of truth, shared by frontend and backend)
 # Must be bundled to openakita/llm/registries/ directory, Python reads via Path(__file__).parent

@@ -127,7 +127,36 @@ setTimeout(() => hideBoot(true), 20000);
       items.push(
         { label: "剪切", action: () => document.execCommand("cut"), disabled: !hasSelection },
         { label: "复制", action: () => document.execCommand("copy"), disabled: !hasSelection },
-        { label: "粘贴", action: () => document.execCommand("paste") },
+        {
+          label: "粘贴",
+          action: () => {
+            navigator.clipboard.readText().then((text) => {
+              if (!text) return;
+              if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+                const el = target;
+                const start = el.selectionStart ?? el.value.length;
+                const end = el.selectionEnd ?? el.value.length;
+                const before = el.value.slice(0, start);
+                const after = el.value.slice(end);
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                  target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+                  "value",
+                )?.set;
+                nativeInputValueSetter?.call(el, before + text + after);
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+                el.setSelectionRange(start + text.length, start + text.length);
+              } else if (target.isContentEditable) {
+                const selection = window.getSelection();
+                if (selection && selection.rangeCount > 0) {
+                  const range = selection.getRangeAt(0);
+                  range.deleteContents();
+                  range.insertNode(document.createTextNode(text));
+                  range.collapse(false);
+                }
+              }
+            }).catch(() => {});
+          },
+        },
         { label: "全选", action: () => document.execCommand("selectAll") },
       );
     } else {
