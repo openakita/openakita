@@ -5967,18 +5967,21 @@ NEXT: 建议的下一步（如有）"""
 
         duration = time.time() - start_time
 
-        # === 桌面通知 ===
+        # === 桌面通知（仅本地通道：cli/desktop；IM 通道已有自己的通知机制）===
         if settings.desktop_notify_enabled:
-            from .desktop_notify import notify_task_completed_async
+            _session = getattr(self, "_current_session", None)
+            _channel = getattr(_session, "channel", "cli") if _session else "cli"
+            if _channel in ("cli", "desktop"):
+                from .desktop_notify import notify_task_completed_async
 
-            asyncio.ensure_future(
-                notify_task_completed_async(
-                    task.description[:80],
-                    success=True,
-                    duration_seconds=duration,
-                    sound=settings.desktop_notify_sound,
+                asyncio.ensure_future(
+                    notify_task_completed_async(
+                        task.description[:80],
+                        success=True,
+                        duration_seconds=duration,
+                        sound=settings.desktop_notify_sound,
+                    )
                 )
-            )
 
         return TaskResult(
             success=True,

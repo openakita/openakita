@@ -85,6 +85,7 @@ _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
     (("persona_",), "人格"),
     (("proactive_",), "活人感"),
     (("sticker_",), "表情包"),
+    (("desktop_notify_",), "桌面通知"),
     (("tracing_",), "追踪"),
     (("evaluation_",), "评估"),
     (("ui_",), "UI偏好"),
