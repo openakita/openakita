@@ -3379,6 +3379,7 @@ export function App() {
           "PROACTIVE_ENABLED", "PROACTIVE_MAX_DAILY_MESSAGES", "PROACTIVE_MIN_INTERVAL_MINUTES",
           "PROACTIVE_QUIET_HOURS_START", "PROACTIVE_QUIET_HOURS_END", "PROACTIVE_IDLE_THRESHOLD_HOURS",
           "STICKER_ENABLED", "STICKER_DATA_DIR",
+          "DESKTOP_NOTIFY_ENABLED", "DESKTOP_NOTIFY_SOUND",
           "SCHEDULER_ENABLED", "SCHEDULER_TIMEZONE", "SCHEDULER_MAX_CONCURRENT", "SCHEDULER_TASK_TIMEOUT",
           "SESSION_TIMEOUT_MINUTES", "SESSION_MAX_HISTORY", "SESSION_STORAGE_PATH",
           "ORCHESTRATION_ENABLED", "ORCHESTRATION_MODE",
@@ -4818,6 +4819,9 @@ export function App() {
     PROACTIVE_IDLE_THRESHOLD_HOURS: "24",
     STICKER_ENABLED: "true",
     STICKER_DATA_DIR: "data/sticker",
+    // ── Desktop Notification ──
+    DESKTOP_NOTIFY_ENABLED: "true",
+    DESKTOP_NOTIFY_SOUND: "true",
     // ── Tools ──
     MCP_ENABLED: "true",
     MCP_BROWSER_ENABLED: "true",
@@ -6962,6 +6966,7 @@ export function App() {
       "PROACTIVE_ENABLED", "PROACTIVE_MAX_DAILY_MESSAGES", "PROACTIVE_MIN_INTERVAL_MINUTES",
       "PROACTIVE_QUIET_HOURS_START", "PROACTIVE_QUIET_HOURS_END", "PROACTIVE_IDLE_THRESHOLD_HOURS",
       "STICKER_ENABLED", "STICKER_DATA_DIR",
+      "DESKTOP_NOTIFY_ENABLED", "DESKTOP_NOTIFY_SOUND",
       "SCHEDULER_ENABLED", "SCHEDULER_TIMEZONE", "SCHEDULER_MAX_CONCURRENT", "SCHEDULER_TASK_TIMEOUT",
       "SESSION_TIMEOUT_MINUTES", "SESSION_MAX_HISTORY", "SESSION_STORAGE_PATH",
       "ORCHESTRATION_ENABLED", "ORCHESTRATION_MODE", "ORCHESTRATION_BUS_ADDRESS",
@@ -7039,6 +7044,15 @@ export function App() {
               <FieldText k="PROACTIVE_QUIET_HOURS_START" label={t("config.agentQuietStart")} placeholder="23" help={t("config.agentQuietStartHelp")} />
               <FieldText k="PROACTIVE_QUIET_HOURS_END" label={t("config.agentQuietEnd")} placeholder="7" />
             </div>
+          </div>
+
+          <div className="divider" />
+
+          {/* ── Desktop Notification ── */}
+          <div className="label">{t("config.agentDesktopNotify")}</div>
+          <div className="row" style={{ gap: 16, flexWrap: "wrap", marginTop: 4 }}>
+            <FieldBool k="DESKTOP_NOTIFY_ENABLED" label={t("config.agentDesktopNotifyEnable")} help={t("config.agentDesktopNotifyEnableHelp")} />
+            <FieldBool k="DESKTOP_NOTIFY_SOUND" label={t("config.agentDesktopNotifySound")} help={t("config.agentDesktopNotifySoundHelp")} />
           </div>
 
           <div className="divider" />
