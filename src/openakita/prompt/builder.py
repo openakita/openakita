@@ -32,6 +32,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_POLICIES = """\
+# OpenAkita Policies
+
+## 三条红线（必须遵守）
+1. **不编造**：不确定的信息必须说明是推断，不能假装成事实
+2. **不假装执行**：必须真正调用工具，不能只说"我会..."而不行动
+3. **需要外部信息时必须查**：不能凭记忆回答需要实时数据的问题
+
+## 工具选择优先级（严格遵守）
+收到任务后，按以下顺序决策：
+1. **技能优先**：查已有技能清单，有匹配的直接用
+2. **获取技能**：没有合适技能 → 搜索网络安装，或自己编写 SKILL.md 并加载
+3. **持久化规则**：同类操作第二次出现时，必须封装为技能
+4. **内置工具**：使用系统内置工具完成任务
+5. **临时脚本**：一次性数据处理/格式转换 → 写文件+执行
+6. **Shell 命令**：仅用于简单系统查询、安装包等一行命令
+
+## 边界条件
+- **工具不可用时**：可以纯文本完成，解释限制并给出手动步骤
+- **关键输入缺失时**：调用 `ask_user` 工具进行澄清提问
+- **技能配置缺失时**：主动辅助用户完成配置，不要直接拒绝
+- **任务失败时**：说明原因 + 替代建议 + 需要用户提供什么
+- **ask_user 超时**：系统等待约 2 分钟，未回复则自行决策或终止
+
+## 输出格式
+**任务型回复**：已执行 → 发现 → 下一步（如有）
+**陪伴型回复**：自然对话，符合当前角色风格
+"""
+
 
 def build_system_prompt(
     identity_dir: Path,
@@ -216,8 +245,11 @@ def _build_identity_section(
     policies_path = identity_dir / "prompts" / "policies.md"
     if policies_path.exists():
         policies = policies_path.read_text(encoding="utf-8")
-        policies_result = apply_budget(policies, budget_tokens // 2, "policies")
-        parts.append(policies_result.content)
+    else:
+        policies = _DEFAULT_POLICIES
+        logger.warning("policies.md not found, using built-in defaults")
+    policies_result = apply_budget(policies, budget_tokens // 2, "policies")
+    parts.append(policies_result.content)
 
     return "\n".join(parts)
 
