@@ -12,15 +12,12 @@ import asyncio
 import contextlib
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .session import Session, SessionConfig, SessionState
 from .user import UserManager
-
-# Session 恢复时的上下文清理阈值
-SESSION_CONTEXT_STALE_HOURS = 1  # 超过 1 小时未活跃，清理上下文
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +71,10 @@ class SessionManager:
         self._dirty = False
         self._save_delay_seconds = 5  # 防抖延迟：5 秒内的多次修改只保存一次
 
+        # 可选：从外部存储（SQLite）加载 turns 的回调，用于崩溃恢复时回填
+        # 签名: (safe_session_id: str) -> list[dict]  (每个 dict 含 role, content, timestamp)
+        self._turn_loader = None
+
         # 加载持久化的会话
         self._load_sessions()
 
@@ -87,6 +88,50 @@ class SessionManager:
     def mark_dirty(self) -> None:
         """标记会话数据已修改，需要保存"""
         self._dirty = True
+
+    def set_turn_loader(self, loader) -> None:
+        """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）"""
+        self._turn_loader = loader
+
+    def backfill_sessions_from_store(self) -> int:
+        """用 turn_loader 回填所有 session 中可能缺失的消息（崩溃恢复）。
+
+        Returns:
+            回填的总 turn 数
+        """
+        import re
+
+        if not self._turn_loader:
+            return 0
+        total_backfilled = 0
+        for session in self._sessions.values():
+            try:
+                safe_id = session.session_key.replace(":", "__")
+                safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe_id)
+                db_turns = self._turn_loader(safe_id)
+                if not db_turns:
+                    continue
+                last_ts = ""
+                if session.context.messages:
+                    last_ts = session.context.messages[-1].get("timestamp", "")
+                newer = [t for t in db_turns if t.get("timestamp", "") > last_ts] if last_ts else []
+                if not newer and not session.context.messages and db_turns:
+                    newer = db_turns
+                for t in newer:
+                    session.context.add_message(
+                        role=t["role"],
+                        content=t.get("content", ""),
+                    )
+                if newer:
+                    total_backfilled += len(newer)
+                    logger.info(
+                        f"Backfilled {len(newer)} turns from SQLite for {session.session_key}"
+                    )
+            except Exception as e:
+                logger.warning(f"Turn backfill failed for {session.session_key}: {e}")
+        if total_backfilled:
+            self.mark_dirty()
+        return total_backfilled
 
     async def stop(self) -> None:
         """停止会话管理器"""
@@ -134,15 +179,8 @@ class SessionManager:
         # 检查缓存
         if session_key in self._sessions:
             session = self._sessions[session_key]
-
-            # 检查是否过期
-            if session.is_expired():
-                logger.info(f"Session expired: {session_key}")
-                session.mark_expired()
-                del self._sessions[session_key]
-            else:
-                session.touch()
-                return session
+            session.touch()
+            return session
 
         # 创建新会话
         if create_if_missing:
@@ -264,10 +302,10 @@ class SessionManager:
         return len(expired_keys)
 
     async def _cleanup_loop(self) -> None:
-        """定期清理循环"""
+        """定期清理循环（每 24 小时清理 30 天未活跃的僵尸 session）"""
         while self._running:
             try:
-                await asyncio.sleep(self.cleanup_interval)
+                await asyncio.sleep(3600 * 24)
                 await self.cleanup_expired()
             except asyncio.CancelledError:
                 break
@@ -308,35 +346,22 @@ class SessionManager:
             with open(sessions_file, encoding="utf-8") as f:
                 data = json.load(f)
 
-            now = datetime.now()
-            stale_threshold = now - timedelta(hours=SESSION_CONTEXT_STALE_HOURS)
-            cleaned_count = 0
-
+            skipped_expired = 0
             for item in data:
                 try:
                     session = Session.from_dict(item)
-                    # 只加载未过期的会话
                     if not session.is_expired() and session.state != SessionState.CLOSED:
-                        # 检查上下文是否过期
-                        if session.last_active < stale_threshold:
-                            # 上下文过期，清理 messages 但保留 session
-                            old_count = len(session.context.messages)
-                            session.context.clear_messages()
-                            session.context.summary = "之前的对话已归档（超过 1 小时未活跃）"
-                            cleaned_count += 1
-                            logger.info(
-                                f"Cleared stale context for session {session.session_key}: "
-                                f"{old_count} messages removed (last_active: {session.last_active})"
-                            )
-                        else:
-                            # 上下文未过期，但清理大型数据（如 base64）
-                            self._clean_large_content_in_messages(session.context.messages)
-
+                        msg_count = len(session.context.messages)
+                        self._clean_large_content_in_messages(session.context.messages)
                         self._sessions[session.session_key] = session
+                        if msg_count > 0:
+                            logger.debug(
+                                f"Loaded session {session.session_key}: "
+                                f"{msg_count} messages preserved (last_active: {session.last_active})"
+                            )
+                    else:
+                        skipped_expired += 1
 
-                    # 无论是否过期/被加载，都更新通道注册表（内存）
-                    # 这样即使 session 已过期不被加载到内存，chat_id 仍被记录
-                    # 只在 session 比已有记录更新时才覆盖，避免用旧 session 回退 registry
                     session_ts = session.last_active.isoformat()
                     existing = self._channel_registry.get(session.channel)
                     if not existing or session_ts >= existing.get("last_seen", ""):
@@ -348,12 +373,12 @@ class SessionManager:
                 except Exception as e:
                     logger.warning(f"Failed to load session: {e}")
 
-            # 加载完毕后统一持久化通道注册表
             if self._channel_registry:
                 self._save_channel_registry()
 
             logger.info(
-                f"Loaded {len(self._sessions)} sessions from storage (cleaned {cleaned_count} stale contexts)"
+                f"Loaded {len(self._sessions)} sessions from storage"
+                f"{f' (skipped {skipped_expired} expired)' if skipped_expired else ''}"
             )
 
         except Exception as e:

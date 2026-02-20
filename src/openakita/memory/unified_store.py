@@ -190,6 +190,12 @@ class UnifiedStore:
     def get_session_turns(self, session_id: str) -> list[dict]:
         return self.db.get_session_turns(session_id)
 
+    def get_max_turn_index(self, session_id: str) -> int:
+        return self.db.get_max_turn_index(session_id)
+
+    def get_recent_turns(self, session_id: str, limit: int = 20) -> list[dict]:
+        return self.db.get_recent_turns(session_id, limit)
+
     # ======================================================================
     # Extraction Queue
     # ======================================================================

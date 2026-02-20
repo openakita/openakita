@@ -194,6 +194,14 @@ class MemoryManager:
         self._current_session_id = session_id
         self._session_turns = []
         self._recent_messages = []
+        try:
+            self._turn_offset = self.store.get_max_turn_index(session_id)
+        except Exception:
+            self._turn_offset = 0
+        if self._turn_offset > 0:
+            logger.info(f"[Memory] start_session({session_id}): resuming at turn_offset={self._turn_offset}")
+        else:
+            logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
 
     def record_turn(
         self, role: str, content: str,
@@ -239,9 +247,10 @@ class MemoryManager:
 
         # v2: Write to SQLite
         if self._current_session_id:
+            offset = getattr(self, "_turn_offset", 0)
             self.store.save_turn(
                 session_id=self._current_session_id,
-                turn_index=len(self._session_turns) - 1,
+                turn_index=offset + len(self._session_turns) - 1,
                 role=role,
                 content=content,
                 tool_calls=tool_calls,

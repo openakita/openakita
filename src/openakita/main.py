@@ -456,6 +456,20 @@ async def start_im_channels(agent_or_master):
 
     _message_gateway.agent_handler = agent_handler
 
+    # 设置 turn_loader 用于 session 崩溃恢复回填
+    _actual_agent = agent_or_master
+    if is_orchestration_enabled() and hasattr(agent_or_master, "_local_agent"):
+        _actual_agent = agent_or_master._local_agent
+    if _actual_agent and hasattr(_actual_agent, "memory_manager"):
+        _mm = _actual_agent.memory_manager
+        if hasattr(_mm, "store"):
+            _session_manager.set_turn_loader(
+                lambda safe_id: _mm.store.get_recent_turns(safe_id, limit=50)
+            )
+            backfilled = _session_manager.backfill_sessions_from_store()
+            if backfilled:
+                logger.info(f"Session backfill: recovered {backfilled} turns from SQLite")
+
     # 启动网关
     if adapters_started:
         await _message_gateway.start()

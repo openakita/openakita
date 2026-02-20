@@ -173,8 +173,8 @@ class Session:
             self.state = SessionState.ACTIVE
 
     def is_expired(self, timeout_minutes: int | None = None) -> bool:
-        """检查是否过期"""
-        timeout = timeout_minutes or self.config.timeout_minutes
+        """仅在超长不活跃时标记过期（30 天冷归档）"""
+        timeout = timeout_minutes or (60 * 24 * 30)  # 30 天
         elapsed = (datetime.now() - self.last_active).total_seconds() / 60
         return elapsed > timeout
 

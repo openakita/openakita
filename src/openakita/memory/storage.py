@@ -820,6 +820,37 @@ class MemoryStorage:
             logger.error(f"Failed to get session turns: {e}")
             return []
 
+    def get_max_turn_index(self, session_id: str) -> int:
+        """返回下一个可用的 turn_index（用于续接，避免覆盖历史数据）"""
+        if not self._conn:
+            return 0
+        try:
+            cur = self._conn.execute(
+                "SELECT MAX(turn_index) FROM conversation_turns WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cur.fetchone()
+            return (row[0] if row[0] is not None else -1) + 1
+        except Exception:
+            return 0
+
+    def get_recent_turns(self, session_id: str, limit: int = 20) -> list[dict]:
+        """按 turn_index 倒序获取最近 N 轮对话"""
+        if not self._conn:
+            return []
+        try:
+            cur = self._conn.execute(
+                "SELECT role, content, timestamp, tool_calls, tool_results "
+                "FROM conversation_turns "
+                "WHERE session_id = ? ORDER BY turn_index DESC LIMIT ?",
+                (session_id, limit),
+            )
+            rows = self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+            rows.reverse()
+            return rows
+        except Exception:
+            return []
+
     # ======================================================================
     # Extraction Queue
     # ======================================================================

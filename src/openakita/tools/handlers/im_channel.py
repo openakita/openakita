@@ -699,6 +699,41 @@ class IMChannelHandler:
 
         return "❌ 当前消息没有图片文件"
 
+    def _fallback_history_from_sqlite(self, session, limit: int) -> str | None:
+        """从 SQLite conversation_turns 兜底加载历史（进程崩溃恢复场景）"""
+        import logging
+        import re
+
+        _logger = logging.getLogger(__name__)
+
+        mm = getattr(self.agent, "memory_manager", None)
+        if not mm or not hasattr(mm, "store"):
+            return None
+        safe_id = ""
+        if hasattr(session, "session_key"):
+            safe_id = session.session_key.replace(":", "__")
+        elif hasattr(self.agent, "_current_conversation_id"):
+            safe_id = self.agent._current_conversation_id.replace(":", "__")
+        if not safe_id:
+            _logger.debug("[getChatHistory] fallback skipped: no safe_id resolved")
+            return None
+        safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe_id)
+        _logger.info(f"[getChatHistory] Session context empty, falling back to SQLite (safe_id={safe_id})")
+        db_turns = mm.store.get_recent_turns(safe_id, limit)
+        if not db_turns:
+            _logger.info(f"[getChatHistory] SQLite fallback: no turns found for {safe_id}")
+            return None
+        _logger.info(f"[getChatHistory] SQLite fallback: recovered {len(db_turns)} turns for {safe_id}")
+        output = f"最近 {len(db_turns)} 条消息（从持久化存储恢复）:\n\n"
+        for t in db_turns:
+            role = t.get("role", "?")
+            content = t.get("content", "") or ""
+            if isinstance(content, str):
+                output += f"[{role}] {content[:1000]}{'...' if len(content) > 1000 else ''}\n"
+            else:
+                output += f"[{role}] [复杂内容]\n"
+        return output
+
     def _get_chat_history_desktop(self, params: dict) -> str:
         """Desktop 模式下从当前 session 读取聊天历史"""
         limit = params.get("limit", 20)
@@ -713,6 +748,10 @@ class IMChannelHandler:
             return "当前没有活跃的会话，无法获取聊天历史"
 
         messages = session.context.get_messages(limit=limit)
+        if not messages or len(messages) <= 1:
+            fallback = self._fallback_history_from_sqlite(session, limit)
+            if fallback:
+                return fallback
         if not messages:
             return "没有聊天历史"
 
@@ -733,9 +772,11 @@ class IMChannelHandler:
         session = get_im_session()
         limit = params.get("limit", 20)
 
-        # 从 session context 获取消息历史
         messages = session.context.get_messages(limit=limit)
-
+        if not messages or len(messages) <= 1:
+            fallback = self._fallback_history_from_sqlite(session, limit)
+            if fallback:
+                return fallback
         if not messages:
             return "没有聊天历史"
 

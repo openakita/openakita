@@ -89,11 +89,26 @@ class MemoryHandler:
             return "✅ 记忆已存在（语义相似），无需重复记录。请继续执行其他任务或结束。"
 
     def _search_memory(self, params: dict) -> str:
-        """搜索记忆"""
+        """搜索记忆（优先使用 RetrievalEngine 多路召回，fallback 到子串匹配）"""
         from ...memory.types import MemoryType
 
         query = params["query"]
         type_filter = params.get("type")
+
+        retrieval_engine = getattr(self.agent.memory_manager, "retrieval_engine", None)
+        if retrieval_engine and not type_filter:
+            try:
+                candidates = retrieval_engine.retrieve_candidates(
+                    query=query,
+                    recent_messages=getattr(self.agent.memory_manager, "_recent_messages", None),
+                )
+                if candidates:
+                    output = f"找到 {len(candidates)} 条相关记忆:\n\n"
+                    for c in candidates[:10]:
+                        output += f"- [{c.source_type}] {c.content[:200]}\n\n"
+                    return output
+            except Exception:
+                pass
 
         mem_type = None
         if type_filter:
