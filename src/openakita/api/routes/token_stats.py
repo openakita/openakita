@@ -10,6 +10,7 @@ GET  /api/stats/tokens/context   — current context size + limit
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -23,12 +24,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stats/tokens", tags=["token_stats"])
 
 _db_instance: Database | None = None
+_db_lock = asyncio.Lock()
 
 
 async def _get_db() -> Database | None:
     """Lazy-init a shared Database instance for stats queries."""
     global _db_instance
-    if _db_instance is None:
+    if _db_instance is not None and _db_instance._connection is not None:
+        return _db_instance
+    async with _db_lock:
+        if _db_instance is not None and _db_instance._connection is not None:
+            return _db_instance
         _db_instance = Database()
         await _db_instance.connect()
     return _db_instance
