@@ -1742,6 +1742,43 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
         }
     }
 
+    // policies 文件：运行时策略规则，builder.py 会读取
+    {
+        let prompts_dir = dir.join("identity").join("prompts");
+        fs::create_dir_all(&prompts_dir)
+            .map_err(|e| format!("create identity/prompts dir failed: {e}"))?;
+        let policies = prompts_dir.join("policies.md");
+        if !policies.exists() {
+            const DEFAULT_POLICIES: &str = include_str!("../../../../identity/prompts/policies.md");
+            fs::write(&policies, DEFAULT_POLICIES)
+                .map_err(|e| format!("write identity/prompts/policies.md failed: {e}"))?;
+        }
+    }
+
+    // compiled 黄金文件：预编译的身份摘要，避免首次启动时必须等 LLM 编译
+    {
+        let compiled_dir = dir.join("identity").join("compiled");
+        fs::create_dir_all(&compiled_dir)
+            .map_err(|e| format!("create identity/compiled dir failed: {e}"))?;
+
+        const SOUL_SUMMARY: &str = include_str!("../../../../identity/compiled/soul.summary.md");
+        const AGENT_CORE: &str = include_str!("../../../../identity/compiled/agent.core.md");
+        const AGENT_TOOLING: &str = include_str!("../../../../identity/compiled/agent.tooling.md");
+
+        let golden_files: &[(&str, &str)] = &[
+            ("soul.summary.md", SOUL_SUMMARY),
+            ("agent.core.md", AGENT_CORE),
+            ("agent.tooling.md", AGENT_TOOLING),
+        ];
+        for (filename, content) in golden_files {
+            let path = compiled_dir.join(filename);
+            if !path.exists() {
+                fs::write(&path, content)
+                    .map_err(|e| format!("write identity/compiled/{filename} failed: {e}"))?;
+            }
+        }
+    }
+
     // 默认 llm_endpoints.json：用仓库内的 data/llm_endpoints.json.example 作为初始模板
     let llm = dir.join("data").join("llm_endpoints.json");
     if !llm.exists() {
@@ -2029,6 +2066,7 @@ fn main() {
             http_proxy_request,
             read_file_base64,
             download_file,
+            show_item_in_folder,
             open_external_url,
             openakita_list_processes,
             openakita_stop_all_processes,
@@ -4156,6 +4194,39 @@ async fn download_file(url: String, filename: String) -> Result<String, String> 
         .map_err(|e| format!("Failed to write file: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// Open the OS file manager and highlight the given file.
+#[tauri::command]
+fn show_item_in_folder(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {path}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut c = std::process::Command::new("explorer");
+        c.args(["/select,", &path]);
+        apply_no_window(&mut c);
+        c.spawn().map_err(|e| format!("Failed to open explorer: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to reveal in Finder: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(parent) = p.parent() {
+            std::process::Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| format!("Failed to open file manager: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Open an external URL in the OS default browser.

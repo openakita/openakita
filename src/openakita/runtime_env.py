@@ -38,6 +38,85 @@ def _find_python_in_dir(directory: Path) -> Path | None:
     return None
 
 
+def _is_windows_store_stub(path: str) -> bool:
+    """检查是否为 Windows Store 的假 Python 桩（App Execution Alias）。
+    这些桩位于 WindowsApps 目录，执行时返回 9009 而不是真正运行 Python。"""
+    return "WindowsApps" in path or "AppInstallerPythonRedirector" in path
+
+
+def _which_real_python() -> str | None:
+    """在 PATH 中查找真正可用的 Python，跳过 Windows Store 桩。"""
+    if sys.platform == "win32":
+        # Windows: python.exe 优先（python3.exe 通常只有 Store 桩提供）
+        candidates = ["python", "python3"]
+    else:
+        candidates = ["python3", "python"]
+
+    for name in candidates:
+        path = shutil.which(name)
+        if path and not _is_windows_store_stub(path):
+            return path
+    return None
+
+
+def _scan_common_python_dirs() -> str | None:
+    """扫描各平台常见 Python 安装目录（PATH 失效时的兜底）。"""
+    import glob
+
+    if sys.platform == "win32":
+        patterns = [
+            r"C:\Python3*\python.exe",
+            r"C:\Program Files\Python3*\python.exe",
+            r"C:\Program Files (x86)\Python3*\python.exe",
+        ]
+        for pattern in patterns:
+            matches = sorted(glob.glob(pattern), reverse=True)
+            if matches:
+                return matches[0]
+        # 用户级安装 (AppData\Local\Programs\Python)
+        local_programs = Path.home() / "AppData" / "Local" / "Programs" / "Python"
+        if local_programs.exists():
+            for py_dir in sorted(local_programs.iterdir(), reverse=True):
+                py = py_dir / "python.exe"
+                if py.exists():
+                    return str(py)
+    elif sys.platform == "darwin":
+        # macOS: Homebrew, python.org installer, Xcode CLI tools
+        for pattern in [
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/3.*/bin/python3",
+            "/usr/bin/python3",
+        ]:
+            matches = sorted(glob.glob(pattern), reverse=True)
+            if matches:
+                return matches[0]
+    else:
+        # Linux: system, deadsnakes PPA, pyenv, user-local
+        for pattern in [
+            "/usr/bin/python3",
+            "/usr/bin/python3.*",
+            "/usr/local/bin/python3",
+            str(Path.home() / ".pyenv/shims/python3"),
+            str(Path.home() / ".local/bin/python3"),
+        ]:
+            matches = sorted(glob.glob(pattern), reverse=True)
+            if matches:
+                return matches[0]
+    return None
+
+
+def _get_python_from_env_var() -> str | None:
+    """从环境变量 PYTHON / PYTHON3 / OPENAKITA_PYTHON 获取 Python 路径。
+    用户可以通过设置环境变量来显式指定 Python 解释器。"""
+    import os
+    for var in ("OPENAKITA_PYTHON", "PYTHON3", "PYTHON"):
+        val = os.environ.get(var)
+        if val and Path(val).is_file():
+            return val
+    return None
+
+
 def _get_openakita_root() -> Path:
     """获取 ~/.openakita 根目录路径 (避免循环导入 config)"""
     return Path.home() / ".openakita"
@@ -89,13 +168,26 @@ def get_python_executable() -> str | None:
                     logger.debug(f"使用 embedded Python: {py}")
                     return str(py)
 
-    # 3. PATH 中的 python
-    py_path = shutil.which("python3") or shutil.which("python")
+    # 3. 环境变量显式指定 (OPENAKITA_PYTHON / PYTHON3 / PYTHON)
+    env_py = _get_python_from_env_var()
+    if env_py:
+        logger.info(f"使用环境变量指定的 Python: {env_py}")
+        return env_py
+
+    # 4. PATH 中的 python（跳过 Windows Store 假桩）
+    py_path = _which_real_python()
     if py_path:
-        logger.debug(f"使用 PATH Python: {py_path}")
-    else:
-        logger.warning("未找到可用的 Python 解释器")
-    return py_path
+        logger.info(f"使用 PATH Python: {py_path}")
+        return py_path
+
+    # 5. 常见安装目录扫描（PATH 失效时的兜底，支持 Windows/macOS/Linux）
+    py_path = _scan_common_python_dirs()
+    if py_path:
+        logger.info(f"使用扫描发现的 Python: {py_path}")
+        return py_path
+
+    logger.warning("未找到可用的 Python 解释器")
+    return None
 
 
 def can_pip_install() -> bool:

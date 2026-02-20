@@ -35,9 +35,29 @@ async def _get_db() -> Database | None:
     async with _db_lock:
         if _db_instance is not None and _db_instance._connection is not None:
             return _db_instance
-        _db_instance = Database()
-        await _db_instance.connect()
+        try:
+            db = Database()
+            await db.connect()
+            if db._connection is None:
+                logger.error("[TokenStats] Database connect() returned but _connection is None")
+                return None
+            _db_instance = db
+        except Exception as e:
+            logger.error(f"[TokenStats] Failed to connect database: {e}")
+            return None
     return _db_instance
+
+
+async def _reset_db() -> None:
+    """Reset the cached db instance so next call re-connects."""
+    global _db_instance
+    async with _db_lock:
+        if _db_instance is not None:
+            try:
+                await _db_instance.close()
+            except Exception:
+                pass
+            _db_instance = None
 
 
 def _parse_range(
@@ -85,13 +105,18 @@ async def summary(
     if db is None:
         return {"error": "database not available"}
     start_str, end_str = _parse_range(start, end, period)
-    rows = await db.get_token_usage_summary(
-        start_time=start_str,
-        end_time=end_str,
-        group_by=group_by,
-        endpoint_name=endpoint_name,
-        operation_type=operation_type,
-    )
+    try:
+        rows = await db.get_token_usage_summary(
+            start_time=start_str,
+            end_time=end_str,
+            group_by=group_by,
+            endpoint_name=endpoint_name,
+            operation_type=operation_type,
+        )
+    except Exception as e:
+        logger.error(f"[TokenStats] summary query failed: {e}")
+        await _reset_db()
+        return {"error": "query failed, connection reset"}
     return {"start": start_str, "end": end_str, "group_by": group_by, "data": rows}
 
 
@@ -108,12 +133,17 @@ async def timeline(
     if db is None:
         return {"error": "database not available"}
     start_str, end_str = _parse_range(start, end, period)
-    rows = await db.get_token_usage_timeline(
-        start_time=start_str,
-        end_time=end_str,
-        interval=interval,
-        endpoint_name=endpoint_name,
-    )
+    try:
+        rows = await db.get_token_usage_timeline(
+            start_time=start_str,
+            end_time=end_str,
+            interval=interval,
+            endpoint_name=endpoint_name,
+        )
+    except Exception as e:
+        logger.error(f"[TokenStats] timeline query failed: {e}")
+        await _reset_db()
+        return {"error": "query failed, connection reset"}
     return {"start": start_str, "end": end_str, "interval": interval, "data": rows}
 
 
@@ -130,9 +160,14 @@ async def sessions(
     if db is None:
         return {"error": "database not available"}
     start_str, end_str = _parse_range(start, end, period)
-    rows = await db.get_token_usage_sessions(
-        start_time=start_str, end_time=end_str, limit=limit, offset=offset
-    )
+    try:
+        rows = await db.get_token_usage_sessions(
+            start_time=start_str, end_time=end_str, limit=limit, offset=offset
+        )
+    except Exception as e:
+        logger.error(f"[TokenStats] sessions query failed: {e}")
+        await _reset_db()
+        return {"error": "query failed, connection reset"}
     return {"start": start_str, "end": end_str, "data": rows}
 
 
@@ -147,7 +182,12 @@ async def total(
     if db is None:
         return {"error": "database not available"}
     start_str, end_str = _parse_range(start, end, period)
-    row = await db.get_token_usage_total(start_time=start_str, end_time=end_str)
+    try:
+        row = await db.get_token_usage_total(start_time=start_str, end_time=end_str)
+    except Exception as e:
+        logger.error(f"[TokenStats] total query failed: {e}")
+        await _reset_db()
+        return {"error": "query failed, connection reset"}
     return {"start": start_str, "end": end_str, "data": row}
 
 

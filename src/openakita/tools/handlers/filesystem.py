@@ -223,11 +223,28 @@ class FilesystemHandler:
                 return text
 
             output_parts = [f"命令执行失败 (exit code: {result.returncode})"]
+
+            # Windows 9009 = 命令未找到，给出明确诊断
+            if result.returncode == 9009:
+                cmd_lower = command.strip().lower()
+                if cmd_lower.startswith(("python", "python3")):
+                    output_parts.append(
+                        "⚠️ Python 不在系统 PATH 中（Windows 9009 = 命令未找到）。\n"
+                        "请先安装 Python：run_shell 执行 'winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements'\n"
+                        "安装完成后系统将自动检测，无需重启。不要再重试 python/python3 命令。"
+                    )
+                else:
+                    first_word = command.strip().split()[0] if command.strip() else command
+                    output_parts.append(
+                        f"⚠️ '{first_word}' 不在系统 PATH 中（Windows 9009 = 命令未找到）。\n"
+                        "请检查该程序是否已安装，或使用完整路径。"
+                    )
+
             if result.stdout:
                 output_parts.append(f"[stdout-tail]:\n{_tail(result.stdout)}")
             if result.stderr:
                 output_parts.append(f"[stderr-tail]:\n{_tail(result.stderr)}")
-            if not result.stdout and not result.stderr:
+            if not result.stdout and not result.stderr and result.returncode != 9009:
                 output_parts.append("(无输出，可能命令不存在或语法错误)")
 
             # 失败输出也可能很大，使用同样的溢出机制
