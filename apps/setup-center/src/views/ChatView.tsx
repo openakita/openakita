@@ -1469,11 +1469,14 @@ export function ChatView({
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
     if (!lightbox) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLightbox(null); };
+    const onResize = () => setWinSize({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("resize", onResize);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("resize", onResize); };
   }, [lightbox]);
 
   // 思维链 & 显示模式（从 localStorage 恢复用户习惯）
@@ -3381,10 +3384,12 @@ export function ChatView({
             src={lightbox.url}
             alt={lightbox.name}
             style={{
-              maxWidth: "92vw", maxHeight: "90vh",
+              maxWidth: Math.max(winSize.w - 80, 200),
+              maxHeight: Math.max(winSize.h - 80, 200),
               borderRadius: 8, objectFit: "contain",
               boxShadow: "0 8px 48px rgba(0,0,0,0.5)",
               cursor: "default",
+              transition: "max-width 0.2s, max-height 0.2s",
             }}
             onClick={(e) => e.stopPropagation()}
           />
