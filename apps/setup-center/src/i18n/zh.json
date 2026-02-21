@@ -386,6 +386,8 @@
     "agentOrchSection": "多 Agent 协同",
     "agentOrchEnable": "启用编排",
     "agentOrchMode": "编排模式",
+      "agentOrchModeHelp": "single=单 Agent / handoff=接力 / master-worker=主从",
+      "agentOrchModeInvalid": "ORCHESTRATION_MODE 无效：\"{{mode}}\"。可选值：single / handoff / master-worker",
     "agentOrchBus": "总线地址",
     "agentOrchMinW": "最小 Worker",
     "agentOrchMaxW": "最大 Worker",
