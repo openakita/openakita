@@ -1660,6 +1660,17 @@ export function App() {
     if (venvStatus.includes("安装完成")) setOpenakitaInstalled(true);
   }, [venvStatus]);
 
+  const ORCH_ALLOWED_MODES = useMemo(() => (["single", "handoff", "master-worker"] as const), []);
+  const ORCH_MODE_OPTIONS = useMemo(
+    () => ORCH_ALLOWED_MODES.map((v) => ({ value: v, label: v })),
+    [ORCH_ALLOWED_MODES]
+  );
+  const ORCH_MODE_HELP = "single=单 Agent / handoff=接力 / master-worker=主从";
+  type OrchestrationMode = typeof ORCH_ALLOWED_MODES[number];
+  function isValidOrchestrationMode(mode: string): mode is OrchestrationMode {
+    return (ORCH_ALLOWED_MODES as readonly string[]).includes(mode);
+  }
+
   async function ensureEnvLoaded(workspaceId: string): Promise<EnvMap> {
     if (envLoadedForWs.current === workspaceId) return envDraft;
     let parsed: EnvMap = {};
@@ -1695,6 +1706,12 @@ export function App() {
     for (const [dk, dv] of Object.entries(defaults)) {
       if (!(dk in parsed)) parsed[dk] = dv;
     }
+    try {
+      const mode = String(parsed["ORCHESTRATION_MODE"] ?? "").trim();
+      if (mode && !isValidOrchestrationMode(mode)) {
+        setError(`ORCHESTRATION_MODE 无效: "${mode}"。可选值：single / handoff / master-worker`);
+      }
+    } catch { /* ignore */ }
     setEnvDraft(parsed);
     envLoadedForWs.current = workspaceId;
     return parsed;
@@ -3243,6 +3260,14 @@ export function App() {
       }
     }
     if (!Object.keys(entries).length) return;
+
+    if (Object.prototype.hasOwnProperty.call(entries, "ORCHESTRATION_MODE")) {
+      const modeVal = String(entries["ORCHESTRATION_MODE"] ?? "").trim();
+      if (modeVal && !isValidOrchestrationMode(modeVal)) {
+        setError(`无法保存：ORCHESTRATION_MODE 无效 "${modeVal}"。可选值：single / handoff / master-worker`);
+        delete entries["ORCHESTRATION_MODE"];
+      }
+    }
 
     if (shouldUseHttpApi()) {
       // ── 后端运行中 → 优先 HTTP API（后端写入 .env 并热加载）──
@@ -7137,7 +7162,7 @@ export function App() {
               <div className="label" style={{ fontSize: 13, opacity: 0.7 }}>{t("config.agentOrchSection")}</div>
               <FieldBool k="ORCHESTRATION_ENABLED" label={t("config.agentOrchEnable")} />
               <div className="grid2">
-                <FieldText k="ORCHESTRATION_MODE" label={t("config.agentOrchMode")} placeholder="single" />
+                <FieldSelect k="ORCHESTRATION_MODE" label={t("config.agentOrchMode")} options={ORCH_MODE_OPTIONS} help={ORCH_MODE_HELP} />
                 <FieldText k="ORCHESTRATION_BUS_ADDRESS" label={t("config.agentOrchBus")} placeholder="tcp://127.0.0.1:5555" />
                 <FieldText k="ORCHESTRATION_MIN_WORKERS" label={t("config.agentOrchMinW")} placeholder="1" />
                 <FieldText k="ORCHESTRATION_MAX_WORKERS" label={t("config.agentOrchMaxW")} placeholder="4" />
@@ -7645,7 +7670,7 @@ export function App() {
               <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>多 Agent 协同（可选）</summary>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 <FieldBool k="ORCHESTRATION_ENABLED" label="启用多 Agent（Master/Worker）" help="多数用户不需要；开启前建议先完成单 Agent 跑通" />
-                <FieldText k="ORCHESTRATION_MODE" label="编排模式" placeholder="single" help="single=单 Agent / handoff=接力 / master-worker=主从" />
+                <FieldSelect k="ORCHESTRATION_MODE" label="编排模式" options={ORCH_MODE_OPTIONS} help={ORCH_MODE_HELP} />
                 <FieldText k="ORCHESTRATION_BUS_ADDRESS" label="总线地址" placeholder="tcp://127.0.0.1:5555" />
                 <FieldText k="ORCHESTRATION_PUB_ADDRESS" label="广播地址" placeholder="tcp://127.0.0.1:5556" />
                 <FieldText k="ORCHESTRATION_MIN_WORKERS" label="最小 Worker 数" placeholder="1" />
@@ -7863,6 +7888,14 @@ export function App() {
       }
     }
     if (!Object.keys(entries).length) return;
+
+    if (Object.prototype.hasOwnProperty.call(entries, "ORCHESTRATION_MODE")) {
+      const modeVal = String(entries["ORCHESTRATION_MODE"] ?? "").trim();
+      if (modeVal && !isValidOrchestrationMode(modeVal)) {
+        setError(`无法保存：ORCHESTRATION_MODE 无效 "${modeVal}"。可选值：single / handoff / master-worker`);
+        delete entries["ORCHESTRATION_MODE"];
+      }
+    }
 
     if (shouldUseHttpApi()) {
       try {
