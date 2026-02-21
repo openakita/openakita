@@ -6,6 +6,7 @@ fn main() {
     ensure_placeholder_windows_icon();
 
     ensure_resource_dir();
+    ensure_gitignored_placeholders();
 
     tauri_build::build()
 }
@@ -14,6 +15,15 @@ fn ensure_resource_dir() {
     let dir = std::path::Path::new("resources").join("openakita-server");
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
+    }
+}
+
+/// include_str!() 引用的 gitignored 文件，clone 后不存在会导致编译失败
+fn ensure_gitignored_placeholders() {
+    let persona_path = std::path::Path::new("..").join("..").join("..").join("identity").join("personas").join("user_custom.md");
+    if !persona_path.exists() {
+        let _ = std::fs::create_dir_all(persona_path.parent().unwrap());
+        let _ = std::fs::write(&persona_path, "# User Custom Persona (placeholder)\n");
     }
 }
 
