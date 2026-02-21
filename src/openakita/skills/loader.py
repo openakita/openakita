@@ -257,13 +257,29 @@ class SkillLoader:
             脚本内容或 None
         """
         skill = self._loaded_skills.get(name)
-        if not skill or not skill.scripts_dir:
+        if not skill:
             return None
 
-        script_path = skill.scripts_dir / script_name
-        if script_path.exists():
+        script_path = self._resolve_script_path(skill, script_name)
+        if script_path:
             return script_path.read_text(encoding="utf-8")
 
+        return None
+
+    def _resolve_script_path(self, skill: ParsedSkill, script_name: str) -> Path | None:
+        """在技能的 scripts/ 目录和根目录中查找脚本文件。
+
+        很多外部技能（如 Anthropic 的 xlsx、pdf 等）把脚本直接放在技能根目录
+        而非 scripts/ 子目录，因此需要双重查找。
+        """
+        if skill.scripts_dir:
+            candidate = skill.scripts_dir / script_name
+            if candidate.exists():
+                return candidate
+        # Fallback: 技能根目录
+        candidate = skill.skill_dir / script_name
+        if candidate.exists():
+            return candidate
         return None
 
     def run_script(
@@ -286,11 +302,11 @@ class SkillLoader:
             (成功, 输出) 元组
         """
         skill = self._loaded_skills.get(name)
-        if not skill or not skill.scripts_dir:
-            return False, f"Skill or scripts not found: {name}"
+        if not skill:
+            return False, f"Skill not found: {name}"
 
-        script_path = skill.scripts_dir / script_name
-        if not script_path.exists():
+        script_path = self._resolve_script_path(skill, script_name)
+        if not script_path:
             return False, f"Script not found: {script_name}"
 
         # 确定如何运行脚本

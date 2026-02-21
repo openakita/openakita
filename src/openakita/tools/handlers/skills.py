@@ -209,8 +209,11 @@ class SkillsHandler:
         skill_name = params["skill_name"]
         script_name = params["script_name"]
         args = params.get("args", [])
+        cwd = params.get("cwd")
 
-        success, output = self.agent.skill_loader.run_script(skill_name, script_name, args)
+        success, output = self.agent.skill_loader.run_script(
+            skill_name, script_name, args, cwd=Path(cwd) if cwd else None
+        )
 
         if success:
             return f"✅ 脚本执行成功:\n{output}"

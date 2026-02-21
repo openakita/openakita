@@ -109,11 +109,16 @@ class ParsedSkill:
         """技能根目录"""
         return self.path.parent
 
+    _SCRIPT_SUFFIXES = {".py", ".sh", ".bash", ".js"}
+
     def get_scripts(self) -> list[Path]:
-        """获取 scripts/ 目录下的所有脚本"""
+        """获取所有可用脚本（scripts/ 目录优先，兼容根目录放置脚本的外部技能）"""
         if self.scripts_dir and self.scripts_dir.exists():
             return list(self.scripts_dir.iterdir())
-        return []
+        return [
+            f for f in self.skill_dir.iterdir()
+            if f.is_file() and f.suffix in self._SCRIPT_SUFFIXES
+        ]
 
     def get_references(self) -> list[Path]:
         """获取 references/ 目录下的所有文档"""
