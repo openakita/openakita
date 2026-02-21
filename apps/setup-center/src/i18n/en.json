@@ -386,6 +386,8 @@
     "agentOrchSection": "Multi-Agent Orchestration",
     "agentOrchEnable": "Enable Orchestration",
     "agentOrchMode": "Mode",
+      "agentOrchModeHelp": "single = single agent / handoff = relay / master-worker = master/slave",
+      "agentOrchModeInvalid": "Invalid ORCHESTRATION_MODE: \"{{mode}}\". Allowed: single / handoff / master-worker",
     "agentOrchBus": "Bus Address",
     "agentOrchMinW": "Min Workers",
     "agentOrchMaxW": "Max Workers",
