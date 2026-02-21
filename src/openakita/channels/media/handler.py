@@ -57,6 +57,7 @@ class MediaHandler:
         # 延迟加载的模型
         self._whisper = None
         self._whisper_loaded = False
+        self._whisper_unavailable = False  # ImportError → 本进程内不再重试
         self._ocr = None
 
     async def preload_whisper(self) -> bool:
@@ -68,8 +69,8 @@ class MediaHandler:
         Returns:
             是否成功加载
         """
-        if self._whisper_loaded:
-            return True
+        if self._whisper_loaded or self._whisper_unavailable:
+            return self._whisper_loaded
 
         try:
             loop = asyncio.get_event_loop()
@@ -81,7 +82,7 @@ class MediaHandler:
 
     def _load_whisper_sync(self) -> None:
         """同步加载 Whisper 模型"""
-        if self._whisper_loaded:
+        if self._whisper_loaded or self._whisper_unavailable:
             return
 
         try:
@@ -94,7 +95,8 @@ class MediaHandler:
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
             hint = import_or_hint("whisper")
-            logger.warning(f"Whisper 不可用: {hint}")
+            logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
+            self._whisper_unavailable = True
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
 
@@ -159,8 +161,7 @@ class MediaHandler:
 
     async def _transcribe_with_whisper(self, audio_path: str) -> str:
         """使用本地 Whisper 转写"""
-        # 确保模型已加载
-        if not self._whisper_loaded:
+        if not self._whisper_loaded and not self._whisper_unavailable:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._load_whisper_sync)
 

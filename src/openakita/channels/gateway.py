@@ -633,6 +633,7 @@ class MessageGateway:
             self._whisper_model_name = whisper_model
         self._whisper = None
         self._whisper_loaded = False
+        self._whisper_unavailable = False  # ImportError → 本进程内不再重试
 
         # ==================== 消息中断机制 ====================
         # 会话级中断队列 {session_key: asyncio.PriorityQueue[InterruptMessage]}
@@ -773,7 +774,7 @@ class MessageGateway:
 
     def _load_whisper_model(self) -> None:
         """加载 Whisper 模型（在线程池中执行）"""
-        if self._whisper_loaded:
+        if self._whisper_loaded or self._whisper_unavailable:
             return
 
         # 模块可能在服务运行期间安装，路径尚未注入 sys.path。
@@ -831,8 +832,8 @@ class MessageGateway:
         except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
             hint = import_or_hint("whisper")
-            logger.warning(f"Whisper 不可用: {hint}")
-            logger.warning(f"Whisper ImportError 详情: {e}", exc_info=True)
+            logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
+            self._whisper_unavailable = True
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
 
@@ -1452,14 +1453,13 @@ class MessageGateway:
                 return None
 
             # 确保模型已加载
-            if not self._whisper_loaded:
-                # 同步加载模型（如果还没加载）
+            if not self._whisper_loaded and not self._whisper_unavailable:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._load_whisper_model)
 
-            # 检查模型是否可用
             if self._whisper is None:
-                logger.error("Whisper model not available")
+                if not self._whisper_unavailable:
+                    logger.error("Whisper model not available")
                 return None
 
             # 在线程池中运行转写（避免阻塞事件循环）
