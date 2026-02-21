@@ -259,7 +259,9 @@ class Agent:
         # MCP 系统
         self.mcp_client = mcp_client
         self.mcp_catalog = MCPCatalog()
-        self.browser_mcp = None  # 在 _start_builtin_mcp_servers 中启动
+        self.browser_manager = None  # 在 _start_builtin_mcp_servers 中启动
+        self.pw_tools = None
+        self.bu_runner = None
         self._builtin_mcp_count = 0
 
         # 系统工具目录（渐进式披露）
@@ -717,11 +719,10 @@ class Agent:
         # browser_task（browser-use）需要一个 OpenAI-compatible LLM（langchain_openai.ChatOpenAI）。
         # 项目本身使用 LLMClient（可多端点/故障切换），这里复用当前可用的 openai 协议端点配置。
         try:
-            if getattr(self, "browser_mcp", None):
+            if getattr(self, "bu_runner", None):
                 llm_client = getattr(self.brain, "_llm_client", None)
                 provider = None
                 if llm_client:
-                    # 优先使用当前健康端点；若不是 openai 协议，则退化为任意健康 openai 协议端点
                     current = llm_client.get_current_model()
                     if current and current.name in llm_client.providers:
                         p = llm_client.providers[current.name]
@@ -736,7 +737,7 @@ class Agent:
                 if provider:
                     api_key = provider.config.get_api_key()
                     if api_key:
-                        self.browser_mcp.set_llm_config(
+                        self.bu_runner.set_llm_config(
                             {
                                 "model": provider.config.model,
                                 "api_key": api_key,
@@ -744,7 +745,7 @@ class Agent:
                             }
                         )
         except Exception as e:
-            logger.debug(f"[BrowserMCP] LLM config injection skipped/failed: {e}")
+            logger.debug(f"[BrowserUseRunner] LLM config injection skipped/failed: {e}")
 
         self._initialized = True
         total_mcp = self.mcp_catalog.server_count + self._builtin_mcp_count
@@ -1346,21 +1347,19 @@ class Agent:
         self._builtin_mcp_count = 0
 
         # 初始化浏览器服务 (作为内置工具，不是 MCP)
-        # 注意: 不自动启动浏览器，由 browser_open 工具控制启动时机和模式
+        # 不自动启动浏览器，由 browser_open 工具控制启动时机和模式
         try:
-            # 先检查 playwright 是否可用，避免假阳性日志
             from ..tools._import_helper import import_or_hint
             pw_hint = import_or_hint("playwright")
             if pw_hint:
                 logger.warning(f"浏览器自动化不可用: {pw_hint}")
             else:
-                from ..tools.browser_mcp import BrowserMCP
+                from ..tools.browser import BrowserManager, PlaywrightTools, BrowserUseRunner
 
-                self.browser_mcp = BrowserMCP(headless=False)  # 默认可见模式
-                # 不在这里 await self.browser_mcp.start()，让 LLM 通过 browser_open 控制
+                self.browser_manager = BrowserManager()
+                self.pw_tools = PlaywrightTools(self.browser_manager)
+                self.bu_runner = BrowserUseRunner(self.browser_manager)
 
-                # 注意: 浏览器工具已在 BASE_TOOLS 中定义，不需要注册到 MCP catalog
-                # 这样 LLM 就会直接使用 browser_navigate 等工具名，而不是 MCP 格式
                 self._builtin_mcp_count += 1
                 logger.info("Started builtin browser service (Playwright)")
         except Exception as e:
