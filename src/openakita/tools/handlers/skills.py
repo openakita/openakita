@@ -228,10 +228,8 @@ class SkillsHandler:
                 error_msg += "2. 使用 `get_skill_info` 查看技能详情确认用法\n"
                 error_msg += "3. 尝试使用其他方法完成任务"
             elif "not found" in output.lower() or "未找到" in output:
-                error_msg += "**建议**: 脚本或资源未找到。可以尝试:\n"
-                error_msg += "1. 使用 `list_skills` 确认技能是否已安装\n"
-                error_msg += "2. 使用 `get_skill_info` 查看可用脚本列表\n"
-                error_msg += "3. 检查脚本名称是否正确"
+                error_msg += "**建议**: 脚本名称错误。请从上面 Available scripts 列表中选择正确的脚本名。\n"
+                error_msg += "如果不确定用法，使用 `get_skill_info(\"" + skill_name + "\")` 查看技能完整指令。"
             elif "permission" in output.lower() or "权限" in output:
                 error_msg += "**建议**: 权限不足。可以尝试:\n"
                 error_msg += "1. 检查文件/目录权限\n"

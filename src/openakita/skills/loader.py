@@ -266,6 +266,33 @@ class SkillLoader:
 
         return None
 
+    _SCRIPT_SUFFIXES = frozenset({".py", ".sh", ".bash", ".js", ".ts", ".mjs"})
+    _SCRIPT_IGNORE = frozenset({"__init__.py", "__pycache__"})
+
+    def _list_available_scripts(self, skill: ParsedSkill) -> list[str]:
+        """列出技能中所有可执行脚本（scripts/ 递归 + 根目录顶层）。"""
+        scripts: list[str] = []
+
+        if skill.scripts_dir and skill.scripts_dir.is_dir():
+            for f in sorted(skill.scripts_dir.rglob("*")):
+                if (
+                    f.is_file()
+                    and f.suffix in self._SCRIPT_SUFFIXES
+                    and f.name not in self._SCRIPT_IGNORE
+                ):
+                    rel = f.relative_to(skill.scripts_dir)
+                    scripts.append(f"scripts/{rel.as_posix()}")
+
+        for f in sorted(skill.skill_dir.iterdir()):
+            if (
+                f.is_file()
+                and f.suffix in self._SCRIPT_SUFFIXES
+                and f.name not in self._SCRIPT_IGNORE
+            ):
+                scripts.append(f.name)
+
+        return scripts
+
     def _resolve_script_path(self, skill: ParsedSkill, script_name: str) -> Path | None:
         """在技能的 scripts/ 目录和根目录中查找脚本文件。
 
@@ -307,7 +334,9 @@ class SkillLoader:
 
         script_path = self._resolve_script_path(skill, script_name)
         if not script_path:
-            return False, f"Script not found: {script_name}"
+            available = self._list_available_scripts(skill)
+            hint = f"\nAvailable scripts: {', '.join(available)}" if available else ""
+            return False, f"Script not found: {script_name}{hint}"
 
         # 确定如何运行脚本
         args = args or []
