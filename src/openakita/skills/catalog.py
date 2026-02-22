@@ -132,7 +132,9 @@ Use `get_skill_info(skill_name)` to load full instructions when needed.
         lines: list[str] = [
             "## Skills Index (complete)",
             "",
-            "Use `get_skill_info(skill_name)` to load full instructions. If you need to execute scripts, use `run_skill_script(skill_name, script_name, args)`.",
+            "Use `get_skill_info(skill_name)` to load full instructions.",
+            "Most external skills are **instruction-only** (no pre-built scripts) — read instructions via get_skill_info, then write code and execute via run_shell.",
+            "Only use `run_skill_script` when a skill explicitly lists executable scripts.",
         ]
 
         if system_names:

@@ -259,6 +259,18 @@ def _build_identity_section(
     return "\n".join(parts)
 
 
+def _get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
+    """获取指定时区的当前时间，避免依赖服务器本地时区"""
+    from datetime import timezone, timedelta
+
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(timezone_name)
+    except Exception:
+        tz = timezone(timedelta(hours=8))
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _build_runtime_section() -> str:
     """构建 Runtime 层（运行时信息）"""
     import locale as _locale
@@ -268,7 +280,7 @@ def _build_runtime_section() -> str:
     from ..config import settings
     from ..runtime_env import IS_FROZEN, can_pip_install, get_python_executable
 
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_time = _get_current_time(settings.scheduler_timezone)
 
     # --- 部署模式与 Python 环境 ---
     deploy_mode = _detect_deploy_mode()

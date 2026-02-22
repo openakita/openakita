@@ -340,7 +340,13 @@ class PersonaManager:
 
     def get_current_context(self) -> dict[str, Any]:
         """获取当前上下文信息"""
-        now = datetime.now()
+        try:
+            from zoneinfo import ZoneInfo
+            from ..config import settings
+            tz = ZoneInfo(settings.scheduler_timezone)
+            now = datetime.now(tz)
+        except Exception:
+            now = datetime.now()
         hour = now.hour
 
         # 时间段判断

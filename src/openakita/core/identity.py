@@ -164,6 +164,14 @@ class Identity:
 
         return f"## Memory (核心记忆)\n\n{memory}\n"
 
+    @staticmethod
+    def _get_configured_timezone() -> str:
+        """从 settings 获取配置的时区"""
+        try:
+            return settings.scheduler_timezone
+        except Exception:
+            return "Asia/Shanghai"
+
     def get_system_prompt(self, include_active_task: bool = True) -> str:
         """
         生成系统提示词
@@ -173,9 +181,14 @@ class Identity:
         Args:
             include_active_task: 是否包含活跃任务（IM Session 应设为 False）
         """
-        from datetime import datetime
+        from datetime import datetime, timezone, timedelta
 
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(self._get_configured_timezone())
+        except Exception:
+            tz = timezone(timedelta(hours=8))
+        current_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
 
         return f"""# OpenAkita System
 

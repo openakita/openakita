@@ -218,28 +218,47 @@ class SkillsHandler:
         if success:
             return f"✅ 脚本执行成功:\n{output}"
         else:
-            # 提供详细错误信息和可操作建议
-            error_msg = f"❌ 脚本执行失败:\n{output}\n\n"
+            output_lower = output.lower()
 
-            # 根据错误类型提供建议
-            if "timed out" in output.lower() or "超时" in output:
-                error_msg += "**建议**: 脚本执行超时。可以尝试:\n"
-                error_msg += "1. 检查脚本是否有死循环或长时间阻塞操作\n"
-                error_msg += "2. 使用 `get_skill_info` 查看技能详情确认用法\n"
-                error_msg += "3. 尝试使用其他方法完成任务"
-            elif "not found" in output.lower() or "未找到" in output:
-                error_msg += "**建议**: 脚本名称错误。请从上面 Available scripts 列表中选择正确的脚本名。\n"
-                error_msg += "如果不确定用法，使用 `get_skill_info(\"" + skill_name + "\")` 查看技能完整指令。"
-            elif "permission" in output.lower() or "权限" in output:
-                error_msg += "**建议**: 权限不足。可以尝试:\n"
-                error_msg += "1. 检查文件/目录权限\n"
-                error_msg += "2. 使用管理员权限运行"
-            else:
-                error_msg += (
-                    "**建议**: 请检查脚本参数是否正确，或使用 `get_skill_info` 查看技能使用说明"
+            if "no executable scripts" in output_lower or "instruction-only" in output_lower:
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**This skill is instruction-only (no scripts).** "
+                    f"DO NOT retry run_skill_script.\n"
+                    f"Use `get_skill_info(\"{skill_name}\")` to read instructions, "
+                    f"then write Python code via `write_file` and execute via `run_shell`."
                 )
-
-            return error_msg
+            elif "not found" in output_lower and "available scripts:" in output_lower:
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**建议**: Use one of the available scripts listed above."
+                )
+            elif "not found" in output_lower or "未找到" in output_lower:
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**建议**: 如果不确定用法，使用 `get_skill_info(\"{skill_name}\")` 查看技能完整指令。\n"
+                    f"对于指令型技能，应改用 write_file + run_shell 方式执行代码。"
+                )
+            elif "timed out" in output_lower or "超时" in output:
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**建议**: 脚本执行超时。可以尝试:\n"
+                    f"1. 检查脚本是否有死循环或长时间阻塞操作\n"
+                    f"2. 使用 `get_skill_info` 查看技能详情确认用法\n"
+                    f"3. 尝试使用其他方法完成任务"
+                )
+            elif "permission" in output_lower or "权限" in output:
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**建议**: 权限不足。可以尝试:\n"
+                    f"1. 检查文件/目录权限\n"
+                    f"2. 使用管理员权限运行"
+                )
+            else:
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**建议**: 请检查脚本参数是否正确，或使用 `get_skill_info` 查看技能使用说明"
+                )
 
     def _get_skill_reference(self, params: dict) -> str:
         """获取技能参考文档"""

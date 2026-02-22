@@ -268,7 +268,10 @@ async def list_channels(request: Request):
     seen: set[tuple[str, str]] = set()
     session_manager = getattr(gateway, "session_manager", None)
 
+    skip_channels = {"desktop"}
+
     if session_manager:
+        # 1. Active memory sessions
         sessions = session_manager.list_sessions()
         if sessions:
             sessions.sort(
@@ -277,19 +280,22 @@ async def list_channels(request: Request):
             for s in sessions:
                 if getattr(s, "state", None) and str(s.state.value) == "closed":
                     continue
-                if not getattr(s, "channel", None) or not getattr(s, "chat_id", None):
+                ch = getattr(s, "channel", None)
+                cid = getattr(s, "chat_id", None)
+                if not ch or not cid or ch in skip_channels:
                     continue
-                pair = (s.channel, s.chat_id)
+                pair = (ch, cid)
                 if pair in seen:
                     continue
                 seen.add(pair)
                 results.append({
-                    "channel_id": s.channel,
-                    "chat_id": s.chat_id,
+                    "channel_id": ch,
+                    "chat_id": cid,
                     "user_id": getattr(s, "user_id", None),
                     "last_active": getattr(s, "last_active", dt.min).isoformat(),
                 })
 
+        # 2. Persisted sessions from file
         sessions_file = getattr(session_manager, "storage_path", None)
         if sessions_file:
             sessions_file = sessions_file / "sessions.json"
@@ -302,7 +308,7 @@ async def list_channels(request: Request):
                         ch = s.get("channel")
                         cid = s.get("chat_id")
                         state = s.get("state", "")
-                        if not ch or not cid or state == "closed":
+                        if not ch or not cid or state == "closed" or ch in skip_channels:
                             continue
                         pair = (ch, cid)
                         if pair in seen:
@@ -316,6 +322,26 @@ async def list_channels(request: Request):
                         })
                 except Exception as e:
                     logger.warning(f"Failed to read sessions file: {e}")
+
+        # 3. Channel registry (persists even after sessions expire)
+        registry = getattr(session_manager, "_channel_registry", None)
+        if registry and isinstance(registry, dict):
+            for ch, entry in registry.items():
+                if ch in skip_channels or not isinstance(entry, dict):
+                    continue
+                cid = entry.get("chat_id")
+                if not cid:
+                    continue
+                pair = (ch, cid)
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                results.append({
+                    "channel_id": ch,
+                    "chat_id": cid,
+                    "user_id": entry.get("user_id"),
+                    "last_active": entry.get("last_seen", ""),
+                })
 
     return {"channels": results}
 

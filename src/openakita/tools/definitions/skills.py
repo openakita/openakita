@@ -56,17 +56,25 @@ SKILLS_TOOLS = [
     {
         "name": "run_skill_script",
         "category": "Skills",
-        "description": "Execute a skill's script file with arguments. When you need to: (1) Run skill functionality, (2) Execute specific operations, (3) Process data with skill.",
-        "detail": """运行技能的脚本。
+        "description": "Execute a skill's pre-built script file. IMPORTANT: Many skills (xlsx, docx, pptx, pdf, etc.) are instruction-only — they have NO scripts. For those skills, use get_skill_info to read instructions, then write code and execute via run_shell instead.",
+        "detail": """运行技能的**预置脚本**。
+
+**⚠️ 重要提醒**：
+很多技能（xlsx, docx, pptx, pdf, algorithmic-art 等）是**指令型技能**，它们不提供可执行脚本。
+如果 run_skill_script 报告 "Script not found" 或 "no executable scripts"，说明该技能没有预置脚本。
+此时**不要重试 run_skill_script**，而应：
+1. 用 get_skill_info 读取技能的完整指令
+2. 按照指令编写 Python 代码
+3. 用 run_shell 执行代码
 
 **适用场景**：
-- 执行技能功能
-- 运行特定操作
-- 用技能处理数据
+- 执行技能内预置的脚本（如 recalc.py 等）
+- 必须先确认技能有可用脚本
 
 **使用方法**：
-1. 先用 get_skill_info 了解可用脚本
-2. 指定脚本名称和参数执行
+1. 先用 get_skill_info 了解可用脚本列表
+2. 仅当技能有可执行脚本时使用本工具
+3. 如果失败提示"no executable scripts"，改用 run_shell
 
 **配置缺失处理**：
 如果脚本因缺少配置（API Key/凭据/路径等）而失败，应主动帮用户完成配置（引导获取、写入配置文件），而不是告诉用户"缺少XX无法使用"。""",

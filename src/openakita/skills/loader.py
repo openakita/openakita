@@ -335,8 +335,21 @@ class SkillLoader:
         script_path = self._resolve_script_path(skill, script_name)
         if not script_path:
             available = self._list_available_scripts(skill)
-            hint = f"\nAvailable scripts: {', '.join(available)}" if available else ""
-            return False, f"Script not found: {script_name}{hint}"
+            if available:
+                return False, (
+                    f"Script not found: {script_name}\n"
+                    f"Available scripts: {', '.join(available)}\n"
+                    f"Use one of the available scripts, or use get_skill_info(\"{name}\") "
+                    f"to check usage instructions."
+                )
+            else:
+                return False, (
+                    f"Script not found: {script_name}\n"
+                    f"This skill has NO executable scripts — it is an instruction-only skill.\n"
+                    f"DO NOT retry run_skill_script for this skill.\n"
+                    f"Instead: use get_skill_info(\"{name}\") to read the skill instructions, "
+                    f"then write Python code and execute it via run_shell."
+                )
 
         # 确定如何运行脚本
         args = args or []

@@ -12,7 +12,7 @@ FILESYSTEM_TOOLS = [
     {
         "name": "run_shell",
         "category": "File System",
-        "description": "Execute shell commands (LAST RESORT for one-off system operations). ⚠️ BEFORE using run_shell: check if a skill already handles this task (list_skills → get_skill_info → run_skill_script). Only use run_shell for: simple system queries, one-off commands, or when no skill exists. If you find yourself writing the same shell pattern repeatedly, create a skill instead.",
+        "description": "Execute shell commands. Use for: (1) running Python scripts you wrote via write_file, (2) system commands, (3) installing packages, (4) executing code from skill instructions (after reading via get_skill_info). This is the primary way to execute code. For repetitive patterns, consider creating a skill.",
         "detail": """执行 Shell 命令，用于运行系统命令、创建目录、执行脚本等。
 
 **适用场景**:

@@ -9102,10 +9102,10 @@ export function App() {
             <IconSkills size={16} /> {!sidebarCollapsed && <span>{t("sidebar.skills")}</span>}
           </div>
           <div className={`navItem ${view === "mcp" ? "navItemActive" : ""}`} onClick={() => setView("mcp")} role="button" tabIndex={0} title="MCP" style={disabledViews.includes("mcp") ? { opacity: 0.4 } : undefined}>
-            <IconPlug size={16} /> {!sidebarCollapsed && <span>MCP</span>}
+            <IconPlug size={16} /> {!sidebarCollapsed && <span>MCP <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
           </div>
           <div className={`navItem ${view === "scheduler" ? "navItemActive" : ""}`} onClick={() => setView("scheduler")} role="button" tabIndex={0} title={t("sidebar.scheduler")} style={disabledViews.includes("scheduler") ? { opacity: 0.4 } : undefined}>
-            <IconCalendar size={16} /> {!sidebarCollapsed && <span>{t("sidebar.scheduler")}</span>}
+            <IconCalendar size={16} /> {!sidebarCollapsed && <span>{t("sidebar.scheduler")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
           </div>
           <div className={`navItem ${view === "modules" ? "navItemActive" : ""}`} onClick={() => { setView("modules"); obLoadModules(); }} role="button" tabIndex={0} title={t("sidebar.modules")} style={disabledViews.includes("modules") ? { opacity: 0.4 } : undefined}>
             <IconGear size={16} /> {!sidebarCollapsed && <span>{t("sidebar.modules")}</span>}
