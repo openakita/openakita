@@ -638,27 +638,36 @@ def _build_scratchpad_section(memory_manager: Optional["MemoryManager"]) -> str:
 
 
 def _get_core_memory(memory_manager: Optional["MemoryManager"], max_chars: int = 600) -> str:
-    """获取 MEMORY.md 核心记忆"""
+    """获取 MEMORY.md 核心记忆（损坏时自动 fallback 到 .bak）"""
     memory_path = getattr(memory_manager, "memory_md_path", None)
-    if not memory_path or not memory_path.exists():
+    if not memory_path:
         return ""
-    try:
-        content = memory_path.read_text(encoding="utf-8").strip()
-        if not content:
-            return ""
-        if len(content) > max_chars:
-            lines = content.split("\n")
-            result_lines: list[str] = []
-            current_len = 0
-            for line in reversed(lines):
-                if current_len + len(line) + 1 > max_chars:
-                    break
-                result_lines.insert(0, line)
-                current_len += len(line) + 1
-            return "\n".join(result_lines)
-        return content
-    except Exception:
+
+    content = ""
+    for path_to_try in [memory_path, memory_path.with_suffix(memory_path.suffix + ".bak")]:
+        if not path_to_try.exists():
+            continue
+        try:
+            content = path_to_try.read_text(encoding="utf-8").strip()
+            if content:
+                break
+        except Exception:
+            continue
+
+    if not content:
         return ""
+
+    if len(content) > max_chars:
+        lines = content.split("\n")
+        result_lines: list[str] = []
+        current_len = 0
+        for line in reversed(lines):
+            if current_len + len(line) + 1 > max_chars:
+                break
+            result_lines.insert(0, line)
+            current_len += len(line) + 1
+        return "\n".join(result_lines)
+    return content
 
 
 def _build_user_section(

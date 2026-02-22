@@ -89,6 +89,12 @@ class SessionManager:
         """标记会话数据已修改，需要保存"""
         self._dirty = True
 
+    def flush(self) -> None:
+        """立即保存所有待写入的会话（绕过防抖延迟）"""
+        if self._dirty:
+            self._dirty = False
+            self._save_sessions()
+
     def set_turn_loader(self, loader) -> None:
         """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）"""
         self._turn_loader = loader

@@ -30,6 +30,30 @@ from .unified_store import UnifiedStore
 logger = logging.getLogger(__name__)
 
 
+def _safe_write_with_backup(path: Path, content: str) -> None:
+    """安全写入文件：先备份再写入，写失败则恢复"""
+    backup = path.with_suffix(path.suffix + ".bak")
+    try:
+        if path.exists():
+            import shutil
+            shutil.copy2(path, backup)
+    except Exception as e:
+        logger.warning(f"Failed to create backup of {path}: {e}")
+
+    try:
+        path.write_text(content, encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Failed to write {path}: {e}")
+        if backup.exists():
+            try:
+                import shutil
+                shutil.copy2(backup, path)
+                logger.info(f"Restored {path} from backup")
+            except Exception as e2:
+                logger.error(f"Failed to restore {path} from backup: {e2}")
+        raise
+
+
 class LifecycleManager:
     """记忆生命周期管理器"""
 
@@ -360,7 +384,13 @@ class LifecycleManager:
                 total_chars += len(line)
 
         memory_md = identity_dir / "MEMORY.md"
-        memory_md.write_text("\n".join(lines), encoding="utf-8")
+        new_content = "\n".join(lines)
+
+        if len(new_content.strip()) < 10:
+            logger.warning("[Lifecycle] Generated MEMORY.md content too short, skipping refresh")
+            return
+
+        _safe_write_with_backup(memory_md, new_content)
         logger.info(f"[Lifecycle] Refreshed MEMORY.md ({total_chars} chars)")
 
     # ==================================================================

@@ -325,7 +325,7 @@ class ContextManager:
 
         if len(groups) <= recent_group_count:
             messages = await self._compress_large_tool_results(messages, threshold=2000)
-            return _end_ctx_span(self._hard_truncate_if_needed(messages, hard_limit))
+            return _end_ctx_span(self._hard_truncate_if_needed(messages, hard_limit, memory_manager))
 
         early_groups = groups[:-recent_group_count]
         recent_groups = groups[-recent_group_count:]
@@ -355,7 +355,7 @@ class ContextManager:
         compressed = await self._compress_further(compressed, soft_limit)
 
         # Step 5: 硬保底
-        return _end_ctx_span(self._hard_truncate_if_needed(compressed, hard_limit))
+        return _end_ctx_span(self._hard_truncate_if_needed(compressed, hard_limit, memory_manager))
 
     async def _compress_large_tool_results(
         self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
@@ -691,7 +691,9 @@ class ContextManager:
 
         return result
 
-    def _hard_truncate_if_needed(self, messages: list[dict], hard_limit: int) -> list[dict]:
+    def _hard_truncate_if_needed(
+        self, messages: list[dict], hard_limit: int, memory_manager: object | None = None
+    ) -> list[dict]:
         """硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断"""
         current_tokens = self.estimate_messages_tokens(messages)
         if current_tokens <= hard_limit:
@@ -703,9 +705,15 @@ class ContextManager:
         )
 
         truncated = list(messages)
+        dropped_messages: list[dict] = []
         while len(truncated) > 2 and self.estimate_messages_tokens(truncated) > hard_limit:
             removed = truncated.pop(0)
+            dropped_messages.append(removed)
             logger.warning(f"[HardTruncate] Dropped earliest message (role={removed.get('role', '?')})")
+
+        # 将被丢弃的消息入队到提取队列，避免永久丢失
+        if dropped_messages and memory_manager is not None:
+            self._enqueue_dropped_for_extraction(dropped_messages, memory_manager)
 
         if self.estimate_messages_tokens(truncated) > hard_limit:
             max_chars_per_msg = (hard_limit * CHARS_PER_TOKEN) // max(len(truncated), 1)
@@ -750,3 +758,31 @@ class ContextManager:
             f"(hard_limit={hard_limit}, messages={len(truncated)})"
         )
         return truncated
+
+    @staticmethod
+    def _enqueue_dropped_for_extraction(
+        dropped: list[dict], memory_manager: object
+    ) -> None:
+        """将硬截断丢弃的消息入队到提取队列"""
+        store = getattr(memory_manager, "store", None)
+        if store is None:
+            return
+        session_id = getattr(memory_manager, "_current_session_id", None) or "hard_truncate"
+        try:
+            enqueued = 0
+            for i, msg in enumerate(dropped):
+                content = msg.get("content", "")
+                if not content or not isinstance(content, str) or len(content) < 20:
+                    continue
+                store.enqueue_extraction(
+                    session_id=session_id,
+                    turn_index=i,
+                    content=content,
+                    tool_calls=msg.get("tool_calls"),
+                    tool_results=msg.get("tool_results"),
+                )
+                enqueued += 1
+            if enqueued:
+                logger.info(f"[HardTruncate] Enqueued {enqueued} dropped messages for memory extraction")
+        except Exception as e:
+            logger.warning(f"[HardTruncate] Failed to enqueue dropped messages: {e}")

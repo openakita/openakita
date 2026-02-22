@@ -167,8 +167,12 @@ class DailyConsolidator:
                 # 压缩内容
                 content = await self._compress_memory_md(content)
 
-            # 写入文件
-            self.memory_md_path.write_text(content, encoding="utf-8")
+            # 安全写入文件（先备份再写入）
+            if len(content.strip()) < 10:
+                logger.warning("Generated MEMORY.md content too short, skipping refresh")
+                return False
+            from .lifecycle import _safe_write_with_backup
+            _safe_write_with_backup(self.memory_md_path, content)
             logger.info("MEMORY.md refreshed")
 
             return True

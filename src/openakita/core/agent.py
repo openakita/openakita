@@ -2745,15 +2745,9 @@ search_github → install_skill → 使用
 
         策略：
         1. 从最早的消息开始丢弃，保留最近的消息
-        2. 对剩余消息中仍然过大的单条内容做字符级截断
-        3. 添加截断提示让模型知道上下文不完整
-
-        Args:
-            messages: 消息列表
-            hard_limit: 绝对 token 上限
-
-        Returns:
-            保证不超过 hard_limit 的消息列表
+        2. 将丢弃的消息入队到提取队列避免永久丢失
+        3. 对剩余消息中仍然过大的单条内容做字符级截断
+        4. 添加截断提示让模型知道上下文不完整
         """
         current_tokens = self._estimate_messages_tokens(messages)
         if current_tokens <= hard_limit:
@@ -2765,13 +2759,17 @@ search_github → install_skill → 使用
             f"Applying hard truncation to guarantee API submission."
         )
 
-        # 策略一：从最早的消息开始丢弃，保留最近的
         truncated = list(messages)
+        dropped_messages: list[dict] = []
         while len(truncated) > 2 and self._estimate_messages_tokens(truncated) > hard_limit:
-            # 丢弃最早的消息（但至少保留 2 条：1 条用户消息 + 1 条最新交互）
             removed = truncated.pop(0)
+            dropped_messages.append(removed)
             removed_role = removed.get("role", "?")
             logger.warning(f"[HardTruncate] Dropped earliest message (role={removed_role})")
+
+        if dropped_messages:
+            from .context_manager import ContextManager
+            ContextManager._enqueue_dropped_for_extraction(dropped_messages, self.memory_manager)
 
         # 策略二：如果只剩 2 条还是超限，对单条消息内容做字符级截断
         if self._estimate_messages_tokens(truncated) > hard_limit:
@@ -2847,6 +2845,7 @@ search_github → install_skill → 使用
             self._cli_session = Session.create(
                 channel="cli", chat_id="cli", user_id="user"
             )
+            self._cli_session.set_metadata("_memory_manager", self.memory_manager)
 
         # 模拟 Gateway 的消息管理流程：先记录用户消息到 Session
         self._cli_session.add_message("user", message)
@@ -2942,6 +2941,10 @@ search_github → install_skill → 使用
             session=session if gateway else None,
             gateway=gateway,
         )
+
+        # 2.5 注入 memory_manager 到 session metadata（供 session 截断时入队提取）
+        if session is not None:
+            session.set_metadata("_memory_manager", self.memory_manager)
 
         # 3. Agent state / log session
         self._current_session = session
@@ -6207,7 +6210,11 @@ NEXT: 建议的下一步（如有）"""
             errors=errors or [],
         )
 
-        # MEMORY.md 由 DailyConsolidator 在凌晨刷新，shutdown 时不同步
+        # 等待记忆系统挂起的异步任务（episode 生成等）
+        try:
+            await self.memory_manager.await_pending_tasks(timeout=15.0)
+        except Exception as e:
+            logger.warning(f"Failed to await memory pending tasks: {e}")
 
         self._running = False
         logger.info("Agent shutdown complete")

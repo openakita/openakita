@@ -102,6 +102,9 @@ class MemoryManager:
         self._session_turns: list[ConversationTurn] = []
         self._recent_messages: list[dict] = []
 
+        # Track pending async tasks to await on shutdown
+        self._pending_tasks: set[asyncio.Task] = set()
+
         # Load existing memories
         self._load_memories()
 
@@ -265,17 +268,17 @@ class MemoryManager:
         if role == "user":
             try:
                 loop = asyncio.get_running_loop()
+                _session_id = self._current_session_id
+                _turn_index = len(self._session_turns) - 1
 
                 async def _extract_and_add() -> None:
                     try:
-                        # v2 extraction preferred
                         items = await self.extractor.extract_from_turn_v2(turn)
                         if items:
                             for item in items:
                                 self._save_extracted_item(item)
                             logger.info(f"[Memory] v2 extraction: {len(items)} items")
                         else:
-                            # Fallback to v1
                             memories = await self.extractor.extract_from_turn_with_ai(turn)
                             for memory in memories:
                                 await asyncio.to_thread(self.add_memory, memory)
@@ -283,17 +286,14 @@ class MemoryManager:
                                 logger.info(f"[Memory] v1 extraction: {len(memories)} memories")
                     except Exception as e:
                         logger.warning(f"[Memory] Extraction failed (isolated): {e}")
-                        # Enqueue for retry
-                        if self._current_session_id:
-                            self.store.enqueue_extraction(
-                                session_id=self._current_session_id,
-                                turn_index=len(self._session_turns) - 1,
-                                content=content,
-                                tool_calls=tool_calls,
-                                tool_results=tool_results,
-                            )
+                        self._safe_enqueue_extraction(
+                            _session_id, _turn_index, content, tool_calls, tool_results
+                        )
+                    finally:
+                        self._pending_tasks.discard(task)
 
-                loop.create_task(_extract_and_add())
+                task = loop.create_task(_extract_and_add())
+                self._pending_tasks.add(task)
             except RuntimeError:
                 pass
             except Exception as e:
@@ -370,7 +370,7 @@ class MemoryManager:
         for memory in memories:
             self.add_memory(memory)
 
-        # v2: Generate episode + update scratchpad (async)
+        # v2: Generate episode + update scratchpad (async, with tracking)
         session_id = self._current_session_id
         turns = list(self._session_turns)
 
@@ -390,14 +390,91 @@ class MemoryManager:
                         logger.info(f"[Memory] Session finalized: episode + scratchpad updated")
                 except Exception as e:
                     logger.warning(f"[Memory] Session finalization failed: {e}")
+                finally:
+                    self._pending_tasks.discard(task)
 
-            loop.create_task(_finalize_session())
+            task = loop.create_task(_finalize_session())
+            self._pending_tasks.add(task)
         except RuntimeError:
-            pass
+            # 无 event loop（同步环境 / CLI 一次性任务）: 将 turns 入队提取作为 fallback
+            self._enqueue_session_turns_for_extraction(session_id, turns)
 
         logger.info(f"Ended session {session_id}: {len(memories)} memories extracted")
         self._current_session_id = None
         self._session_turns = []
+
+    def _enqueue_session_turns_for_extraction(
+        self, session_id: str, turns: list[ConversationTurn]
+    ) -> None:
+        """Fallback: 将会话 turns 入队提取（用于无 event loop 的同步场景）"""
+        try:
+            enqueued = 0
+            for i, turn in enumerate(turns):
+                if turn.content and len(turn.content) >= 20:
+                    self.store.enqueue_extraction(
+                        session_id=session_id,
+                        turn_index=i,
+                        content=turn.content,
+                        tool_calls=turn.tool_calls or None,
+                        tool_results=turn.tool_results or None,
+                    )
+                    enqueued += 1
+            if enqueued:
+                logger.info(f"[Memory] Enqueued {enqueued} turns for deferred extraction (no event loop)")
+        except Exception as e:
+            logger.warning(f"[Memory] Failed to enqueue session turns: {e}")
+
+    async def await_pending_tasks(self, timeout: float = 30.0) -> None:
+        """等待所有挂起的异步任务完成（在 shutdown 时调用）"""
+        if not self._pending_tasks:
+            return
+        pending = list(self._pending_tasks)
+        logger.info(f"[Memory] Awaiting {len(pending)} pending tasks (timeout={timeout}s)...")
+        done, not_done = await asyncio.wait(pending, timeout=timeout)
+        if not_done:
+            logger.warning(f"[Memory] {len(not_done)} tasks did not complete within timeout")
+            for t in not_done:
+                t.cancel()
+        self._pending_tasks.clear()
+
+    def _safe_enqueue_extraction(
+        self,
+        session_id: str | None,
+        turn_index: int,
+        content: str,
+        tool_calls: list | None = None,
+        tool_results: list | None = None,
+    ) -> None:
+        """安全入队提取 — 捕获所有异常，永不抛出"""
+        try:
+            sid = session_id or self._current_session_id or "unknown"
+            self.store.enqueue_extraction(
+                session_id=sid,
+                turn_index=turn_index,
+                content=content,
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+            )
+            logger.info(f"[Memory] Enqueued extraction for retry: session={sid}, turn={turn_index}")
+        except Exception as e:
+            # 最终 fallback: 写到本地文件，防止数据永久丢失
+            try:
+                fallback_dir = self.data_dir / "extraction_fallback"
+                fallback_dir.mkdir(parents=True, exist_ok=True)
+                import json
+                from datetime import datetime
+
+                fallback_file = fallback_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{turn_index}.json"
+                fallback_file.write_text(
+                    json.dumps(
+                        {"session_id": session_id, "turn_index": turn_index, "content": content},
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                logger.warning(f"[Memory] Enqueue failed ({e}), saved to fallback file: {fallback_file}")
+            except Exception as e2:
+                logger.error(f"[Memory] Both enqueue and fallback failed: enqueue={e}, fallback={e2}")
 
     # ==================== Context Compression Hook ====================
 

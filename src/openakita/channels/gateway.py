@@ -1275,7 +1275,8 @@ class MessageGateway:
                 content=_save_text,
                 **({"chain_summary": _chain_summary} if _chain_summary else {}),
             )
-            self.session_manager.mark_dirty()  # 触发保存
+            self.session_manager.mark_dirty()
+            self.session_manager.flush()
 
             # 9. 发送响应
             logger.info(

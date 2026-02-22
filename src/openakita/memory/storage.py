@@ -21,7 +21,7 @@ import json
 import logging
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -914,11 +914,34 @@ class MemoryStorage:
             except Exception as e:
                 logger.error(f"Failed to enqueue extraction: {e}")
 
+    def _recover_stuck_extractions(self, stuck_timeout_minutes: int = 30) -> int:
+        """将卡在 'processing' 超过 stuck_timeout_minutes 的项重置为 'pending'"""
+        if not self._conn:
+            return 0
+        try:
+            cutoff = (datetime.now() - timedelta(minutes=stuck_timeout_minutes)).isoformat()
+            cur = self._conn.execute(
+                "UPDATE extraction_queue SET status = 'pending' "
+                "WHERE status = 'processing' AND last_attempted_at < ?",
+                (cutoff,),
+            )
+            self._conn.commit()
+            recovered = cur.rowcount
+            if recovered:
+                logger.warning(f"[ExtractionQueue] Recovered {recovered} stuck items (>{stuck_timeout_minutes}m)")
+            return recovered
+        except Exception as e:
+            logger.error(f"Failed to recover stuck extractions: {e}")
+            return 0
+
     def dequeue_extraction(self, batch_size: int = 10) -> list[dict]:
         if not self._conn:
             return []
         with self._lock:
             try:
+                # 先恢复卡住的 processing 项
+                self._recover_stuck_extractions()
+
                 cur = self._conn.execute(
                     "SELECT * FROM extraction_queue WHERE status = 'pending' "
                     "AND retry_count < max_retries "
