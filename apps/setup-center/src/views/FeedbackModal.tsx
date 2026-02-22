@@ -202,8 +202,16 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       >
         {/* Header */}
         <div className="dialogHeader">
-          <div className="cardTitle">
+          <div className="cardTitle" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isBug ? t("bugReport.title") : t("featureRequest.title")}
+            <span style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+              padding: "1px 6px", borderRadius: 4,
+              background: "linear-gradient(135deg, #f59e0b, #f97316)",
+              color: "#fff", lineHeight: "16px", textTransform: "uppercase",
+            }}>
+              Beta
+            </span>
           </div>
           <button className="dialogCloseBtn" onClick={handleClose}>
             <IconX size={14} />
