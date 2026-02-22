@@ -128,6 +128,7 @@ class OpenAIProvider(LLMProvider):
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
         """发送聊天请求"""
+        await self.acquire_rate_limit()
         client = await self._get_client()
 
         # 构建请求体
@@ -153,8 +154,6 @@ class OpenAIProvider(LLMProvider):
             try:
                 data = response.json()
             except JSONDecodeError:
-                # 某些 OpenAI 兼容网关可能返回 200 但 body 为空/非 JSON（例如 HTML 错误页）
-                # 这里把关键信息打进错误文本，便于排障（base_url 是否需要 /v1 等）
                 content_type = response.headers.get("content-type", "")
                 body_preview = (response.text or "")[:500]
                 raise LLMError(
@@ -162,6 +161,37 @@ class OpenAIProvider(LLMProvider):
                     f"(status={response.status_code}, content-type={content_type}, "
                     f"body_preview={body_preview!r})"
                 )
+
+            # 某些 OpenAI 兼容 API 在 HTTP 200 响应体内返回错误（不走标准 HTTP 状态码）
+            if "error" in data and data["error"]:
+                err_obj = data["error"] if isinstance(data["error"], dict) else {"message": str(data["error"])}
+                err_msg = err_obj.get("message", str(err_obj))
+                err_code = err_obj.get("code", "")
+                logger.warning(
+                    f"[OpenAI] '{self.name}': API returned 200 with error in body: "
+                    f"code={err_code}, message={err_msg}"
+                )
+                raise LLMError(f"API error in response body: {err_msg}")
+
+            # HTTP 200 但 choices 为空 —— 某些中转/兼容 API 的异常行为
+            # （正常推理不可能返回空 choices，这通常表示上游限流、模型不可用等问题）
+            choices = data.get("choices")
+            if not choices:
+                body_preview = json.dumps(data, ensure_ascii=False)[:500]
+                logger.warning(
+                    f"[OpenAI] '{self.name}': API returned 200 but choices is empty. "
+                    f"Response preview: {body_preview}"
+                )
+                self.mark_unhealthy(
+                    f"Empty choices in 200 response (model={data.get('model', '?')})",
+                    is_local=self._is_local_endpoint(),
+                )
+                raise LLMError(
+                    f"API returned empty response (no choices) from '{self.name}'. "
+                    f"This usually indicates the model is unavailable, rate-limited, "
+                    f"or the API key lacks permission. Response: {body_preview}"
+                )
+
             self.mark_healthy()
             return self._parse_response(data)
 
@@ -176,6 +206,7 @@ class OpenAIProvider(LLMProvider):
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
         """流式聊天请求"""
+        await self.acquire_rate_limit()
         client = await self._get_client()
 
         body = self._build_request_body(request)
@@ -192,17 +223,51 @@ class OpenAIProvider(LLMProvider):
                     error_body = await response.aread()
                     raise LLMError(f"API error ({response.status_code}): {error_body.decode()}")
 
+                has_content = False
+                first_line_raw = None
                 async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    if first_line_raw is None:
+                        first_line_raw = line
+
                     if line.startswith("data: "):
                         data = line[6:]
                         if data.strip() and data != "[DONE]":
                             try:
                                 event = json.loads(data)
+                                has_content = True
                                 yield self._convert_stream_event(event)
                             except json.JSONDecodeError:
                                 continue
+                    elif not has_content and not line.startswith(":"):
+                        # 非 SSE 格式——可能是普通 JSON 错误响应
+                        try:
+                            err_data = json.loads(line)
+                            if "error" in err_data:
+                                err_obj = err_data["error"]
+                                err_msg = err_obj.get("message", str(err_obj)) if isinstance(err_obj, dict) else str(err_obj)
+                                raise LLMError(f"Stream error from '{self.name}': {err_msg}")
+                        except json.JSONDecodeError:
+                            if "error" in line.lower():
+                                raise LLMError(f"Stream error from '{self.name}': {line[:500]}")
 
-                self.mark_healthy()
+                if has_content:
+                    self.mark_healthy()
+                else:
+                    preview = (first_line_raw or "")[:300]
+                    logger.warning(
+                        f"[OpenAI] '{self.name}': stream returned 200 but no content chunks. "
+                        f"First line: {preview!r}"
+                    )
+                    self.mark_unhealthy(
+                        f"Empty stream response (model={body.get('model', '?')})",
+                        is_local=self._is_local_endpoint(),
+                    )
+                    raise LLMError(
+                        f"Stream returned empty response from '{self.name}'. "
+                        f"Model may be unavailable or rate-limited."
+                    )
 
         except httpx.TimeoutException as e:
             detail = f"{type(e).__name__}: {e}"

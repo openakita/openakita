@@ -500,6 +500,8 @@
     "advContextWindowHint": "Context window size (tokens)",
     "advTimeout": "Timeout (s)",
     "advTimeoutHint": "Request timeout in seconds",
+    "advRpmLimit": "RPM Limit",
+    "advRpmLimitHint": "Max requests per minute, 0 = no limit",
     "compiler": "Prompt Compiler Model",
     "compilerHint": "Lightweight model for preprocessing, use a fast small model",
     "addCompiler": "Add Compiler Endpoint",

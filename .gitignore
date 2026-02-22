@@ -82,8 +82,9 @@ apps/**/dist/
 apps/**/.vite/
 apps/**/src-tauri/target/
 apps/**/tsconfig.tsbuildinfo
-# Tauri resources - 构建产物，不应提交
-apps/setup-center/src-tauri/resources/openakita-server/
+# Tauri resources - 构建产物，不应提交（保留 .gitkeep 使空目录入库）
+apps/setup-center/src-tauri/resources/openakita-server/*
+!apps/setup-center/src-tauri/resources/openakita-server/.gitkeep
 apps/setup-center/src-tauri/resources/modules/
 
 # Data (keep structure)

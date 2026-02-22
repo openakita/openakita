@@ -1140,6 +1140,7 @@ export function App() {
   const [addEpMaxTokens, setAddEpMaxTokens] = useState(0);
   const [addEpContextWindow, setAddEpContextWindow] = useState(150000);
   const [addEpTimeout, setAddEpTimeout] = useState(180);
+  const [addEpRpmLimit, setAddEpRpmLimit] = useState(0);
   const [codingPlanMode, setCodingPlanMode] = useState(false);
 
   // Compiler endpoint form state
@@ -1181,6 +1182,7 @@ export function App() {
     maxTokens: number;
     contextWindow: number;
     timeout: number;
+    rpmLimit: number;
     pricingTiers: { max_input: number; input_price: number; output_price: number }[];
   } | null>(null);
   const dragNameRef = useRef<string | null>(null);
@@ -1992,9 +1994,9 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProvider) return;
-    // Coding Plan 固定为 Anthropic 兼容协议，URL 与协议一致
+    // Coding Plan：根据 provider 的 coding_plan_api_type 切换协议与 URL
     if (codingPlanMode && selectedProvider.coding_plan_base_url) {
-      setApiType("anthropic");
+      setApiType((selectedProvider.coding_plan_api_type as "openai" | "anthropic") || "anthropic");
       if (!baseUrlTouched) setBaseUrl(selectedProvider.coding_plan_base_url);
       setAddEpContextWindow(150000);
       setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 8192);
@@ -2941,6 +2943,7 @@ export function App() {
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
       contextWindow: typeof ep.context_window === "number" ? ep.context_window : 150000,
       timeout: typeof ep.timeout === "number" ? ep.timeout : 180,
+      rpmLimit: typeof ep.rpm_limit === "number" ? ep.rpm_limit : 0,
       pricingTiers: Array.isArray(ep.pricing_tiers) ? ep.pricing_tiers.map((t: any) => ({
         max_input: Number(t.max_input ?? 0),
         input_price: Number(t.input_price ?? 0),
@@ -3068,6 +3071,7 @@ export function App() {
         max_tokens: editDraft.maxTokens ?? 0,
         context_window: editDraft.contextWindow ?? 150000,
         timeout: editDraft.timeout ?? 180,
+        rpm_limit: editDraft.rpmLimit ?? 0,
         capabilities: editDraft.caps?.length ? editDraft.caps : ["text"],
         extra_params:
           (editDraft.caps || []).includes("thinking") && editDraft.providerSlug === "dashscope"
@@ -3194,6 +3198,7 @@ export function App() {
           max_tokens: addEpMaxTokens,
           context_window: addEpContextWindow,
           timeout: addEpTimeout,
+          rpm_limit: addEpRpmLimit,
           capabilities: capList,
           // DashScope 思考模式：OpenAkita 的 OpenAI provider 会识别 enable_thinking
           extra_params:
@@ -5689,6 +5694,11 @@ export function App() {
                     <input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                     <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advTimeoutHint")}</div>
                   </div>
+                  <div>
+                    <div className="dialogLabel">{t("llm.advRpmLimit")}</div>
+                    <input type="number" min={0} value={addEpRpmLimit} onChange={(e) => setAddEpRpmLimit(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advRpmLimitHint")}</div>
+                  </div>
                 </div>
               </details>
               </div>
@@ -5863,6 +5873,11 @@ export function App() {
                     <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advTimeout")}</div>
                     <input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                     <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advTimeoutHint")}</div>
+                  </div>
+                  <div className="dialogSection" style={{ margin: 0 }}>
+                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advRpmLimit")}</div>
+                    <input type="number" min={0} value={editDraft.rpmLimit} onChange={(e) => setEditDraft({ ...editDraft, rpmLimit: Math.max(0, parseInt(e.target.value) || 0) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advRpmLimitHint")}</div>
                   </div>
                 </div>
               </details>

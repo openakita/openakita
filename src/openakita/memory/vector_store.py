@@ -118,6 +118,8 @@ class VectorStore:
         self._init_failed = False
         self._init_fail_time: float = 0.0
         self._init_retry_cooldown: float = 300.0  # 失败后 5 分钟冷却再重试
+        self._retry_count: int = 0
+        self._import_missing: bool = False  # 依赖缺失（ImportError）
         self._lock = threading.RLock()
 
         # 立即启动后台初始化（不阻塞调用方）
@@ -174,7 +176,9 @@ class VectorStore:
                 self._enabled = False
                 self._init_state = "failed"
                 self._init_failed = True
+                self._import_missing = True
                 self._init_fail_time = _time.monotonic()
+                self._retry_count += 1
             return
 
         try:
@@ -216,6 +220,8 @@ class VectorStore:
                 self._enabled = True
                 self._init_state = "ready"
                 self._init_failed = False
+                self._import_missing = False
+                self._retry_count = 0
 
             logger.info(
                 f"[VectorStore] ✓ 初始化完成，已加载 {collection.count()} 条记忆"
@@ -240,10 +246,7 @@ class VectorStore:
                 self._init_state = "failed"
                 self._init_failed = True
                 self._init_fail_time = _time.monotonic()
-
-            logger.info(
-                f"[VectorStore] 将在 {self._init_retry_cooldown:.0f}s 后自动重试初始化"
-            )
+                self._retry_count += 1
 
     def _ensure_initialized(self) -> bool:
         """检查是否已初始化就绪。
@@ -252,6 +255,7 @@ class VectorStore:
         - 已就绪 → 返回 True
         - 正在加载 → 返回 False（调用方优雅降级）
         - 加载失败且冷却期已过 → 触发后台重试，返回 False
+        - 依赖缺失（ImportError）→ 指数退避，最长 1 小时
         """
         global _sentence_transformers_available, _chromadb
 
@@ -260,17 +264,26 @@ class VectorStore:
                 return True
 
             if self._init_state == "loading":
-                return False  # 正在后台加载，不阻塞
+                return False
 
-            # 失败后冷却重试
             if self._init_failed:
                 import time as _time
 
+                # 依赖缺失时指数退避：300s → 600s → 1200s → … → 3600s 封顶
+                if self._import_missing:
+                    cooldown = min(
+                        self._init_retry_cooldown * (2 ** (self._retry_count - 1)),
+                        3600.0,
+                    )
+                else:
+                    cooldown = self._init_retry_cooldown
+
                 elapsed = _time.monotonic() - self._init_fail_time
-                if elapsed < self._init_retry_cooldown:
-                    return False  # 冷却期内不重试
+                if elapsed < cooldown:
+                    return False
                 logger.info(
-                    f"[VectorStore] 上次初始化失败已过 {elapsed:.0f}s，后台重新尝试..."
+                    f"[VectorStore] 上次初始化失败已过 {elapsed:.0f}s"
+                    f"（重试 #{self._retry_count + 1}），后台重新尝试..."
                 )
                 self._init_failed = False
                 # 重置全局导入缓存，允许重新尝试 import
@@ -278,7 +291,6 @@ class VectorStore:
                 _sentence_transformers_available = None
                 _chromadb = None
 
-        # 触发后台重试
         self._start_background_init()
         return False
 

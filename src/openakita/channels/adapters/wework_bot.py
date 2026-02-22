@@ -23,6 +23,7 @@
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -418,6 +419,8 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         if self._cleanup_task:
             self._cleanup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._cleanup_task
 
         if self._callback_site:
             await self._callback_site.stop()

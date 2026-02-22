@@ -14,8 +14,9 @@ CONFIG_TOOLS = [
             "(1) view or change any system setting (log level, thinking mode, proxy, IM channel, etc.), "
             "(2) add/remove/test LLM endpoints, "
             "(3) switch UI theme or language, "
-            "(4) discover what settings are available. "
-            "IMPORTANT: Before calling action=set or action=add_endpoint, "
+            "(4) discover what settings are available, "
+            "(5) manage LLM providers (add/update/remove custom providers). "
+            "IMPORTANT: Before calling action=set, action=add_endpoint, or action=manage_provider with add/update/remove, "
             "ALWAYS use ask_user first to confirm the changes with the user. "
             "If unsure which config key to use, call action=discover first."
         ),
@@ -53,11 +54,24 @@ API Key 存入 .env，JSON 中只引用环境变量名。
 ### set_ui -- 设置 UI 偏好
 切换桌面客户端的主题和语言。非 Desktop 通道会提示仅影响桌面端。
 
+### manage_provider -- 管理 LLM 服务商
+管理 LLM 服务商列表（内置 + 自定义）。自定义服务商存储在工作区 data/custom_providers.json。
+- operation=list: 列出所有服务商
+- operation=add: 添加自定义服务商（provider 字段必填: slug, name, api_type, default_base_url）
+- operation=update: 修改服务商配置（可覆盖内置服务商的默认设置）
+- operation=remove: 删除自定义服务商（内置服务商不可删除，但可移除自定义覆盖）
+
+服务商规则:
+- slug: 唯一标识，只允许小写字母、数字、连字符、下划线
+- api_type: 只允许 "openai" 或 "anthropic"
+- default_base_url: 必须以 http:// 或 https:// 开头
+- registry_class: 不填则根据 api_type 自动选择 OpenAIRegistry 或 AnthropicRegistry
+
 ## 使用流程
 1. 不确定 key 名 → 先 discover
 2. 查看当前值 → get
 3. 修改前 → 用 ask_user 确认
-4. 确认后 → set / add_endpoint / remove_endpoint
+4. 确认后 → set / add_endpoint / remove_endpoint / manage_provider
 """,
         "input_schema": {
             "type": "object",
@@ -72,6 +86,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                         "remove_endpoint",
                         "test_endpoint",
                         "set_ui",
+                        "manage_provider",
                     ],
                     "description": "操作类型",
                 },
@@ -160,6 +175,35 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                     "enum": ["zh", "en"],
                     "description": "UI 语言（set_ui 时）",
                 },
+                "operation": {
+                    "type": "string",
+                    "enum": ["list", "add", "update", "remove"],
+                    "description": "服务商操作类型（manage_provider 时必填）",
+                },
+                "provider": {
+                    "type": "object",
+                    "description": (
+                        "服务商配置（manage_provider 的 add/update 时必填）。"
+                        "add 必填: slug, name, api_type, default_base_url。"
+                        "update 必填: slug（定位），其余为要修改的字段。"
+                    ),
+                    "properties": {
+                        "slug": {"type": "string", "description": "服务商唯一标识（小写字母、数字、连字符）"},
+                        "name": {"type": "string", "description": "显示名称"},
+                        "api_type": {"type": "string", "enum": ["openai", "anthropic"], "description": "API 协议类型"},
+                        "default_base_url": {"type": "string", "description": "默认 API 地址"},
+                        "api_key_env_suggestion": {"type": "string", "description": "建议的 API Key 环境变量名"},
+                        "supports_model_list": {"type": "boolean", "description": "是否支持拉取模型列表"},
+                        "requires_api_key": {"type": "boolean", "description": "是否需要 API Key"},
+                        "is_local": {"type": "boolean", "description": "是否为本地服务（如 Ollama）"},
+                        "coding_plan_base_url": {"type": "string", "description": "Coding Plan 专用 API 地址"},
+                        "coding_plan_api_type": {"type": "string", "description": "Coding Plan 协议类型"},
+                    },
+                },
+                "slug": {
+                    "type": "string",
+                    "description": "服务商 slug（manage_provider 的 remove 时必填）",
+                },
             },
             "required": ["action"],
         },
@@ -168,6 +212,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
             "User asks about available configuration options",
             "User wants to add, remove, or test LLM endpoints",
             "User wants to switch theme or language",
+            "User wants to add, modify, or remove LLM providers/服务商",
         ],
         "examples": [
             {
@@ -197,6 +242,24 @@ API Key 存入 .env，JSON 中只引用环境变量名。
             {
                 "scenario": "切换暗色主题",
                 "params": {"action": "set_ui", "theme": "dark"},
+            },
+            {
+                "scenario": "列出所有 LLM 服务商",
+                "params": {"action": "manage_provider", "operation": "list"},
+            },
+            {
+                "scenario": "添加自定义服务商",
+                "params": {
+                    "action": "manage_provider",
+                    "operation": "add",
+                    "provider": {
+                        "slug": "my-proxy",
+                        "name": "My API Proxy",
+                        "api_type": "openai",
+                        "default_base_url": "https://my-proxy.example.com/v1",
+                        "api_key_env_suggestion": "MY_PROXY_API_KEY",
+                    },
+                },
             },
         ],
     },

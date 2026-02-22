@@ -4,14 +4,70 @@ LLM Provider 基类
 定义所有 Provider 必须实现的接口。
 """
 
+import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import AsyncIterator
 
 from ..types import EndpointConfig, LLMRequest, LLMResponse
 
 logger = logging.getLogger(__name__)
+
+
+class RPMRateLimiter:
+    """滑动窗口 RPM (Requests Per Minute) 限流器。
+
+    采用 60 秒滑动窗口 + asyncio.Lock 保证并发安全。
+    当请求速率超过限制时，自动等待直到窗口内有空余配额。
+    """
+
+    __slots__ = ("_rpm", "_window", "_timestamps", "_lock", "_lock_loop_id")
+
+    def __init__(self, rpm: int):
+        self._rpm = rpm
+        self._window = 60.0
+        self._timestamps: deque[float] = deque()
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop_id: int | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """获取或创建 asyncio.Lock（绑定到当前事件循环）。"""
+        try:
+            loop_id = id(asyncio.get_running_loop())
+        except RuntimeError:
+            loop_id = None
+        if self._lock is None or self._lock_loop_id != loop_id:
+            self._lock = asyncio.Lock()
+            self._lock_loop_id = loop_id
+        return self._lock
+
+    async def acquire(self, endpoint_name: str = "") -> None:
+        """获取一个请求配额，必要时等待。"""
+        if self._rpm <= 0:
+            return
+
+        lock = self._get_lock()
+        while True:
+            async with lock:
+                now = time.monotonic()
+                while self._timestamps and self._timestamps[0] <= now - self._window:
+                    self._timestamps.popleft()
+
+                if len(self._timestamps) < self._rpm:
+                    self._timestamps.append(now)
+                    return
+
+                oldest = self._timestamps[0]
+                wait_time = oldest + self._window - now
+
+            tag = f" endpoint={endpoint_name}" if endpoint_name else ""
+            logger.info(
+                f"[RPM]{tag} rate limit reached ({self._rpm} rpm), "
+                f"waiting {wait_time:.1f}s"
+            )
+            await asyncio.sleep(max(wait_time, 0.1))
 
 # 冷静期时长（秒）- 按错误类型区分
 # 设计原则：冷却只防止秒级连续轰炸，不阻塞其他会话；
@@ -44,6 +100,10 @@ class LLMProvider(ABC):
         self._error_category: str = ""   # 错误分类
         self._consecutive_cooldowns: int = 0  # 连续进入冷静期次数（无成功请求间隔）
         self._is_extended_cooldown: bool = False  # 是否处于升级冷静期
+        _rpm = config.rpm_limit if isinstance(config.rpm_limit, int) else 0
+        self._rate_limiter: RPMRateLimiter | None = (
+            RPMRateLimiter(_rpm) if _rpm > 0 else None
+        )
 
     @property
     def name(self) -> str:
@@ -214,6 +274,11 @@ class LLMProvider(ABC):
             self._cooldown_until = 0
             self._last_error = None
             self._error_category = ""
+
+    async def acquire_rate_limit(self):
+        """获取 RPM 限流配额，必要时等待。无限流配置时立即返回。"""
+        if self._rate_limiter:
+            await self._rate_limiter.acquire(endpoint_name=self.name)
 
     def reset_cooldown(self):
         """重置冷静期，允许端点立即被重新尝试

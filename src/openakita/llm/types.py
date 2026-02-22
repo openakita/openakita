@@ -437,6 +437,7 @@ class EndpointConfig:
     capabilities: list[str] | None = None  # 能力列表
     extra_params: dict | None = None  # 额外参数
     note: str | None = None  # 备注
+    rpm_limit: int = 0  # 每分钟请求数限制 (0=不限流)
     pricing_tiers: list[dict] | None = None  # 阶梯定价 [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
     price_currency: str = "CNY"  # 价格货币单位
 
@@ -536,6 +537,7 @@ class EndpointConfig:
             capabilities=data.get("capabilities"),
             extra_params=data.get("extra_params"),
             note=data.get("note"),
+            rpm_limit=int(data.get("rpm_limit") or 0),
             pricing_tiers=data.get("pricing_tiers"),
             price_currency=data.get("price_currency", "CNY"),
         )
@@ -563,6 +565,8 @@ class EndpointConfig:
             result["extra_params"] = self.extra_params
         if self.note:
             result["note"] = self.note
+        if self.rpm_limit and self.rpm_limit > 0:
+            result["rpm_limit"] = self.rpm_limit
         if self.pricing_tiers:
             result["pricing_tiers"] = self.pricing_tiers
         if self.price_currency and self.price_currency != "CNY":

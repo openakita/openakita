@@ -9,6 +9,7 @@ MCP (Model Context Protocol) 客户端
 - streamable_http: Streamable HTTP (用于 mcp-chrome 等)
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -189,6 +190,9 @@ class MCPClient:
             logger.error(f"Failed to connect to {server_name}: {e}")
             return False
 
+    _CONNECT_TIMEOUT: int = 30
+    _CALL_TIMEOUT: int = 60
+
     async def _connect_stdio(self, server_name: str, config: MCPServerConfig) -> bool:
         """通过 stdio 连接到 MCP 服务器"""
         server_params = StdioServerParameters(
@@ -201,13 +205,20 @@ class MCPClient:
         client_cm = None
         try:
             stdio_cm = stdio_client(server_params)
-            read, write = await stdio_cm.__aenter__()
+            read, write = await asyncio.wait_for(
+                stdio_cm.__aenter__(), timeout=self._CONNECT_TIMEOUT,
+            )
 
             client_cm = ClientSession(read, write)
-            client = await client_cm.__aenter__()
-            await client.initialize()
+            client = await asyncio.wait_for(
+                client_cm.__aenter__(), timeout=self._CONNECT_TIMEOUT,
+            )
+            await asyncio.wait_for(client.initialize(), timeout=self._CONNECT_TIMEOUT)
 
-            await self._discover_capabilities(server_name, client)
+            await asyncio.wait_for(
+                self._discover_capabilities(server_name, client),
+                timeout=self._CONNECT_TIMEOUT,
+            )
 
             self._connections[server_name] = {
                 "client": client,
@@ -248,13 +259,20 @@ class MCPClient:
         client_cm = None
         try:
             http_cm = streamablehttp_client(url=config.url)
-            read, write, _ = await http_cm.__aenter__()
+            read, write, _ = await asyncio.wait_for(
+                http_cm.__aenter__(), timeout=self._CONNECT_TIMEOUT,
+            )
 
             client_cm = ClientSession(read, write)
-            client = await client_cm.__aenter__()
-            await client.initialize()
+            client = await asyncio.wait_for(
+                client_cm.__aenter__(), timeout=self._CONNECT_TIMEOUT,
+            )
+            await asyncio.wait_for(client.initialize(), timeout=self._CONNECT_TIMEOUT)
 
-            await self._discover_capabilities(server_name, client)
+            await asyncio.wait_for(
+                self._discover_capabilities(server_name, client),
+                timeout=self._CONNECT_TIMEOUT,
+            )
 
             self._connections[server_name] = {
                 "client": client,
@@ -382,7 +400,10 @@ class MCPClient:
             if client is None:
                 return MCPCallResult(success=False, error=f"Invalid connection for server: {server_name}")
 
-            result = await client.call_tool(tool_name, arguments)
+            result = await asyncio.wait_for(
+                client.call_tool(tool_name, arguments),
+                timeout=self._CALL_TIMEOUT,
+            )
 
             content = []
             for item in result.content:
@@ -429,7 +450,9 @@ class MCPClient:
             client = conn.get("client") if isinstance(conn, dict) else conn
             if client is None:
                 return MCPCallResult(success=False, error=f"Invalid connection for server: {server_name}")
-            result = await client.read_resource(uri)
+            result = await asyncio.wait_for(
+                client.read_resource(uri), timeout=self._CALL_TIMEOUT,
+            )
 
             content = []
             for item in result.contents:
@@ -475,7 +498,10 @@ class MCPClient:
             client = conn.get("client") if isinstance(conn, dict) else conn
             if client is None:
                 return MCPCallResult(success=False, error=f"Invalid connection for server: {server_name}")
-            result = await client.get_prompt(prompt_name, arguments or {})
+            result = await asyncio.wait_for(
+                client.get_prompt(prompt_name, arguments or {}),
+                timeout=self._CALL_TIMEOUT,
+            )
 
             messages = []
             for msg in result.messages:

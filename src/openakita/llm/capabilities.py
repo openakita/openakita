@@ -691,6 +691,8 @@ URL_TO_PROVIDER = {
     "api.siliconflow.cn": "siliconflow",
     "api.siliconflow.com": "siliconflow",
     "yunwu.ai": "yunwu",
+    "api.longcat.chat": "longcat",
+    "apis.iflow.cn": "iflow",
     "ark.cn-beijing.volces.com": "volcengine",
 }
 

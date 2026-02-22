@@ -500,6 +500,8 @@
     "advContextWindowHint": "上下文窗口大小 (tokens)",
     "advTimeout": "请求超时 (秒)",
     "advTimeoutHint": "单次请求超时秒数",
+    "advRpmLimit": "RPM 限流",
+    "advRpmLimitHint": "每分钟最大请求数，0 = 不限流",
     "compiler": "提示词编译模型",
     "compilerHint": "用于预处理指令的轻量模型，建议使用快速小模型",
     "addCompiler": "添加编译端点",

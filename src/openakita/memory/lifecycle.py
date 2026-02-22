@@ -297,28 +297,30 @@ class LifecycleManager:
 
     def cleanup_stale_attachments(self, max_age_days: int = 90) -> int:
         """清理过期的空白附件 (无描述+无关联+超龄)"""
-        if not self.store.db._conn:
+        db = self.store.db
+        if not db._conn:
             return 0
-        try:
-            from datetime import timedelta
-            cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
-            cursor = self.store.db._conn.execute(
-                """DELETE FROM attachments
-                   WHERE created_at < ?
-                     AND description = ''
-                     AND transcription = ''
-                     AND extracted_text = ''
-                     AND linked_memory_ids = '[]'""",
-                (cutoff,),
-            )
-            count = cursor.rowcount
-            if count:
-                self.store.db._conn.commit()
-                logger.info(f"[Lifecycle] Cleaned {count} stale attachments (>{max_age_days} days, no content)")
-            return count
-        except Exception as e:
-            logger.error(f"[Lifecycle] Attachment cleanup failed: {e}")
-            return 0
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        with db._lock:
+            try:
+                cursor = db._conn.execute(
+                    """DELETE FROM attachments
+                       WHERE created_at < ?
+                         AND description = ''
+                         AND transcription = ''
+                         AND extracted_text = ''
+                         AND linked_memory_ids = '[]'""",
+                    (cutoff,),
+                )
+                count = cursor.rowcount
+                if count:
+                    db._conn.commit()
+                    logger.info(f"[Lifecycle] Cleaned {count} stale attachments (>{max_age_days} days, no content)")
+                return count
+            except Exception as e:
+                logger.error(f"[Lifecycle] Attachment cleanup failed: {e}")
+                return 0
 
     # ==================================================================
     # Refresh MEMORY.md

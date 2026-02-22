@@ -744,44 +744,18 @@ fn check_environment() -> EnvironmentCheck {
         }
     }
 
-    // Calculate disk usage
     let disk_usage_mb = dir_size_bytes(&root) / (1024 * 1024);
 
-    // 如果内嵌后端存在，自动清理旧 venv/runtime（它们已经被打包替代，不再需要）
-    let bundled_exists = bundled_backend_dir().exists();
-    let mut auto_cleaned = Vec::new();
-    if has_old_venv && bundled_exists {
-        if force_remove_dir(&root.join("venv")).is_ok() {
-            auto_cleaned.push("venv");
-        }
-    }
-    if has_old_runtime && bundled_exists {
-        if force_remove_dir(&root.join("runtime")).is_ok() {
-            auto_cleaned.push("runtime");
-        }
-    }
+    // venv 和 runtime 是打包后应用运行时所必需的环境组件：
+    // - venv: 用于 pip install 模块（vector-memory/whisper 等）和工具执行
+    // - runtime (embedded python): 用于在无系统 Python 时创建 venv
+    // 即使 bundled backend 存在，它们也不应被自动清理。
+    let _bundled_exists = bundled_backend_dir().exists();
 
-    // 重新检测清理后的状态
-    let has_old_venv = has_old_venv && root.join("venv").exists();
-    let has_old_runtime = has_old_runtime && root.join("runtime").exists();
-
-    // Generate conflict descriptions
     let mut conflicts = Vec::new();
-    if !auto_cleaned.is_empty() {
-        conflicts.push(format!("已自动清理旧环境: {}", auto_cleaned.join(", ")));
-    }
-    if has_old_venv && bundled_exists {
-        conflicts.push("旧 Python 虚拟环境 (venv) 清理失败，请手动删除".to_string());
-    }
-    if has_old_runtime && bundled_exists {
-        conflicts.push("旧 Python 运行时 (runtime) 清理失败，请手动删除".to_string());
-    }
     if !running.is_empty() {
         conflicts.push(format!("检测到 {} 个正在运行的 OpenAkita 进程", running.len()));
     }
-
-    // Recalculate disk usage after cleanup
-    let disk_usage_mb = dir_size_bytes(&root) / (1024 * 1024);
 
     EnvironmentCheck {
         openakita_root: root.to_string_lossy().to_string(),
@@ -833,10 +807,20 @@ fn force_remove_dir(path: &std::path::Path) -> Result<(), String> {
 fn cleanup_old_environment(clean_venv: bool, clean_runtime: bool) -> Result<String, String> {
     let root = openakita_root_dir();
     let mut cleaned = Vec::new();
+    let mut warnings = Vec::new();
 
     if clean_venv {
         let venv_path = root.join("venv");
         if venv_path.exists() {
+            // 检查是否有已安装的外置模块依赖此 venv
+            let modules_base = root.join("modules");
+            let has_installed_modules = modules_base.exists()
+                && modules_base.read_dir()
+                    .map(|mut d| d.any(|e| e.map(|e| e.path().is_dir()).unwrap_or(false)))
+                    .unwrap_or(false);
+            if has_installed_modules {
+                warnings.push("注意: 清理 venv 后已安装的外置模块（vector-memory 等）可能需要重新安装".to_string());
+            }
             force_remove_dir(&venv_path)
                 .map_err(|e| format!("清理 venv 失败: {e}"))?;
             cleaned.push("venv");
@@ -854,7 +838,11 @@ fn cleanup_old_environment(clean_venv: bool, clean_runtime: bool) -> Result<Stri
     if cleaned.is_empty() {
         Ok("无需清理".to_string())
     } else {
-        Ok(format!("已清理: {}", cleaned.join(", ")))
+        let mut msg = format!("已清理: {}", cleaned.join(", "));
+        if !warnings.is_empty() {
+            msg.push_str(&format!(" ({})", warnings.join("; ")));
+        }
+        Ok(msg)
     }
 }
 

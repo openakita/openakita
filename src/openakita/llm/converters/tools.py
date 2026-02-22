@@ -291,8 +291,17 @@ def parse_text_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     kimi_tool_calls = _parse_kimi_tool_calls(text)
     tool_calls.extend(kimi_tool_calls)
 
-    # 清理文本，移除已解析的工具调用
-    if tool_calls:
+    # === 格式 4: JSON 格式 {"name": "...", "arguments": {...}} ===
+    _json_parsed = False
+    if not tool_calls and _has_json_tool_calls(text):
+        json_clean, json_tool_calls = _parse_json_tool_calls(text)
+        if json_tool_calls:
+            tool_calls.extend(json_tool_calls)
+            clean_text = json_clean
+            _json_parsed = True
+
+    # 清理文本，移除已解析的工具调用（格式 1-3 的清理；格式 4 已在上面处理）
+    if tool_calls and not _json_parsed:
         # 移除 function_calls 块
         clean_text = re.sub(
             r"<function_calls>.*?</function_calls>", "", text, flags=re.DOTALL | re.IGNORECASE
@@ -449,6 +458,119 @@ def _parse_invoke_blocks(content: str) -> list[ToolUseBlock]:
     return tool_calls
 
 
+# ── JSON 格式工具调用检测与解析 ──────────────────────────
+# 部分模型（如 Qwen 2.5）在 failover 时会把工具调用以原始 JSON
+# 写入文本响应，而非走结构化 tool_use。典型格式：
+#   {{"name": "browser_open", "arguments": {"visible": true}}}
+#   {"name": "web_search", "arguments": {"query": "test"}}
+
+_JSON_TOOL_CALL_HEADER_RE = re.compile(
+    r'\{+\s*"name"\s*:\s*"([a-z_][a-z0-9_]*)"\s*,\s*"arguments"\s*:\s*',
+)
+
+
+def _extract_balanced_braces(text: str, start: int) -> str | None:
+    """从 start 位置的 ``{`` 开始提取一个括号平衡的 JSON 对象。"""
+    if start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def _has_json_tool_calls(text: str) -> bool:
+    """检测文本中是否包含 JSON 格式的工具调用。"""
+    return bool(_JSON_TOOL_CALL_HEADER_RE.search(text))
+
+
+def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """
+    从文本中提取 JSON 格式工具调用。
+
+    匹配 {"name": "xxx", "arguments": {...}} 或双花括号变体。
+    使用括号计数法正确处理深度嵌套的参数 JSON。
+    返回 (清理后文本, 工具调用列表)。
+    """
+    tool_calls: list[ToolUseBlock] = []
+    spans_to_remove: list[tuple[int, int]] = []
+
+    for m in _JSON_TOOL_CALL_HEADER_RE.finditer(text):
+        tool_name = m.group(1)
+        args_start = m.end()
+
+        args_str = _extract_balanced_braces(text, args_start)
+        if args_str is None:
+            continue
+
+        # 找到外层闭合花括号（跳过可能的多余 }）
+        outer_end = args_start + len(args_str)
+        while outer_end < len(text) and text[outer_end] in " \t\n\r}":
+            outer_end += 1
+
+        # 向前找外层开头的多余 { 以便整块移除
+        outer_start = m.start()
+        while outer_start > 0 and text[outer_start - 1] == "{":
+            outer_start -= 1
+
+        try:
+            arguments = json.loads(args_str)
+        except json.JSONDecodeError:
+            repaired = _try_repair_json(args_str)
+            if repaired is not None:
+                arguments = repaired
+            else:
+                logger.warning(
+                    f"[JSON_TOOL_PARSE] Failed to parse arguments for "
+                    f"'{tool_name}': {args_str[:120]}"
+                )
+                arguments = {"raw": args_str}
+
+        tc = ToolUseBlock(
+            id=f"json_call_{uuid.uuid4().hex[:8]}",
+            name=tool_name,
+            input=arguments,
+        )
+        tool_calls.append(tc)
+        spans_to_remove.append((outer_start, outer_end))
+        logger.info(
+            f"[JSON_TOOL_PARSE] Extracted tool call: {tool_name} "
+            f"with args: {list(arguments.keys()) if isinstance(arguments, dict) else '?'}"
+        )
+
+    if tool_calls:
+        parts: list[str] = []
+        prev = 0
+        for s, e in sorted(spans_to_remove):
+            parts.append(text[prev:s])
+            prev = e
+        parts.append(text[prev:])
+        clean_text = "".join(parts).strip()
+    else:
+        clean_text = text
+
+    return clean_text, tool_calls
+
+
 def has_text_tool_calls(text: str) -> bool:
     """
     检查文本中是否包含工具调用格式
@@ -457,9 +579,11 @@ def has_text_tool_calls(text: str) -> bool:
     - <function_calls> 格式（通用）
     - <minimax:tool_call> 格式（MiniMax）
     - <<|tool_calls_section_begin|>> 格式（Kimi K2）
+    - JSON 格式: {"name": "tool", "arguments": {...}} 或 {{"name": ...}}
     """
     return bool(
         re.search(r"<function_calls>", text, re.IGNORECASE)
         or re.search(r"<minimax:tool_call>", text, re.IGNORECASE)
         or re.search(r"<<\|tool_calls_section_begin\|>>", text)
+        or _has_json_tool_calls(text)
     )

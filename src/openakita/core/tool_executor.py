@@ -89,12 +89,75 @@ class ToolExecutor:
         for handler_name in ("browser", "desktop", "mcp"):
             self._handler_locks[handler_name] = asyncio.Lock()
 
+    # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
+    _TOOL_HARD_TIMEOUT: int = 120
+
     def get_handler_name(self, tool_name: str) -> str | None:
         """获取工具对应的 handler 名称"""
         try:
             return self._handler_registry.get_handler_name_for_tool(tool_name)
         except Exception:
             return None
+
+    async def _execute_with_cancel(
+        self,
+        coro,
+        state: TaskState | None,
+        tool_name: str,
+    ) -> str:
+        """
+        执行工具协程，同时监听 state.cancel_event 和硬超时。
+        如果用户取消或超时，取消工具协程并返回错误信息。
+        """
+        tool_task = asyncio.ensure_future(coro)
+
+        cancel_future: asyncio.Future | None = None
+        if state and hasattr(state, "cancel_event") and state.cancel_event:
+            cancel_future = asyncio.ensure_future(state.cancel_event.wait())
+
+        timeout_task = asyncio.ensure_future(asyncio.sleep(self._TOOL_HARD_TIMEOUT))
+
+        wait_set: set[asyncio.Future] = {tool_task, timeout_task}
+        if cancel_future:
+            wait_set.add(cancel_future)
+
+        try:
+            done, pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+
+            if tool_task in done:
+                return tool_task.result()
+
+            # 工具未完成 —— 是取消还是超时？
+            reason = ""
+            if cancel_future and cancel_future in done:
+                reason = f"用户请求取消任务"
+                logger.warning(f"[ToolExecutor] Tool '{tool_name}' cancelled by user")
+            else:
+                reason = f"工具执行超时 ({self._TOOL_HARD_TIMEOUT}s)"
+                logger.error(f"[ToolExecutor] Tool '{tool_name}' timed out after {self._TOOL_HARD_TIMEOUT}s")
+
+            tool_task.cancel()
+            try:
+                await tool_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+            return f"⚠️ 工具执行被中断: {reason}。工具 '{tool_name}' 已停止。"
+
+        finally:
+            for t in [tool_task, timeout_task]:
+                if not t.done():
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            if cancel_future and not cancel_future.done():
+                cancel_future.cancel()
+                try:
+                    await cancel_future
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def execute_tool(
         self,
@@ -270,12 +333,16 @@ class ToolExecutor:
                 async with self._semaphore:
                     if handler_lock:
                         async with handler_lock:
-                            result = await self.execute_tool(
-                                tool_name, tool_input, session_id=session_id
+                            result = await self._execute_with_cancel(
+                                self.execute_tool(tool_name, tool_input, session_id=session_id),
+                                state,
+                                tool_name,
                             )
                     else:
-                        result = await self.execute_tool(
-                            tool_name, tool_input, session_id=session_id
+                        result = await self._execute_with_cancel(
+                            self.execute_tool(tool_name, tool_input, session_id=session_id),
+                            state,
+                            tool_name,
                         )
 
                 result_str = str(result) if result is not None else "操作已完成"

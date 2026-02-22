@@ -20,6 +20,26 @@ from ..types import (
 )
 from .multimodal import convert_content_blocks_to_openai
 
+# 启用 thinking 时，要求 assistant 消息携带 reasoning_content 的服务商集合
+# 这些服务商的思考模型在响应中返回 reasoning_content，
+# 多轮对话时缺少此字段会返回 400
+_REASONING_CONTENT_PROVIDERS = frozenset({
+    "moonshot",         # legacy Kimi
+    "kimi-cn",          # Kimi 中国区
+    "kimi-int",         # Kimi 国际区
+    "deepseek",         # DeepSeek Reasoner
+    "dashscope",        # 通义千问 Qwen3 / QwQ
+    "siliconflow",      # 硅基流动（托管 DeepSeek-R1 / QwQ / Qwen3 等）
+    "siliconflow-intl", # 硅基流动国际区
+    "volcengine",       # 火山引擎（托管 DeepSeek-R1 / doubao-seed 等）
+    "zhipu",            # 智谱 GLM-5 / GLM-4.7
+})
+
+
+def _needs_reasoning_content(provider: str) -> bool:
+    """服务商在 thinking 模式下是否要求 assistant 消息包含 reasoning_content"""
+    return provider in _REASONING_CONTENT_PROVIDERS or provider.startswith("kimi")
+
 
 def convert_messages_to_openai(
     messages: list[Message],
@@ -74,8 +94,9 @@ def _convert_single_message_to_openai(
     if isinstance(msg.content, str):
         # 简单文本消息
         converted = {"role": msg.role, "content": msg.content}
-        # Kimi 专用：传递 reasoning_content
-        if provider == "moonshot" and msg.reasoning_content:
+        if msg.role == "assistant" and enable_thinking and _needs_reasoning_content(provider):
+            converted["reasoning_content"] = msg.reasoning_content or ""
+        elif msg.reasoning_content:
             converted["reasoning_content"] = msg.reasoning_content
         return converted
 
@@ -115,23 +136,22 @@ def _convert_single_message_to_openai(
                 else:
                     text_content = "".join(b.text for b in text_blocks)
 
-            # Kimi 专用：从 Message 或文本中提取 reasoning_content
+            # 需要 reasoning_content 的服务商（DeepSeek Reasoner / Kimi 等）
             reasoning_content = None
-            if provider == "moonshot":
-                # 优先使用 Message 中存储的 reasoning_content
+            if enable_thinking and _needs_reasoning_content(provider):
                 if msg.reasoning_content:
                     reasoning_content = msg.reasoning_content
-                # 否则尝试从文本中提取 <thinking> 标签
                 elif text_content:
                     reasoning_content, text_content = _extract_thinking_content(text_content)
 
-                # thinking 启用且有工具调用但无 reasoning_content 时，
-                # 注入占位符避免 API 返回 400
-                if not reasoning_content and enable_thinking and tool_uses:
-                    reasoning_content = "..."
+                # 缺失时注入占位符，避免 API 400
+                # DeepSeek 要求所有 assistant 消息都携带，Kimi 至少在有 tool_calls 时需要
+                if reasoning_content is None:
+                    reasoning_content = "..." if tool_uses else ""
 
-                if reasoning_content:
-                    assistant_msg["reasoning_content"] = reasoning_content
+                assistant_msg["reasoning_content"] = reasoning_content
+            elif msg.reasoning_content:
+                assistant_msg["reasoning_content"] = msg.reasoning_content
 
             assistant_msg["content"] = text_content if text_content else None
 

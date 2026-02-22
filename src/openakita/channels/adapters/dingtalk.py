@@ -120,6 +120,7 @@ class DingTalkAdapter(ChannelAdapter):
         # Stream 模式
         self._stream_client: Any | None = None
         self._stream_thread: threading.Thread | None = None
+        self._stream_loop: asyncio.AbstractEventLoop | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
 
         # 缓存每个会话的 session webhook、发送者 userId、会话类型
@@ -149,8 +150,31 @@ class DingTalkAdapter(ChannelAdapter):
         logger.info("DingTalk adapter started (Stream mode)")
 
     async def stop(self) -> None:
-        """停止钉钉适配器"""
+        """停止钉钉适配器，确保旧 Stream 连接被完全关闭。
+
+        不关闭旧连接会导致钉钉平台在新旧连接间分发消息，
+        发到旧连接上的消息因 _main_loop 已失效而被静默丢弃（与飞书同源 Bug）。
+        """
         self._running = False
+
+        # 1) 停止 Stream 线程的事件循环
+        stream_loop = self._stream_loop
+        if stream_loop is not None:
+            try:
+                stream_loop.call_soon_threadsafe(stream_loop.stop)
+            except Exception:
+                pass
+
+        # 2) 等待 Stream 线程退出
+        stream_thread = self._stream_thread
+        if stream_thread is not None and stream_thread.is_alive():
+            stream_thread.join(timeout=5)
+            if stream_thread.is_alive():
+                logger.warning("DingTalk Stream thread did not exit within 5s timeout")
+
+        self._stream_client = None
+        self._stream_thread = None
+        self._stream_loop = None
 
         if self._http_client:
             await self._http_client.aclose()
@@ -183,6 +207,7 @@ class DingTalkAdapter(ChannelAdapter):
             """在独立线程中运行 Stream 客户端"""
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
+            self._stream_loop = new_loop
 
             try:
                 credential = dingtalk_stream.Credential(
@@ -197,8 +222,10 @@ class DingTalkAdapter(ChannelAdapter):
                 logger.info("DingTalk Stream client starting...")
                 client.start_forever()
             except Exception as e:
-                logger.error(f"DingTalk Stream error: {e}", exc_info=True)
+                if self._running:
+                    logger.error(f"DingTalk Stream error: {e}", exc_info=True)
             finally:
+                self._stream_loop = None
                 new_loop.close()
 
         self._stream_thread = threading.Thread(
@@ -262,12 +289,13 @@ class DingTalkAdapter(ChannelAdapter):
 
         self._log_message(unified)
 
-        # 从 Stream 线程投递到主事件循环
-        if self._main_loop and self._main_loop.is_running():
+        # 从 Stream 线程投递到主事件循环。
+        # 必须使用 run_coroutine_threadsafe：当前线程已有运行中的事件循环（SDK 的 stream loop），
+        # 不能使用 asyncio.run()，否则会触发 RuntimeError 导致消息丢失。
+        if self._main_loop is not None:
             future = asyncio.run_coroutine_threadsafe(
                 self._emit_message(unified), self._main_loop
             )
-            # 添加回调以捕获跨线程投递中的异常，避免静默丢失消息
             def _on_emit_done(f: "asyncio.futures.Future") -> None:
                 try:
                     f.result()
@@ -278,10 +306,10 @@ class DingTalkAdapter(ChannelAdapter):
                     )
             future.add_done_callback(_on_emit_done)
         else:
-            logger.warning(
-                "Main event loop not available, dispatching message in current loop"
+            logger.error(
+                "Main event loop not set (DingTalk adapter not started from async context?), "
+                "dropping message to avoid dispatch failure in Stream thread"
             )
-            await self._emit_message(unified)
 
     async def _parse_message_content(
         self, msg_type: str, raw_data: dict

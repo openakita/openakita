@@ -924,7 +924,8 @@ class LLMClient:
                         "must be a response to a preceeding message",
                         "does not support",  # Ollama: "model does not support thinking" 等
                         "not supported",     # 通用的"不支持"格式
-                        "reasoning_content is missing",  # Kimi 等代理: thinking 启用但历史消息缺少思考内容
+                        "reasoning_content is missing",  # Kimi: thinking 启用但历史消息缺少思考内容
+                        "missing 'reasoning_content'",  # DeepSeek Reasoner: 同上
                     ]
                     is_non_retryable = any(
                         pattern in error_str.lower() for pattern in non_retryable_patterns

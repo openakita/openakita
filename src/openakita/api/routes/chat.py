@@ -209,8 +209,9 @@ async def _stream_chat(
                     pass
 
         # --- Save assistant response to session ---
-        assistant_text_to_save = _full_reply
-        if not assistant_text_to_save and _ask_user_question:
+        # ask_user 场景：_ask_user_question 已包含 LLM 文本 + 问题（由 reason_stream 拼接），
+        # 优先使用它作为保存文本，确保下一轮 LLM 能看到完整的确认问题上下文。
+        if _ask_user_question:
             parts = [_ask_user_question]
             if _ask_user_questions:
                 for q in _ask_user_questions:
@@ -226,6 +227,8 @@ async def _stream_chat(
                 for o in _ask_user_options:
                     parts.append(f"  - {o.get('id', '')}: {o.get('label', '')}")
             assistant_text_to_save = "\n".join(parts)
+        else:
+            assistant_text_to_save = _full_reply
 
         # Append tool execution summary so next turn's LLM sees what was done
         try:

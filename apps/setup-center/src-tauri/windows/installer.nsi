@@ -454,15 +454,15 @@ Function PageEnvCheck
  ; 使用固定 Y 坐标，每项间隔 16u，checkbox 高度 12u
 
  ${If} ${FileExists} "$R0\venv\*.*"
-  ${NSD_CreateCheckbox} 14u 34u -14u 12u "清理旧的 Python 虚拟环境 (venv)"
+  ${NSD_CreateCheckbox} 14u 34u -14u 12u "清理 Python 虚拟环境 (venv) — 模块安装和工具执行需要，清理后需重建"
   Pop $EnvCleanVenv
-  ${NSD_SetState} $EnvCleanVenv ${BST_CHECKED}
+  ${NSD_SetState} $EnvCleanVenv ${BST_UNCHECKED}
  ${EndIf}
 
  ${If} ${FileExists} "$R0\runtime\*.*"
-  ${NSD_CreateCheckbox} 14u 50u -14u 12u "清理旧的 Python 运行时 (runtime)"
+  ${NSD_CreateCheckbox} 14u 50u -14u 12u "清理 Python 运行时 (runtime) — 用于创建 venv，清理后需重新下载"
   Pop $EnvCleanRuntime
-  ${NSD_SetState} $EnvCleanRuntime ${BST_CHECKED}
+  ${NSD_SetState} $EnvCleanRuntime ${BST_UNCHECKED}
  ${EndIf}
 
  ${If} ${FileExists} "$R0\modules\*.*"

@@ -20,37 +20,86 @@ SKILLS_SH_API = "https://skills.sh/api/search"
 
 @router.get("/api/skills")
 async def list_skills(request: Request):
-    """List all available skills with their config schemas."""
-    from openakita.core.agent import Agent
+    """List all available skills with their config schemas.
 
-    agent = getattr(request.app.state, "agent", None)
-    actual_agent = agent
-    if not isinstance(agent, Agent):
-        actual_agent = getattr(agent, "_local_agent", None)
+    Returns ALL discovered skills (including disabled ones) with correct
+    ``enabled`` status derived from ``data/skills.json`` allowlist.
+    """
+    import json
+    from pathlib import Path
 
-    if actual_agent is None:
-        return {"skills": []}
+    try:
+        from openakita.config import settings
 
-    registry = getattr(actual_agent, "skill_registry", None)
-    if registry is None:
-        return {"skills": []}
+        base_path = settings.project_root
+    except Exception:
+        base_path = Path.cwd()
+
+    # Read external_allowlist from skills.json
+    external_allowlist: set[str] | None = None
+    try:
+        cfg_path = base_path / "data" / "skills.json"
+        if cfg_path.exists():
+            raw = cfg_path.read_text(encoding="utf-8")
+            cfg = json.loads(raw) if raw.strip() else {}
+            al = cfg.get("external_allowlist", None)
+            if isinstance(al, list):
+                external_allowlist = {str(x).strip() for x in al if str(x).strip()}
+    except Exception:
+        pass
+
+    # Load all skills via a fresh SkillLoader (not pruned by allowlist)
+    try:
+        from openakita.skills.loader import SkillLoader
+
+        loader = SkillLoader()
+        loader.load_all(base_path=base_path)
+        all_skills = loader.registry.list_all()
+    except Exception:
+        # Fallback to agent's registry (only enabled skills)
+        from openakita.core.agent import Agent
+
+        agent = getattr(request.app.state, "agent", None)
+        actual_agent = agent
+        if not isinstance(agent, Agent):
+            actual_agent = getattr(agent, "_local_agent", None)
+        if actual_agent is None:
+            return {"skills": []}
+        registry = getattr(actual_agent, "skill_registry", None)
+        if registry is None:
+            return {"skills": []}
+        all_skills = registry.list_all()
 
     skills = []
-    for skill in registry.list_all():
-        # config 存储在 ParsedSkill.metadata 中
+    for skill in all_skills:
         config = None
         parsed = getattr(skill, "_parsed_skill", None)
         if parsed and hasattr(parsed, "metadata"):
             config = getattr(parsed.metadata, "config", None) or None
 
+        is_system = bool(skill.system)
+        is_enabled = is_system or external_allowlist is None or skill.name in external_allowlist
+
+        # Read install origin (.openakita-source) for marketplace matching
+        source_url = None
+        if skill.skill_path:
+            try:
+                origin_file = Path(skill.skill_path) / ".openakita-source"
+                if origin_file.exists():
+                    source_url = origin_file.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+
         skills.append({
             "name": skill.name,
             "description": skill.description,
-            "system": skill.system,
-            "enabled": True,  # 在 registry 中的技能都是已启用的
+            "system": is_system,
+            "enabled": is_enabled,
             "category": skill.category,
             "tool_name": skill.tool_name,
             "config": config,
+            "path": skill.skill_path,
+            "source_url": source_url,
         })
 
     return {"skills": skills}

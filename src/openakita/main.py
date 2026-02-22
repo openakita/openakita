@@ -220,6 +220,43 @@ def _ensure_channel_deps() -> None:
         console.print(f"[red]✗[/red] 依赖安装异常: {e}")
 
 
+async def ensure_session_manager():
+    """
+    确保 SessionManager 已初始化。
+
+    Desktop Chat API 和 IM 通道都依赖 SessionManager 管理对话上下文，
+    因此无论是否启用 IM 通道，都需要初始化 SessionManager。
+    """
+    global _session_manager
+
+    if _session_manager is not None:
+        return
+
+    from .sessions import SessionManager
+
+    _session_manager = SessionManager(
+        storage_path=settings.project_root / settings.session_storage_path,
+    )
+    await _session_manager.start()
+    logger.info("SessionManager started")
+
+
+def _setup_session_backfill(agent_or_master):
+    """从 SQLite 回填 session 中可能缺失的消息（崩溃恢复）。"""
+    _actual_agent = agent_or_master
+    if is_orchestration_enabled() and hasattr(agent_or_master, "_local_agent"):
+        _actual_agent = agent_or_master._local_agent
+    if _actual_agent and hasattr(_actual_agent, "memory_manager"):
+        _mm = _actual_agent.memory_manager
+        if hasattr(_mm, "store") and _session_manager is not None:
+            _session_manager.set_turn_loader(
+                lambda safe_id: _mm.store.get_recent_turns(safe_id, limit=50)
+            )
+            backfilled = _session_manager.backfill_sessions_from_store()
+            if backfilled:
+                logger.info(f"Session backfill: recovered {backfilled} turns from SQLite")
+
+
 async def start_im_channels(agent_or_master):
     """
     启动配置的 IM 通道
@@ -228,6 +265,9 @@ async def start_im_channels(agent_or_master):
         agent_or_master: Agent 实例或 MasterAgent 实例
     """
     global _message_gateway, _session_manager
+
+    # SessionManager 必须在 IM 和 Desktop 模式下都可用
+    await ensure_session_manager()
 
     # 检查是否有任何通道启用
     any_enabled = (
@@ -240,20 +280,12 @@ async def start_im_channels(agent_or_master):
     )
 
     if not any_enabled:
-        logger.info("No IM channels enabled")
+        logger.info("No IM channels enabled, SessionManager is still active for Desktop Chat")
+        _setup_session_backfill(agent_or_master)
         return
 
     # 自动安装缺失的 IM 通道依赖
     _ensure_channel_deps()
-
-    # 初始化 SessionManager
-    from .sessions import SessionManager
-
-    _session_manager = SessionManager(
-        storage_path=settings.project_root / settings.session_storage_path,
-    )
-    await _session_manager.start()
-    logger.info("SessionManager started")
 
     # 初始化在线 STT 客户端（可选）
     from .llm.config import load_endpoints_config as _load_ep_config
@@ -457,18 +489,7 @@ async def start_im_channels(agent_or_master):
     _message_gateway.agent_handler = agent_handler
 
     # 设置 turn_loader 用于 session 崩溃恢复回填
-    _actual_agent = agent_or_master
-    if is_orchestration_enabled() and hasattr(agent_or_master, "_local_agent"):
-        _actual_agent = agent_or_master._local_agent
-    if _actual_agent and hasattr(_actual_agent, "memory_manager"):
-        _mm = _actual_agent.memory_manager
-        if hasattr(_mm, "store"):
-            _session_manager.set_turn_loader(
-                lambda safe_id: _mm.store.get_recent_turns(safe_id, limit=50)
-            )
-            backfilled = _session_manager.backfill_sessions_from_store()
-            if backfilled:
-                logger.info(f"Session backfill: recovered {backfilled} turns from SQLite")
+    _setup_session_backfill(agent_or_master)
 
     # 启动网关
     if adapters_started:

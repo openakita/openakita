@@ -185,8 +185,10 @@ class ConfigHandler:
                 return await self._test_endpoint(params)
             elif action == "set_ui":
                 return self._set_ui(params)
+            elif action == "manage_provider":
+                return self._manage_provider(params)
             else:
-                return f"未知的 action: {action}。支持: discover, get, set, add_endpoint, remove_endpoint, test_endpoint, set_ui"
+                return f"未知的 action: {action}。支持: discover, get, set, add_endpoint, remove_endpoint, test_endpoint, set_ui, manage_provider"
         except Exception as e:
             logger.error(f"[ConfigHandler] action={action} failed: {e}", exc_info=True)
             return f"配置操作失败: {type(e).__name__}: {e}"
@@ -755,6 +757,221 @@ class ConfigHandler:
             result["message"] += "\n\n注意: 此设置仅影响桌面客户端 (Desktop)，当前通道为 " + channel
 
         return json.dumps(result, ensure_ascii=False)
+
+    # ------------------------------------------------------------------
+    # manage_provider: 管理 LLM 服务商
+    # ------------------------------------------------------------------
+
+    _PROVIDER_REQUIRED_FIELDS = ("slug", "name", "api_type", "default_base_url")
+    _PROVIDER_VALID_API_TYPES = ("openai", "anthropic")
+    _PROVIDER_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+    def _manage_provider(self, params: dict) -> str:
+        operation = (params.get("operation") or "").strip()
+
+        if operation == "list":
+            return self._list_providers_info()
+        elif operation == "add":
+            return self._add_custom_provider(params.get("provider") or {})
+        elif operation == "update":
+            return self._update_custom_provider(params.get("provider") or {})
+        elif operation == "remove":
+            slug = (params.get("slug") or "").strip()
+            return self._remove_custom_provider(slug)
+        else:
+            return (
+                "❌ manage_provider 需要 operation 参数。\n"
+                "支持: list (列出所有服务商), add (添加自定义服务商), "
+                "update (修改自定义服务商), remove (删除自定义服务商)"
+            )
+
+    def _list_providers_info(self) -> str:
+        from ...llm.registries import list_providers, load_custom_providers
+
+        all_providers = list_providers()
+        custom_slugs = {e.get("slug") for e in load_custom_providers()}
+
+        lines = [f"## LLM 服务商列表 (共 {len(all_providers)} 个)\n"]
+        for p in all_providers:
+            tag = " [自定义]" if p.slug in custom_slugs else ""
+            local_tag = " [本地]" if p.is_local else ""
+            lines.append(
+                f"- **{p.name}**{tag}{local_tag}\n"
+                f"  slug: `{p.slug}` | 协议: {p.api_type} | URL: {p.default_base_url}"
+            )
+        lines.append(
+            f"\n自定义服务商文件: data/custom_providers.json\n"
+            f"使用 operation=add 添加新服务商，operation=update 修改已有服务商。"
+        )
+        return "\n".join(lines)
+
+    def _validate_provider_entry(self, entry: dict) -> str | None:
+        """校验服务商条目，返回错误信息或 None"""
+        for field in self._PROVIDER_REQUIRED_FIELDS:
+            if not (entry.get(field) or "").strip():
+                return f"缺少必填字段: {field}"
+
+        slug = entry["slug"].strip()
+        if not self._PROVIDER_SLUG_PATTERN.match(slug):
+            return f"slug 格式无效: '{slug}'（只允许小写字母、数字、连字符、下划线，不能以符号开头）"
+
+        api_type = entry["api_type"].strip()
+        if api_type not in self._PROVIDER_VALID_API_TYPES:
+            return f"api_type 无效: '{api_type}'（只允许 openai 或 anthropic）"
+
+        base_url = entry["default_base_url"].strip()
+        if not base_url.startswith(("http://", "https://")):
+            return f"default_base_url 必须以 http:// 或 https:// 开头"
+
+        return None
+
+    def _add_custom_provider(self, provider_data: dict) -> str:
+        if not provider_data or not isinstance(provider_data, dict):
+            return "❌ 缺少 provider 参数（需包含 slug, name, api_type, default_base_url）"
+
+        err = self._validate_provider_entry(provider_data)
+        if err:
+            return f"❌ {err}"
+
+        from ...llm.registries import (
+            load_custom_providers,
+            list_providers,
+            reload_registries,
+            save_custom_providers,
+        )
+
+        slug = provider_data["slug"].strip()
+
+        existing_slugs = {p.slug for p in list_providers()}
+        if slug in existing_slugs:
+            return (
+                f"❌ slug '{slug}' 已存在。如需修改，请使用 operation=update；"
+                f"如需覆盖内置服务商的默认配置，也使用 operation=update。"
+            )
+
+        entry = {
+            "slug": slug,
+            "name": provider_data["name"].strip(),
+            "api_type": provider_data["api_type"].strip(),
+            "default_base_url": provider_data["default_base_url"].strip(),
+            "api_key_env_suggestion": (provider_data.get("api_key_env_suggestion") or "").strip(),
+            "supports_model_list": provider_data.get("supports_model_list", True),
+            "supports_capability_api": provider_data.get("supports_capability_api", False),
+            "registry_class": provider_data.get("registry_class") or (
+                "AnthropicRegistry" if provider_data["api_type"].strip() == "anthropic" else "OpenAIRegistry"
+            ),
+            "requires_api_key": provider_data.get("requires_api_key", True),
+            "is_local": provider_data.get("is_local", False),
+        }
+        if provider_data.get("coding_plan_base_url"):
+            entry["coding_plan_base_url"] = provider_data["coding_plan_base_url"].strip()
+        if provider_data.get("coding_plan_api_type"):
+            entry["coding_plan_api_type"] = provider_data["coding_plan_api_type"].strip()
+
+        custom = load_custom_providers()
+        custom.append(entry)
+        save_custom_providers(custom)
+        count = reload_registries()
+
+        return (
+            f"✅ 已添加自定义服务商:\n"
+            f"- 名称: {entry['name']}\n"
+            f"- slug: {slug}\n"
+            f"- 协议: {entry['api_type']} | URL: {entry['default_base_url']}\n"
+            f"- 服务商总数: {count}\n"
+            f"- 保存位置: data/custom_providers.json"
+        )
+
+    def _update_custom_provider(self, provider_data: dict) -> str:
+        if not provider_data or not isinstance(provider_data, dict):
+            return "❌ 缺少 provider 参数"
+
+        slug = (provider_data.get("slug") or "").strip()
+        if not slug:
+            return "❌ 缺少 slug 字段，用于定位要修改的服务商"
+
+        from ...llm.registries import (
+            load_custom_providers,
+            reload_registries,
+            save_custom_providers,
+        )
+
+        if "api_type" in provider_data:
+            api_type = provider_data["api_type"].strip()
+            if api_type not in self._PROVIDER_VALID_API_TYPES:
+                return f"❌ api_type 无效: '{api_type}'"
+
+        if "default_base_url" in provider_data:
+            url = provider_data["default_base_url"].strip()
+            if not url.startswith(("http://", "https://")):
+                return "❌ default_base_url 必须以 http:// 或 https:// 开头"
+
+        custom = load_custom_providers()
+        found = False
+        for i, entry in enumerate(custom):
+            if entry.get("slug") == slug:
+                for k, v in provider_data.items():
+                    if k == "slug":
+                        continue
+                    custom[i][k] = v.strip() if isinstance(v, str) else v
+                found = True
+                break
+
+        if not found:
+            new_entry = {"slug": slug}
+            for k, v in provider_data.items():
+                if k == "slug":
+                    continue
+                new_entry[k] = v.strip() if isinstance(v, str) else v
+            if not new_entry.get("registry_class"):
+                api_type = new_entry.get("api_type", "openai")
+                new_entry["registry_class"] = (
+                    "AnthropicRegistry" if api_type == "anthropic" else "OpenAIRegistry"
+                )
+            custom.append(new_entry)
+
+        save_custom_providers(custom)
+        count = reload_registries()
+
+        action = "修改" if found else "添加（覆盖内置配置）"
+        return (
+            f"✅ 已{action}服务商 '{slug}':\n"
+            f"- 更新字段: {', '.join(k for k in provider_data if k != 'slug')}\n"
+            f"- 服务商总数: {count}"
+        )
+
+    def _remove_custom_provider(self, slug: str) -> str:
+        if not slug:
+            return "❌ 缺少 slug 参数"
+
+        from ...llm.registries import (
+            _BUILTIN_ENTRIES,
+            load_custom_providers,
+            reload_registries,
+            save_custom_providers,
+        )
+
+        builtin_slugs = {e["slug"] for e in _BUILTIN_ENTRIES}
+        if slug in builtin_slugs:
+            custom = load_custom_providers()
+            had_override = any(e.get("slug") == slug for e in custom)
+            if had_override:
+                custom = [e for e in custom if e.get("slug") != slug]
+                save_custom_providers(custom)
+                reload_registries()
+                return f"✅ 已移除对内置服务商 '{slug}' 的自定义覆盖，恢复为内置默认配置"
+            return f"❌ '{slug}' 是内置服务商，不能删除。如需修改其配置，使用 operation=update"
+
+        custom = load_custom_providers()
+        original_len = len(custom)
+        custom = [e for e in custom if e.get("slug") != slug]
+
+        if len(custom) == original_len:
+            return f"❌ 未找到自定义服务商 '{slug}'"
+
+        save_custom_providers(custom)
+        count = reload_registries()
+        return f"✅ 已删除自定义服务商 '{slug}'。服务商总数: {count}"
 
     # ------------------------------------------------------------------
     # 辅助方法

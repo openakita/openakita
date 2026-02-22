@@ -20,12 +20,27 @@ function SkillConfigForm({
   onEnvChange: (fn: (prev: EnvMap) => EnvMap) => void;
 }) {
   const [secretShown, setSecretShown] = useState<Record<string, boolean>>({});
+  const [localDraft, setLocalDraft] = useState<EnvMap>({});
   const { t } = useTranslation();
+
+  const getValue = (key: string, fallback: string) =>
+    key in localDraft ? localDraft[key] : envGet(envDraft, key, fallback);
+
+  const handleChange = (key: string, value: string) => {
+    setLocalDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const flushField = (key: string) => {
+    if (key in localDraft) {
+      const v = localDraft[key];
+      onEnvChange((m) => envSet(m, key, v));
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "8px 0" }}>
       {fields.map((field) => {
-        const value = envGet(envDraft, field.key, String(field.default ?? ""));
+        const value = getValue(field.key, String(field.default ?? ""));
         const isSecret = field.type === "secret";
         const shown = secretShown[field.key] ?? false;
 
@@ -42,7 +57,10 @@ function SkillConfigForm({
             {field.type === "select" && field.options ? (
               <select
                 value={value}
-                onChange={(e) => onEnvChange((m) => envSet(m, field.key, e.target.value))}
+                onChange={(e) => {
+                  handleChange(field.key, e.target.value);
+                  onEnvChange((m) => envSet(m, field.key, e.target.value));
+                }}
                 style={{ width: "100%", padding: "8px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--panel2)", color: "var(--text)", fontSize: 14 }}
               >
                 {field.options.map((opt) => (
@@ -54,7 +72,10 @@ function SkillConfigForm({
                 <input
                   type="checkbox"
                   checked={value.toLowerCase() === "true"}
-                  onChange={(e) => onEnvChange((m) => envSet(m, field.key, String(e.target.checked)))}
+                  onChange={(e) => {
+                    handleChange(field.key, String(e.target.checked));
+                    onEnvChange((m) => envSet(m, field.key, String(e.target.checked)));
+                  }}
                   style={{ width: 16, height: 16 }}
                 />
                 {field.label}
@@ -65,7 +86,8 @@ function SkillConfigForm({
                 value={value}
                 min={field.min}
                 max={field.max}
-                onChange={(e) => onEnvChange((m) => envSet(m, field.key, e.target.value))}
+                onChange={(e) => handleChange(field.key, e.target.value)}
+                onBlur={() => flushField(field.key)}
                 placeholder={String(field.default ?? "")}
                 style={{ width: "100%" }}
               />
@@ -74,7 +96,8 @@ function SkillConfigForm({
                 <input
                   type={isSecret && !shown ? "password" : "text"}
                   value={value}
-                  onChange={(e) => onEnvChange((m) => envSet(m, field.key, e.target.value))}
+                  onChange={(e) => handleChange(field.key, e.target.value)}
+                  onBlur={() => flushField(field.key)}
                   placeholder={field.type === "secret" ? t("skills.secretPlaceholder") : String(field.default ?? "")}
                   style={{ flex: 1 }}
                 />
@@ -329,6 +352,7 @@ export function SkillManager({
         toolName: s.tool_name as string | null,
         category: s.category as string | null,
         path: s.path as string | null,
+        sourceUrl: (s.source_url as string | null) || null,
         config: (s.config as SkillConfigField[] | null) || null,
         configComplete: true,  // 由 useMemo 动态计算，这里先占位
       }));
@@ -389,11 +413,52 @@ export function SkillManager({
 
   // ── 切换启用/禁用 ──
   const handleToggleEnabled = useCallback(async (skill: SkillInfo) => {
-    // TODO: 通过 bridge 更新 skills.json 的 external_allowlist
+    const newEnabled = !(skill.enabled !== false);
+
+    // Update local state immediately
     setSkills((prev) => prev.map((s) =>
-      s.name === skill.name ? { ...s, enabled: !(s.enabled !== false) } : s
+      s.name === skill.name ? { ...s, enabled: newEnabled } : s
     ));
-  }, []);
+
+    // Compute new allowlist from updated state
+    const updatedSkills = skills.map((s) =>
+      s.name === skill.name ? { ...s, enabled: newEnabled } : s
+    );
+    const externalAllowlist = updatedSkills
+      .filter((s) => !s.system && s.enabled !== false)
+      .map((s) => s.name);
+
+    const content = {
+      version: 1,
+      external_allowlist: externalAllowlist,
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      if (serviceRunning && apiBaseUrl) {
+        await fetch(`${apiBaseUrl}/api/config/skills`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+          signal: AbortSignal.timeout(5000),
+        });
+        fetch(`${apiBaseUrl}/api/skills/reload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(10_000),
+        }).catch(() => {});
+      } else if (dataMode !== "remote" && currentWorkspaceId) {
+        await invoke("workspace_write_file", {
+          workspaceId: currentWorkspaceId,
+          relativePath: "data/skills.json",
+          content: JSON.stringify(content, null, 2) + "\n",
+        });
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [skills, serviceRunning, apiBaseUrl, dataMode, currentWorkspaceId]);
 
   // ── 搜索 skills.sh 市场技能 ──
   const parseMarketplaceResponse = useCallback((data: Record<string, unknown>) => {
@@ -410,7 +475,11 @@ export function SkillManager({
         url: installUrl,
         installs: typeof s.installs === "number" ? s.installs : undefined,
         tags: [],
-        installed: skills.some((local) => local.name === skillId),
+        installed: skills.some((local) => {
+          if (local.name !== skillId) return false;
+          if (local.sourceUrl && installUrl) return local.sourceUrl === installUrl;
+          return true;
+        }),
       };
     });
     return items;
@@ -534,7 +603,7 @@ export function SkillManager({
       }
 
       setMarketplace((prev) => prev.map((s) =>
-        s.name === skill.name ? { ...s, installed: true } : s
+        s.url === skill.url ? { ...s, installed: true } : s
       ));
       await loadSkills();
       // 安装后自动切换到「已安装」标签并展开配置面板

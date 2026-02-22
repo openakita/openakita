@@ -1,23 +1,30 @@
 """
-浏览器后端抽象层
+浏览器自动化模块
 
-提供统一的浏览器操作接口，支持多种后端实现：
-- PlaywrightBackend: 基于 Playwright 的内置浏览器（默认）
-- ChromeDevToolsBackend: 通过 Chrome DevTools MCP 连接用户 Chrome
-- McpChromeBackend: 通过 mcp-chrome 扩展连接用户 Chrome
+核心组件：
+- BrowserManager: 浏览器生命周期管理（状态机 + 多策略启动）
+- PlaywrightTools: 基于 Playwright 的直接页面操作
+- BrowserUseRunner: browser-use AI Agent 集成
+- chrome_finder: Chrome 检测与 Profile 管理工具函数
 
 WebMCP 预留接口：
 - discover_webmcp_tools: 在页面上发现 WebMCP 工具
 - call_webmcp_tool: 调用页面上的 WebMCP 工具
 """
 
-from .base import BrowserBackend, BrowserBackendType, auto_select_backend
+from .browser_use_runner import BrowserUseRunner
+from .chrome_finder import detect_chrome_installation
+from .manager import BrowserManager, BrowserState, StartupStrategy
+from .playwright_tools import PlaywrightTools
 from .webmcp import WebMCPDiscoveryResult, WebMCPTool, call_webmcp_tool, discover_webmcp_tools
 
 __all__ = [
-    "BrowserBackend",
-    "BrowserBackendType",
-    "auto_select_backend",
+    "BrowserManager",
+    "BrowserState",
+    "StartupStrategy",
+    "PlaywrightTools",
+    "BrowserUseRunner",
+    "detect_chrome_installation",
     "WebMCPTool",
     "WebMCPDiscoveryResult",
     "discover_webmcp_tools",

@@ -1,7 +1,7 @@
 ; OpenAkita Setup Center - NSIS Hooks
 ; 目标：
 ; - 卸载时强制杀掉残留进程（Setup Center 本体 + OpenAkita 后台服务）
-; - 勾选“清理用户数据”时，删除用户目录下的 ~/.openakita
+; - 勾选"清理用户数据"时，删除用户目录下的 ~/.openakita
 
 !macro _OpenAkita_KillPid pid
   StrCpy $0 "${pid}"
@@ -83,7 +83,7 @@
     FileClose $R5
   ${EndIf}
 
-  ; 以当前用户身份再清理一次 venv/runtime（解决“以管理员运行安装程序”时清错用户目录）
+  ; 仅当用户在安装页面明确勾选时，以当前用户身份清理 venv/runtime
   ${If} $EnvCleanVenvChecked == ${BST_CHECKED}
   ${OrIf} $EnvCleanRuntimeChecked == ${BST_CHECKED}
     StrCpy $R9 ""
@@ -105,7 +105,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; 勾选“清理用户数据”时：删除 ~/.openakita；优先 PowerShell 不弹窗，失败则兜底 cmd（会闪黑框）
+  ; 勾选"清理用户数据"时：删除 ~/.openakita；优先 PowerShell 不弹窗，失败则兜底 cmd（会闪黑框）
   ; 仅在非更新模式下清理（与默认行为保持一致）
   ${If} $DeleteAppDataCheckboxState = 1
   ${AndIf} $UpdateMode <> 1
@@ -117,4 +117,3 @@
     ${EndIf}
   ${EndIf}
 !macroend
-

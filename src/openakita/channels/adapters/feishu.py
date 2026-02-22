@@ -112,6 +112,7 @@ class FeishuAdapter(ChannelAdapter):
         self._event_dispatcher: Any | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
         """
@@ -180,6 +181,7 @@ class FeishuAdapter(ChannelAdapter):
 
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
+            self._ws_loop = new_loop
 
             # 覆盖 SDK ws 模块的全局 loop
             ws_client_mod.loop = new_loop
@@ -199,8 +201,10 @@ class FeishuAdapter(ChannelAdapter):
                 self._ws_client = ws_client
                 ws_client.start()  # 阻塞运行于该线程
             except Exception as e:
-                logger.error(f"Feishu WebSocket error: {e}", exc_info=True)
+                if self._running:
+                    logger.error(f"Feishu WebSocket error: {e}", exc_info=True)
             finally:
+                self._ws_loop = None
                 with contextlib.suppress(Exception):
                     new_loop.close()
 
@@ -221,14 +225,26 @@ class FeishuAdapter(ChannelAdapter):
 
         # 创建事件分发器
         # verification_token 和 encrypt_key 在长连接模式下必须为空字符串
-        self._event_dispatcher = (
+        builder = (
             lark_oapi.EventDispatcherHandler.builder(
                 verification_token="",  # 长连接模式不需要验证
                 encrypt_key="",  # 长连接模式不需要加密
             )
             .register_p2_im_message_receive_v1(self._on_message_receive)
-            .build()
         )
+        # 注册消息已读事件，避免 SDK 报 "processor not found" ERROR 日志
+        try:
+            builder = builder.register_p2_im_message_read_v1(self._on_message_read)
+        except AttributeError:
+            pass
+        # 注册机器人进入会话事件
+        try:
+            builder = builder.register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
+                self._on_bot_chat_entered
+            )
+        except AttributeError:
+            pass
+        self._event_dispatcher = builder.build()
 
     def _on_message_receive(self, data: Any) -> None:
         """
@@ -260,8 +276,10 @@ class FeishuAdapter(ChannelAdapter):
                 },
             }
 
-            # 从 WebSocket 线程把协程安全投递到主事件循环
-            if self._main_loop and self._main_loop.is_running():
+            # 从 WebSocket 线程把协程安全投递到主事件循环。
+            # 必须使用 run_coroutine_threadsafe：当前线程已有运行中的事件循环（SDK 的 ws loop），
+            # 不能使用 asyncio.run()，否则会触发 "asyncio.run() cannot be called from a running event loop" 导致消息丢失。
+            if self._main_loop is not None:
                 fut = asyncio.run_coroutine_threadsafe(
                     self._handle_message_async(msg_dict, sender_dict),
                     self._main_loop,
@@ -277,14 +295,21 @@ class FeishuAdapter(ChannelAdapter):
                         )
                 fut.add_done_callback(_on_dispatch_done)
             else:
-                # 兜底：没有主 loop 时，直接在当前线程创建临时 loop 执行
-                logger.warning(
-                    "Main event loop not available, dispatching message in temporary loop"
+                logger.error(
+                    "Main event loop not set (Feishu adapter not started from async context?), "
+                    "dropping message to avoid asyncio.run() in WebSocket thread"
                 )
-                asyncio.run(self._handle_message_async(msg_dict, sender_dict))
 
         except Exception as e:
             logger.error(f"Error handling message event: {e}", exc_info=True)
+
+    def _on_message_read(self, data: Any) -> None:
+        """消息已读事件 (im.message.message_read_v1)，仅需静默消费以避免 SDK 报错"""
+        pass
+
+    def _on_bot_chat_entered(self, data: Any) -> None:
+        """机器人进入会话事件，仅需静默消费以避免 SDK 报错"""
+        pass
 
     async def _handle_message_async(self, msg_dict: dict, sender_dict: dict) -> None:
         """异步处理消息"""
@@ -296,10 +321,31 @@ class FeishuAdapter(ChannelAdapter):
             logger.error(f"Error in message handler: {e}", exc_info=True)
 
     async def stop(self) -> None:
-        """停止飞书客户端"""
+        """停止飞书客户端，确保旧 WebSocket 连接被完全关闭。
+
+        不关闭旧连接会导致飞书平台在新旧连接间随机分发消息，
+        发到旧连接上的消息因 _main_loop 已失效而被静默丢弃。
+        """
         self._running = False
-        if self._ws_client:
-            self._ws_client = None
+
+        # 1) 停止 WS 线程的事件循环 → SDK 的 ws_client.start() 会退出阻塞
+        ws_loop = self._ws_loop
+        if ws_loop is not None:
+            try:
+                ws_loop.call_soon_threadsafe(ws_loop.stop)
+            except Exception:
+                pass
+
+        # 2) 等待 WS 线程退出（给 5 秒超时）
+        ws_thread = self._ws_thread
+        if ws_thread is not None and ws_thread.is_alive():
+            ws_thread.join(timeout=5)
+            if ws_thread.is_alive():
+                logger.warning("Feishu WebSocket thread did not exit within 5s timeout")
+
+        self._ws_client = None
+        self._ws_thread = None
+        self._ws_loop = None
         self._client = None
         logger.info("Feishu adapter stopped")
 

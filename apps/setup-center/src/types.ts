@@ -291,6 +291,7 @@ export type SkillInfo = {
   toolName?: string | null;
   category?: string | null;
   path?: string | null;
+  sourceUrl?: string | null;
   config?: SkillConfigField[] | null;
   configComplete?: boolean;
 };

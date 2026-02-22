@@ -101,6 +101,7 @@ class AnthropicProvider(LLMProvider):
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
         """发送聊天请求"""
+        await self.acquire_rate_limit()
         client = await self._get_client()
 
         # 构建请求体
@@ -136,6 +137,7 @@ class AnthropicProvider(LLMProvider):
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
         """流式聊天请求"""
+        await self.acquire_rate_limit()
         client = await self._get_client()
 
         body = self._build_request_body(request)

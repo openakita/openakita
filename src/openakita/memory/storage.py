@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,10 +40,13 @@ class MemoryStorage:
         results = storage.search_fts("代码风格")
     """
 
+    _BUSY_TIMEOUT_MS = 5000
+
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
         self._init_db()
 
     # ======================================================================
@@ -53,6 +57,7 @@ class MemoryStorage:
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
 
         current_version = self._get_schema_version()
         if current_version < _SCHEMA_VERSION:
@@ -342,121 +347,126 @@ class MemoryStorage:
         if not self._conn:
             return
         now = datetime.now().isoformat()
-        try:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO memories
-                (id, content, type, priority, source, importance_score,
-                 access_count, tags, created_at, updated_at, expires_at, metadata,
-                 subject, predicate, confidence, decay_rate,
-                 last_accessed_at, superseded_by, source_episode_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    memory.get("id", ""),
-                    memory.get("content", ""),
-                    memory.get("type", "FACT"),
-                    memory.get("priority", "SHORT_TERM"),
-                    memory.get("source", ""),
-                    memory.get("importance_score", 0.5),
-                    memory.get("access_count", 0),
-                    json.dumps(memory.get("tags", []), ensure_ascii=False),
-                    memory.get("created_at", now),
-                    now,
-                    memory.get("expires_at"),
-                    json.dumps(memory.get("metadata", {}), ensure_ascii=False),
-                    memory.get("subject", ""),
-                    memory.get("predicate", ""),
-                    memory.get("confidence", 0.5),
-                    memory.get("decay_rate", 0.1),
-                    memory.get("last_accessed_at"),
-                    memory.get("superseded_by"),
-                    memory.get("source_episode_id"),
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to save memory to SQLite: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO memories
+                    (id, content, type, priority, source, importance_score,
+                     access_count, tags, created_at, updated_at, expires_at, metadata,
+                     subject, predicate, confidence, decay_rate,
+                     last_accessed_at, superseded_by, source_episode_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        memory.get("id", ""),
+                        memory.get("content", ""),
+                        memory.get("type", "FACT"),
+                        memory.get("priority", "SHORT_TERM"),
+                        memory.get("source", ""),
+                        memory.get("importance_score", 0.5),
+                        memory.get("access_count", 0),
+                        json.dumps(memory.get("tags", []), ensure_ascii=False),
+                        memory.get("created_at", now),
+                        now,
+                        memory.get("expires_at"),
+                        json.dumps(memory.get("metadata", {}), ensure_ascii=False),
+                        memory.get("subject", ""),
+                        memory.get("predicate", ""),
+                        memory.get("confidence", 0.5),
+                        memory.get("decay_rate", 0.1),
+                        memory.get("last_accessed_at"),
+                        memory.get("superseded_by"),
+                        memory.get("source_episode_id"),
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to save memory to SQLite: {e}")
 
     def save_memories_batch(self, memories: list[dict]) -> None:
         if not self._conn or not memories:
             return
         now = datetime.now().isoformat()
-        try:
-            self._conn.executemany(
-                """
-                INSERT OR REPLACE INTO memories
-                (id, content, type, priority, source, importance_score,
-                 access_count, tags, created_at, updated_at, expires_at, metadata,
-                 subject, predicate, confidence, decay_rate,
-                 last_accessed_at, superseded_by, source_episode_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        m.get("id", ""),
-                        m.get("content", ""),
-                        m.get("type", "FACT"),
-                        m.get("priority", "SHORT_TERM"),
-                        m.get("source", ""),
-                        m.get("importance_score", 0.5),
-                        m.get("access_count", 0),
-                        json.dumps(m.get("tags", []), ensure_ascii=False),
-                        m.get("created_at", now),
-                        now,
-                        m.get("expires_at"),
-                        json.dumps(m.get("metadata", {}), ensure_ascii=False),
-                        m.get("subject", ""),
-                        m.get("predicate", ""),
-                        m.get("confidence", 0.5),
-                        m.get("decay_rate", 0.1),
-                        m.get("last_accessed_at"),
-                        m.get("superseded_by"),
-                        m.get("source_episode_id"),
-                    )
-                    for m in memories
-                ],
-            )
-            self._conn.commit()
-            logger.debug(f"Batch saved {len(memories)} memories to SQLite")
-        except Exception as e:
-            logger.error(f"Failed to batch save memories: {e}")
+        with self._lock:
+            try:
+                self._conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO memories
+                    (id, content, type, priority, source, importance_score,
+                     access_count, tags, created_at, updated_at, expires_at, metadata,
+                     subject, predicate, confidence, decay_rate,
+                     last_accessed_at, superseded_by, source_episode_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            m.get("id", ""),
+                            m.get("content", ""),
+                            m.get("type", "FACT"),
+                            m.get("priority", "SHORT_TERM"),
+                            m.get("source", ""),
+                            m.get("importance_score", 0.5),
+                            m.get("access_count", 0),
+                            json.dumps(m.get("tags", []), ensure_ascii=False),
+                            m.get("created_at", now),
+                            now,
+                            m.get("expires_at"),
+                            json.dumps(m.get("metadata", {}), ensure_ascii=False),
+                            m.get("subject", ""),
+                            m.get("predicate", ""),
+                            m.get("confidence", 0.5),
+                            m.get("decay_rate", 0.1),
+                            m.get("last_accessed_at"),
+                            m.get("superseded_by"),
+                            m.get("source_episode_id"),
+                        )
+                        for m in memories
+                    ],
+                )
+                self._conn.commit()
+                logger.debug(f"Batch saved {len(memories)} memories to SQLite")
+            except Exception as e:
+                logger.error(f"Failed to batch save memories: {e}")
 
     def load_all(self) -> list[dict]:
         if not self._conn:
             return []
-        try:
-            cursor = self._conn.execute(
-                "SELECT * FROM memories ORDER BY created_at DESC"
-            )
-            return self._rows_to_dicts(cursor)
-        except Exception as e:
-            logger.error(f"Failed to load memories from SQLite: {e}")
-            return []
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM memories ORDER BY created_at DESC"
+                )
+                return self._rows_to_dicts(cursor)
+            except Exception as e:
+                logger.error(f"Failed to load memories from SQLite: {e}")
+                return []
 
     def get_memory(self, memory_id: str) -> dict | None:
         if not self._conn:
             return None
-        try:
-            cursor = self._conn.execute(
-                "SELECT * FROM memories WHERE id = ?", (memory_id,)
-            )
-            rows = self._rows_to_dicts(cursor)
-            return rows[0] if rows else None
-        except Exception as e:
-            logger.error(f"Failed to get memory {memory_id}: {e}")
-            return None
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM memories WHERE id = ?", (memory_id,)
+                )
+                rows = self._rows_to_dicts(cursor)
+                return rows[0] if rows else None
+            except Exception as e:
+                logger.error(f"Failed to get memory {memory_id}: {e}")
+                return None
 
     def delete_memory(self, memory_id: str) -> bool:
         if not self._conn:
             return False
-        try:
-            self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
-            self._conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to delete memory {memory_id}: {e}")
-            return False
+        with self._lock:
+            try:
+                self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+                self._conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Failed to delete memory {memory_id}: {e}")
+                return False
 
     def update_memory(self, memory_id: str, updates: dict) -> bool:
         """Update specific fields of a memory."""
@@ -481,15 +491,16 @@ class MemoryStorage:
         set_clause = ", ".join(f"{k} = ?" for k in filtered)
         values = list(filtered.values()) + [memory_id]
 
-        try:
-            self._conn.execute(
-                f"UPDATE memories SET {set_clause} WHERE id = ?", values
-            )
-            self._conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to update memory {memory_id}: {e}")
-            return False
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"UPDATE memories SET {set_clause} WHERE id = ?", values
+                )
+                self._conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Failed to update memory {memory_id}: {e}")
+                return False
 
     def query(
         self,
@@ -527,31 +538,33 @@ class MemoryStorage:
         where = " AND ".join(conditions) if conditions else "1=1"
         params.extend([limit, offset])
 
-        try:
-            cursor = self._conn.execute(
-                f"SELECT * FROM memories WHERE {where} "
-                f"ORDER BY importance_score DESC, created_at DESC "
-                f"LIMIT ? OFFSET ?",
-                params,
-            )
-            return self._rows_to_dicts(cursor)
-        except Exception as e:
-            logger.error(f"Failed to query memories: {e}")
-            return []
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    f"SELECT * FROM memories WHERE {where} "
+                    f"ORDER BY importance_score DESC, created_at DESC "
+                    f"LIMIT ? OFFSET ?",
+                    params,
+                )
+                return self._rows_to_dicts(cursor)
+            except Exception as e:
+                logger.error(f"Failed to query memories: {e}")
+                return []
 
     def count(self, memory_type: str | None = None) -> int:
         if not self._conn:
             return 0
-        try:
-            if memory_type:
-                cur = self._conn.execute(
-                    "SELECT COUNT(*) FROM memories WHERE type = ?", (memory_type,)
-                )
-            else:
-                cur = self._conn.execute("SELECT COUNT(*) FROM memories")
-            return cur.fetchone()[0]
-        except Exception:
-            return 0
+        with self._lock:
+            try:
+                if memory_type:
+                    cur = self._conn.execute(
+                        "SELECT COUNT(*) FROM memories WHERE type = ?", (memory_type,)
+                    )
+                else:
+                    cur = self._conn.execute("SELECT COUNT(*) FROM memories")
+                return cur.fetchone()[0]
+            except Exception:
+                return 0
 
     # ======================================================================
     # FTS5 Search
@@ -561,23 +574,24 @@ class MemoryStorage:
         """Full-text search using FTS5 with BM25 ranking."""
         if not self._conn or not query.strip():
             return []
-        try:
-            safe_query = self._sanitize_fts_query(query)
-            cursor = self._conn.execute(
-                """
-                SELECT m.*, bm25(memories_fts) AS rank
-                FROM memories_fts fts
-                JOIN memories m ON m.rowid = fts.rowid
-                WHERE memories_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (safe_query, limit),
-            )
-            return self._rows_to_dicts(cursor)
-        except Exception as e:
-            logger.debug(f"FTS5 search failed (query={query!r}): {e}")
-            return []
+        with self._lock:
+            try:
+                safe_query = self._sanitize_fts_query(query)
+                cursor = self._conn.execute(
+                    """
+                    SELECT m.*, bm25(memories_fts) AS rank
+                    FROM memories_fts fts
+                    JOIN memories m ON m.rowid = fts.rowid
+                    WHERE memories_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (safe_query, limit),
+                )
+                return self._rows_to_dicts(cursor)
+            except Exception as e:
+                logger.debug(f"FTS5 search failed (query={query!r}): {e}")
+                return []
 
     @staticmethod
     def _sanitize_fts_query(query: str) -> str:
@@ -593,12 +607,13 @@ class MemoryStorage:
         """Rebuild FTS5 index from scratch (after migration)."""
         if not self._conn:
             return
-        try:
-            self._conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
-            self._conn.commit()
-            logger.info("[MemoryStorage] FTS5 index rebuilt")
-        except Exception as e:
-            logger.warning(f"[MemoryStorage] FTS5 rebuild failed: {e}")
+        with self._lock:
+            try:
+                self._conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+                self._conn.commit()
+                logger.info("[MemoryStorage] FTS5 index rebuilt")
+            except Exception as e:
+                logger.warning(f"[MemoryStorage] FTS5 rebuild failed: {e}")
 
     # ======================================================================
     # Episode CRUD
@@ -607,47 +622,49 @@ class MemoryStorage:
     def save_episode(self, episode: dict) -> None:
         if not self._conn:
             return
-        try:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO episodes
-                (id, session_id, summary, goal, outcome, started_at, ended_at,
-                 action_nodes, entities, tools_used, linked_memory_ids, tags,
-                 importance_score, access_count, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    episode.get("id", ""),
-                    episode.get("session_id", ""),
-                    episode.get("summary", ""),
-                    episode.get("goal", ""),
-                    episode.get("outcome", "completed"),
-                    episode.get("started_at", ""),
-                    episode.get("ended_at", ""),
-                    json.dumps(episode.get("action_nodes", []), ensure_ascii=False),
-                    json.dumps(episode.get("entities", []), ensure_ascii=False),
-                    json.dumps(episode.get("tools_used", []), ensure_ascii=False),
-                    json.dumps(episode.get("linked_memory_ids", []), ensure_ascii=False),
-                    json.dumps(episode.get("tags", []), ensure_ascii=False),
-                    episode.get("importance_score", 0.5),
-                    episode.get("access_count", 0),
-                    episode.get("source", "session_end"),
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to save episode: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO episodes
+                    (id, session_id, summary, goal, outcome, started_at, ended_at,
+                     action_nodes, entities, tools_used, linked_memory_ids, tags,
+                     importance_score, access_count, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        episode.get("id", ""),
+                        episode.get("session_id", ""),
+                        episode.get("summary", ""),
+                        episode.get("goal", ""),
+                        episode.get("outcome", "completed"),
+                        episode.get("started_at", ""),
+                        episode.get("ended_at", ""),
+                        json.dumps(episode.get("action_nodes", []), ensure_ascii=False),
+                        json.dumps(episode.get("entities", []), ensure_ascii=False),
+                        json.dumps(episode.get("tools_used", []), ensure_ascii=False),
+                        json.dumps(episode.get("linked_memory_ids", []), ensure_ascii=False),
+                        json.dumps(episode.get("tags", []), ensure_ascii=False),
+                        episode.get("importance_score", 0.5),
+                        episode.get("access_count", 0),
+                        episode.get("source", "session_end"),
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to save episode: {e}")
 
     def get_episode(self, episode_id: str) -> dict | None:
         if not self._conn:
             return None
-        try:
-            cur = self._conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
-            rows = self._rows_to_dicts(cur, json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"])
-            return rows[0] if rows else None
-        except Exception as e:
-            logger.error(f"Failed to get episode {episode_id}: {e}")
-            return None
+        with self._lock:
+            try:
+                cur = self._conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
+                rows = self._rows_to_dicts(cur, json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"])
+                return rows[0] if rows else None
+            except Exception as e:
+                logger.error(f"Failed to get episode {episode_id}: {e}")
+                return None
 
     def search_episodes(
         self,
@@ -684,15 +701,16 @@ class MemoryStorage:
         where = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
 
-        try:
-            cur = self._conn.execute(
-                f"SELECT * FROM episodes WHERE {where} ORDER BY started_at DESC LIMIT ?",
-                params,
-            )
-            return self._rows_to_dicts(cur, json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"])
-        except Exception as e:
-            logger.error(f"Failed to search episodes: {e}")
-            return []
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    f"SELECT * FROM episodes WHERE {where} ORDER BY started_at DESC LIMIT ?",
+                    params,
+                )
+                return self._rows_to_dicts(cur, json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"])
+            except Exception as e:
+                logger.error(f"Failed to search episodes: {e}")
+                return []
 
     # ======================================================================
     # Scratchpad CRUD
@@ -701,40 +719,42 @@ class MemoryStorage:
     def get_scratchpad(self, user_id: str = "default") -> dict | None:
         if not self._conn:
             return None
-        try:
-            cur = self._conn.execute(
-                "SELECT * FROM scratchpad WHERE user_id = ?", (user_id,)
-            )
-            rows = self._rows_to_dicts(cur, json_fields=["active_projects", "open_questions", "next_steps"])
-            return rows[0] if rows else None
-        except Exception as e:
-            logger.error(f"Failed to get scratchpad: {e}")
-            return None
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT * FROM scratchpad WHERE user_id = ?", (user_id,)
+                )
+                rows = self._rows_to_dicts(cur, json_fields=["active_projects", "open_questions", "next_steps"])
+                return rows[0] if rows else None
+            except Exception as e:
+                logger.error(f"Failed to get scratchpad: {e}")
+                return None
 
     def save_scratchpad(self, scratchpad: dict) -> None:
         if not self._conn:
             return
-        try:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO scratchpad
-                (user_id, content, active_projects, current_focus,
-                 open_questions, next_steps, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    scratchpad.get("user_id", "default"),
-                    scratchpad.get("content", ""),
-                    json.dumps(scratchpad.get("active_projects", []), ensure_ascii=False),
-                    scratchpad.get("current_focus", ""),
-                    json.dumps(scratchpad.get("open_questions", []), ensure_ascii=False),
-                    json.dumps(scratchpad.get("next_steps", []), ensure_ascii=False),
-                    scratchpad.get("updated_at", datetime.now().isoformat()),
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to save scratchpad: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO scratchpad
+                    (user_id, content, active_projects, current_focus,
+                     open_questions, next_steps, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        scratchpad.get("user_id", "default"),
+                        scratchpad.get("content", ""),
+                        json.dumps(scratchpad.get("active_projects", []), ensure_ascii=False),
+                        scratchpad.get("current_focus", ""),
+                        json.dumps(scratchpad.get("open_questions", []), ensure_ascii=False),
+                        json.dumps(scratchpad.get("next_steps", []), ensure_ascii=False),
+                        scratchpad.get("updated_at", datetime.now().isoformat()),
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to save scratchpad: {e}")
 
     # ======================================================================
     # Conversation Turns
@@ -755,103 +775,109 @@ class MemoryStorage:
             return
         ts = timestamp or datetime.now().isoformat()
         has_tools = bool(tool_calls)
-        try:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO conversation_turns
-                (session_id, turn_index, role, content, tool_calls, tool_results,
-                 has_tool_calls, timestamp, token_estimate, extracted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
-                """,
-                (
-                    session_id,
-                    turn_index,
-                    role,
-                    content,
-                    json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
-                    json.dumps(tool_results, ensure_ascii=False) if tool_results else None,
-                    has_tools,
-                    ts,
-                    token_estimate,
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to save turn: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO conversation_turns
+                    (session_id, turn_index, role, content, tool_calls, tool_results,
+                     has_tool_calls, timestamp, token_estimate, extracted)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
+                    """,
+                    (
+                        session_id,
+                        turn_index,
+                        role,
+                        content,
+                        json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
+                        json.dumps(tool_results, ensure_ascii=False) if tool_results else None,
+                        has_tools,
+                        ts,
+                        token_estimate,
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to save turn: {e}")
 
     def get_unextracted_turns(self, limit: int = 100) -> list[dict]:
         if not self._conn:
             return []
-        try:
-            cur = self._conn.execute(
-                "SELECT * FROM conversation_turns WHERE extracted = FALSE "
-                "ORDER BY timestamp ASC LIMIT ?",
-                (limit,),
-            )
-            return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
-        except Exception as e:
-            logger.error(f"Failed to get unextracted turns: {e}")
-            return []
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT * FROM conversation_turns WHERE extracted = FALSE "
+                    "ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+            except Exception as e:
+                logger.error(f"Failed to get unextracted turns: {e}")
+                return []
 
     def mark_turns_extracted(self, session_id: str, turn_indices: list[int]) -> None:
         if not self._conn or not turn_indices:
             return
         placeholders = ",".join("?" * len(turn_indices))
-        try:
-            self._conn.execute(
-                f"UPDATE conversation_turns SET extracted = TRUE "
-                f"WHERE session_id = ? AND turn_index IN ({placeholders})",
-                [session_id] + turn_indices,
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to mark turns extracted: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"UPDATE conversation_turns SET extracted = TRUE "
+                    f"WHERE session_id = ? AND turn_index IN ({placeholders})",
+                    [session_id] + turn_indices,
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to mark turns extracted: {e}")
 
     def get_session_turns(self, session_id: str) -> list[dict]:
         if not self._conn:
             return []
-        try:
-            cur = self._conn.execute(
-                "SELECT * FROM conversation_turns WHERE session_id = ? ORDER BY turn_index",
-                (session_id,),
-            )
-            return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
-        except Exception as e:
-            logger.error(f"Failed to get session turns: {e}")
-            return []
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT * FROM conversation_turns WHERE session_id = ? ORDER BY turn_index",
+                    (session_id,),
+                )
+                return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+            except Exception as e:
+                logger.error(f"Failed to get session turns: {e}")
+                return []
 
     def get_max_turn_index(self, session_id: str) -> int:
         """返回下一个可用的 turn_index（用于续接，避免覆盖历史数据）"""
         if not self._conn:
             return 0
-        try:
-            cur = self._conn.execute(
-                "SELECT MAX(turn_index) FROM conversation_turns WHERE session_id = ?",
-                (session_id,),
-            )
-            row = cur.fetchone()
-            return (row[0] if row[0] is not None else -1) + 1
-        except Exception as e:
-            logger.warning(f"Failed to get max turn_index for {session_id}: {e}")
-            return 0
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT MAX(turn_index) FROM conversation_turns WHERE session_id = ?",
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                return (row[0] if row[0] is not None else -1) + 1
+            except Exception as e:
+                logger.warning(f"Failed to get max turn_index for {session_id}: {e}")
+                return 0
 
     def get_recent_turns(self, session_id: str, limit: int = 20) -> list[dict]:
         """按 turn_index 倒序获取最近 N 轮对话"""
         if not self._conn:
             return []
-        try:
-            cur = self._conn.execute(
-                "SELECT role, content, timestamp, tool_calls, tool_results "
-                "FROM conversation_turns "
-                "WHERE session_id = ? ORDER BY turn_index DESC LIMIT ?",
-                (session_id, limit),
-            )
-            rows = self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
-            rows.reverse()
-            return rows
-        except Exception as e:
-            logger.warning(f"Failed to get recent turns for {session_id}: {e}")
-            return []
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT role, content, timestamp, tool_calls, tool_results "
+                    "FROM conversation_turns "
+                    "WHERE session_id = ? ORDER BY turn_index DESC LIMIT ?",
+                    (session_id, limit),
+                )
+                rows = self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+                rows.reverse()
+                return rows
+            except Exception as e:
+                logger.warning(f"Failed to get recent turns for {session_id}: {e}")
+                return []
 
     # ======================================================================
     # Extraction Queue
@@ -867,64 +893,67 @@ class MemoryStorage:
     ) -> None:
         if not self._conn:
             return
-        try:
-            self._conn.execute(
-                """
-                INSERT INTO extraction_queue
-                (session_id, turn_index, content, tool_calls, tool_results, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session_id,
-                    turn_index,
-                    content,
-                    json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
-                    json.dumps(tool_results, ensure_ascii=False) if tool_results else None,
-                    datetime.now().isoformat(),
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to enqueue extraction: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT INTO extraction_queue
+                    (session_id, turn_index, content, tool_calls, tool_results, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        turn_index,
+                        content,
+                        json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None,
+                        json.dumps(tool_results, ensure_ascii=False) if tool_results else None,
+                        datetime.now().isoformat(),
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to enqueue extraction: {e}")
 
     def dequeue_extraction(self, batch_size: int = 10) -> list[dict]:
         if not self._conn:
             return []
-        try:
-            cur = self._conn.execute(
-                "SELECT * FROM extraction_queue WHERE status = 'pending' "
-                "AND retry_count < max_retries "
-                "ORDER BY created_at ASC LIMIT ?",
-                (batch_size,),
-            )
-            rows = self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
-            if rows:
-                ids = [r["id"] for r in rows]
-                placeholders = ",".join("?" * len(ids))
-                self._conn.execute(
-                    f"UPDATE extraction_queue SET status = 'processing', "
-                    f"last_attempted_at = ?, retry_count = retry_count + 1 "
-                    f"WHERE id IN ({placeholders})",
-                    [datetime.now().isoformat()] + ids,
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT * FROM extraction_queue WHERE status = 'pending' "
+                    "AND retry_count < max_retries "
+                    "ORDER BY created_at ASC LIMIT ?",
+                    (batch_size,),
                 )
-                self._conn.commit()
-            return rows
-        except Exception as e:
-            logger.error(f"Failed to dequeue extraction: {e}")
-            return []
+                rows = self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+                if rows:
+                    ids = [r["id"] for r in rows]
+                    placeholders = ",".join("?" * len(ids))
+                    self._conn.execute(
+                        f"UPDATE extraction_queue SET status = 'processing', "
+                        f"last_attempted_at = ?, retry_count = retry_count + 1 "
+                        f"WHERE id IN ({placeholders})",
+                        [datetime.now().isoformat()] + ids,
+                    )
+                    self._conn.commit()
+                return rows
+            except Exception as e:
+                logger.error(f"Failed to dequeue extraction: {e}")
+                return []
 
     def complete_extraction(self, queue_id: int, success: bool = True) -> None:
         if not self._conn:
             return
         status = "completed" if success else "failed"
-        try:
-            self._conn.execute(
-                "UPDATE extraction_queue SET status = ? WHERE id = ?",
-                (status, queue_id),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to complete extraction {queue_id}: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "UPDATE extraction_queue SET status = ? WHERE id = ?",
+                    (status, queue_id),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to complete extraction {queue_id}: {e}")
 
     # ======================================================================
     # Embedding Cache (for API embedding backend)
@@ -933,33 +962,35 @@ class MemoryStorage:
     def get_cached_embedding(self, content_hash: str) -> bytes | None:
         if not self._conn:
             return None
-        try:
-            cur = self._conn.execute(
-                "SELECT embedding FROM embedding_cache WHERE content_hash = ?",
-                (content_hash,),
-            )
-            row = cur.fetchone()
-            return row[0] if row else None
-        except Exception:
-            return None
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT embedding FROM embedding_cache WHERE content_hash = ?",
+                    (content_hash,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+            except Exception:
+                return None
 
     def save_cached_embedding(
         self, content_hash: str, embedding: bytes, model: str, dimensions: int = 1024
     ) -> None:
         if not self._conn:
             return
-        try:
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO embedding_cache
-                (content_hash, embedding, model, dimensions, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (content_hash, embedding, model, dimensions, datetime.now().isoformat()),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to cache embedding: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO embedding_cache
+                    (content_hash, embedding, model, dimensions, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (content_hash, embedding, model, dimensions, datetime.now().isoformat()),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to cache embedding: {e}")
 
     # ======================================================================
     # Attachments (文件/媒体记忆)
@@ -968,56 +999,58 @@ class MemoryStorage:
     def save_attachment(self, data: dict) -> None:
         if not self._conn:
             return
-        try:
-            tags_val = data.get("tags", [])
-            if isinstance(tags_val, list):
-                tags_val = json.dumps(tags_val, ensure_ascii=False)
-            linked_val = data.get("linked_memory_ids", [])
-            if isinstance(linked_val, list):
-                linked_val = json.dumps(linked_val, ensure_ascii=False)
+        tags_val = data.get("tags", [])
+        if isinstance(tags_val, list):
+            tags_val = json.dumps(tags_val, ensure_ascii=False)
+        linked_val = data.get("linked_memory_ids", [])
+        if isinstance(linked_val, list):
+            linked_val = json.dumps(linked_val, ensure_ascii=False)
 
-            self._conn.execute(
-                """INSERT OR REPLACE INTO attachments
-                   (id, session_id, episode_id, filename, original_filename,
-                    mime_type, file_size, local_path, url, direction,
-                    description, transcription, extracted_text, tags,
-                    linked_memory_ids, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    data["id"],
-                    data.get("session_id", ""),
-                    data.get("episode_id", ""),
-                    data.get("filename", ""),
-                    data.get("original_filename", ""),
-                    data.get("mime_type", ""),
-                    data.get("file_size", 0),
-                    data.get("local_path", ""),
-                    data.get("url", ""),
-                    data.get("direction", "inbound"),
-                    data.get("description", ""),
-                    data.get("transcription", ""),
-                    data.get("extracted_text", ""),
-                    tags_val,
-                    linked_val,
-                    data.get("created_at", datetime.now().isoformat()),
-                ),
-            )
-            self._conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to save attachment {data.get('id')}: {e}")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """INSERT OR REPLACE INTO attachments
+                       (id, session_id, episode_id, filename, original_filename,
+                        mime_type, file_size, local_path, url, direction,
+                        description, transcription, extracted_text, tags,
+                        linked_memory_ids, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        data["id"],
+                        data.get("session_id", ""),
+                        data.get("episode_id", ""),
+                        data.get("filename", ""),
+                        data.get("original_filename", ""),
+                        data.get("mime_type", ""),
+                        data.get("file_size", 0),
+                        data.get("local_path", ""),
+                        data.get("url", ""),
+                        data.get("direction", "inbound"),
+                        data.get("description", ""),
+                        data.get("transcription", ""),
+                        data.get("extracted_text", ""),
+                        tags_val,
+                        linked_val,
+                        data.get("created_at", datetime.now().isoformat()),
+                    ),
+                )
+                self._conn.commit()
+            except Exception as e:
+                logger.error(f"Failed to save attachment {data.get('id')}: {e}")
 
     def get_attachment(self, attachment_id: str) -> dict | None:
         if not self._conn:
             return None
-        try:
-            cursor = self._conn.execute(
-                "SELECT * FROM attachments WHERE id = ?", (attachment_id,)
-            )
-            rows = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
-            return rows[0] if rows else None
-        except Exception as e:
-            logger.error(f"Failed to get attachment {attachment_id}: {e}")
-        return None
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM attachments WHERE id = ?", (attachment_id,)
+                )
+                rows = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
+                return rows[0] if rows else None
+            except Exception as e:
+                logger.error(f"Failed to get attachment {attachment_id}: {e}")
+            return None
 
     def search_attachments(
         self,
@@ -1029,75 +1062,78 @@ class MemoryStorage:
     ) -> list[dict]:
         if not self._conn:
             return []
-        try:
-            if query:
-                safe_query = self._sanitize_fts_query(query)
-                results = []
-                try:
+        with self._lock:
+            try:
+                if query:
+                    safe_query = self._sanitize_fts_query(query)
+                    results = []
+                    try:
+                        cursor = self._conn.execute(
+                            """SELECT a.* FROM attachments a
+                               JOIN attachments_fts f ON a.rowid = f.rowid
+                               WHERE attachments_fts MATCH ?
+                               ORDER BY rank
+                               LIMIT ?""",
+                            (safe_query, limit * 3),
+                        )
+                        results = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
+                    except sqlite3.OperationalError:
+                        pass
+
+                    if not results:
+                        like_q = f"%{query}%"
+                        cursor = self._conn.execute(
+                            """SELECT * FROM attachments
+                               WHERE description LIKE ? OR filename LIKE ?
+                                     OR transcription LIKE ? OR extracted_text LIKE ?
+                               ORDER BY created_at DESC LIMIT ?""",
+                            (like_q, like_q, like_q, like_q, limit * 3),
+                        )
+                        results = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
+                else:
                     cursor = self._conn.execute(
-                        """SELECT a.* FROM attachments a
-                           JOIN attachments_fts f ON a.rowid = f.rowid
-                           WHERE attachments_fts MATCH ?
-                           ORDER BY rank
-                           LIMIT ?""",
-                        (safe_query, limit * 3),
+                        "SELECT * FROM attachments ORDER BY created_at DESC LIMIT ?",
+                        (limit * 3,),
                     )
                     results = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
-                except sqlite3.OperationalError:
-                    pass
 
-                if not results:
-                    like_q = f"%{query}%"
-                    cursor = self._conn.execute(
-                        """SELECT * FROM attachments
-                           WHERE description LIKE ? OR filename LIKE ?
-                                 OR transcription LIKE ? OR extracted_text LIKE ?
-                           ORDER BY created_at DESC LIMIT ?""",
-                        (like_q, like_q, like_q, like_q, limit * 3),
-                    )
-                    results = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
-            else:
-                cursor = self._conn.execute(
-                    "SELECT * FROM attachments ORDER BY created_at DESC LIMIT ?",
-                    (limit * 3,),
-                )
-                results = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
+                if mime_type:
+                    results = [r for r in results if r.get("mime_type", "").startswith(mime_type)]
+                if direction:
+                    results = [r for r in results if r.get("direction") == direction]
+                if session_id:
+                    results = [r for r in results if r.get("session_id") == session_id]
 
-            if mime_type:
-                results = [r for r in results if r.get("mime_type", "").startswith(mime_type)]
-            if direction:
-                results = [r for r in results if r.get("direction") == direction]
-            if session_id:
-                results = [r for r in results if r.get("session_id") == session_id]
-
-            return results[:limit]
-        except Exception as e:
-            logger.error(f"Failed to search attachments: {e}")
-            return []
+                return results[:limit]
+            except Exception as e:
+                logger.error(f"Failed to search attachments: {e}")
+                return []
 
     def delete_attachment(self, attachment_id: str) -> bool:
         if not self._conn:
             return False
-        try:
-            self._conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
-            self._conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to delete attachment {attachment_id}: {e}")
-            return False
+        with self._lock:
+            try:
+                self._conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+                self._conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Failed to delete attachment {attachment_id}: {e}")
+                return False
 
     def get_session_attachments(self, session_id: str) -> list[dict]:
         if not self._conn:
             return []
-        try:
-            cursor = self._conn.execute(
-                "SELECT * FROM attachments WHERE session_id = ? ORDER BY created_at",
-                (session_id,),
-            )
-            return self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
-        except Exception as e:
-            logger.error(f"Failed to get session attachments: {e}")
-            return []
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM attachments WHERE session_id = ? ORDER BY created_at",
+                    (session_id,),
+                )
+                return self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
+            except Exception as e:
+                logger.error(f"Failed to get session attachments: {e}")
+                return []
 
     # ======================================================================
     # Export / Import / Cleanup
@@ -1123,7 +1159,7 @@ class MemoryStorage:
             if not isinstance(memories, list):
                 logger.error(f"Invalid memories format in {json_path}")
                 return 0
-            self.save_memories_batch(memories)
+            self.save_memories_batch(memories)  # already locked internally
             logger.info(f"Imported {len(memories)} memories from {json_path}")
             return len(memories)
         except Exception as e:
@@ -1134,24 +1170,26 @@ class MemoryStorage:
         if not self._conn:
             return 0
         now = datetime.now().isoformat()
-        try:
-            cursor = self._conn.execute(
-                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?",
-                (now,),
-            )
-            self._conn.commit()
-            count = cursor.rowcount
-            if count > 0:
-                logger.info(f"Cleaned up {count} expired memories")
-            return count
-        except Exception as e:
-            logger.error(f"Failed to cleanup expired memories: {e}")
-            return 0
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now,),
+                )
+                self._conn.commit()
+                count = cursor.rowcount
+                if count > 0:
+                    logger.info(f"Cleaned up {count} expired memories")
+                return count
+            except Exception as e:
+                logger.error(f"Failed to cleanup expired memories: {e}")
+                return 0
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
 
     # ======================================================================
     # Helpers

@@ -36,6 +36,11 @@ class StickerEngine:
     """表情包引擎"""
 
     INDEX_URL = "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json"
+    _MIRRORS = [
+        "https://cdn.jsdelivr.net/gh/zhaoolee/ChineseBQB@master/",
+        "https://raw.gitmirror.com/zhaoolee/ChineseBQB/master/",
+    ]
+    _GITHUB_RAW_PREFIX = "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/"
 
     def __init__(self, data_dir: Path | str):
         self.data_dir = Path(data_dir) if not isinstance(data_dir, Path) else data_dir
@@ -97,45 +102,27 @@ class StickerEngine:
         return []
 
     async def _download_index(self) -> bool:
-        """下载 ChineseBQB 索引 JSON"""
-        try:
-            import aiohttp
+        """下载 ChineseBQB 索引 JSON，自动尝试镜像。"""
+        index_urls = [self.INDEX_URL]
+        relative = "chinesebqb_github.json"
+        for mirror in self._MIRRORS:
+            index_urls.append(mirror + relative)
 
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(self.INDEX_URL, timeout=aiohttp.ClientTimeout(total=30)) as resp,
-            ):
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        self._stickers = self._extract_sticker_list(data)
-                        # 保存到本地
-                        self.index_file.write_text(
-                            json.dumps(data, ensure_ascii=False),
-                            encoding="utf-8",
-                        )
-                        return True
-                    else:
-                        logger.warning(f"Failed to download sticker index: HTTP {resp.status}")
-        except ImportError:
-            logger.warning("aiohttp not available, trying httpx")
-            try:
-                import httpx
+        for url in index_urls:
+            content = await self._download_bytes(url, timeout=30)
+            if content:
+                try:
+                    data = json.loads(content)
+                    self._stickers = self._extract_sticker_list(data)
+                    self.index_file.write_text(
+                        json.dumps(data, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    return True
+                except (json.JSONDecodeError, Exception) as e:
+                    logger.warning(f"Failed to parse sticker index from {url}: {e}")
 
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(self.INDEX_URL)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        self._stickers = self._extract_sticker_list(data)
-                        self.index_file.write_text(
-                            json.dumps(data, ensure_ascii=False),
-                            encoding="utf-8",
-                        )
-                        return True
-            except Exception as e:
-                logger.warning(f"Failed to download sticker index with httpx: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to download sticker index: {e}")
-
+        logger.warning("Failed to download sticker index: all mirrors exhausted")
         return False
 
     def _build_indices(self) -> None:
@@ -268,36 +255,48 @@ class StickerEngine:
         Returns:
             本地缓存文件路径 或 None
         """
-        # 使用 URL hash 作为缓存 key
         url_hash = hashlib.md5(url.encode()).hexdigest()
         ext = url.rsplit(".", 1)[-1] if "." in url else "gif"
         cache_path = self.cache_dir / f"{url_hash}.{ext}"
 
-        # 已缓存则直接返回
         if cache_path.exists():
             return cache_path
 
+        urls_to_try = [url]
+        if url.startswith(self._GITHUB_RAW_PREFIX):
+            relative = url[len(self._GITHUB_RAW_PREFIX):]
+            for mirror in self._MIRRORS:
+                urls_to_try.append(mirror + relative)
+
+        for attempt_url in urls_to_try:
+            content = await self._download_bytes(attempt_url)
+            if content:
+                cache_path.write_bytes(content)
+                return cache_path
+
+        logger.warning(f"Failed to download sticker from {url}: all mirrors exhausted")
+        return None
+
+    @staticmethod
+    async def _download_bytes(url: str, timeout: float = 15) -> bytes | None:
+        """尝试下载 URL 内容，返回 bytes 或 None。"""
         try:
             try:
                 import aiohttp
 
                 async with (
                     aiohttp.ClientSession() as session,
-                    session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+                    session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp,
                 ):
-                        if resp.status == 200:
-                            content = await resp.read()
-                            cache_path.write_bytes(content)
-                            return cache_path
+                    if resp.status == 200:
+                        return await resp.read()
             except ImportError:
                 import httpx
 
-                async with httpx.AsyncClient(timeout=30) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.get(url)
                     if resp.status_code == 200:
-                        cache_path.write_bytes(resp.content)
-                        return cache_path
-        except Exception as e:
-            logger.warning(f"Failed to download sticker from {url}: {e}")
-
+                        return resp.content
+        except Exception:
+            pass
         return None

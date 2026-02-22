@@ -4,7 +4,7 @@
 测试内容:
 1. runtime_env.py: 模块路径注入和 DLL 注册
 2. _import_helper.py: 模块映射完整性
-3. browser_mcp.py: PLAYWRIGHT_BROWSERS_PATH 运行时设置
+3. browser/manager.py: PLAYWRIGHT_BROWSERS_PATH 运行时设置
 4. bundle_modules.py: 离线打包脚本模块定义一致性
 5. 记忆检索回退机制
 """
@@ -214,7 +214,7 @@ class TestImportHelper:
 
 
 # ─────────────────────────────────────────────
-# 3. browser_mcp PLAYWRIGHT_BROWSERS_PATH 设置
+# 3. browser/manager PLAYWRIGHT_BROWSERS_PATH 设置
 # ─────────────────────────────────────────────
 
 
@@ -231,7 +231,7 @@ class TestPlaywrightBrowsersPath:
         env_backup = os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
         try:
             with patch("pathlib.Path.home", return_value=tmp_path):
-                # 模拟 browser_mcp.py 中的逻辑
+                # 模拟 browser/manager.py 中的逻辑
                 if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
                     check_dir = Path.home() / ".openakita" / "modules" / "browser" / "browsers"
                     if check_dir.is_dir():
@@ -256,7 +256,7 @@ class TestPlaywrightBrowsersPath:
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = custom_path
 
             with patch("pathlib.Path.home", return_value=tmp_path):
-                # 模拟 browser_mcp.py 中的逻辑
+                # 模拟 browser/manager.py 中的逻辑
                 if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
                     check_dir = Path.home() / ".openakita" / "modules" / "browser" / "browsers"
                     if check_dir.is_dir():

@@ -61,21 +61,23 @@ dependencies = [
 
     # IM Channels - Telegram (default)
     "python-telegram-bot>=21.0",
-]
 
-[project.optional-dependencies]
-# 向量记忆增强 (sentence-transformers + chromadb)
-memory = [
-    "sentence-transformers>=2.2.0",
-    "chromadb>=0.4.0",
-]
-
-# 浏览器自动化 (playwright + browser-use) — 已内置到核心依赖打包
-automation = [
+    # Browser automation (built-in)
     "playwright>=1.40.0",
     "browser-use>=0.11.8",
     "langchain-openai>=1.0.0",
 ]
+
+[project.optional-dependencies]
+# 向量记忆增强 (sentence-transformers + chromadb + jieba)
+memory = [
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+    "jieba>=0.42",
+]
+
+# 浏览器自动化 — 已内置到核心依赖
+automation = []
 
 # 多 Agent 协同 (pyzmq)
 orchestration = [
@@ -115,11 +117,8 @@ whisper = [
     "static-ffmpeg>=2.7",
 ]
 
-# 浏览器 AI 代理
-browser = [
-    "browser-use>=0.11.8",
-    "langchain-openai>=1.0.0",
-]
+# 浏览器 AI 代理 — 已内置到核心依赖
+browser = []
 
 # Windows 桌面自动化
 windows = [
@@ -136,7 +135,7 @@ all = [
     # -- 从核心依赖分离的重型模块 --
     "sentence-transformers>=2.2.0",
     "chromadb>=0.4.0",
-    "playwright>=1.40.0",
+    "jieba>=0.42",
     "pyzmq>=25.0.0",
     # -- IM 通道 --
     "lark-oapi>=1.2.0",
@@ -146,11 +145,9 @@ all = [
     "websockets>=12.0",
     "qq-botpy>=1.1.5",
     "pilk>=0.2.1",
-    # -- 语音 / 浏览器 AI / 桌面 --
+    # -- 语音 / 桌面 --
     "openai-whisper>=20231117",
     "static-ffmpeg>=2.7",
-    "browser-use>=0.11.8",
-    "langchain-openai>=1.0.0",
     "mss>=9.0.0",
     "pyautogui>=0.9.54",
     "pywinauto>=0.6.8; platform_system == 'Windows'",
