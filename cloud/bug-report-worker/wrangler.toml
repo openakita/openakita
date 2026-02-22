@@ -8,7 +8,7 @@ bucket_name = "bug-reports"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "PLACEHOLDER"  # Replace after: npx wrangler kv:namespace create RATE_LIMIT
+id = "e341bab1a2bb43c382861bb20eb5d780"
 
 # Secrets (set via `wrangler secret put`):
 #   TURNSTILE_SECRET_KEY - Cloudflare Turnstile server-side secret

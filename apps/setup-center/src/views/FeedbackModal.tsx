@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { IconX, IconInfo } from "../icons";
 
-const TURNSTILE_SITE_KEY = "0x4AAAAAAA_PLACEHOLDER_REPLACE_ME";
+const TURNSTILE_SITE_KEY = "0x4AAAAAACgY6e8TLK4RVrQk";
 
 type FeedbackMode = "bug" | "feature";
 

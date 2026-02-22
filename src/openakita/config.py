@@ -357,7 +357,7 @@ class Settings(BaseSettings):
 
     # === Bug Report 配置 ===
     bug_report_endpoint: str = Field(
-        default="",
+        default="https://bug-report-worker.zacon365.workers.dev",
         description="Bug report cloud endpoint URL (Cloudflare Worker). Empty = feature disabled.",
     )
 
