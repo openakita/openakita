@@ -373,6 +373,8 @@ class TelegramAdapter(ChannelAdapter):
                 BotCommand("thinking", "深度思考模式 (on/off/auto)"),
                 BotCommand("thinking_depth", "思考深度 (low/medium/high)"),
                 BotCommand("cancel", "取消当前操作"),
+                BotCommand("restart", "终极重启服务"),
+                BotCommand("cancel_restart", "取消重启"),
             ]
             await self._bot.set_my_commands(bot_commands)
             logger.info(

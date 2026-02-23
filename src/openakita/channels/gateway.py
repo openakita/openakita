@@ -14,6 +14,7 @@ import asyncio
 import base64
 import contextlib
 import logging
+import random
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -572,6 +573,204 @@ class ThinkingCommandHandler:
         return "\n".join(lines)
 
 
+# ==================== 终极重启命令处理 ====================
+
+
+@dataclass
+class RestartSession:
+    """重启确认会话"""
+
+    session_key: str
+    confirm_code: str
+    message: UnifiedMessage
+    started_at: datetime = field(default_factory=datetime.now)
+    timeout_seconds: int = 60
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.now() > self.started_at + timedelta(seconds=self.timeout_seconds)
+
+    @property
+    def remaining_seconds(self) -> int:
+        elapsed = (datetime.now() - self.started_at).total_seconds()
+        return max(0, int(self.timeout_seconds - elapsed))
+
+
+class RestartCommandHandler:
+    """
+    终极重启命令处理器
+
+    在 _on_message 最早期拦截，确保即使系统卡死也能响应。
+    流程：/restart → 生成确认码 → 用户回传确认码 → 触发重启。
+    支持倒计时自动取消和手动取消。
+    """
+
+    RESTART_COMMANDS = {"/restart", "/重启"}
+    CANCEL_COMMANDS = {"/cancel_restart", "/取消重启"}
+    CONFIRM_TIMEOUT = 60
+
+    def __init__(self) -> None:
+        self._pending: dict[str, RestartSession] = {}
+        self._timeout_tasks: dict[str, asyncio.Task] = {}
+        # 由 MessageGateway 注入
+        self._send_feedback_fn: Callable[
+            [UnifiedMessage, str], Awaitable[None]
+        ] | None = None
+        self._shutdown_event: asyncio.Event | None = None
+
+    # ---------- 命令识别 ----------
+
+    def is_restart_command(self, text: str) -> bool:
+        return text.strip().lower() in self.RESTART_COMMANDS
+
+    def is_cancel_command(self, text: str) -> bool:
+        return text.strip().lower() in self.CANCEL_COMMANDS
+
+    def has_pending_session(self, session_key: str) -> bool:
+        """检查该用户是否有待确认的重启会话"""
+        session = self._pending.get(session_key)
+        if session is None:
+            return False
+        if session.is_expired:
+            self._cleanup(session_key)
+            return False
+        return True
+
+    def is_confirm_code(self, session_key: str, text: str) -> bool:
+        """检查文本是否可能是重启确认码（纯6位数字）"""
+        session = self._pending.get(session_key)
+        if session is None:
+            return False
+        return text.strip().isdigit() and len(text.strip()) == 6
+
+    # ---------- 核心流程 ----------
+
+    async def handle_restart_command(
+        self, session_key: str, message: UnifiedMessage,
+    ) -> None:
+        """处理 /restart 命令：生成确认码并发送给用户"""
+        if session_key in self._pending:
+            old = self._pending[session_key]
+            await self._send(
+                message,
+                f"⚠️ 已有一个待确认的重启请求（确认码 **{old.confirm_code}**，"
+                f"剩余 {old.remaining_seconds}s）。\n"
+                f"发送确认码以确认，或 /cancel_restart 取消。",
+            )
+            return
+
+        code = f"{random.randint(0, 999999):06d}"
+        session = RestartSession(
+            session_key=session_key,
+            confirm_code=code,
+            message=message,
+            timeout_seconds=self.CONFIRM_TIMEOUT,
+        )
+        self._pending[session_key] = session
+
+        timeout_task = asyncio.create_task(self._timeout_handler(session_key))
+        self._timeout_tasks[session_key] = timeout_task
+
+        logger.warning(
+            f"[Restart] Restart requested by {session_key}, "
+            f"confirm_code={code}, timeout={self.CONFIRM_TIMEOUT}s"
+        )
+
+        await self._send(
+            message,
+            f"🔄 **服务重启确认**\n\n"
+            f"确认码: `{code}`\n\n"
+            f"请在 **{self.CONFIRM_TIMEOUT} 秒** 内回复此确认码以执行重启。\n"
+            f"发送 `/cancel_restart` 取消重启。",
+        )
+
+    async def handle_pending_input(
+        self, session_key: str, message: UnifiedMessage,
+    ) -> bool:
+        """
+        处理待确认会话中的用户输入。
+
+        Returns:
+            True  — 输入已被消费（调用方应 return，不继续处理）
+            False — 输入与重启无关，调用方应放行给正常流程
+        """
+        text = (message.plain_text or "").strip()
+        session = self._pending.get(session_key)
+        if session is None:
+            return False
+
+        # 取消
+        if text.lower() in self.CANCEL_COMMANDS or text.lower() == "/cancel":
+            self._cleanup(session_key)
+            logger.info(f"[Restart] Cancelled by user: {session_key}")
+            await self._send(message, "❌ 重启已取消。")
+            return True
+
+        # 验证确认码
+        if text == session.confirm_code:
+            self._cleanup(session_key)
+            logger.warning(f"[Restart] Confirmed by {session_key}, triggering restart...")
+            await self._send(message, "✅ 确认码正确，服务将在 3 秒后重启…")
+            await asyncio.sleep(3)
+            await self._trigger_restart()
+            return True
+
+        # 6位数字但不匹配 → 提示错误
+        if text.isdigit() and len(text) == 6:
+            await self._send(
+                message,
+                f"❌ 确认码不正确（剩余 {session.remaining_seconds}s）。\n"
+                f"请发送 `{session.confirm_code}` 或 `/cancel_restart` 取消。",
+            )
+            return True
+
+        # 非数字输入 → 不消费，放行给正常流程（避免误拦截普通消息）
+        return False
+
+    # ---------- 超时处理 ----------
+
+    async def _timeout_handler(self, session_key: str) -> None:
+        session = self._pending.get(session_key)
+        if session is None:
+            return
+        try:
+            await asyncio.sleep(session.timeout_seconds)
+        except asyncio.CancelledError:
+            return
+
+        if session_key in self._pending:
+            msg = self._pending[session_key].message
+            self._cleanup(session_key)
+            logger.info(f"[Restart] Timed out for {session_key}")
+            await self._send(msg, "⏰ 重启确认已超时，已自动取消。")
+
+    # ---------- 重启触发 ----------
+
+    async def _trigger_restart(self) -> None:
+        from openakita import config as cfg
+
+        cfg._restart_requested = True
+        if self._shutdown_event is not None:
+            logger.warning("[Restart] Setting shutdown_event for graceful restart")
+            self._shutdown_event.set()
+        else:
+            logger.error("[Restart] No shutdown_event available, restart may not work")
+
+    # ---------- 辅助 ----------
+
+    def _cleanup(self, session_key: str) -> None:
+        self._pending.pop(session_key, None)
+        task = self._timeout_tasks.pop(session_key, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _send(self, message: UnifiedMessage, text: str) -> None:
+        if self._send_feedback_fn:
+            await self._send_feedback_fn(message, text)
+        else:
+            logger.warning(f"[Restart] No feedback function, cannot send: {text}")
+
+
 class MessageGateway:
     """
     统一消息网关
@@ -653,6 +852,13 @@ class MessageGateway:
 
         # 思考模式命令处理器
         self._thinking_cmd_handler: ThinkingCommandHandler = ThinkingCommandHandler(session_manager)
+
+        # 终极重启命令处理器（在 _on_message 最早期拦截，不经过队列/Agent）
+        self._restart_cmd_handler: RestartCommandHandler = RestartCommandHandler()
+        self._restart_cmd_handler._send_feedback_fn = self._send_feedback
+
+        # 外部注入的 shutdown_event（由 main.py 调用 set_shutdown_event 设置）
+        self._shutdown_event: asyncio.Event | None = None
 
         # ==================== 进度事件流（Plan/Deliver 等）====================
         # 目标：把“执行过程进度展示”下沉到网关侧，避免模型/工具刷屏。
@@ -867,6 +1073,12 @@ class MessageGateway:
         self._model_cmd_handler.set_brain(brain)
         logger.info("ModelCommandHandler brain set")
 
+    def set_shutdown_event(self, event: asyncio.Event) -> None:
+        """注入 shutdown_event（供终极重启指令使用）"""
+        self._shutdown_event = event
+        self._restart_cmd_handler._shutdown_event = event
+        logger.debug("RestartCommandHandler shutdown_event set")
+
     # ==================== 适配器管理 ====================
 
     async def register_adapter(self, adapter: ChannelAdapter) -> None:
@@ -912,6 +1124,22 @@ class MessageGateway:
         - INSERT: 将用户消息注入任务上下文，让 LLM 决策如何处理
         """
         session_key = f"{message.channel}:{message.chat_id}:{message.user_id}"
+        _raw_text = (message.plain_text or "").strip()
+
+        # ==================== 终极重启指令拦截 ====================
+        # 在所有逻辑之前拦截，确保即使系统卡死也能响应。
+        # 不经过消息队列、不进入 Agent、不污染会话上下文。
+        if self._restart_cmd_handler.has_pending_session(session_key):
+            consumed = await self._restart_cmd_handler.handle_pending_input(
+                session_key, message,
+            )
+            if consumed:
+                return
+
+        if self._restart_cmd_handler.is_restart_command(_raw_text):
+            await self._restart_cmd_handler.handle_restart_command(session_key, message)
+            return
+        # ==================== /终极重启指令拦截 ====================
 
         async with self._interrupt_lock:
             if self._processing_sessions.get(session_key, False):

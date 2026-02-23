@@ -1343,6 +1343,10 @@ def serve():
         if im_channels:
             console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
 
+        # 注入 shutdown_event 到网关（供终极重启指令使用）
+        if _message_gateway is not None:
+            _message_gateway.set_shutdown_event(shutdown_event)
+
         # 启动 HTTP API 服务器（供 Setup Center Chat 页面使用）
         api_task = None
         _api_fatal = False
