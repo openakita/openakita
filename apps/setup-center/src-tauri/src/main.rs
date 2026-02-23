@@ -1888,6 +1888,15 @@ fn startup_reconcile() {
 }
 
 fn main() {
+    // Workaround: NVIDIA drivers on Linux can cause a blank WebKitGTK window
+    // due to DMA-BUF renderer incompatibility. Disable it preemptively.
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 第二个实例启动时，聚焦已有窗口并退出自身
