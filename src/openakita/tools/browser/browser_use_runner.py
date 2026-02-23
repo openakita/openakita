@@ -163,31 +163,46 @@ class BrowserUseRunner:
 
     def _resolve_llm(self) -> Any | None:
         """三级回退获取 LLM 实例：注入配置 → 环境变量 → ChatBrowserUse。"""
+
+        def _try_langchain(model: str, api_key: str, base_url: str | None) -> Any | None:
+            try:
+                from langchain_openai import ChatOpenAI
+            except ImportError as ie:
+                logger.error(
+                    f"[BrowserTask] langchain_openai 模块加载失败: {ie}. "
+                    "请确认已打包 langchain-openai 依赖。"
+                )
+                return None
+            try:
+                llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
+                return _ensure_browser_use_llm_contract(
+                    llm, provider="openai", model=model,
+                )
+            except Exception as e:
+                logger.error(f"[BrowserTask] ChatOpenAI 初始化失败: {e}")
+                return None
+
         # 1. 注入的配置
         if self._llm_config:
-            from langchain_openai import ChatOpenAI
-
             model = self._llm_config.get("model", "")
             api_key = self._llm_config.get("api_key")
             base_url = self._llm_config.get("base_url")
 
             if api_key:
-                llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
-                llm = _ensure_browser_use_llm_contract(llm, provider="openai", model=model)
-                logger.info(f"[BrowserTask] Using inherited LLM config: {model}")
-                return llm
+                llm = _try_langchain(model, api_key, base_url)
+                if llm:
+                    logger.info(f"[BrowserTask] Using inherited LLM config: {model}")
+                    return llm
 
         # 2. 环境变量
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
-            from langchain_openai import ChatOpenAI
-
             base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL")
             model = os.getenv("OPENAI_MODEL", "")
-            llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
-            llm = _ensure_browser_use_llm_contract(llm, provider="openai", model=model)
-            logger.info(f"[BrowserTask] Using env LLM: {model}")
-            return llm
+            llm = _try_langchain(model, api_key, base_url)
+            if llm:
+                logger.info(f"[BrowserTask] Using env LLM: {model}")
+                return llm
 
         # 3. ChatBrowserUse
         try:

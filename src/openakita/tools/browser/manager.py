@@ -23,15 +23,16 @@ _COMMON_CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--no-sandbox",
     "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--no-first-run",
+    "--disable-features=VizDisplayCompositor",
 ]
 
 _SERVER_EXTRA_ARGS = [
-    "--disable-gpu",
     "--disable-software-rasterizer",
     "--disable-extensions",
     "--disable-background-networking",
     "--disable-default-apps",
-    "--no-first-run",
 ]
 
 
@@ -76,9 +77,9 @@ def _find_bundled_browser_executable() -> str | None:
     """在 PyInstaller 打包目录中搜索内置的 Chromium/Chrome 可执行文件。
 
     搜索路径（按优先级）：
-    1. {_MEIPASS}/browser/chrome.exe          — Tauri 桌面端标准打包位置
-    2. {_MEIPASS}/playwright-browsers/.../     — Playwright 标准结构（如有）
-    3. {exe_dir}/_internal/browser/chrome.exe  — PyInstaller onedir 结构
+    1. {base}/browser/chrome.exe                          — 直接打包位置
+    2. {base}/playwright-browsers/chromium-*/chrome-win/   — Playwright 标准结构
+    3. {base}/playwright-browsers/chromium-*/chrome-linux/
     """
     import sys
 
@@ -86,34 +87,43 @@ def _find_bundled_browser_executable() -> str | None:
     if not IS_FROZEN:
         return None
 
-    candidates: list[Path] = []
+    search_roots: list[Path] = []
 
     _meipass = getattr(sys, "_MEIPASS", None)
     if _meipass:
-        meipass = Path(_meipass)
-        # Tauri 打包的标准位置
-        candidates.append(meipass / "browser" / "chrome.exe")
-        candidates.append(meipass / "browser" / "chrome")
-        # headless-shell 变体
-        candidates.append(meipass / "browser" / "headless_shell.exe")
-        candidates.append(meipass / "browser" / "headless_shell")
+        search_roots.append(Path(_meipass))
 
-    # 兜底: 相对于 exe 的 _internal/browser/
     exe_dir = Path(sys.executable).parent
-    internal_browser = exe_dir / "_internal" / "browser"
-    if internal_browser != (Path(_meipass) / "browser" if _meipass else None):
-        candidates.append(internal_browser / "chrome.exe")
-        candidates.append(internal_browser / "chrome")
+    internal_dir = exe_dir / "_internal"
+    if internal_dir.is_dir() and internal_dir not in search_roots:
+        search_roots.append(internal_dir)
+
+    is_win = platform.system() == "Windows"
+    exe_name = "chrome.exe" if is_win else "chrome"
+    headless_name = "headless_shell.exe" if is_win else "headless_shell"
+
+    candidates: list[Path] = []
+    for root in search_roots:
+        candidates.append(root / "browser" / exe_name)
+
+        pw_dir = root / "playwright-browsers"
+        if pw_dir.is_dir():
+            for chromium_dir in sorted(pw_dir.glob("chromium-*"), reverse=True):
+                if is_win:
+                    candidates.append(chromium_dir / "chrome-win" / exe_name)
+                else:
+                    candidates.append(chromium_dir / "chrome-linux" / exe_name)
+                    candidates.append(chromium_dir / "chrome-linux" / headless_name)
+
+        candidates.append(root / "browser" / headless_name)
 
     for path in candidates:
         if path.is_file():
             logger.info(f"[Browser] Found bundled browser executable: {path}")
             return str(path)
 
-    logger.debug(
-        f"[Browser] No bundled browser found in: "
-        f"{[str(c.parent) for c in candidates[:2]]}"
-    )
+    searched = list({str(c.parent) for c in candidates[:6]})
+    logger.debug(f"[Browser] No bundled browser found in: {searched}")
     return None
 
 
@@ -535,8 +545,9 @@ class BrowserManager:
     async def _try_bundled_chromium(self, headless: bool) -> bool:
         """使用 Chromium 启动。
 
-        优先使用打包内置的 chrome.exe（通过 executable_path 直接指定），
-        回退到 Playwright 标准浏览器发现机制。
+        策略（按顺序）：
+        1. persistent_context — 原子式创建浏览器 + 上下文 + 页面，避免进程间隙崩溃
+        2. launch + new_context + new_page — 传统方式兜底
         """
         exe_path = self._bundled_executable
 
@@ -552,23 +563,93 @@ class BrowserManager:
             logger.info("[Browser] Server environment: forcing headless mode for Chromium")
             effective_headless = True
 
+        exe_label = "bundled" if exe_path else "playwright"
+        logger.info(
+            f"[Browser] Launching Chromium "
+            f"(headless={effective_headless}, exe={exe_label})"
+        )
+
+        last_err: Exception | None = None
+
+        # --- 策略 1: persistent_context（原子启动，避免 new_page 崩溃）---
+        try:
+            ok = await self._launch_persistent(exe_path, effective_headless)
+            if ok:
+                return True
+        except Exception as e:
+            last_err = e
+            logger.info(
+                f"[Browser] persistent_context failed ({e}), "
+                "trying standard launch..."
+            )
+            await self._close_browser_silently()
+
+        # --- 策略 2: 传统 launch + new_context + new_page ---
+        try:
+            ok = await self._launch_standard(exe_path, effective_headless)
+            if ok:
+                return True
+        except Exception as e:
+            last_err = e
+            logger.debug(f"[Browser] standard launch also failed: {e}")
+            await self._close_browser_silently()
+
+        raise last_err or RuntimeError("Chromium launch failed")
+
+    async def _launch_persistent(
+        self, exe_path: str | None, headless: bool,
+    ) -> bool:
+        """用 launch_persistent_context 原子启动浏览器 + 页面。"""
+        import tempfile
+        user_data = tempfile.mkdtemp(prefix="oa_chromium_")
+
+        kwargs: dict[str, Any] = {
+            "user_data_dir": user_data,
+            "headless": headless,
+            "args": self._build_launch_args(),
+            "timeout": _LAUNCH_TIMEOUT * 1000,
+        }
+        if exe_path:
+            kwargs["executable_path"] = exe_path
+
+        self._context = await asyncio.wait_for(
+            self._playwright.chromium.launch_persistent_context(**kwargs),
+            timeout=_LAUNCH_TIMEOUT + 5,
+        )
+        self._browser = None
+        self.using_user_chrome = False
+        self._cdp_url = f"http://localhost:{self._cdp_port}"
+
+        pages = self._context.pages
+        self._page = pages[0] if pages else await self._context.new_page()
+        self._page.set_default_timeout(30000)
+
+        self.visible = not headless
+        logger.info(
+            f"Browser started with Chromium persistent_context "
+            f"(visible={self.visible})"
+        )
+        return True
+
+    async def _launch_standard(
+        self, exe_path: str | None, headless: bool,
+    ) -> bool:
+        """传统 launch + new_context + new_page。"""
         launch_kwargs: dict[str, Any] = {
-            "headless": effective_headless,
+            "headless": headless,
             "args": self._build_launch_args(),
             "timeout": _LAUNCH_TIMEOUT * 1000,
         }
         if exe_path:
             launch_kwargs["executable_path"] = exe_path
 
-        logger.info(
-            f"[Browser] Launching Chromium "
-            f"(headless={effective_headless}, exe={'bundled' if exe_path else 'playwright'})"
-        )
-
         self._browser = await asyncio.wait_for(
             self._playwright.chromium.launch(**launch_kwargs),
             timeout=_LAUNCH_TIMEOUT + 5,
         )
+
+        if not self._browser.is_connected():
+            raise RuntimeError("Browser process exited immediately after launch")
 
         self._cdp_url = f"http://localhost:{self._cdp_port}"
         self.using_user_chrome = False
@@ -577,9 +658,21 @@ class BrowserManager:
         self._page = await self._context.new_page()
         self._page.set_default_timeout(30000)
 
-        self.visible = not effective_headless
-        logger.info(f"Browser started with Chromium (visible={self.visible})")
+        self.visible = not headless
+        logger.info(f"Browser started with Chromium standard launch (visible={self.visible})")
         return True
+
+    async def _close_browser_silently(self) -> None:
+        """关闭浏览器资源但不清理 Playwright driver。"""
+        for resource in (self._page, self._context, self._browser):
+            if resource:
+                try:
+                    await resource.close()
+                except Exception:
+                    pass
+        self._page = None
+        self._context = None
+        self._browser = None
 
     async def _health_check(self) -> bool:
         """快速检查浏览器连接是否存活。"""
