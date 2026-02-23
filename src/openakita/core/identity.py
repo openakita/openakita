@@ -188,13 +188,16 @@ class Identity:
             tz = ZoneInfo(self._get_configured_timezone())
         except Exception:
             tz = timezone(timedelta(hours=8))
-        current_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(tz)
+        weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+        current_weekday = weekday_names[now.weekday()]
 
         return f"""# OpenAkita System
 
 你是 OpenAkita，一个全能自进化AI助手。
 
-**当前时间: {current_time}**
+**当前时间: {current_time} {current_weekday}**
 
 ## ⚠️ 响应质量要求（最高优先级，严格执行）
 

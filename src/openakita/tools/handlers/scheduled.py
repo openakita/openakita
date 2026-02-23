@@ -60,51 +60,28 @@ class ScheduledHandler:
         trigger_type = TriggerType(params["trigger_type"])
         task_type = TaskType(params.get("task_type", "task"))
 
-        # ==================== 凌晨“明天”语义歧义处理 ====================
-        # 用户在凌晨（例如 00:00-04:00）设置“明天 xx 点”的提醒时，
-        # 很常见的真实意图是“今天白天 xx 点”（即同一自然日内的下一次发生）。
-        #
-        # 由于 schedule_task 的 trigger_config 是由模型填充的“绝对时间”，
-        # 这里用启发式做一次兜底：当描述/名称包含“明天/后天”等相对词且时间处于凌晨窗口时，
-        # 在创建任务前要求用户确认具体日期，避免默默创建到错误的那一天。
+        # ==================== run_at 合理性校验 ====================
         if trigger_type == TriggerType.ONCE:
             try:
                 now = datetime.now()
                 run_at_raw = (params.get("trigger_config") or {}).get("run_at")
-                # 只处理字符串时间（例如 "2026-02-07 10:00" 或 ISO 格式）
                 if isinstance(run_at_raw, str):
-                    # fromisoformat 支持 "YYYY-MM-DD HH:MM[:SS]" / "YYYY-MM-DDTHH:MM:SS"
                     parsed = datetime.fromisoformat(run_at_raw.strip())
-                    text_hint = " ".join(
-                        str(x)
-                        for x in (
-                            params.get("name", ""),
-                            params.get("description", ""),
-                            params.get("reminder_message", ""),
-                            params.get("prompt", ""),
+                    delta = parsed - now
+
+                    if delta.total_seconds() < -300:
+                        return (
+                            f"❌ run_at 时间 {parsed.strftime('%Y-%m-%d %H:%M')} 已经过去了。"
+                            f"当前时间是 {now.strftime('%Y-%m-%d %H:%M')}。\n"
+                            "请根据当前时间重新计算正确的日期和时间。"
                         )
-                        if x
-                    )
-                    # 凌晨窗口：默认 00:00-04:00（可后续做成配置）
-                    in_midnight_window = 0 <= now.hour < 4
-                    has_relative_tomorrow = ("明天" in text_hint) or ("后天" in text_hint)
-                    # 若包含“明天/后天”且解析出来的日期正好是“明天/后天”，则触发确认
-                    if in_midnight_window and has_relative_tomorrow:
-                        delta_days = (parsed.date() - now.date()).days
-                        if delta_days in (1, 2):
-                            # 给出两个候选日期：今天/明天（或明天/后天）
-                            option1 = parsed - timedelta(days=delta_days)  # 回退到“今天/明天”
-                            option2 = parsed
-                            return (
-                                "⚠️ 检测到**凌晨设置提醒**且文本包含“明天/后天”，可能存在日期歧义。\n\n"
-                                f"你希望提醒发生在哪一天？\n"
-                                f"1) {option1.strftime('%Y-%m-%d %H:%M')}（按“今天/明天”理解）\n"
-                                f"2) {option2.strftime('%Y-%m-%d %H:%M')}（按字面“明天/后天”理解）\n\n"
-                                "请直接回复 **1** 或 **2**，或回复一个明确时间（例如 `2026-02-06 10:00`）。\n"
-                                "我收到你的确认后，会再帮你创建提醒。"
-                            )
-            except Exception:
-                # 任何解析失败都不阻断创建流程
+
+                    if delta.days > 365:
+                        return (
+                            f"⚠️ run_at 时间 {parsed.strftime('%Y-%m-%d %H:%M')} 距现在超过 1 年，"
+                            "可能是日期计算有误。请向用户确认具体日期后重试。"
+                        )
+            except ValueError:
                 pass
 
         # 获取当前 IM 会话信息

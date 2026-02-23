@@ -263,9 +263,9 @@ export function SchedulerView({ serviceRunning }: { serviceRunning: boolean }) {
   const [activeTab, setActiveTab] = useState<TaskTab>("active");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (showLoading = true) => {
     if (!serviceRunning) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/scheduler/tasks`);
       if (res.ok) {
@@ -273,7 +273,7 @@ export function SchedulerView({ serviceRunning }: { serviceRunning: boolean }) {
         setTasks(data.tasks || []);
       }
     } catch { /* ignore */ }
-    setLoading(false);
+    if (showLoading) setLoading(false);
   }, [serviceRunning]);
 
   const fetchChannels = useCallback(async () => {
@@ -288,6 +288,12 @@ export function SchedulerView({ serviceRunning }: { serviceRunning: boolean }) {
   }, [serviceRunning]);
 
   useEffect(() => { fetchTasks(); fetchChannels(); }, [fetchTasks, fetchChannels]);
+
+  useEffect(() => {
+    if (!serviceRunning) return;
+    const interval = setInterval(() => fetchTasks(false), 10_000);
+    return () => clearInterval(interval);
+  }, [serviceRunning, fetchTasks]);
 
   const showMsg = (text: string, ok: boolean) => {
     setMessage({ text, ok });

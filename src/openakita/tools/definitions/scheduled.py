@@ -18,34 +18,33 @@ SCHEDULED_TOOLS = [
 
 ⚠️ **重要: 必须调用此工具才能创建任务！只是说"好的我会提醒你"不会创建任务！**
 
-📢 **推送通道规则（非常重要）**：
-- **默认行为**: 提醒/结果会自动推送到用户 **当前正在聊天的 IM 通道**（例如用户在企业微信中发消息，提醒就自动推到企业微信）
-- **你不需要问用户要 Webhook URL 或任何通道配置信息！通道已由系统自动配置好！**
-- 只有当用户明确要求推送到 **另一个不同的通道** 时，才需要设置 target_channel
-- 绝大多数情况下，直接创建任务即可，不需要设置 target_channel
+## ⏰ 时间填写规则（最重要！）
 
-**任务类型判断规则**：
-✅ **reminder**（默认优先）: 所有只需要发送消息的提醒
-   - "提醒我喝水" → reminder
-   - "站立提醒" → reminder
-   - "叫我起床" → reminder
+**trigger_config.run_at 必须填写精确的绝对时间（YYYY-MM-DD HH:MM 格式）！**
 
-❌ **task**（仅当需要 AI 执行操作时）:
-   - "查询天气告诉我" → task（需要查询）
-   - "截图发给我" → task（需要操作）
+- 系统 prompt 中已给出「当前时间」和「明天日期」，根据这些信息推算用户说的"明天"、"后天"、"下周一"对应的具体日期
+- 用户说"明天晚上7点" → 看 system prompt 中的「明天是 YYYY-MM-DD」→ 填 `run_at: "YYYY-MM-DD 19:00"`
+- 用户说"3分钟后" → 用当前时间 + 3分钟 → 填精确时间
+- **如果无法确定用户想要的具体日期/时间，必须先向用户确认，不要猜测！**
+- 创建后回复中必须明确告知用户设定的**具体日期和时间**（如"2月23日 19:00"），让用户可以核实
 
-**90%的提醒都应该是 reminder 类型！**
+## 📢 推送通道规则
+- **默认行为**: 自动推送到用户 **当前正在聊天的 IM 通道**
+- **不需要问用户要 Webhook URL！** 通道已由系统自动配置好
+- 只有用户明确要求推送到 **另一个不同的通道** 时，才设置 target_channel
 
-**触发类型**：
-- once: 一次性执行
-- interval: 间隔执行
+## 📋 任务类型判断
+✅ **reminder**（默认，90%%）: 只需发送消息的提醒（"提醒我喝水"、"叫我起床"）
+❌ **task**（仅当需要 AI 操作时）: "查询天气告诉我"、"截图发给我"
+
+## 🔧 触发类型
+- once: 一次性（run_at 填绝对时间）
+- interval: 间隔重复
 - cron: cron 表达式
 
-**推送通道（target_channel）- 通常不需要设置！**：
-- ⚠️ **默认不传此参数！** 系统会自动推送到用户当前的 IM 通道
-- 仅当用户明确要求推送到 **另一个** 通道时才设置（如用户在 Telegram 中说"推送到企业微信"）
-- 可用通道名: wework（企业微信）、telegram、dingtalk（钉钉）、feishu（飞书）、slack 等
-- ⚠️ **绝对不要问用户要 Webhook URL！** 通道已在系统中配置好，直接用通道名即可""",
+## 📡 target_channel（通常不需要设置！）
+- 默认不传！系统自动用当前 IM 通道
+- 仅当用户明确要求时才设置（如 wework/telegram/dingtalk/feishu/slack）""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -64,7 +63,7 @@ SCHEDULED_TOOLS = [
                 },
                 "trigger_config": {
                     "type": "object",
-                    "description": "触发配置。once: {run_at: '2026-02-01 10:00'}；interval: {interval_minutes: 30} 或 {interval_seconds: 30} 或 {interval_hours: 2}；cron: {cron: '0 9 * * *'}。interval 支持 interval_seconds/interval_minutes/interval_hours/interval_days，可组合使用",
+                    "description": "触发配置。once: {run_at: 'YYYY-MM-DD HH:MM'} 必须是精确的绝对时间，根据 system prompt 中的当前时间推算；interval: {interval_minutes: 30} 或 {interval_seconds: 30} 或 {interval_hours: 2}；cron: {cron: '0 9 * * *'}",
                 },
                 "reminder_message": {
                     "type": "string",
