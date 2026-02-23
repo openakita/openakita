@@ -100,18 +100,36 @@ hidden_imports_core = [
     "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets",
     "uvicorn.protocols.websockets.auto",
+    "uvicorn.protocols.websockets.wsproto_impl",
+    "uvicorn.protocols.websockets.websockets_impl",
     "fastapi",
+    "fastapi.middleware",           # CORSMiddleware 等中间件 (server.py 直接导入)
+    "fastapi.middleware.cors",
+    "starlette",                    # fastapi 底层框架 (运行时必需)
+    "starlette.middleware",
+    "starlette.middleware.cors",
+    "starlette.responses",
+    "starlette.websockets",
     "pydantic",
+    "pydantic.deprecated",          # pydantic v2 兼容层 (运行时动态加载)
+    "pydantic._internal",
+    "pydantic._internal._config",
     "pydantic_settings",
     "anthropic",
+    "anthropic.types",              # brain.py 直接导入 Message/TextBlock/ToolUseBlock
     "openai",
     "httpx",
+    "httpx._transports",            # 传输层 (动态选择 default/asyncio)
+    "httpx._transports.default",
     "aiofiles",
+    "aiofiles.os",                  # file.py 直接导入 (stat/remove 等操作)
     "aiosqlite",
     "yaml",
     "dotenv",
     "tenacity",
     "typer",
+    "typer.core",                   # typer 内部核心
+    "click",                        # typer 依赖 (PyInstaller 可能无法自动追踪)
     "rich",
     "git",
     "mcp",
@@ -137,6 +155,7 @@ hidden_imports_core = [
     "lxml",                     # ddgs HTML 解析
     "lxml.html",
     "lxml.etree",
+    "lxml._elementpath",        # lxml XPath 引擎 (C 扩展，PyInstaller 常遗漏)
     "fake_useragent",           # ddgs 随机 User-Agent
     "fake_useragent.data",      # fake_useragent 数据文件 (browsers.jsonl, importlib.resources 动态加载)
     "h2",                       # ddgs HTTP/2 支持
@@ -149,6 +168,8 @@ hidden_imports_core = [
     "websockets",               # WebSocket protocol (~500KB)
     "aiohttp",                  # Async HTTP server (~2MB, used by wework/qq webhook)
     "aiohttp.web",
+    "aiohttp._http_parser",     # aiohttp C 扩展 (HTTP 解析加速，PyInstaller 常遗漏)
+    "aiohttp._helpers",         # aiohttp C 扩展 (辅助函数)
     "multidict",                # aiohttp 依赖: 多值字典
     "yarl",                     # aiohttp 依赖: URL 解析
     "frozenlist",               # aiohttp 依赖: 不可变列表
@@ -165,6 +186,7 @@ hidden_imports_core = [
     "openpyxl",                 # Excel files (~5MB)
     "openpyxl.workbook",        # openpyxl 工作簿
     "openpyxl.worksheet",       # openpyxl 工作表
+    "openpyxl.cell._writer",    # openpyxl C 扩展 (单元格写入加速，PyInstaller 常遗漏)
     "pptx",                     # python-pptx: PowerPoint files (~3MB)
     "pptx.opc",                 # python-pptx 包格式
     "pptx.oxml",                # python-pptx XML 层
@@ -179,11 +201,22 @@ hidden_imports_core = [
     "pywinauto",                # Windows UI Automation (~5MB)
     "pywinauto.controls",
     "pywinauto.controls.uiawrapper",
+    "pywinauto.findwindows",    # 窗口查找 (client.py 直接导入)
+    "pywinauto.timings",        # 超时控制 (client.py 直接导入)
+    "pywinauto.uia_element_info",  # UIA 元素信息 (inspector.py 直接导入)
+    "pywinauto.backend",        # 后端选择 (动态加载 uia/win32 后端)
     "comtypes",                 # pywinauto 依赖: COM 类型支持 (Windows)
     "comtypes.client",          # pywinauto 依赖: COM 客户端
+    "comtypes.gen",             # COM 类型存根 (运行时生成，inspector.py 使用)
     "mss",                      # Screenshot capture (~1MB)
     "mss.tools",
     # -- IM channel adapters (small, bundled to avoid install-on-config bugs) --
+    "telegram",                 # python-telegram-bot: 核心 IM 通道 (~5MB)
+    "telegram.ext",             # telegram 扩展框架 (Application/Handler)
+    "telegram.ext.filters",     # 消息过滤器 (MessageHandler 需要)
+    "telegram.request",         # HTTPXRequest (自定义超时配置)
+    "telegram.constants",       # Telegram API 常量
+    "telegram.error",           # Telegram 异常类
     "lark_oapi",                # Feishu/Lark (~3MB)
     "lark_oapi.ws",             # Feishu WebSocket
     "lark_oapi.ws.client",      # Feishu WebSocket 客户端
@@ -191,8 +224,14 @@ hidden_imports_core = [
     "Crypto",                   # pycryptodome for WeWork (~3MB)
     "Crypto.Cipher",
     "Crypto.Cipher.AES",
+    "Crypto.Util",              # pycryptodome 工具模块 (AES 运行时依赖)
+    "Crypto.Util.Padding",      # 加解密填充 (AES CBC 模式常用)
     "botpy",                    # QQ Bot (~5MB)
     "botpy.message",            # QQ Bot 消息模块
+    "pilk",                     # SILK 语音编解码 (QQ 语音格式, audio_utils.py 使用)
+    "nacl",                     # PyNaCl: ed25519 签名验证 (QQ 官方机器人)
+    "nacl.signing",             # 签名验证
+    "nacl.exceptions",          # 签名异常
     # -- 浏览器自动化 (原为外置模块，现直接打包以提高用户体验) --
     "playwright",               # Playwright 浏览器自动化 (~20MB Python 包)
     "playwright.async_api",
@@ -203,15 +242,48 @@ hidden_imports_core = [
     "browser_use.agent.system_prompts",  # importlib.resources.files() 需要此包可导入
     "browser_use.code_use",
     "langchain_openai",         # LangChain OpenAI adapter (~3MB)
+    "langchain_openai.chat_models",
+    "langchain_openai.chat_models.base",
     "langchain_core",           # LangChain 核心 (browser-use 依赖)
     "langchain_core.language_models",
+    "langchain_core.language_models.chat_models",
+    "langchain_core.language_models.base",
     "langchain_core.messages",
+    "langchain_core.messages.ai",
+    "langchain_core.messages.human",
+    "langchain_core.messages.system",
+    "langchain_core.messages.tool",
+    "langchain_core.messages.utils",
+    "langchain_core.callbacks",
+    "langchain_core.callbacks.manager",
+    "langchain_core.callbacks.base",
+    "langchain_core.callbacks.streaming_stdout",
+    "langchain_core.outputs",
+    "langchain_core.outputs.chat_result",
+    "langchain_core.outputs.chat_generation",
+    "langchain_core.outputs.generation",
+    "langchain_core.outputs.llm_result",
+    "langchain_core.utils",
+    "langchain_core.utils.function_calling",
+    "langchain_core.utils.pydantic",
+    "langchain_core.utils.utils",
+    "langchain_core.runnables",
+    "langchain_core.runnables.base",
+    "langchain_core.runnables.config",
+    "langchain_core.load",
+    "langchain_core.load.serializable",
+    "langchain_core.load.load",
+    "langchain_core.prompts",
+    "langchain_core.tools",
     "langsmith",                # LangChain 依赖
+    "langsmith.run_helpers",
     "pydantic_settings",        # browser-use 依赖 (已在上面声明)
     # -- browser-use 运行时传递依赖 --
     "pyee",                     # playwright 依赖: EventEmitter
     "greenlet",                 # playwright 依赖: 协程桥接
     "tiktoken",                 # langchain-openai 依赖: token 计数
+    "tiktoken_ext",             # tiktoken 动态注册 (importlib 加载，PyInstaller 无法静态追踪)
+    "tiktoken_ext.openai_public",
     "bubus",                    # browser-use 事件总线
     "cdp_use",                  # browser-use CDP 协议支持
     "browser_use_sdk",          # browser-use SDK 客户端
