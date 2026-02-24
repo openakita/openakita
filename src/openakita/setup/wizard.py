@@ -1185,7 +1185,7 @@ Press Ctrl+C at any time to cancel.
                 f"PROACTIVE_MIN_INTERVAL_MINUTES={self.config.get('PROACTIVE_MIN_INTERVAL_MINUTES', '120')}  # 两条主动消息最短间隔（分钟）",
                 f"PROACTIVE_QUIET_HOURS_START={self.config.get('PROACTIVE_QUIET_HOURS_START', '23')}  # 免打扰时段开始（24h）",
                 f"PROACTIVE_QUIET_HOURS_END={self.config.get('PROACTIVE_QUIET_HOURS_END', '7')}  # 免打扰时段结束（24h）",
-                f"PROACTIVE_IDLE_THRESHOLD_HOURS={self.config.get('PROACTIVE_IDLE_THRESHOLD_HOURS', '24')}  # 用户空闲多久后触发主动问候",
+                f"PROACTIVE_IDLE_THRESHOLD_HOURS={self.config.get('PROACTIVE_IDLE_THRESHOLD_HOURS', '3')}  # 用户空闲多久后触发主动问候（AI 动态调整）",
             ])
         else:
             lines.extend([
@@ -1194,7 +1194,7 @@ Press Ctrl+C at any time to cancel.
                 "# PROACTIVE_MIN_INTERVAL_MINUTES=120  # 两条主动消息最短间隔（分钟）",
                 "# PROACTIVE_QUIET_HOURS_START=23  # 免打扰时段开始（24h）",
                 "# PROACTIVE_QUIET_HOURS_END=7  # 免打扰时段结束（24h）",
-                "# PROACTIVE_IDLE_THRESHOLD_HOURS=24  # 用户空闲多久后触发主动问候",
+                "# PROACTIVE_IDLE_THRESHOLD_HOURS=3  # 用户空闲多久后触发主动问候（AI 动态调整）",
             ])
         lines.append("")
 

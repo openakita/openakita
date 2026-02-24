@@ -329,7 +329,7 @@ class Settings(BaseSettings):
     proactive_min_interval_minutes: int = Field(default=120, description="两条主动消息最短间隔（分钟）")
     proactive_quiet_hours_start: int = Field(default=23, description="安静时段开始（小时，0-23）")
     proactive_quiet_hours_end: int = Field(default=7, description="安静时段结束（小时，0-23）")
-    proactive_idle_threshold_hours: int = Field(default=24, description="用户空闲多久后触发闲聊问候（小时）")
+    proactive_idle_threshold_hours: int = Field(default=3, description="用户空闲多久后触发闲聊问候（小时），AI 会根据反馈动态调整")
 
     # === UI 偏好配置 ===
     ui_theme: str = Field(

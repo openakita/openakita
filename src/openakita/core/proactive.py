@@ -38,7 +38,7 @@ class ProactiveConfig:
     min_interval_minutes: int = 120
     quiet_hours_start: int = 23  # 安静时段开始
     quiet_hours_end: int = 7  # 安静时段结束
-    idle_threshold_hours: int = 24  # 多久没互动才发闲聊
+    idle_threshold_hours: int = 3  # 多久没互动才发闲聊（AI 会根据反馈动态调整）
 
 
 # ── 反馈跟踪 ──────────────────────────────────────────────────────
@@ -131,13 +131,12 @@ class ProactiveFeedbackTracker:
         return None
 
     def get_adjusted_config(self, base_config: ProactiveConfig) -> ProactiveConfig:
-        """根据历史反馈动态调整频率"""
-        # 获取最近 30 天的记录
+        """根据历史反馈动态调整频率和闲置阈值"""
         cutoff = datetime.now() - timedelta(days=30)
         recent = [r for r in self.records if r.timestamp > cutoff and r.reaction]
 
         if len(recent) < 5:
-            return base_config  # 数据不够，保持默认
+            return base_config
 
         total = len(recent)
         positive = sum(1 for r in recent if r.reaction == "positive")
@@ -153,25 +152,67 @@ class ProactiveFeedbackTracker:
             idle_threshold_hours=base_config.idle_threshold_hours,
         )
 
-        # negative 出现 -> 大幅降低
         if negative > 0:
             adjusted.max_daily_messages = max(1, base_config.max_daily_messages - 2)
             adjusted.min_interval_minutes = base_config.min_interval_minutes + 120
             logger.info("Proactive frequency reduced due to negative feedback")
-
-        # ignored 率 > 50% -> 降低
         elif ignored / total > 0.5:
             adjusted.max_daily_messages = max(1, base_config.max_daily_messages - 1)
             adjusted.min_interval_minutes = base_config.min_interval_minutes + 60
             logger.info("Proactive frequency reduced due to high ignore rate")
-
-        # positive 率 > 80% -> 可以提高
         elif positive / total > 0.8:
             adjusted.max_daily_messages = min(5, base_config.max_daily_messages + 1)
             adjusted.min_interval_minutes = max(60, base_config.min_interval_minutes - 30)
             logger.info("Proactive frequency increased due to positive feedback")
 
+        # 基于 idle_chat 专项反馈动态调整闲置阈值
+        adjusted.idle_threshold_hours = self._compute_idle_threshold(
+            base_config.idle_threshold_hours, cutoff
+        )
+
         return adjusted
+
+    def _compute_idle_threshold(self, base_hours: int, cutoff: datetime) -> int:
+        """
+        根据 idle_chat 消息的历史反馈动态调整闲置阈值。
+
+        策略:
+        - positive 多 → 缩短阈值（用户喜欢，可以更主动，下限 1h）
+        - ignored 多  → 拉长阈值（用户不感兴趣，别打扰）
+        - negative    → 大幅拉长（用户反感，上限 24h）
+        """
+        idle_records = [
+            r for r in self.records
+            if r.timestamp > cutoff and r.reaction and r.msg_type == "idle_chat"
+        ]
+
+        if len(idle_records) < 2:
+            return base_hours
+
+        total = len(idle_records)
+        pos = sum(1 for r in idle_records if r.reaction == "positive")
+        neg = sum(1 for r in idle_records if r.reaction == "negative")
+        ign = sum(1 for r in idle_records if r.reaction == "ignored")
+
+        threshold = base_hours
+
+        if neg > 0:
+            threshold = min(24, base_hours * 3)
+            logger.info(
+                "Idle threshold increased to %dh (negative feedback on idle_chat)", threshold
+            )
+        elif ign / total > 0.5:
+            threshold = min(24, base_hours * 2)
+            logger.info(
+                "Idle threshold increased to %dh (idle_chat often ignored)", threshold
+            )
+        elif pos / total > 0.8:
+            threshold = max(1, base_hours - 1)
+            logger.info(
+                "Idle threshold decreased to %dh (idle_chat well received)", threshold
+            )
+
+        return threshold
 
 
 # ── 活人感引擎 ────────────────────────────────────────────────────
