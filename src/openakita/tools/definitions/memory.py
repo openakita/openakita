@@ -5,6 +5,7 @@ Memory 工具定义
 - add_memory: 记录重要信息
 - search_memory: 搜索相关记忆
 - get_memory_stats: 获取记忆统计
+- list_recent_tasks: 列出最近完成的任务
 - search_conversation_traces: 搜索完整对话历史（含工具调用和结果）
 """
 
@@ -97,6 +98,32 @@ MEMORY_TOOLS = [
 - 按类型分布
 - 按重要性分布""",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "list_recent_tasks",
+        "category": "Memory",
+        "description": "List recently completed tasks/episodes. Use FIRST when user asks 'what did you do', 'what happened', '你做了什么', '干了什么', '昨天/今天做了哪些事'. Much faster and more accurate than searching conversation traces by keyword.",
+        "detail": """列出最近完成的任务（历史操作记录）。
+
+**优先使用此工具**：当用户问"你做了什么"、"之前干了什么"时，直接调用此工具获取任务列表，
+而不是用 search_conversation_traces 盲猜关键词。
+
+每条记录包含：任务目标、结果、使用的工具、时间。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "查看最近几天的任务（默认 3）",
+                    "default": 3,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最多返回几条（默认 15）",
+                    "default": 15,
+                },
+            },
+        },
     },
     {
         "name": "search_conversation_traces",

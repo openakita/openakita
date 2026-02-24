@@ -32,6 +32,7 @@ class MemoryHandler:
         "add_memory",
         "search_memory",
         "get_memory_stats",
+        "list_recent_tasks",
         "search_conversation_traces",
     ]
 
@@ -48,6 +49,8 @@ class MemoryHandler:
             return self._search_memory(params)
         elif tool_name == "get_memory_stats":
             return self._get_memory_stats(params)
+        elif tool_name == "list_recent_tasks":
+            return self._list_recent_tasks(params)
         elif tool_name == "search_conversation_traces":
             return self._search_conversation_traces(params)
         else:
@@ -227,6 +230,35 @@ class MemoryHandler:
 
         return output
 
+
+    def _list_recent_tasks(self, params: dict) -> str:
+        """列出最近完成的任务（Episode）"""
+        days = params.get("days", 3)
+        limit = params.get("limit", 15)
+
+        mm = self.agent.memory_manager
+        store = getattr(mm, "store", None)
+        if not store:
+            return "记忆系统未初始化"
+
+        episodes = store.get_recent_episodes(days=days, limit=limit)
+        if not episodes:
+            return f"最近 {days} 天没有已完成的任务记录。"
+
+        lines = [f"最近 {days} 天完成的任务（共 {len(episodes)} 条）：\n"]
+        for i, ep in enumerate(episodes, 1):
+            goal = ep.goal or "(未记录目标)"
+            outcome = ep.outcome or "completed"
+            tools = ", ".join(ep.tools_used[:5]) if ep.tools_used else "无工具调用"
+            sa = ep.started_at
+            started = sa.strftime("%Y-%m-%d %H:%M") if hasattr(sa, "strftime") else str(sa)[:16]
+            lines.append(f"{i}. [{started}] {goal}")
+            lines.append(f"   结果: {outcome} | 工具: {tools}")
+            if ep.summary:
+                lines.append(f"   摘要: {ep.summary[:120]}")
+            lines.append("")
+
+        return "\n".join(lines)
 
     def _search_conversation_traces(self, params: dict) -> str:
         """搜索完整对话历史（含工具调用和结果）
