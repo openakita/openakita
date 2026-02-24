@@ -37,10 +37,14 @@ SCHEDULED_TOOLS = [
 ✅ **reminder**（默认，90%%）: 只需发送消息的提醒（"提醒我喝水"、"叫我起床"）
 ❌ **task**（仅当需要 AI 操作时）: "查询天气告诉我"、"截图发给我"
 
-## 🔧 触发类型
-- once: 一次性（run_at 填绝对时间）
-- interval: 间隔重复
-- cron: cron 表达式
+## 🔧 触发类型（严格区分！）
+- **once**: 一次性提醒（run_at 填绝对时间）—— **"X分钟后提醒我"、"明天8点提醒我" 都是 once！**
+- **interval**: 持续循环重复（"每30分钟提醒我喝水"、"每天提醒我"）—— 仅当用户明确说"每X分钟/每天"时才用
+- **cron**: cron 表达式（"工作日早上9点"）
+
+⚠️ **常见错误**：用户说"5分钟后提醒我" ≠ "每5分钟提醒我"！
+- "5分钟后提醒我洗澡" → trigger_type="once", run_at="当前时间+5分钟"
+- "每5分钟提醒我喝水" → trigger_type="interval", interval_minutes=5
 
 ## 📡 target_channel（通常不需要设置！）
 - 默认不传！系统自动用当前 IM 通道
@@ -122,13 +126,18 @@ SCHEDULED_TOOLS = [
     {
         "name": "cancel_scheduled_task",
         "category": "Scheduled",
-        "description": "PERMANENTLY DELETE scheduled task. When user says 'cancel/delete task' → use this. When user says 'turn off notification' → use update_scheduled_task with notify=false. When user says 'pause task' → use update_scheduled_task with enabled=false.",
+        "description": "PERMANENTLY DELETE scheduled task. Use when user says 'cancel/delete/remove task', 'turn off reminder', 'stop reminding me', etc. IMPORTANT: For REMINDER-type tasks, when user says 'turn off/stop/cancel the reminder' → use THIS tool (cancel), NOT update_scheduled_task, because reminder tasks exist solely to send messages — disabling notifications does NOT stop the reminder!",
         "detail": """【永久删除】定时任务。
 
 ⚠️ **操作区分**：
 - 用户说"取消/删除任务" → 用此工具
-- 用户说"关闭提醒" → 用 update_scheduled_task 设 notify=false
-- 用户说"暂停任务" → 用 update_scheduled_task 设 enabled=false
+- 用户说"关了/关掉/停了/别提醒了"（针对 reminder 类型）→ 用此工具！
+- 用户说"暂停任务"（想保留稍后恢复）→ 用 update_scheduled_task 设 enabled=false
+
+⚠️ **reminder 类型任务特殊说明**：
+reminder 任务的唯一作用就是发送提醒消息。
+关闭 notify_on_start/complete 不会阻止提醒消息发送！
+用户说"把XX提醒关了/关掉"= 取消任务，必须用 cancel_scheduled_task。
 
 **注意**：删除后无法恢复！""",
         "input_schema": {
@@ -140,21 +149,25 @@ SCHEDULED_TOOLS = [
     {
         "name": "update_scheduled_task",
         "category": "Scheduled",
-        "description": "Modify scheduled task settings WITHOUT deleting. Can modify: notify_on_start, notify_on_complete, enabled, target_channel. Common uses: (1) 'Turn off notification' → notify=false, (2) 'Pause task' → enabled=false, (3) 'Resume task' → enabled=true, (4) 'Push to WeChat' → target_channel='wework'. NO Webhook URL needed!",
+        "description": "Modify scheduled task settings WITHOUT deleting. Can modify: notify_on_start, notify_on_complete, enabled, target_channel. Common uses: (1) 'Pause task' → enabled=false, (2) 'Resume task' → enabled=true, (3) 'Push to WeChat' → target_channel='wework'. WARNING: For REMINDER-type tasks, do NOT use notify=false to 'turn off reminder' — that only controls metadata notifications, NOT the reminder message itself! To stop a reminder, use cancel_scheduled_task instead.",
         "detail": """修改定时任务设置【不删除任务】。
 
 **可修改项**：
-- notify_on_start: 开始时是否通知
-- notify_on_complete: 完成时是否通知
-- enabled: 是否启用
+- notify_on_start: 开始时是否通知（仅控制执行开始/完成的状态通知，不影响 reminder 消息！）
+- notify_on_complete: 完成时是否通知（同上）
+- enabled: 是否启用（false=暂停，true=恢复）
 - target_channel: 修改推送通道（如 wework/telegram/dingtalk/feishu/slack）
 
 **常见用法**：
-- "关闭提醒" → notify_on_start=false, notify_on_complete=false
 - "暂停任务" → enabled=false
 - "恢复任务" → enabled=true
 - "改推送到企业微信" → target_channel="wework"
-- ⚠️ 不需要 Webhook URL，通道已在系统中配置好！""",
+- ⚠️ 不需要 Webhook URL，通道已在系统中配置好！
+
+⚠️ **不要用此工具来 "关闭提醒"！**
+对 reminder 类型任务，设 notify=false 只关闭执行状态通知，
+提醒消息（reminder_message）仍然会正常发送！
+要停止提醒 → 用 cancel_scheduled_task 删除，或设 enabled=false 暂停。""",
         "input_schema": {
             "type": "object",
             "properties": {
