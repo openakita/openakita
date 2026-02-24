@@ -32,9 +32,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_POLICIES = """\
-# OpenAkita Policies
-
+# ---------------------------------------------------------------------------
+# 系统策略（代码硬编码，升级自动生效，用户不可删除）
+# 新增系统级规则只需在此追加，无需迁移用户文件。
+# ---------------------------------------------------------------------------
+_SYSTEM_POLICIES = """\
 ## 三条红线（必须遵守）
 1. **不编造**：不确定的信息必须说明是推断，不能假装成事实
 2. **不假装执行**：必须真正调用工具，不能只说"我会..."而不行动
@@ -47,6 +49,15 @@ _DEFAULT_POLICIES = """\
 
 此标记由系统自动移除，用户不会看到。调用工具时不需要此标记。
 
+## 切换模型的工具上下文隔离
+- 切换模型后，之前的 tool_use/tool_result 证据链视为不可见
+- 不得假设浏览器/MCP/桌面等 stateful 状态仍然存在
+- 执行 stateful 工具前，必须先做状态复核"""
+
+# ---------------------------------------------------------------------------
+# 用户策略默认值（policies.md 不存在时的 fallback）
+# ---------------------------------------------------------------------------
+_DEFAULT_USER_POLICIES = """\
 ## 工具选择优先级（严格遵守）
 收到任务后，按以下顺序决策：
 1. **技能优先**：查已有技能清单，有匹配的直接用
@@ -70,8 +81,7 @@ _DEFAULT_POLICIES = """\
 
 ## 输出格式
 **任务型回复**：已执行 → 发现 → 下一步（如有）
-**陪伴型回复**：自然对话，符合当前角色风格
-"""
+**陪伴型回复**：自然对话，符合当前角色风格"""
 
 
 def build_system_prompt(
@@ -253,16 +263,55 @@ def _build_identity_section(
         parts.append(tooling_result.content)
         parts.append("")
 
-    # Policies (~50%，实测 627 tokens，是 identity 中最大的部分)
+    # Policies = 系统策略（代码层，不可删除）+ 用户策略（文件层，可定制）
     policies_path = identity_dir / "prompts" / "policies.md"
     if policies_path.exists():
-        policies = policies_path.read_text(encoding="utf-8")
+        user_policies = policies_path.read_text(encoding="utf-8")
     else:
-        policies = _DEFAULT_POLICIES
+        user_policies = _DEFAULT_USER_POLICIES
         logger.warning("policies.md not found, using built-in defaults")
-    policies_result = apply_budget(policies, budget_tokens // 2, "policies")
+    merged_policies = _merge_policies(_SYSTEM_POLICIES, user_policies)
+    policies_result = apply_budget(merged_policies, budget_tokens // 2, "policies")
     parts.append(policies_result.content)
 
+    return "\n".join(parts)
+
+
+def _merge_policies(system: str, user: str) -> str:
+    """合并系统策略和用户策略，去除用户文件中与系统策略重复的段落。
+
+    系统策略中的每个 ``## 标题`` 段落被视为权威版本。
+    如果用户文件中包含相同标题的段落，以系统版本为准（去重）。
+    """
+    import re
+
+    _SECTION_RE = re.compile(r"^## .+", re.MULTILINE)
+
+    system_titles = {m.group().strip() for m in _SECTION_RE.finditer(system)}
+
+    # 按 ## 标题切分用户策略，保留不与系统策略重复的段落
+    user_clean = user.strip()
+    # 去掉用户文件可能的顶级标题 (# OpenAkita Policies 等)
+    user_clean = re.sub(r"^#\s+[^\n]+\n*", "", user_clean).strip()
+
+    if not system_titles:
+        return f"# OpenAkita Policies\n\n{system}\n\n{user_clean}"
+
+    kept_sections: list[str] = []
+    sections = re.split(r"(?=^## )", user_clean, flags=re.MULTILINE)
+    for section in sections:
+        section_stripped = section.strip()
+        if not section_stripped:
+            continue
+        title_match = _SECTION_RE.match(section_stripped)
+        if title_match and title_match.group().strip() in system_titles:
+            continue
+        kept_sections.append(section_stripped)
+
+    parts = ["# OpenAkita Policies", "", system.strip()]
+    if kept_sections:
+        parts.append("")
+        parts.append("\n\n".join(kept_sections))
     return "\n".join(parts)
 
 
