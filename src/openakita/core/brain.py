@@ -420,6 +420,8 @@ class Brain:
 
         req_id = self._dump_llm_request(system, llm_messages, llm_tools, caller="messages_create_async")
 
+        extra_params = kwargs.get("extra_params")
+
         try:
             response = await self._llm_client.chat(
                 messages=llm_messages,
@@ -429,6 +431,7 @@ class Brain:
                 enable_thinking=use_thinking,
                 thinking_depth=thinking_depth,
                 conversation_id=conversation_id,
+                extra_params=extra_params,
             )
             _choices = getattr(response, 'choices', None) or []
             _content = getattr(response, 'content', None) or []
