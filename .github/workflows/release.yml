@@ -161,7 +161,8 @@ jobs:
             build_mode: "core"
             suffix: ""
           # Linux ARM64 (树莓派、ARM 服务器等)
-          - platform: ubuntu-24.04-arm
+          # 用 ubuntu-22.04-arm 构建，生成的 deb 兼容 22.04+ ARM 系统
+          - platform: ubuntu-22.04-arm
             bundles: "deb"
             args: ""
             build_mode: "core"
