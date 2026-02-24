@@ -54,18 +54,21 @@ def _sync_json(request: Request):
 
 
 def _get_lifecycle(request: Request):
-    agent = getattr(request.app.state, "agent", None)
-    if agent is None:
+    mm = _get_manager(request)
+    if not mm:
         return None
-    mm = getattr(agent, "memory_manager", None)
-    if mm and hasattr(mm, "lifecycle"):
-        return mm.lifecycle
-    local = getattr(agent, "_local_agent", None)
-    if local:
-        mm = getattr(local, "memory_manager", None)
-        if mm and hasattr(mm, "lifecycle"):
-            return mm.lifecycle
-    return None
+    try:
+        from openakita.config import settings
+        from openakita.memory.lifecycle import LifecycleManager
+
+        return LifecycleManager(
+            store=mm.store,
+            extractor=mm.extractor,
+            identity_dir=settings.identity_path,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create LifecycleManager: {e}")
+        return None
 
 
 class MemoryUpdateRequest(BaseModel):
