@@ -27,12 +27,14 @@ jobs:
           - platform: macos-latest
             bundles: "dmg"
             build_mode: "core"
-            suffix: "-aarch64"
-          # macOS - Intel (x86_64)
-          - platform: macos-13
+            suffix: ""
+          # macOS - Intel (x86_64) 在 Apple Silicon runner 上通过 Rosetta 2 交叉编译
+          - platform: macos-latest
             bundles: "dmg"
             build_mode: "core"
             suffix: "-x86_64"
+            rust_target: "x86_64-apple-darwin"
+            python_arch: "x64"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -54,6 +56,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          architecture: ${{ matrix.python_arch || '' }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -64,6 +67,10 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust cross-compilation target
+        if: matrix.rust_target
+        run: rustup target add ${{ matrix.rust_target }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -111,7 +118,7 @@ jobs:
 
       - name: Build Tauri bundles
         working-directory: apps/setup-center
-        run: npx tauri build --bundles "${{ matrix.bundles }}"
+        run: npx tauri build --bundles "${{ matrix.bundles }}" ${{ matrix.rust_target && format('--target {0}', matrix.rust_target) || '' }}
 
       - name: Collect installer bundles
         shell: bash
