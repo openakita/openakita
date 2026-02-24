@@ -426,6 +426,7 @@ jobs:
       contents: write
     env:
       HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+      HAS_R2_KEY: ${{ secrets.R2_ACCESS_KEY_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -463,7 +464,7 @@ jobs:
           # 始终生成当前版本的 manifest
           # 如果配置了 R2，则使用 CDN 域名作为下载链接
           CDN_ARGS=""
-          if [ -n "${{ secrets.R2_ACCESS_KEY_ID }}" ]; then
+          if [ -n "${HAS_R2_KEY}" ]; then
             CDN_ARGS="--cdn-base-url https://dl.openakita.ai"
           fi
           python scripts/generate_latest_json.py \
@@ -518,7 +519,7 @@ jobs:
 
       # ── 上传安装包到 Cloudflare R2（国内加速下载） ──
       - name: Upload release assets to Cloudflare R2
-        if: ${{ secrets.R2_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_R2_KEY != '' }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
