@@ -1,6 +1,6 @@
 [project]
 name = "openakita"
-version = "1.25.0"
+version = "1.24.1"
 description = "全能自进化AI Agent - 基于Ralph Wiggum模式，永不放弃"
 readme = "README.md"
 license = { text = "MIT" }
