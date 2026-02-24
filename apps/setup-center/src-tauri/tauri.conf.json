@@ -18,6 +18,11 @@
     "resources": [
       "resources/openakita-server/"
     ],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "signingIdentity": "-",
+      "minimumSystemVersion": "10.15"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",

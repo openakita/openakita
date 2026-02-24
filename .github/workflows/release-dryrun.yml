@@ -23,10 +23,16 @@ jobs:
             bundles: "deb,appimage"
             build_mode: "core"
             suffix: ""
+          # macOS - Apple Silicon (arm64)
           - platform: macos-latest
             bundles: "dmg"
             build_mode: "core"
-            suffix: ""
+            suffix: "-aarch64"
+          # macOS - Intel (x86_64)
+          - platform: macos-13
+            bundles: "dmg"
+            build_mode: "core"
+            suffix: "-x86_64"
 
     runs-on: ${{ matrix.platform }}
     steps:

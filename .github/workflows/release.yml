@@ -160,12 +160,18 @@ jobs:
             args: ""
             build_mode: "core"
             suffix: ""
-          # macOS
+          # macOS - Apple Silicon (arm64)
           - platform: macos-latest
             bundles: "dmg"
             args: ""
             build_mode: "core"
-            suffix: ""
+            suffix: "-aarch64"
+          # macOS - Intel (x86_64)
+          - platform: macos-13
+            bundles: "dmg"
+            args: ""
+            build_mode: "core"
+            suffix: "-x86_64"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -261,6 +267,14 @@ jobs:
           TAURI_CONFIG: ${{ matrix.build_mode == 'full' && '{"bundle":{"resources":["resources/openakita-server/","resources/modules/"]}}' || '{}' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS 代码签名 & 公证 (需要 Apple Developer 证书)
+          # 当 secrets 未配置时，Tauri 会跳过签名，使用 ad-hoc 签名
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NO_STRIP: true
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: npx tauri build --bundles "${{ matrix.bundles }}" ${{ matrix.args }}

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ═══ Hardened Runtime (非 App Sandbox 模式) ═══
+         OpenAkita 作为 AI Agent 桌面终端，需要：
+         - 启动 Python 后端进程 (PyInstaller 打包)
+         - 执行用户 shell 命令
+         - 读写用户文件系统任意位置
+         - 监听本地端口提供 API 服务
+         - 加载 Python C 扩展动态库
+         因此不启用 App Sandbox，仅声明 Hardened Runtime 所需权限。
+    -->
+
+    <!-- 允许加载未签名的可执行内存 (PyInstaller / Python ctypes / numpy 等) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- 允许 JIT 编译 (Python JIT, V8 等) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- 禁用库验证：允许加载第三方动态库 (pydantic_core, numpy 等 Python C 扩展) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- 允许 DYLD 环境变量 (PyInstaller 运行时需要) -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- 允许调试器附加 (开发调试用，发布版可移除) -->
+    <!-- <key>com.apple.security.cs.debugger</key> -->
+    <!-- <true/> -->
+</dict>
+</plist>
