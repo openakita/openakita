@@ -9,6 +9,9 @@ compatible with tauri-plugin-updater.
 Usage:
     python scripts/generate_latest_json.py --tag v1.22.0 --output latest.json
     python scripts/generate_latest_json.py --tag v1.22.0 --output latest.json --repo openakita/openakita
+
+    # With Cloudflare R2 CDN acceleration:
+    python scripts/generate_latest_json.py --tag v1.22.0 --output latest.json --cdn-base-url https://dl.openakita.ai
 """
 
 import argparse
@@ -109,12 +112,29 @@ def find_sig_content(assets: list[dict], asset_name: str) -> str | None:
     return None
 
 
+def rewrite_url_to_cdn(github_url: str, cdn_base: str, tag: str) -> str:
+    """Rewrite a GitHub Release download URL to a CDN URL.
+
+    GitHub format:  https://github.com/owner/repo/releases/download/v1.0.0/file.exe
+    CDN format:     https://dl.openakita.ai/v1.0.0/file.exe
+    """
+    filename = github_url.rsplit("/", 1)[-1]
+    return f"{cdn_base.rstrip('/')}/{tag}/{filename}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate latest.json for Tauri updater")
     parser.add_argument("--tag", required=True, help="Release tag (e.g. v1.22.0)")
     parser.add_argument("--output", required=True, help="Output JSON file path")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repository (owner/repo)")
+    parser.add_argument(
+        "--cdn-base-url",
+        default=os.environ.get("CDN_BASE_URL", ""),
+        help="CDN base URL for download acceleration (e.g. https://dl.openakita.ai). "
+        "Falls back to env var CDN_BASE_URL. If empty, uses GitHub Release URLs.",
+    )
     args = parser.parse_args()
+    cdn_base = args.cdn_base_url.strip()
 
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     tag = args.tag
@@ -155,11 +175,16 @@ def main():
             print(f"  {platform_key}: asset={asset['name']} but no .sig found, skipping")
             continue
 
-        platforms[platform_key] = {
+        github_url = asset["browser_download_url"]
+        download_url = rewrite_url_to_cdn(github_url, cdn_base, tag) if cdn_base else github_url
+        entry: dict = {
             "signature": sig,
-            "url": asset["browser_download_url"],
+            "url": download_url,
         }
-        print(f"  {platform_key}: {asset['name']} ✓")
+        if cdn_base:
+            entry["github_url"] = github_url
+        platforms[platform_key] = entry
+        print(f"  {platform_key}: {asset['name']} → {download_url} ✓")
 
     if not platforms:
         print("Warning: no platforms with valid signatures found", file=sys.stderr)
@@ -196,12 +221,17 @@ def main():
     for dl_key, dl_config in DOWNLOAD_PATTERNS.items():
         asset = find_asset(assets, dl_config)
         if asset:
-            downloads[dl_key] = {
+            github_url = asset["browser_download_url"]
+            download_url = rewrite_url_to_cdn(github_url, cdn_base, tag) if cdn_base else github_url
+            dl_entry: dict = {
                 "name": asset["name"],
-                "url": asset["browser_download_url"],
+                "url": download_url,
                 "size": asset.get("size", 0),
             }
-            print(f"  download.{dl_key}: {asset['name']} ✓")
+            if cdn_base:
+                dl_entry["github_url"] = github_url
+            downloads[dl_key] = dl_entry
+            print(f"  download.{dl_key}: {asset['name']} → {download_url} ✓")
 
     manifest = {
         "version": version,

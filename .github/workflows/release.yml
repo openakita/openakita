@@ -427,10 +427,16 @@ jobs:
           echo "Release channel: ${CHANNEL} (is_stable=${IS_STABLE})"
 
           # 始终生成当前版本的 manifest
+          # 如果配置了 R2，则使用 CDN 域名作为下载链接
+          CDN_ARGS=""
+          if [ -n "${{ secrets.R2_ACCESS_KEY_ID }}" ]; then
+            CDN_ARGS="--cdn-base-url https://dl.openakita.ai"
+          fi
           python scripts/generate_latest_json.py \
             --tag "${{ env.RELEASE_TAG }}" \
             --output latest-this.json \
-            --repo "${{ github.repository }}"
+            --repo "${{ github.repository }}" \
+            ${CDN_ARGS}
 
           NEW_VER=$(python -c "import json; print(json.load(open('latest-this.json'))['version'])")
           echo "New version: ${NEW_VER}"
@@ -475,6 +481,47 @@ jobs:
         run: |
           # 始终把当前版本的 manifest 上传到对应 Release
           gh release upload "${{ env.RELEASE_TAG }}" latest-this.json --clobber
+
+      # ── 上传安装包到 Cloudflare R2（国内加速下载） ──
+      - name: Upload release assets to Cloudflare R2
+        if: ${{ secrets.R2_ACCESS_KEY_ID != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: openakita-releases
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pip install awscli
+
+          TAG="${{ env.RELEASE_TAG }}"
+          VERSION="${TAG#v}"
+          echo "Uploading release assets to R2 for ${TAG}..."
+
+          # 下载所有 Release 资产到临时目录
+          mkdir -p /tmp/release-assets
+          gh release download "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --dir /tmp/release-assets \
+            --pattern "*.exe" --pattern "*.dmg" --pattern "*.deb" \
+            --pattern "*.AppImage" --pattern "*.appimage" \
+            --pattern "*.app.tar.gz" --pattern "*.sig" \
+            --clobber || true
+
+          # 上传到 R2（按版本号组织目录）
+          ASSET_COUNT=0
+          for file in /tmp/release-assets/*; do
+            [ -f "$file" ] || continue
+            FILENAME="$(basename "$file")"
+            echo "  Uploading: ${FILENAME}"
+            aws s3 cp "$file" "s3://${R2_BUCKET}/${TAG}/${FILENAME}" \
+              --endpoint-url "${R2_ENDPOINT}" \
+              --no-progress
+            ASSET_COUNT=$((ASSET_COUNT + 1))
+          done
+
+          echo "Uploaded ${ASSET_COUNT} asset(s) to R2 (${R2_BUCKET}/${TAG}/)"
 
       - name: Push to website repo
         if: ${{ env.HAS_WEBSITE_TOKEN != '' }}
