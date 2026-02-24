@@ -1,0 +1,9 @@
+{
+    "name": "get_screen_size",
+    "description": "Get the current screen resolution in pixels.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+}

@@ -1,0 +1,7 @@
+{
+    "serverIdentifier": "desktop-control",
+    "serverName": "Desktop Control (Screen + PyAutoGUI)",
+    "serverDescription": "基于视觉的桌面自动化服务。通过截屏分析 + pyautogui 执行桌面操作（点击、输入、拖拽、滚动等）。坐标使用 0-1000 归一化体系。基于 tech-shrimp/qwen_autogui 开源项目。",
+    "command": "python",
+    "args": ["-m", "openakita.mcp_servers.desktop_control"]
+}

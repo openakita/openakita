@@ -1,0 +1,9 @@
+{
+    "name": "capture_screen",
+    "description": "Capture a screenshot of the entire screen. Returns base64-encoded PNG image. Always call this before performing any desktop action to understand the current screen state.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+}

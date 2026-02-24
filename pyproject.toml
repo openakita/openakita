@@ -1,6 +1,6 @@
 [project]
 name = "openakita"
-version = "1.24.0"
+version = "1.25.0"
 description = "全能自进化AI Agent - 基于Ralph Wiggum模式，永不放弃"
 readme = "README.md"
 license = { text = "MIT" }
@@ -174,9 +174,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/openakita"]
 
-# 把仓库根目录的系统技能一并打进 wheel，保证 `pip install openakita` 后可用。
-# 这些文件会被放到 site-packages/openakita/builtin_skills/system/...
-force-include = { "skills/system" = "openakita/builtin_skills/system" }
+# 把仓库根目录的系统技能、内置 MCP 配置一并打进 wheel，保证 `pip install openakita` 后可用。
+# skills/system → site-packages/openakita/builtin_skills/system/
+# mcps          → site-packages/openakita/builtin_mcps/
+force-include = { "skills/system" = "openakita/builtin_skills/system", "mcps" = "openakita/builtin_mcps" }
 
 [tool.ruff]
 line-length = 100

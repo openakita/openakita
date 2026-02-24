@@ -1,0 +1,23 @@
+{
+    "name": "move_mouse",
+    "description": "Move the mouse cursor to a position without clicking.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "x": {
+                "type": "number",
+                "description": "X coordinate (0-1000 normalized)"
+            },
+            "y": {
+                "type": "number",
+                "description": "Y coordinate (0-1000 normalized)"
+            },
+            "duration": {
+                "type": "number",
+                "description": "Duration of the movement in seconds (default: 0.3)",
+                "default": 0.3
+            }
+        },
+        "required": ["x", "y"]
+    }
+}

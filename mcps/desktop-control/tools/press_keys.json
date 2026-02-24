@@ -1,0 +1,17 @@
+{
+    "name": "press_keys",
+    "description": "Press a key combination (hotkey). Examples: [\"ctrl\", \"c\"], [\"alt\", \"f4\"], [\"enter\"].",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "keys": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "List of keys to press simultaneously, e.g. [\"ctrl\", \"c\"]"
+            }
+        },
+        "required": ["keys"]
+    }
+}

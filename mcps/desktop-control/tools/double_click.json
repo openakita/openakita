@@ -1,0 +1,18 @@
+{
+    "name": "double_click",
+    "description": "Double-click at a position on screen using normalized 0-1000 coordinates.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "x": {
+                "type": "number",
+                "description": "X coordinate (0-1000 normalized)"
+            },
+            "y": {
+                "type": "number",
+                "description": "Y coordinate (0-1000 normalized)"
+            }
+        },
+        "required": ["x", "y"]
+    }
+}

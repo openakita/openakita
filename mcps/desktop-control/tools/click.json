@@ -1,0 +1,24 @@
+{
+    "name": "click",
+    "description": "Click at a position on screen using normalized 0-1000 coordinates.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "x": {
+                "type": "number",
+                "description": "X coordinate (0-1000 normalized, 0=left edge, 1000=right edge)"
+            },
+            "y": {
+                "type": "number",
+                "description": "Y coordinate (0-1000 normalized, 0=top edge, 1000=bottom edge)"
+            },
+            "button": {
+                "type": "string",
+                "description": "Mouse button: left, right, or middle (default: left)",
+                "default": "left",
+                "enum": ["left", "right", "middle"]
+            }
+        },
+        "required": ["x", "y"]
+    }
+}

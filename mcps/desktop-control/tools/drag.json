@@ -1,0 +1,31 @@
+{
+    "name": "drag",
+    "description": "Drag from one position to another using normalized 0-1000 coordinates.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "start_x": {
+                "type": "number",
+                "description": "Start X coordinate (0-1000 normalized)"
+            },
+            "start_y": {
+                "type": "number",
+                "description": "Start Y coordinate (0-1000 normalized)"
+            },
+            "end_x": {
+                "type": "number",
+                "description": "End X coordinate (0-1000 normalized)"
+            },
+            "end_y": {
+                "type": "number",
+                "description": "End Y coordinate (0-1000 normalized)"
+            },
+            "duration": {
+                "type": "number",
+                "description": "Duration of the drag in seconds (default: 0.5)",
+                "default": 0.5
+            }
+        },
+        "required": ["start_x", "start_y", "end_x", "end_y"]
+    }
+}

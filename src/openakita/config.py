@@ -496,8 +496,18 @@ class Settings(BaseSettings):
 
     @property
     def mcp_builtin_path(self) -> Path:
-        """内置 MCP 配置目录（随项目分发，打包后可能只读）"""
-        return self.project_root / "mcps"
+        """内置 MCP 配置目录（随项目分发，打包后可能只读）
+
+        优先使用 project_root/mcps（开发模式），
+        若不存在则回退到 wheel 打包位置 site-packages/openakita/builtin_mcps/。
+        """
+        dev_path = self.project_root / "mcps"
+        if dev_path.exists():
+            return dev_path
+        pkg_path = Path(__file__).resolve().parent / "builtin_mcps"
+        if pkg_path.exists():
+            return pkg_path
+        return dev_path
 
 
 # ---------------------------------------------------------------------------

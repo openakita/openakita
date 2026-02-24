@@ -1,0 +1,22 @@
+{
+    "name": "scroll",
+    "description": "Scroll the mouse wheel. Positive amount scrolls up, negative scrolls down.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "amount": {
+                "type": "integer",
+                "description": "Scroll amount (positive=up, negative=down)"
+            },
+            "x": {
+                "type": "number",
+                "description": "Optional X coordinate (0-1000 normalized) to scroll at"
+            },
+            "y": {
+                "type": "number",
+                "description": "Optional Y coordinate (0-1000 normalized) to scroll at"
+            }
+        },
+        "required": ["amount"]
+    }
+}
