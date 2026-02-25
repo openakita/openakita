@@ -319,9 +319,6 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NO_STRIP: true
           APPIMAGE_EXTRACT_AND_RUN: 1
         shell: bash
@@ -346,6 +343,66 @@ jobs:
           done
           echo "All $MAX_ATTEMPTS attempts failed"
           exit 1
+
+      - name: Notarize macOS artifacts (manual notarytool)
+        if: runner.os == 'macOS'
+        timeout-minutes: 90
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID not fully configured, skipping notarization."
+            exit 0
+          fi
+
+          BUNDLE_DIR="apps/setup-center/src-tauri/target/release/bundle"
+          ARTIFACTS=()
+          while IFS= read -r -d '' artifact; do
+            ARTIFACTS+=("${artifact}")
+          done < <(find "${BUNDLE_DIR}" -type f -name "*.dmg" -print0)
+          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
+            echo "No DMG artifacts found for notarization." >&2
+            exit 1
+          fi
+
+          PROFILE_NAME="openakita-notary"
+          xcrun notarytool store-credentials "${PROFILE_NAME}" \
+            --apple-id "${APPLE_ID}" \
+            --password "${APPLE_PASSWORD}" \
+            --team-id "${APPLE_TEAM_ID}"
+
+          for artifact in "${ARTIFACTS[@]}"; do
+            echo "Submitting for notarization: ${artifact}"
+            success=0
+            for attempt in 1 2 3; do
+              echo "Notarization attempt ${attempt}/3"
+              if xcrun notarytool submit "${artifact}" \
+                --keychain-profile "${PROFILE_NAME}" \
+                --wait \
+                --timeout 25m; then
+                success=1
+                break
+              fi
+              if [ "${attempt}" -lt 3 ]; then
+                echo "Notarization attempt ${attempt} failed, retrying in 45s..."
+                sleep 45
+              fi
+            done
+
+            if [ "${success}" -ne 1 ]; then
+              echo "Notarization failed after 3 attempts: ${artifact}" >&2
+              exit 1
+            fi
+
+            echo "Stapling ticket: ${artifact}"
+            xcrun stapler staple -v "${artifact}"
+            xcrun stapler validate -v "${artifact}" || true
+          done
 
       - name: List bundle outputs
         shell: bash
