@@ -156,8 +156,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !endif
 
 ; 2.5 AI 使用风险确认页面 (自定义)
-Var RiskAckInput
-Var RiskAckError
 Page custom PageRiskAck PageLeaveRiskAck
 
 ; 3. Install mode (if it is set to `both`)
@@ -457,28 +455,14 @@ Function PageRiskAck
  ${NSD_CreateHLine} 0 96u 100% 1u
  Pop $0
 
- ; 输入确认区域
- ${NSD_CreateLabel} 0 102u 100% 10u "请在下方输入「我已知晓」以确认你已阅读并理解上述内容："
+ ; 继续提示
+ ${NSD_CreateLabel} 0 102u 100% 10u "点击“下一步”即表示你已阅读并理解上述内容。"
  Pop $0
  SetCtlColors $0 "" "transparent"
-
- ${NSD_CreateText} 0 116u 180u 14u ""
- Pop $RiskAckInput
-
- ; 错误提示
- ${NSD_CreateLabel} 188u 118u -188u 10u ""
- Pop $RiskAckError
- SetCtlColors $RiskAckError "CC0000" "transparent"
-
  nsDialogs::Show
 FunctionEnd
 
 Function PageLeaveRiskAck
- ${NSD_GetText} $RiskAckInput $0
- ${If} $0 != "我已知晓"
-  ${NSD_SetText} $RiskAckError "输入不正确，请准确输入「我已知晓」"
-  Abort
- ${EndIf}
 FunctionEnd
 
 ; ── 环境检测页面实现 ──
@@ -1441,4 +1425,3 @@ Function CreateOrUpdateDesktopShortcut
  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
  !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
 FunctionEnd
-
