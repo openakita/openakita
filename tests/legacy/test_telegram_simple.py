@@ -288,7 +288,7 @@ async def main():
         else:
             rlist, _, _ = select.select([sys.stdin], [], [], 5)
             answer = sys.stdin.readline().strip().lower() if rlist else 'n'
-    except:
+    except Exception:
         answer = 'n'
         print("(自动跳过)")
     

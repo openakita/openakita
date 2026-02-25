@@ -227,7 +227,7 @@ def search_files(directory: str, pattern: str, content: str = None) -> dict:
                             lines.append({"line": i, "content": line.strip()[:100]})
                     match_info["matches"] = lines[:10]  # 最多10个匹配
                     matches.append(match_info)
-            except:
+            except Exception:
                 pass
         else:
             matches.append(match_info)
