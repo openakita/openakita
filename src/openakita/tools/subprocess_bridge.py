@@ -14,6 +14,7 @@
 import asyncio
 import json
 import logging
+import subprocess
 import sys
 import textwrap
 from typing import Any
@@ -21,6 +22,10 @@ from typing import Any
 from openakita.runtime_env import IS_FROZEN, get_python_executable
 
 logger = logging.getLogger(__name__)
+
+_NO_WINDOW_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
 
 
 class SubprocessBridge:
@@ -52,6 +57,7 @@ class SubprocessBridge:
                 f"import {package}; print('ok')",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **_NO_WINDOW_FLAGS,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
             return proc.returncode == 0 and b"ok" in stdout
@@ -104,6 +110,7 @@ class SubprocessBridge:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                **_NO_WINDOW_FLAGS,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
@@ -222,6 +229,7 @@ asyncio.run(main())
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
             env=os.environ.copy(),
+            **_NO_WINDOW_FLAGS,
         )
 
         try:

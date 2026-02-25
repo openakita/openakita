@@ -39,29 +39,71 @@ def _find_python_in_dir(directory: Path) -> Path | None:
 
 
 def _is_windows_store_stub(path: str) -> bool:
-    """检查是否为 Windows Store 的假 Python 桩（App Execution Alias）。
-    这些桩位于 WindowsApps 目录，执行时返回 9009 而不是真正运行 Python。"""
-    return "WindowsApps" in path or "AppInstallerPythonRedirector" in path
+    """快速检查是否为 Windows Store 的重定向桩（App Execution Alias）。
+
+    AppInstallerPythonRedirector 是微软用来引导用户安装 Python 的假桩，
+    运行时返回 exit code 9009，不是真正的 Python。
+    注意：WindowsApps 目录下也可能有真正的 Microsoft Store 安装的 Python，
+    不能仅凭路径排除，必须通过 verify_python_executable() 进一步验证。
+    """
+    return "AppInstallerPythonRedirector" in path
+
+
+def verify_python_executable(path: str) -> bool:
+    """验证一个 Python 可执行文件是否真正可用。
+
+    实际运行 ``python --version``，确认返回码为 0 且输出以 ``Python 3.`` 开头。
+    可排除 Windows Store 假桩（exit 9009）、损坏的安装、以及非 Python 3 的旧版本。
+    """
+    import subprocess
+
+    try:
+        kwargs: dict = {"capture_output": True, "text": True, "timeout": 5}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run([path, "--version"], **kwargs)
+        if result.returncode != 0:
+            logger.debug("Python 验证失败 (exit %d): %s", result.returncode, path)
+            return False
+        output = (result.stdout + result.stderr).strip()
+        if output.startswith("Python 3."):
+            logger.debug("Python 验证通过: %s → %s", path, output)
+            return True
+        logger.debug("Python 版本不符 (需要 3.x): %s → %s", path, output)
+        return False
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError) as exc:
+        logger.debug("Python 验证异常: %s → %s", path, exc)
+        return False
 
 
 def _which_real_python() -> str | None:
-    """在 PATH 中查找真正可用的 Python，跳过 Windows Store 桩。"""
+    """在 PATH 中查找真正可用的 Python 3.x，跳过假桩并验证可执行。"""
     if sys.platform == "win32":
-        # Windows: python.exe 优先（python3.exe 通常只有 Store 桩提供）
         candidates = ["python", "python3"]
     else:
         candidates = ["python3", "python"]
 
     for name in candidates:
         path = shutil.which(name)
-        if path and not _is_windows_store_stub(path):
+        if not path:
+            continue
+        if _is_windows_store_stub(path):
+            logger.debug("跳过 Windows Store 假桩: %s", path)
+            continue
+        if verify_python_executable(path):
             return path
+        logger.debug("PATH 中 %s 验证失败，跳过: %s", name, path)
     return None
 
 
 def _scan_common_python_dirs() -> str | None:
-    """扫描各平台常见 Python 安装目录（PATH 失效时的兜底）。"""
+    """扫描各平台常见 Python 安装目录（PATH 失效时的兜底）。
+
+    找到候选后会通过 verify_python_executable() 验证其确实可用。
+    """
     import glob
+
+    candidates: list[str] = []
 
     if sys.platform == "win32":
         patterns = [
@@ -70,29 +112,31 @@ def _scan_common_python_dirs() -> str | None:
             r"C:\Program Files (x86)\Python3*\python.exe",
         ]
         for pattern in patterns:
-            matches = sorted(glob.glob(pattern), reverse=True)
-            if matches:
-                return matches[0]
+            candidates.extend(sorted(glob.glob(pattern), reverse=True))
         # 用户级安装 (AppData\Local\Programs\Python)
         local_programs = Path.home() / "AppData" / "Local" / "Programs" / "Python"
         if local_programs.exists():
             for py_dir in sorted(local_programs.iterdir(), reverse=True):
                 py = py_dir / "python.exe"
                 if py.exists():
-                    return str(py)
+                    candidates.append(str(py))
+        # Microsoft Store 安装的 Python (WindowsApps 下的真实安装)
+        win_apps = Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps"
+        if win_apps.exists():
+            for item in win_apps.iterdir():
+                if item.is_dir() and "PythonSoftwareFoundation.Python.3" in item.name:
+                    py = item / "python.exe"
+                    if py.exists():
+                        candidates.append(str(py))
     elif sys.platform == "darwin":
-        # macOS: Homebrew, python.org installer, Xcode CLI tools
         for pattern in [
             "/opt/homebrew/bin/python3",
             "/usr/local/bin/python3",
             "/Library/Frameworks/Python.framework/Versions/3.*/bin/python3",
             "/usr/bin/python3",
         ]:
-            matches = sorted(glob.glob(pattern), reverse=True)
-            if matches:
-                return matches[0]
+            candidates.extend(sorted(glob.glob(pattern), reverse=True))
     else:
-        # Linux: system, deadsnakes PPA, pyenv, user-local
         for pattern in [
             "/usr/bin/python3",
             "/usr/bin/python3.*",
@@ -100,9 +144,12 @@ def _scan_common_python_dirs() -> str | None:
             str(Path.home() / ".pyenv/shims/python3"),
             str(Path.home() / ".local/bin/python3"),
         ]:
-            matches = sorted(glob.glob(pattern), reverse=True)
-            if matches:
-                return matches[0]
+            candidates.extend(sorted(glob.glob(pattern), reverse=True))
+
+    for c in candidates:
+        if verify_python_executable(c):
+            return c
+        logger.debug("扫描到但验证失败: %s", c)
     return None
 
 
@@ -112,8 +159,11 @@ def _get_python_from_env_var() -> str | None:
     import os
     for var in ("OPENAKITA_PYTHON", "PYTHON3", "PYTHON"):
         val = os.environ.get(var)
-        if val and Path(val).is_file():
+        if not val or not Path(val).is_file():
+            continue
+        if verify_python_executable(val):
             return val
+        logger.warning("环境变量 %s=%s 指向的 Python 验证失败", var, val)
     return None
 
 
@@ -128,9 +178,13 @@ def _get_python_from_configured_venv() -> str | None:
     if not venv_dir.is_dir():
         return None
     py = _find_python_in_dir(venv_dir)
-    if py:
-        logger.debug(f"使用配置的 venv Python (PYTHON_VENV_PATH): {py}")
-        return str(py)
+    if not py:
+        return None
+    py_str = str(py)
+    if verify_python_executable(py_str):
+        logger.debug("使用配置的 venv Python (PYTHON_VENV_PATH): %s", py_str)
+        return py_str
+    logger.warning("配置的 venv Python 存在但验证失败: %s", py_str)
     return None
 
 
@@ -239,7 +293,12 @@ def get_python_executable() -> str | None:
         logger.info(f"使用扫描发现的 Python: {py_path}")
         return py_path
 
-    logger.warning("未找到可用的 Python 解释器")
+    logger.warning(
+        "未找到可用的 Python 解释器。"
+        "已搜索: 配置的 venv → 工作区 venv → ~/.openakita/venv → embedded python → "
+        "环境变量 → PATH → 常见安装目录。"
+        "请前往「设置中心 → Python 环境」使用「一键修复」或手动配置 Python 路径。"
+    )
     return None
 
 

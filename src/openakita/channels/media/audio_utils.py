@@ -185,7 +185,10 @@ def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
         "-y", out_path,
     ]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+        extra: dict = {}
+        if os.name == "nt":
+            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.run(cmd, capture_output=True, timeout=30, check=True, **extra)
         logger.info(f"Audio converted for LLM: {src.name} → {Path(out_path).name}")
         return out_path
     except Exception as e:

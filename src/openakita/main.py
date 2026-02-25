@@ -190,6 +190,9 @@ def _ensure_channel_deps() -> None:
         f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] ..."
     )
     try:
+        extra: dict = {}
+        if sys.platform == "win32":
+            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
         result = subprocess.run(
             pip_cmd,
             capture_output=True,
@@ -197,6 +200,7 @@ def _ensure_channel_deps() -> None:
             encoding="utf-8",
             errors="replace",
             timeout=180,
+            **extra,
         )
         if result.returncode == 0:
             logger.info(f"依赖安装成功: {pkg_list}")

@@ -969,7 +969,7 @@ export function App() {
   }, [currentWorkspaceId]);
 
   // ── Onboarding Wizard (首次安装引导) ──
-  type OnboardingStep = "ob-welcome" | "ob-llm" | "ob-im" | "ob-modules" | "ob-cli" | "ob-progress" | "ob-done";
+  type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-modules" | "ob-cli" | "ob-progress" | "ob-done";
   type ModuleInfo = { id: string; name: string; description: string; installed: boolean; bundled: boolean; sizeMb: number; category: string };
   const [obStep, setObStep] = useState<OnboardingStep>("ob-welcome");
   const [obModules, setObModules] = useState<ModuleInfo[]>([]);
@@ -995,6 +995,8 @@ export function App() {
   const [obCliOa, setObCliOa] = useState(true);
   const [obCliAddToPath, setObCliAddToPath] = useState(true);
   const [obAutostart, setObAutostart] = useState(true); // 开机自启，默认勾选
+  const [obAgreementInput, setObAgreementInput] = useState("");
+  const [obAgreementError, setObAgreementError] = useState(false);
 
   /** 探测本地是否有后端服务在运行（用于 onboarding 前提示用户） */
   async function obProbeRunningService() {
@@ -1117,6 +1119,17 @@ export function App() {
   const [customVenvPath, setCustomVenvPath] = useState<string>("");
   const [customPathStatus, setCustomPathStatus] = useState<string>("");
   const [customVenvStatus, setCustomVenvStatus] = useState<string>("");
+  // python diagnostics / repair
+  const [pyDiag, setPyDiag] = useState<{
+    embeddedPythonOk: boolean; embeddedPythonPath: string | null;
+    venvOk: boolean; venvPath: string | null; venvPythonVersion: string | null;
+    openakitaInstalled: boolean; openakitaVersion: string | null;
+    systemPythonOk: boolean; systemPythonPath: string | null;
+    issues: string[];
+  } | null>(null);
+  const [repairStage, setRepairStage] = useState<string>("");
+  const [repairPercent, setRepairPercent] = useState<number>(0);
+  const [repairDetail, setRepairDetail] = useState<string>("");
 
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -1900,6 +1913,61 @@ export function App() {
       setError(String(e));
       setVenvStatus(t("config.pyVenvCreateFail") + `: ${String(e)}`);
     } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doDiagnosePython() {
+    setBusy(t("config.pyDiagnoseRunning"));
+    setPyDiag(null);
+    try {
+      const d = await invoke<NonNullable<typeof pyDiag>>("diagnose_python_env", { venvDir });
+      setPyDiag(d);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doRepairPython() {
+    setError(null);
+    setNotice(null);
+    setRepairStage("");
+    setRepairPercent(0);
+    setRepairDetail("");
+    setBusy(t("config.pyRepairRunning"));
+
+    const unlisten = await listen("python_repair_event", (ev) => {
+      const p = ev.payload as any;
+      if (!p || typeof p !== "object") return;
+      if (p.stage) setRepairStage(String(p.stage));
+      if (typeof p.percent === "number") setRepairPercent(p.percent);
+      if (p.detail) setRepairDetail(String(p.detail));
+    });
+
+    try {
+      const d = await invoke<NonNullable<typeof pyDiag>>("repair_python_env", { venvDir });
+      setPyDiag(d);
+      if (d && d.issues.length === 0) {
+        setNotice(t("config.pyRepairDone"));
+        setVenvReady(true);
+        setOpenakitaInstalled(!!d.openakitaInstalled);
+        await persistPythonEnvConfig(venvDir);
+        // Re-detect Python candidates
+        try {
+          const cands = await invoke<PythonCandidate[]>("detect_python");
+          setPythonCandidates(cands);
+          const firstUsable = cands.findIndex((c: PythonCandidate) => c.isUsable);
+          setSelectedPythonIdx(firstUsable);
+        } catch { /* best-effort */ }
+      } else {
+        setError(t("config.pyRepairFail") + (d?.issues?.length ? `: ${d.issues.join("; ")}` : ""));
+      }
+    } catch (e) {
+      setError(t("config.pyRepairFail") + `: ${String(e)}`);
+    } finally {
+      unlisten();
       setBusy(null);
     }
   }
@@ -5436,6 +5504,99 @@ export function App() {
             </div>
           </div>
         )}
+
+        {/* Diagnostic & One-Click Repair */}
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="cardTitle" style={{ fontSize: 14 }}>{t("config.pyDiagnose")}</div>
+          <div className="cardHint">{t("config.pyRepairHint")}</div>
+          <div className="divider" />
+          <div className="btnRow">
+            <button onClick={doDiagnosePython} disabled={!!busy}>
+              {t("config.pyDiagnose")}
+            </button>
+            <button className="btnPrimary" onClick={doRepairPython} disabled={!!busy}>
+              {t("config.pyRepair")}
+            </button>
+          </div>
+
+          {/* Repair progress */}
+          {repairStage && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>{repairStage}</span>
+                <span style={{ color: "var(--muted)" }}>{repairPercent}%</span>
+              </div>
+              <div style={{ height: 4, borderRadius: 2, background: "var(--line)", marginTop: 4, overflow: "hidden" }}>
+                <div style={{ width: `${repairPercent}%`, height: "100%", borderRadius: 2, background: "var(--primary)", transition: "width 0.3s" }} />
+              </div>
+              {repairDetail && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{repairDetail}</div>}
+            </div>
+          )}
+
+          {/* Diagnostic report */}
+          {pyDiag && (
+            <div style={{ marginTop: 12 }}>
+              <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: "4px 8px", fontWeight: 600 }}>{t("config.pyDiagEmbedded")}</td>
+                    <td style={{ padding: "4px 8px" }}>
+                      <span style={{ color: pyDiag.embeddedPythonOk ? "var(--success)" : "var(--error)" }}>
+                        {pyDiag.embeddedPythonOk ? t("config.pyDiagOk") : t("config.pyDiagFail")}
+                      </span>
+                      {pyDiag.embeddedPythonPath && (
+                        <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>{pyDiag.embeddedPythonPath}</span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 8px", fontWeight: 600 }}>{t("config.pyDiagVenv")}</td>
+                    <td style={{ padding: "4px 8px" }}>
+                      <span style={{ color: pyDiag.venvOk ? "var(--success)" : "var(--error)" }}>
+                        {pyDiag.venvOk ? t("config.pyDiagOk") : t("config.pyDiagFail")}
+                      </span>
+                      {pyDiag.venvPythonVersion && (
+                        <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>{pyDiag.venvPythonVersion}</span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 8px", fontWeight: 600 }}>{t("config.pyDiagOpenakita")}</td>
+                    <td style={{ padding: "4px 8px" }}>
+                      <span style={{ color: pyDiag.openakitaInstalled ? "var(--success)" : "var(--error)" }}>
+                        {pyDiag.openakitaInstalled ? t("config.pyDiagOk") : t("config.pyDiagFail")}
+                      </span>
+                      {pyDiag.openakitaVersion && (
+                        <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>v{pyDiag.openakitaVersion}</span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: "4px 8px", fontWeight: 600 }}>{t("config.pyDiagSystem")}</td>
+                    <td style={{ padding: "4px 8px" }}>
+                      <span style={{ color: pyDiag.systemPythonOk ? "var(--success)" : "var(--muted)" }}>
+                        {pyDiag.systemPythonOk ? t("config.pyDiagOk") : "-"}
+                      </span>
+                      {pyDiag.systemPythonPath && (
+                        <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 12 }}>{pyDiag.systemPythonPath}</span>
+                      )}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {pyDiag.issues.length > 0 ? (
+                <div className="errBox" style={{ marginTop: 8 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("config.pyDiagIssues")} ({pyDiag.issues.length})</div>
+                  {pyDiag.issues.map((issue, i) => (
+                    <div key={i} style={{ fontSize: 12, marginTop: 2 }}>• {issue}</div>
+                  ))}
+                </div>
+              ) : (
+                <div className="okBox" style={{ marginTop: 8 }}>{t("config.pyDiagNoIssues")}</div>
+              )}
+            </div>
+          )}
+        </div>
       </>
     );
   }
@@ -8470,7 +8631,7 @@ export function App() {
   }
 
   function renderOnboarding() {
-    const obStepDots = ["ob-welcome", "ob-llm", "ob-im", "ob-modules", "ob-cli", "ob-progress", "ob-done"] as OnboardingStep[];
+    const obStepDots = ["ob-welcome", "ob-agreement", "ob-llm", "ob-im", "ob-modules", "ob-cli", "ob-progress", "ob-done"] as OnboardingStep[];
     const obCurrentIdx = obStepDots.indexOf(obStep);
 
     const stepIndicator = (

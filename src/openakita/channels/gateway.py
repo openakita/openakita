@@ -957,10 +957,14 @@ class MessageGateway:
                     "-y", output_pattern,
                 ]
                 import subprocess
+                import sys as _sys
                 try:
+                    _kw: dict = {}
+                    if _sys.platform == "win32":
+                        _kw["creationflags"] = subprocess.CREATE_NO_WINDOW
                     subprocess.run(
                         cmd, capture_output=True, timeout=60,
-                        check=False,
+                        check=False, **_kw,
                     )
                 except Exception as e:
                     logger.error(f"ffmpeg keyframe extraction failed: {e}")

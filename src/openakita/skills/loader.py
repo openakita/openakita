@@ -427,6 +427,9 @@ class SkillLoader:
             cmd = [str(script_path)] + args
 
         try:
+            extra: dict = {}
+            if sys.platform == "win32":
+                extra["creationflags"] = subprocess.CREATE_NO_WINDOW
             result = subprocess.run(
                 cmd,
                 cwd=cwd or skill.skill_dir,
@@ -435,6 +438,7 @@ class SkillLoader:
                 encoding="utf-8",
                 errors="replace",
                 timeout=60,
+                **extra,
             )
 
             output = result.stdout

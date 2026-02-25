@@ -295,7 +295,9 @@ fn find_pip_python() -> Option<PathBuf> {
             }
         }
     }
-    // 4. PATH python（排除 Windows Store 假 Python 并验证可用性）
+    // 4. PATH python（验证实际可执行，不再仅凭路径排除 WindowsApps）
+    //    Microsoft Store 安装的 Python 也位于 WindowsApps，是真正可用的；
+    //    仅 AppInstallerPythonRedirector 是假桩（exit 9009）。通过 --version 统一验证。
     let candidates = if cfg!(windows) {
         vec!["python.exe", "python3.exe"]
     } else {
@@ -308,27 +310,28 @@ fn find_pip_python() -> Option<PathBuf> {
         if let Ok(output) = wc.output() {
             if output.status.success() {
                 let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                // where 可能返回多个路径，逐一检查
                 for line in path_str.lines() {
                     let line = line.trim();
                     if line.is_empty() { continue; }
                     let p = PathBuf::from(line);
                     if !p.exists() { continue; }
 
-                    // 排除 Windows Store 假 Python（只是一个占位符，实际不能执行）
-                    // 路径如: C:\Users\xxx\AppData\Local\Microsoft\WindowsApps\python.exe
+                    // 快速排除已知的 Store 重定向桩
                     let path_lower = p.to_string_lossy().to_lowercase();
-                    if path_lower.contains("windowsapps") || path_lower.contains("microsoft\\windowsapps") {
+                    if path_lower.contains("appinstallerpythonredirector") {
                         continue;
                     }
 
-                    // 验证 Python 实际可执行（避免其他假冒/损坏的 Python）
+                    // 运行 --version 验证：排除假桩（exit 9009）、损坏安装和版本过低
                     let mut vc = Command::new(&p);
                     vc.arg("--version");
                     apply_no_window(&mut vc);
                     if let Ok(ver) = vc.output() {
                         if ver.status.success() {
-                            return Some(p);
+                            let ver_str = String::from_utf8_lossy(&ver.stdout).trim().to_string();
+                            if python_version_ok(&ver_str) {
+                                return Some(p);
+                            }
                         }
                     }
                 }
@@ -2030,6 +2033,8 @@ fn main() {
             detect_python,
             validate_python_path,
             validate_venv_path,
+            diagnose_python_env,
+            repair_python_env,
             check_python_for_pip,
             install_embedded_python,
             create_venv,
@@ -3019,6 +3024,12 @@ fn validate_venv_path(path: String) -> Result<PythonCandidate, String> {
     c.arg("--version");
     apply_no_window(&mut c);
     let out = c.output().map_err(|e| format!("无法执行 venv Python: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "venv Python 执行 --version 失败 (exit {})",
+            out.status.code().unwrap_or(-1)
+        ));
+    }
     let version_text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let is_usable = python_version_ok(&version_text);
     Ok(PythonCandidate {
@@ -3026,6 +3037,331 @@ fn validate_venv_path(path: String) -> Result<PythonCandidate, String> {
         version_text: format!("venv: {} ({})", version_text, path),
         is_usable,
     })
+}
+
+/// Diagnostic report for the Python environment.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PythonDiagnostic {
+    /// Is the embedded Python installed and executable?
+    embedded_python_ok: bool,
+    embedded_python_path: Option<String>,
+    /// Is the global venv present and its Python executable?
+    venv_ok: bool,
+    venv_path: Option<String>,
+    venv_python_version: Option<String>,
+    /// Is openakita importable inside the venv?
+    openakita_installed: bool,
+    openakita_version: Option<String>,
+    /// Is any Python available via PATH?
+    system_python_ok: bool,
+    system_python_path: Option<String>,
+    /// Summary list of issues found
+    issues: Vec<String>,
+}
+
+/// Run a full diagnostic of the Python environment.
+#[tauri::command]
+fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
+    let root = openakita_root_dir();
+    let mut diag = PythonDiagnostic {
+        embedded_python_ok: false,
+        embedded_python_path: None,
+        venv_ok: false,
+        venv_path: None,
+        venv_python_version: None,
+        openakita_installed: false,
+        openakita_version: None,
+        system_python_ok: false,
+        system_python_path: None,
+        issues: vec![],
+    };
+
+    // 1. Check embedded Python
+    let runtime_dir = root.join("runtime").join("python");
+    if runtime_dir.exists() {
+        let mut found = false;
+        if let Ok(entries) = fs::read_dir(&runtime_dir) {
+            'outer: for entry in entries.flatten() {
+                if !entry.path().is_dir() { continue; }
+                if let Ok(sub_entries) = fs::read_dir(entry.path()) {
+                    for sub in sub_entries.flatten() {
+                        if !sub.path().is_dir() { continue; }
+                        if let Some(py) = find_python_executable(&sub.path()) {
+                            let mut c = Command::new(&py);
+                            c.arg("--version");
+                            apply_no_window(&mut c);
+                            if let Ok(out) = c.output() {
+                                if out.status.success() {
+                                    diag.embedded_python_ok = true;
+                                    diag.embedded_python_path = Some(py.to_string_lossy().to_string());
+                                    found = true;
+                                    break 'outer;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !found {
+            diag.issues.push("内置 Python 目录存在但可执行文件不可用".into());
+        }
+    } else {
+        diag.issues.push("内置 Python 未安装".into());
+    }
+
+    // 2. Check venv
+    let venv = PathBuf::from(&venv_dir);
+    let venv_py = if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    };
+    if venv.exists() && venv_py.exists() {
+        let mut c = Command::new(&venv_py);
+        c.arg("--version");
+        apply_no_window(&mut c);
+        if let Ok(out) = c.output() {
+            if out.status.success() {
+                let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                diag.venv_ok = true;
+                diag.venv_path = Some(venv_dir.clone());
+                diag.venv_python_version = Some(ver);
+            } else {
+                diag.issues.push("venv 中的 Python 解释器无法执行".into());
+            }
+        } else {
+            diag.issues.push("venv 中的 Python 解释器无法执行".into());
+        }
+    } else if venv.exists() {
+        diag.issues.push("venv 目录存在但缺少 Python 解释器（可能损坏）".into());
+    } else {
+        diag.issues.push("venv 不存在".into());
+    }
+
+    // 3. Check openakita installed
+    if diag.venv_ok {
+        let mut c = Command::new(&venv_py);
+        apply_no_window(&mut c);
+        c.env("PYTHONUTF8", "1");
+        c.args(["-c", "import openakita; print(getattr(openakita,'__version__','unknown'))"]);
+        if let Ok(out) = c.output() {
+            if out.status.success() {
+                let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                diag.openakita_installed = true;
+                diag.openakita_version = Some(ver);
+            } else {
+                diag.issues.push("openakita 未安装在 venv 中".into());
+            }
+        } else {
+            diag.issues.push("无法检测 openakita 是否已安装".into());
+        }
+    }
+
+    // 4. Check system Python
+    let candidates: Vec<&str> = if cfg!(windows) {
+        vec!["python", "python3"]
+    } else {
+        vec!["python3", "python"]
+    };
+    for name in candidates {
+        if let Some(path) = which_real(name) {
+            let mut c = Command::new(&path);
+            c.arg("--version");
+            apply_no_window(&mut c);
+            if let Ok(out) = c.output() {
+                if out.status.success() {
+                    let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if python_version_ok(&ver) {
+                        diag.system_python_ok = true;
+                        diag.system_python_path = Some(path);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if !diag.system_python_ok && !diag.embedded_python_ok {
+        diag.issues.push("系统 PATH 中未找到可用的 Python 3.11+".into());
+    }
+
+    diag
+}
+
+/// which-like helper that verifies Python is actually executable.
+/// Instead of blindly skipping all WindowsApps paths (which blocks valid
+/// Microsoft Store Python), we only skip known redirector stubs and verify
+/// each candidate via `--version`.
+fn which_real(name: &str) -> Option<String> {
+    let mut wc = Command::new(if cfg!(windows) { "where" } else { "which" });
+    wc.arg(name);
+    apply_no_window(&mut wc);
+    if let Ok(output) = wc.output() {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let line = line.trim();
+                if line.is_empty() { continue; }
+                let lower = line.to_lowercase();
+                if lower.contains("appinstallerpythonredirector") {
+                    continue;
+                }
+                let p = PathBuf::from(line);
+                if !p.exists() { continue; }
+                let mut vc = Command::new(&p);
+                vc.arg("--version");
+                apply_no_window(&mut vc);
+                if let Ok(ver) = vc.output() {
+                    if ver.status.success() {
+                        let ver_str = String::from_utf8_lossy(&ver.stdout);
+                        if ver_str.trim().starts_with("Python 3.") {
+                            return Some(line.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// One-click repair: diagnose, fix all issues, return final diagnostic.
+/// Emits `python_repair_event` events with progress updates.
+#[tauri::command]
+async fn repair_python_env(
+    app: tauri::AppHandle,
+    venv_dir: String,
+) -> Result<PythonDiagnostic, String> {
+    let venv_dir_clone = venv_dir.clone();
+    spawn_blocking_result(move || {
+        let emit = |stage: &str, percent: u8, detail: &str| {
+            let _ = app.emit("python_repair_event", serde_json::json!({
+                "stage": stage,
+                "percent": percent,
+                "detail": detail,
+            }));
+        };
+
+        // Phase 1: Diagnose
+        emit("诊断", 5, "检测当前 Python 环境状态...");
+        let diag = diagnose_python_env(venv_dir_clone.clone());
+        let need_embedded = !diag.embedded_python_ok;
+        let need_venv = !diag.venv_ok;
+        let need_openakita = !diag.openakita_installed;
+
+        if diag.issues.is_empty() {
+            emit("完成", 100, "Python 环境正常，无需修复");
+            return Ok(diag);
+        }
+
+        emit("诊断", 10, &format!("发现 {} 个问题，开始修复...", diag.issues.len()));
+
+        // Phase 2: Ensure embedded Python
+        let python_path: PathBuf;
+        if need_embedded {
+            emit("安装内置 Python", 15, "下载/安装内置 Python...");
+            match install_embedded_python_sync(None, None) {
+                Ok(result) => {
+                    python_path = PathBuf::from(&result.python_path);
+                    emit("安装内置 Python", 40, &format!("内置 Python 就绪: {}", result.python_path));
+                }
+                Err(e) => {
+                    emit("错误", 40, &format!("安装内置 Python 失败: {}", e));
+                    return Err(format!("安装内置 Python 失败: {}", e));
+                }
+            }
+        } else if let Some(ref p) = diag.embedded_python_path {
+            python_path = PathBuf::from(p);
+            emit("检查", 20, "内置 Python 正常");
+        } else {
+            // Try to find any usable Python
+            match find_pip_python() {
+                Some(p) => {
+                    python_path = p;
+                    emit("检查", 20, "使用已有 Python");
+                }
+                None => {
+                    emit("安装内置 Python", 15, "下载/安装内置 Python...");
+                    match install_embedded_python_sync(None, None) {
+                        Ok(result) => {
+                            python_path = PathBuf::from(&result.python_path);
+                            emit("安装内置 Python", 40, &format!("内置 Python 就绪: {}", result.python_path));
+                        }
+                        Err(e) => {
+                            return Err(format!("安装内置 Python 失败: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 3: Ensure venv
+        let venv = PathBuf::from(&venv_dir_clone);
+        if need_venv {
+            // Remove corrupted venv first
+            if venv.exists() {
+                emit("修复 venv", 45, "删除损坏的 venv...");
+                let _ = fs::remove_dir_all(&venv);
+            }
+            emit("修复 venv", 50, "创建新的 venv...");
+            let mut c = Command::new(&python_path);
+            apply_no_window(&mut c);
+            c.args(["-m", "venv"]).arg(&venv);
+            let status = c.status().map_err(|e| format!("创建 venv 失败: {e}"))?;
+            if !status.success() {
+                return Err("创建 venv 失败（python -m venv 返回非零退出码）".into());
+            }
+            emit("修复 venv", 60, "venv 创建成功");
+        } else {
+            emit("检查", 50, "venv 正常");
+        }
+
+        // Phase 4: Ensure openakita installed
+        if need_venv || need_openakita {
+            emit("安装 openakita", 65, "在 venv 中安装 openakita...");
+            let venv_py = if cfg!(windows) {
+                venv.join("Scripts").join("python.exe")
+            } else {
+                venv.join("bin").join("python")
+            };
+
+            // Upgrade pip first (best-effort)
+            let mut pip_up = Command::new(&venv_py);
+            apply_no_window(&mut pip_up);
+            pip_up.env("PYTHONUTF8", "1");
+            pip_up.args(["-m", "pip", "install", "--upgrade", "pip"]);
+            let _ = pip_up.status();
+
+            // Install openakita
+            let mut install = Command::new(&venv_py);
+            apply_no_window(&mut install);
+            install.env("PYTHONUTF8", "1");
+            install.env("PYTHONIOENCODING", "utf-8");
+            install.args(["-m", "pip", "install", "openakita[all]"]);
+            emit("安装 openakita", 75, "pip install openakita[all] ...");
+            let out = install.output().map_err(|e| format!("pip install 执行失败: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let tail = if stderr.len() > 3000 { &stderr[stderr.len()-3000..] } else { &stderr };
+                emit("错误", 90, &format!("pip install 失败: {}", tail));
+                return Err(format!("pip install openakita 失败:\n{}", tail));
+            }
+            emit("安装 openakita", 90, "openakita 安装完成");
+        } else {
+            emit("检查", 80, "openakita 已安装");
+        }
+
+        // Phase 5: Final verification
+        emit("验证", 95, "验证修复结果...");
+        let final_diag = diagnose_python_env(venv_dir_clone);
+        if final_diag.issues.is_empty() {
+            emit("完成", 100, "所有问题已修复，Python 环境正常");
+        } else {
+            emit("完成", 100, &format!("修复完成，但仍有 {} 个问题", final_diag.issues.len()));
+        }
+        Ok(final_diag)
+    })
+    .await
 }
 
 #[derive(Debug, Deserialize)]

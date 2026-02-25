@@ -434,6 +434,9 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         return
 
     try:
+        extra: dict = {}
+        if sys.platform == "win32":
+            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
         result = subprocess.run(
             pip_cmd,
             capture_output=True,
@@ -441,6 +444,7 @@ def ensure_channel_deps(workspace_dir: str) -> None:
             encoding="utf-8",
             errors="replace",
             timeout=180,
+            **extra,
         )
         if result.returncode == 0:
             importlib.invalidate_caches()
@@ -614,6 +618,9 @@ def _git_clone(args: list[str]) -> None:
     import subprocess
 
     try:
+        extra: dict = {}
+        if sys.platform == "win32":
+            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
         subprocess.run(
             args,
             check=True,
@@ -621,6 +628,7 @@ def _git_clone(args: list[str]) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            **extra,
         )
     except FileNotFoundError:
         raise FileNotFoundError(

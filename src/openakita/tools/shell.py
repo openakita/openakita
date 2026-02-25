@@ -293,6 +293,18 @@ class ShellTool:
         """交互式执行命令，实时输出"""
         work_dir = cwd or self.default_cwd
 
+        cmd_env = os.environ.copy()
+        try:
+            from ..runtime_env import IS_FROZEN, get_python_executable
+            if IS_FROZEN:
+                _ext_py = get_python_executable()
+                if _ext_py:
+                    from pathlib import Path
+                    _py_dir = str(Path(_ext_py).parent)
+                    cmd_env["PATH"] = _py_dir + os.pathsep + cmd_env.get("PATH", "")
+        except Exception:
+            pass
+
         # Windows PowerShell 命令处理
         if self._is_windows and self._needs_powershell(command):
             command = self._wrap_for_powershell(command)
@@ -304,6 +316,7 @@ class ShellTool:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=work_dir,
+            env=cmd_env,
         )
 
         if process.stdout:
@@ -321,10 +334,17 @@ class ShellTool:
 
     async def pip_install(self, package: str) -> CommandResult:
         """使用 pip 安装包（PyInstaller 兼容：使用 runtime_env 获取正确的 Python 解释器）"""
-        from openakita.runtime_env import get_python_executable
+        from openakita.runtime_env import IS_FROZEN, get_python_executable
         py = get_python_executable()
         if py:
             return await self.run(f'"{py}" -m pip install {package}')
+        if IS_FROZEN:
+            return CommandResult(
+                returncode=-1,
+                stdout="",
+                stderr="未找到可用的 Python 解释器，无法执行 pip install。"
+                       "请前往「设置中心 → Python 环境」使用「一键修复」。",
+            )
         return await self.run(f"pip install {package}")
 
     async def npm_install(self, package: str, global_: bool = False) -> CommandResult:

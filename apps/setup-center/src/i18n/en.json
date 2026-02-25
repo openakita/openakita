@@ -288,6 +288,21 @@
     "pyUseAsActive": "Set as Active Environment",
     "pyActiveEnv": "Active Python Environment",
     "pyNoActiveEnv": "No Python environment configured",
+    "pyRepair": "One-Click Repair Python",
+    "pyRepairHint": "Auto-detect and fix Python env issues (embedded Python, venv, openakita install)",
+    "pyRepairRunning": "Repairing...",
+    "pyRepairDone": "Repair complete",
+    "pyRepairFail": "Repair failed",
+    "pyDiagnose": "Environment Diagnostic",
+    "pyDiagnoseRunning": "Diagnosing...",
+    "pyDiagEmbedded": "Embedded Python",
+    "pyDiagVenv": "Virtual Environment",
+    "pyDiagOpenakita": "openakita Install",
+    "pyDiagSystem": "System Python",
+    "pyDiagOk": "OK",
+    "pyDiagFail": "Issue",
+    "pyDiagIssues": "Issues Found",
+    "pyDiagNoIssues": "Everything is fine, no repair needed",
     "installFetchVer": "Fetch Versions",
     "installRecommended": "recommended",
     "installLatest": "latest",
@@ -803,7 +818,17 @@
       "someErrors": "Some issues occurred",
       "errorsHint": "You can reinstall failed modules in settings."
     },
-    "installLogSaved": "Install log saved to: {{path}}"
+    "installLogSaved": "Install log saved to: {{path}}",
+    "agreement": {
+      "title": "Risk Acknowledgment",
+      "subtitle": "Please read the following carefully before proceeding",
+      "content": "OpenAkita is an AI Agent software powered by Large Language Models (LLMs). Before using it, you need to understand and accept the following:\n\n1. Behavior Is Not Fully Predictable\nThe AI Agent's behavior is driven by underlying LLMs, which produce probabilistic and non-deterministic outputs. Even with identical inputs, the Agent may produce different results, including but not limited to: unexpected file operations, unintended messages, and unintended tool invocations.\n\n2. Supervision Is Required\nYou are responsible for supervising the AI Agent's actions at all times. For tool calls that require approval (such as file deletion, system command execution, message sending, etc.), review the operation details carefully before approving. It is strongly recommended NOT to enable auto-confirm mode without active supervision.\n\n3. Potential Risks\nThe AI Agent may cause: data loss or corruption (e.g., accidental file deletion, overwriting important data), sending inappropriate messages (e.g., incorrect content through IM channels), executing dangerous system commands, generating unexpected API calls and costs, and other unforeseen side effects.\n\n4. Disclaimer of Liability\nOpenAkita is an open-source software project provided \"AS IS\" without warranty of any kind, express or implied. The project maintainers and contributors shall not be liable for any direct, indirect, incidental, special, or consequential damages arising from the use of this software. You assume all risks associated with using this software.\n\n5. Data Security\nYour conversation content, configuration data, and tool call records may be sent to third-party LLM service providers. Do not share sensitive personal information, passwords, keys, or other confidential data in conversations unless you fully understand and accept the associated risks.",
+      "confirmLabel": "Type \"I ACKNOWLEDGE\" below to confirm you have read and understood the above:",
+      "confirmPlaceholder": "Type: I ACKNOWLEDGE",
+      "confirmText": "I ACKNOWLEDGE",
+      "errorMismatch": "Input does not match. Please type \"I ACKNOWLEDGE\" exactly.",
+      "proceed": "Confirm & Continue"
+    }
   },
   "modules": {
     "title": "Module Management",
