@@ -300,6 +300,8 @@ export function SkillManager({
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketSearch, setMarketSearch] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
+  const [manualUrl, setManualUrl] = useState("");
+  const [manualInstalling, setManualInstalling] = useState(false);
   const marketRequestId = useRef(0);  // 用于取消过期请求
   const { t } = useTranslation();
 
@@ -616,6 +618,57 @@ export function SkillManager({
     }
   }, [loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl]);
 
+  // ── 手动输入链接安装技能 ──
+  const handleManualInstall = useCallback(async () => {
+    const url = manualUrl.trim();
+    if (!url) return;
+    if (dataMode !== "remote" && !serviceRunning && (!venvDir || !currentWorkspaceId)) {
+      setError(t("skills.envNotReady") || "环境未就绪：请先完成 Python 环境和工作区配置");
+      return;
+    }
+    setManualInstalling(true);
+    setError(null);
+    try {
+      let installed = false;
+
+      if (serviceRunning && apiBaseUrl) {
+        const res = await fetch(`${apiBaseUrl}/api/skills/install`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        installed = true;
+        try {
+          await fetch(`${apiBaseUrl}/api/skills/reload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(10_000),
+          });
+        } catch { /* reload 失败不阻塞 */ }
+      }
+
+      if (!installed && dataMode !== "remote" && currentWorkspaceId) {
+        await invoke<string>("openakita_install_skill", {
+          venvDir,
+          workspaceId: currentWorkspaceId,
+          url,
+        });
+      }
+
+      setManualUrl("");
+      await loadSkills();
+      setTab("installed");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setManualInstalling(false);
+    }
+  }, [manualUrl, loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t]);
+
   // Debounced search: trigger API call when user stops typing
   useEffect(() => {
     if (tab !== "marketplace") return;
@@ -708,6 +761,49 @@ export function SkillManager({
       {/* 技能市场 */}
       {tab === "marketplace" && (
         <>
+          {/* 安全提示 */}
+          <div style={{
+            marginBottom: 12,
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.2)",
+            fontSize: 12,
+            lineHeight: 1.6,
+            color: "var(--text)",
+          }}>
+            <span style={{ fontWeight: 700 }}>&#9888; {t("skills.securityTitle")}</span>
+            <span style={{ opacity: 0.75 }}>&ensp;{t("skills.securityWarning")}</span>
+          </div>
+
+          {/* 手动输入链接安装 */}
+          <div className="card" style={{ marginBottom: 12, padding: "12px 14px" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, opacity: 0.7 }}>
+              {t("skills.manualInstallTitle")}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={manualUrl}
+                onChange={(e) => setManualUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && manualUrl.trim()) handleManualInstall(); }}
+                placeholder={t("skills.manualInstallPlaceholder")}
+                disabled={manualInstalling}
+                style={{ flex: 1, fontSize: 13 }}
+              />
+              <button
+                className="btnPrimary"
+                onClick={handleManualInstall}
+                disabled={!manualUrl.trim() || manualInstalling}
+                style={{ fontSize: 12, padding: "6px 16px", flexShrink: 0 }}
+              >
+                {manualInstalling ? t("common.loading") : t("skills.install")}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, opacity: 0.4, marginTop: 6 }}>
+              {t("skills.manualInstallHint")}
+            </div>
+          </div>
+
           <div style={{ marginBottom: 12, position: "relative" }}>
             <IconSearch size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} />
             <input

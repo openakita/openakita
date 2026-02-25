@@ -128,7 +128,13 @@
     "hide": "Hide",
     "show": "Show",
     "noResults": "No matching skills found, try different keywords",
-    "poweredBy": "Marketplace powered by skills.sh"
+    "poweredBy": "Marketplace powered by skills.sh",
+    "securityTitle": "Security Notice",
+    "securityWarning": "Third-party skills are provided by community developers and have not been officially reviewed. They may contain malicious code or security risks. Please verify the source before installing and only use skills from trusted authors.",
+    "manualInstallTitle": "Install from URL",
+    "manualInstallPlaceholder": "Enter GitHub/Gitee URL or owner/repo format",
+    "manualInstallHint": "Formats: owner/repo, owner/repo@skill-name, GitHub/Gitee HTTPS URL",
+    "envNotReady": "Environment not ready: please complete Python env and workspace setup first"
   },
   "status": {
     "title": "System Status",

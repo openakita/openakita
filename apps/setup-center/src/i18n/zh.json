@@ -128,7 +128,13 @@
     "hide": "隐藏",
     "show": "显示",
     "noResults": "没有匹配的技能，换个关键词试试",
-    "poweredBy": "技能市场由 skills.sh 提供"
+    "poweredBy": "技能市场由 skills.sh 提供",
+    "securityTitle": "安全提示",
+    "securityWarning": "第三方技能由社区开发者提供，未经官方审核，可能包含恶意代码或安全风险。安装前请确认来源可信，建议仅使用知名作者发布的技能。",
+    "manualInstallTitle": "通过链接安装",
+    "manualInstallPlaceholder": "输入 GitHub/Gitee 链接或 owner/repo 格式",
+    "manualInstallHint": "支持格式: owner/repo、owner/repo@skill-name、GitHub/Gitee HTTPS 链接",
+    "envNotReady": "环境未就绪：请先完成 Python 环境和工作区配置"
   },
   "status": {
     "title": "系统状态",

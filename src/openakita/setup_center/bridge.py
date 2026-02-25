@@ -549,47 +549,186 @@ def _resolve_skills_dir(workspace_dir: str) -> Path:
     return Path.home() / ".openakita" / "workspaces" / "default" / "skills"
 
 
+def _has_git() -> bool:
+    """检查系统是否安装了 git。"""
+    import shutil
+
+    return shutil.which("git") is not None
+
+
+_GITHUB_ZIP_MIRRORS: list[str] = [
+    "https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+    "https://gh-proxy.com/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+    "https://mirror.ghproxy.com/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+    "https://ghproxy.net/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+]
+
+
+def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None:
+    """通过 GitHub Archive API 下载仓库 ZIP 并解压到 dest_dir（不依赖 git）。
+
+    自动尝试 main/master 分支，并在直连失败时回退到国内 CDN 镜像。
+    """
+    import io
+    import shutil
+    import tempfile
+    import zipfile
+
+    import urllib.request
+
+    data: bytes | None = None
+    last_err: Exception | None = None
+
+    for branch in ("main", "master"):
+        if data is not None:
+            break
+        for tpl in _GITHUB_ZIP_MIRRORS:
+            url = tpl.format(owner=repo_owner, repo=repo_name, branch=branch)
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "OpenAkita"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = resp.read()
+                break
+            except Exception as e:
+                last_err = e
+
+    if data is None:
+        raise RuntimeError(
+            f"无法下载仓库 {repo_owner}/{repo_name}，请检查网络或安装 Git。"
+            f"（最后错误: {last_err}）"
+        )
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        tmp_extract = Path(tempfile.mkdtemp(prefix="openakita_zip_"))
+        try:
+            zf.extractall(tmp_extract)
+            children = list(tmp_extract.iterdir())
+            src = children[0] if len(children) == 1 and children[0].is_dir() else tmp_extract
+            shutil.copytree(str(src), str(dest_dir))
+        finally:
+            shutil.rmtree(str(tmp_extract), ignore_errors=True)
+
+
+def _git_clone(args: list[str]) -> None:
+    """执行 git clone，git 不可用时抛出友好错误。"""
+    import subprocess
+
+    try:
+        subprocess.run(
+            args,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "未找到 git 命令。请安装 Git (https://git-scm.com) 或使用 GitHub 简写格式安装技能"
+        )
+
+
+def _parse_github_url(url: str) -> tuple[str, str] | None:
+    """从 HTTPS GitHub URL 中提取 (owner, repo)，非 GitHub URL 返回 None。"""
+    import re
+
+    m = re.match(r"https?://github\.com/([^/]+)/([^/.]+)", url)
+    if m:
+        return m.group(1), m.group(2)
+    return None
+
+
+def _parse_gitee_url(url: str) -> tuple[str, str] | None:
+    """从 HTTPS Gitee URL 中提取 (owner, repo)，非 Gitee URL 返回 None。"""
+    import re
+
+    m = re.match(r"https?://gitee\.com/([^/]+)/([^/.]+)", url)
+    if m:
+        return m.group(1), m.group(2)
+    return None
+
+
+def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None:
+    """通过 Gitee Archive API 下载仓库 ZIP 并解压到 dest_dir（不依赖 git）。"""
+    import io
+    import shutil
+    import tempfile
+    import zipfile
+
+    import urllib.request
+
+    data: bytes | None = None
+    last_err: Exception | None = None
+
+    for branch in ("master", "main"):
+        if data is not None:
+            break
+        url = f"https://gitee.com/{repo_owner}/{repo_name}/repository/archive/{branch}.zip"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "OpenAkita"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+        except Exception as e:
+            last_err = e
+
+    if data is None:
+        raise RuntimeError(
+            f"无法下载 Gitee 仓库 {repo_owner}/{repo_name}，请检查网络。"
+            f"（最后错误: {last_err}）"
+        )
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        tmp_extract = Path(tempfile.mkdtemp(prefix="openakita_gitee_"))
+        try:
+            zf.extractall(tmp_extract)
+            children = list(tmp_extract.iterdir())
+            src = children[0] if len(children) == 1 and children[0].is_dir() else tmp_extract
+            shutil.copytree(str(src), str(dest_dir))
+        finally:
+            shutil.rmtree(str(tmp_extract), ignore_errors=True)
+
+
 def install_skill(workspace_dir: str, url: str) -> None:
     """安装技能（从 Git URL、GitHub 简写或本地目录）"""
     skills_dir = _resolve_skills_dir(workspace_dir)
     skills_dir.mkdir(parents=True, exist_ok=True)
-
-    import subprocess
 
     if url.startswith("github:"):
         # github:user/repo/path -> clone from GitHub
         parts = url.replace("github:", "").split("/")
         if len(parts) < 2:
             raise ValueError(f"无效的 GitHub URL: {url}")
-        repo = f"https://github.com/{parts[0]}/{parts[1]}.git"
-        skill_name = parts[-1] if len(parts) > 2 else parts[1]
+        owner, repo = parts[0], parts[1]
+        skill_name = parts[-1] if len(parts) > 2 else repo
         target = skills_dir / skill_name
 
         if target.exists():
             raise ValueError(f"技能目录已存在: {target}")
 
-        # Sparse checkout or clone
-        subprocess.run(
-            ["git", "clone", "--depth", "1", repo, str(target)],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        if _has_git():
+            git_url = f"https://github.com/{owner}/{repo}.git"
+            _git_clone(["git", "clone", "--depth", "1", git_url, str(target)])
+        else:
+            _download_github_zip(owner, repo, target)
+
     elif url.startswith("http://") or url.startswith("https://"):
         skill_name = url.rstrip("/").split("/")[-1].replace(".git", "")
         target = skills_dir / skill_name
         if target.exists():
             raise ValueError(f"技能目录已存在: {target}")
-        subprocess.run(
-            ["git", "clone", "--depth", "1", url, str(target)],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+
+        gh = _parse_github_url(url)
+        ge = _parse_gitee_url(url)
+        if ge:
+            if _has_git():
+                _git_clone(["git", "clone", "--depth", "1", url, str(target)])
+            else:
+                _download_gitee_zip(ge[0], ge[1], target)
+        elif gh and not _has_git():
+            _download_github_zip(gh[0], gh[1], target)
+        else:
+            _git_clone(["git", "clone", "--depth", "1", url, str(target)])
+
     elif _looks_like_github_shorthand(url):
         # GitHub 简写格式: "owner/repo@skill-name" 或 "owner/repo"
         import shutil
@@ -605,42 +744,40 @@ def install_skill(workspace_dir: str, url: str) -> None:
             repo_part = url
             skill_name = url.split("/")[-1]
 
-        repo_url = f"https://github.com/{repo_part}.git"
+        owner, repo = repo_part.split("/", 1)
         target = skills_dir / skill_name
 
         if target.exists():
             raise ValueError(f"技能目录已存在: {target}")
 
-        # 克隆到临时目录，然后提取目标技能子目录
-        tmp_dir = tempfile.mkdtemp(prefix="openakita_skill_")
+        # 克隆/下载到临时目录，然后提取目标技能子目录
+        tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_skill_"))
+        tmp_dir = tmp_parent / "repo"
         try:
-            subprocess.run(
-                ["git", "clone", "--depth", "1", repo_url, tmp_dir],
-                check=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            if _has_git():
+                repo_url = f"https://github.com/{repo_part}.git"
+                _git_clone(["git", "clone", "--depth", "1", repo_url, str(tmp_dir)])
+            else:
+                _download_github_zip(owner, repo, tmp_dir)
 
             # 优先查找 skills/<skill_name> 子目录（常见的多技能仓库布局）
-            skill_sub = Path(tmp_dir) / "skills" / skill_name
+            skill_sub = tmp_dir / "skills" / skill_name
             if skill_sub.is_dir():
                 shutil.copytree(str(skill_sub), str(target))
             else:
                 # 其次查找仓库根目录下的 <skill_name> 子目录
-                alt_sub = Path(tmp_dir) / skill_name
+                alt_sub = tmp_dir / skill_name
                 if alt_sub.is_dir():
                     shutil.copytree(str(alt_sub), str(target))
                 else:
                     # 整个仓库就是一个技能
-                    shutil.copytree(tmp_dir, str(target))
+                    shutil.copytree(str(tmp_dir), str(target))
                     # 清理克隆产生的 .git 目录
                     git_dir = target / ".git"
                     if git_dir.exists():
                         shutil.rmtree(str(git_dir), ignore_errors=True)
         finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            shutil.rmtree(str(tmp_parent), ignore_errors=True)
     else:
         # Local path
         src = Path(url).expanduser().resolve()
