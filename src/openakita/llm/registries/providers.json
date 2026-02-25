@@ -74,7 +74,7 @@
     "supports_model_list": true,
     "supports_capability_api": false,
     "registry_class": "KimiChinaRegistry",
-    "default_context_window": 150000,
+    "default_context_window": 200000,
     "default_max_tokens": 8192
   },
   {
@@ -88,7 +88,7 @@
     "supports_model_list": true,
     "supports_capability_api": false,
     "registry_class": "KimiInternationalRegistry",
-    "default_context_window": 150000,
+    "default_context_window": 200000,
     "default_max_tokens": 8192
   },
   {
@@ -102,7 +102,7 @@
     "supports_model_list": false,
     "supports_capability_api": false,
     "registry_class": "MiniMaxChinaRegistry",
-    "default_context_window": 150000,
+    "default_context_window": 200000,
     "default_max_tokens": 8192
   },
   {
@@ -116,7 +116,7 @@
     "supports_model_list": false,
     "supports_capability_api": false,
     "registry_class": "MiniMaxInternationalRegistry",
-    "default_context_window": 150000,
+    "default_context_window": 200000,
     "default_max_tokens": 8192
   },
   {
@@ -170,7 +170,7 @@
     "supports_model_list": true,
     "supports_capability_api": false,
     "registry_class": "VolcEngineRegistry",
-    "default_context_window": 150000,
+    "default_context_window": 200000,
     "default_max_tokens": 8192
   },
   {

@@ -22,11 +22,11 @@ from ..tracing.tracer import get_tracer
 logger = logging.getLogger(__name__)
 
 # 上下文管理常量
-DEFAULT_MAX_CONTEXT_TOKENS = 124000
+DEFAULT_MAX_CONTEXT_TOKENS = 160000
 CHARS_PER_TOKEN = 2  # JSON 序列化后约 2 字符 = 1 token
 MIN_RECENT_TURNS = 8  # 至少保留最近 8 组对话（工具密集型对话需要更多上下文）
 COMPRESSION_RATIO = 0.15  # 目标压缩到原上下文的 15%
-BOUNDARY_COMPRESSION_RATIO = 0.05  # 上下文边界前的旧话题压缩到 5%
+BOUNDARY_COMPRESSION_RATIO = 0.18  # 上下文边界前的旧话题压缩到 18%
 CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
 LARGE_TOOL_RESULT_THRESHOLD = 5000  # 单条 tool_result 超过此 token 数时独立压缩
 CONTEXT_BOUNDARY_MARKER = "[上下文边界]"  # 话题切换边界标记
@@ -87,10 +87,10 @@ class ContextManager:
 
         优先级：
         1. 端点配置的 context_window 字段
-        2. 兜底值 150000
-        3. 减去 max_tokens（输出预留）和 15% buffer
+        2. 兜底值 200000
+        3. 减去 max_tokens（输出预留）和 10% buffer
         """
-        FALLBACK_CONTEXT_WINDOW = 150000
+        FALLBACK_CONTEXT_WINDOW = 200000
 
         try:
             info = self._brain.get_current_model_info()
@@ -461,10 +461,14 @@ class ContextManager:
                 max_tokens=target_tokens,
                 system=(
                     "你是一个对话压缩助手。用户已切换到新话题，"
-                    "请将以下旧话题对话压缩为极简摘要（2-3 句话）。\n"
-                    "只保留：用户身份信息、重要的配置/环境信息、"
-                    "可能与未来任务相关的关键结论。\n"
-                    "不要保留旧任务的具体步骤、工具调用细节或中间过程。"
+                    "请将以下旧话题对话压缩为结构化摘要。\n"
+                    "必须保留：\n"
+                    "1. 用户身份信息和偏好设定\n"
+                    "2. 重要的配置/环境信息（路径、版本、参数等）\n"
+                    "3. 关键结论和最终决策（包括具体数值、名称）\n"
+                    "4. 用户明确提到的需求和约束条件\n"
+                    "5. 已完成的操作及其结果（一句话概括每项）\n"
+                    "可以省略：中间调试过程、工具调用原始输出、重复的试错步骤。"
                 ),
                 messages=[{
                     "role": "user",

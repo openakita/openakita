@@ -110,7 +110,7 @@ class TestLLMTypes:
             model="gpt-4",
         )
         assert ep.priority == 1
-        assert ep.context_window == 150000
+        assert ep.context_window == 200000
         assert ep.timeout == 180
 
     def test_stop_reason_values(self):

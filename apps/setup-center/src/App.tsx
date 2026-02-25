@@ -1156,7 +1156,7 @@ export function App() {
   const [baseUrlTouched, setBaseUrlTouched] = useState(false);
   const [llmAdvancedOpen, setLlmAdvancedOpen] = useState(false);
   const [addEpMaxTokens, setAddEpMaxTokens] = useState(0);
-  const [addEpContextWindow, setAddEpContextWindow] = useState(150000);
+  const [addEpContextWindow, setAddEpContextWindow] = useState(200000);
   const [addEpTimeout, setAddEpTimeout] = useState(180);
   const [addEpRpmLimit, setAddEpRpmLimit] = useState(0);
   const [codingPlanMode, setCodingPlanMode] = useState(false);
@@ -1318,7 +1318,7 @@ export function App() {
                 model: String(e?.model || ""), api_key_env: String(e?.api_key_env || ""),
                 priority: Number(e?.priority || 1),
                 max_tokens: Number(e?.max_tokens ?? 0),
-                context_window: Number(e?.context_window || 150000),
+                context_window: Number(e?.context_window || 200000),
                 timeout: Number(e?.timeout || 180),
                 capabilities: Array.isArray(e?.capabilities) ? e.capabilities.map((x: any) => String(x)) : [],
               })));
@@ -2150,13 +2150,13 @@ export function App() {
     if (codingPlanMode && selectedProvider.coding_plan_base_url) {
       setApiType((selectedProvider.coding_plan_api_type as "openai" | "anthropic") || "anthropic");
       if (!baseUrlTouched) setBaseUrl(selectedProvider.coding_plan_base_url);
-      setAddEpContextWindow(150000);
+      setAddEpContextWindow(200000);
       setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 8192);
     } else {
       const t = (selectedProvider.api_type as "openai" | "anthropic") || "openai";
       setApiType(t);
       if (!baseUrlTouched) setBaseUrl(selectedProvider.default_base_url || "");
-      setAddEpContextWindow((selectedProvider as ProviderInfo).default_context_window ?? 150000);
+      setAddEpContextWindow((selectedProvider as ProviderInfo).default_context_window ?? 200000);
       setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 0);
     }
     const suggested = selectedProvider.api_key_env_suggestion || envKeyFromSlug(selectedProvider.slug);
@@ -2376,7 +2376,7 @@ export function App() {
           model: String(e?.model || ""),
           priority: Number.isFinite(Number(e?.priority)) ? Number(e?.priority) : 999,
           max_tokens: Number.isFinite(Number(e?.max_tokens)) ? Number(e?.max_tokens) : 0,
-          context_window: Number.isFinite(Number(e?.context_window)) ? Number(e?.context_window) : 150000,
+          context_window: Number.isFinite(Number(e?.context_window)) ? Number(e?.context_window) : 200000,
           timeout: Number.isFinite(Number(e?.timeout)) ? Number(e?.timeout) : 180,
           capabilities: Array.isArray(e?.capabilities) ? e.capabilities.map((x: any) => String(x)) : [],
           note: e?.note ? String(e.note) : null,
@@ -2404,7 +2404,7 @@ export function App() {
           model: String(e.model || ""),
           priority: Number.isFinite(Number(e.priority)) ? Number(e.priority) : 1,
           max_tokens: Number.isFinite(Number(e.max_tokens)) ? Number(e.max_tokens) : 2048,
-          context_window: Number.isFinite(Number(e.context_window)) ? Number(e.context_window) : 150000,
+          context_window: Number.isFinite(Number(e.context_window)) ? Number(e.context_window) : 200000,
           timeout: Number.isFinite(Number(e.timeout)) ? Number(e.timeout) : 30,
           capabilities: Array.isArray(e.capabilities) ? e.capabilities.map((x: any) => String(x)) : ["text"],
           note: e.note ? String(e.note) : null,
@@ -2843,7 +2843,7 @@ export function App() {
         model: compilerModel.trim(),
         priority: base.compiler_endpoints.length + 1,
         max_tokens: 2048,
-        context_window: 150000,
+        context_window: 200000,
         timeout: 30,
         capabilities: ["text"],
       };
@@ -3093,7 +3093,7 @@ export function App() {
       modelId: ep.model || "",
       caps: Array.isArray(ep.capabilities) && ep.capabilities.length ? ep.capabilities : ["text"],
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
-      contextWindow: typeof ep.context_window === "number" ? ep.context_window : 150000,
+      contextWindow: typeof ep.context_window === "number" ? ep.context_window : 200000,
       timeout: typeof ep.timeout === "number" ? ep.timeout : 180,
       rpmLimit: typeof ep.rpm_limit === "number" ? ep.rpm_limit : 0,
       pricingTiers: Array.isArray(ep.pricing_tiers) ? ep.pricing_tiers.map((t: any) => ({
@@ -3221,7 +3221,7 @@ export function App() {
         model: editDraft.modelId.trim(),
         priority: normalizePriority(editDraft.priority, 1),
         max_tokens: editDraft.maxTokens ?? 0,
-        context_window: editDraft.contextWindow ?? 150000,
+        context_window: editDraft.contextWindow ?? 200000,
         timeout: editDraft.timeout ?? 180,
         rpm_limit: editDraft.rpmLimit ?? 0,
         capabilities: editDraft.caps?.length ? editDraft.caps : ["text"],
@@ -6019,7 +6019,7 @@ export function App() {
                   </div>
                   <div>
                     <div className="dialogLabel">{t("llm.advContextWindow")}</div>
-                    <input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 150000))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 200000))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                     <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advContextWindowHint")}</div>
                   </div>
                   <div>
@@ -6199,7 +6199,7 @@ export function App() {
                   </div>
                   <div className="dialogSection" style={{ margin: 0 }}>
                     <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advContextWindow")}</div>
-                    <input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 150000) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                    <input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 200000) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
                     <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advContextWindowHint")}</div>
                   </div>
                   <div className="dialogSection" style={{ margin: 0 }}>

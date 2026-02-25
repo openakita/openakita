@@ -452,7 +452,7 @@ class EndpointConfig:
     model: str = ""  # 模型名称
     priority: int = 1  # 优先级 (越小越优先)
     max_tokens: int = 0  # 最大输出 tokens (0=不限制，使用模型默认上限)
-    context_window: int = 150000  # 上下文窗口大小 (输入+输出总 token 上限)，配置缺失时的兜底值
+    context_window: int = 200000  # 上下文窗口大小 (输入+输出总 token 上限)，配置缺失时的兜底值
     timeout: int = 180  # 超时时间 (秒)
     capabilities: list[str] | None = None  # 能力列表
     extra_params: dict | None = None  # 额外参数
@@ -552,7 +552,7 @@ class EndpointConfig:
             model=data.get("model", ""),
             priority=data.get("priority", 1),
             max_tokens=data.get("max_tokens", 0),
-            context_window=data.get("context_window", 150000),
+            context_window=data.get("context_window", 200000),
             timeout=data.get("timeout", 180),
             capabilities=data.get("capabilities"),
             extra_params=data.get("extra_params"),

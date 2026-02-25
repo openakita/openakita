@@ -552,7 +552,7 @@ class ConfigHandler:
             model=model,
             priority=int(endpoint_data.get("priority", 10)),
             max_tokens=int(endpoint_data.get("max_tokens", 0)),
-            context_window=int(endpoint_data.get("context_window", 150000)),
+            context_window=int(endpoint_data.get("context_window", 200000)),
             timeout=int(endpoint_data.get("timeout", 180)),
             capabilities=endpoint_data.get("capabilities"),
         )
