@@ -115,7 +115,10 @@
     "queueHint": "Enter 排队 | Ctrl+Enter 立即发送",
     "queuedCount": "排队",
     "insertMessage": "插入消息",
-    "downloadImage": "保存图片"
+    "downloadImage": "保存图片",
+    "agentDefault": "默认 Agent",
+    "agentSelect": "选择 Agent",
+    "agentSwitched": "已切换到 Agent"
   },
   "skills": {
     "title": "技能管理",
@@ -260,6 +263,15 @@
     "wsExisting": "已有工作区",
     "wsEmpty": "暂无工作区，请先创建",
     "wsSetCurrent": "设为当前",
+    "dataRootTitle": "数据存储路径",
+    "dataRootHint": "所有工作区、虚拟环境、运行时等数据的根目录。修改后建议勾选"迁移数据"以保留已有内容。",
+    "dataRootCurrent": "当前数据目录：{{path}}",
+    "dataRootPlaceholder": "例如：D:\\MyData\\.openakita",
+    "dataRootApply": "应用",
+    "dataRootDefault": "恢复默认",
+    "dataRootMigrate": "迁移已有数据到新路径",
+    "dataRootApplied": "已设置数据目录：{{path}}",
+    "dataRootRestored": "已恢复默认数据目录：{{path}}",
     "pyTitle": "Python 环境",
     "pyHint": "推荐内置 Python，也可使用系统 Python 3.11+",
     "pyEmbed": "安装内置 Python（推荐）",
@@ -497,7 +509,11 @@
     "quickFinishTitle": "配置完成",
     "quickFinishHint": "快速配置已完成，点击下方按钮启动服务开始体验。",
     "quickFinishLaunch": "启动服务",
-    "quickFinishToStatus": "跳转状态面板"
+    "quickFinishToStatus": "跳转状态面板",
+    "multiAgentMode": "多Agent模式",
+    "multiAgentBeta": "Beta",
+    "multiAgentOn": "多Agent模式已启用",
+    "multiAgentOff": "单Agent模式"
   },
   "scheduler": {
     "title": "计划任务",

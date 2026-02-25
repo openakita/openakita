@@ -933,6 +933,7 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
+  const [multiAgentEnabled, setMultiAgentEnabled] = useState(false);
 
   // ── Data mode: "local" (Tauri commands) or "remote" (HTTP API) ──
   const [dataMode, setDataMode] = useState<"local" | "remote">("local");
@@ -967,6 +968,20 @@ export function App() {
     const saved = localStorage.getItem("openakita_maxStep");
     setMaxReachedStepIdx(saved ? parseInt(saved, 10) || 0 : 0);
   }, [currentWorkspaceId]);
+
+  useEffect(() => {
+    if (stepId === "workspace") {
+      invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>("get_root_dir_info")
+        .then((info) => {
+          setObCurrentRoot(info.currentRoot);
+          if (info.customRoot) {
+            setObCustomRootInput(info.customRoot);
+            setObCustomRootApplied(true);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [stepId]);
 
   // ── Onboarding Wizard (首次安装引导) ──
   type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-modules" | "ob-cli" | "ob-progress" | "ob-done";
@@ -2511,6 +2526,37 @@ export function App() {
   }, [serviceStatus?.running, dataMode, apiBaseUrl]);
 
   useEffect(() => { fetchDisabledViews(); }, [fetchDisabledViews]);
+
+  const fetchAgentMode = useCallback(async () => {
+    if (!shouldUseHttpApi()) return;
+    try {
+      const res = await fetch(`${httpApiBase()}/api/config/agent-mode`);
+      if (res.ok) {
+        const data = await res.json();
+        setMultiAgentEnabled(data.multi_agent_enabled ?? false);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch agent mode:", e);
+    }
+  }, [serviceStatus?.running, dataMode, apiBaseUrl]);
+
+  useEffect(() => { fetchAgentMode(); }, [fetchAgentMode]);
+
+  const toggleMultiAgent = useCallback(async () => {
+    const next = !multiAgentEnabled;
+    try {
+      const res = await fetch(`${httpApiBase()}/api/config/agent-mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (res.ok) {
+        setMultiAgentEnabled(next);
+      }
+    } catch (e) {
+      console.error("Failed to toggle agent mode:", e);
+    }
+  }, [multiAgentEnabled]);
 
   const toggleViewDisabled = useCallback(async (viewName: string) => {
     const next = disabledViews.includes(viewName)
@@ -5397,6 +5443,75 @@ export function App() {
           <div className="okBox">
             下一步建议：进入“Python”，优先使用“内置 Python”以实现真正的一键安装（尤其是 Windows）。
           </div>
+        </div>
+
+        <div className="card">
+          <div className="cardTitle">{t("config.dataRootTitle")}</div>
+          <div className="cardHint">{t("config.dataRootHint")}</div>
+          <div className="divider" />
+          {obCurrentRoot && (
+            <div className="help" style={{ marginBottom: 8, wordBreak: "break-all" }}>
+              {t("config.dataRootCurrent", { path: obCurrentRoot })}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              style={{ flex: 1 }}
+              value={obCustomRootInput}
+              onChange={(e) => { setObCustomRootInput(e.target.value); setObCustomRootApplied(false); }}
+              placeholder={t("config.dataRootPlaceholder")}
+            />
+            <button
+              className="btnPrimary"
+              style={{ whiteSpace: "nowrap" }}
+              disabled={!obCustomRootInput.trim() || obCustomRootApplied || obCustomRootBusy}
+              onClick={async () => {
+                if (obCustomRootBusy) return;
+                setObCustomRootBusy(true);
+                try {
+                  const info = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
+                    "set_custom_root_dir", { path: obCustomRootInput.trim(), migrate: obCustomRootMigrate }
+                  );
+                  setObCurrentRoot(info.currentRoot);
+                  setObCustomRootApplied(true);
+                  setNotice(t("config.dataRootApplied", { path: info.currentRoot }));
+                  await refreshAll();
+                } catch (e: any) { setError(String(e)); }
+                finally { setObCustomRootBusy(false); }
+              }}
+            >
+              {obCustomRootBusy ? "..." : t("config.dataRootApply")}
+            </button>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={obCustomRootMigrate}
+                onChange={(e) => setObCustomRootMigrate(e.target.checked)}
+              />
+              {t("config.dataRootMigrate")}
+            </label>
+          </div>
+          {obCustomRootApplied && (
+            <button
+              style={{ marginTop: 8, fontSize: 12 }}
+              onClick={async () => {
+                try {
+                  const info = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
+                    "set_custom_root_dir", { path: null, migrate: false }
+                  );
+                  setObCurrentRoot(info.currentRoot);
+                  setObCustomRootInput("");
+                  setObCustomRootApplied(false);
+                  setNotice(t("config.dataRootRestored", { path: info.currentRoot }));
+                  await refreshAll();
+                } catch (e: any) { setError(String(e)); }
+              }}
+            >
+              {t("config.dataRootDefault")}
+            </button>
+          )}
         </div>
       </>
     );
@@ -9745,6 +9860,50 @@ export function App() {
           )}
         </div>
 
+        {/* Multi-Agent Mode Toggle */}
+        {!sidebarCollapsed && (
+          <div style={{
+            padding: "12px 18px",
+            borderTop: "1px solid var(--line)",
+            marginTop: "auto",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 13, color: "var(--fg)" }}>
+                  {t("config.multiAgentMode")}
+                </span>
+                <span style={{
+                  fontSize: 10, padding: "1px 5px", borderRadius: 4,
+                  background: "var(--accent)", color: "#fff",
+                  fontWeight: 600, letterSpacing: 0.5,
+                }}>
+                  {t("config.multiAgentBeta")}
+                </span>
+              </div>
+              <div
+                onClick={toggleMultiAgent}
+                style={{
+                  width: 40, height: 22, borderRadius: 11, cursor: "pointer",
+                  background: multiAgentEnabled ? "var(--ok)" : "var(--line)",
+                  position: "relative", transition: "background 0.2s",
+                }}
+              >
+                <div style={{
+                  width: 18, height: 18, borderRadius: 9, background: "#fff",
+                  position: "absolute", top: 2,
+                  left: multiAgentEnabled ? 20 : 2,
+                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                }} />
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              {multiAgentEnabled ? t("config.multiAgentOn") : t("config.multiAgentOff")}
+            </div>
+          </div>
+        )}
+
         {/* Version info + website link + bug report at sidebar bottom */}
         {!sidebarCollapsed && (
           <div style={{
@@ -10040,6 +10199,7 @@ export function App() {
             serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl}
             endpoints={chatEndpoints}
             visible={view === "chat"}
+            multiAgentEnabled={multiAgentEnabled}
             onStartService={async () => {
               const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
               if (!effectiveWsId) {

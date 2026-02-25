@@ -115,7 +115,10 @@
     "queueHint": "Enter to queue | Ctrl+Enter to send now",
     "queuedCount": "Queued",
     "insertMessage": "Insert message",
-    "downloadImage": "Save image"
+    "downloadImage": "Save image",
+    "agentDefault": "Default Agent",
+    "agentSelect": "Select Agent",
+    "agentSwitched": "Agent switched to"
   },
   "skills": {
     "title": "Skill Manager",
@@ -260,6 +263,15 @@
     "wsExisting": "Existing Workspaces",
     "wsEmpty": "No workspaces yet, create one first",
     "wsSetCurrent": "Set Current",
+    "dataRootTitle": "Data Storage Path",
+    "dataRootHint": "Root directory for all workspaces, venv, runtime, etc. Check \"Migrate data\" to preserve existing content when changing.",
+    "dataRootCurrent": "Current data directory: {{path}}",
+    "dataRootPlaceholder": "e.g. D:\\MyData\\.openakita",
+    "dataRootApply": "Apply",
+    "dataRootDefault": "Reset to Default",
+    "dataRootMigrate": "Migrate existing data to new path",
+    "dataRootApplied": "Data directory set to: {{path}}",
+    "dataRootRestored": "Restored default data directory: {{path}}",
     "pyTitle": "Python Environment",
     "pyHint": "Recommended: built-in Python. Or use system Python 3.11+",
     "pyEmbed": "Install Built-in Python (Recommended)",
@@ -497,7 +509,11 @@
     "quickFinishTitle": "Setup Complete",
     "quickFinishHint": "Quick setup is complete. Click below to launch the service and start using OpenAkita.",
     "quickFinishLaunch": "Launch Service",
-    "quickFinishToStatus": "Go to Status Panel"
+    "quickFinishToStatus": "Go to Status Panel",
+    "multiAgentMode": "Multi-Agent Mode",
+    "multiAgentBeta": "Beta",
+    "multiAgentOn": "Multi-Agent enabled",
+    "multiAgentOff": "Single-Agent mode"
   },
   "scheduler": {
     "title": "Scheduled Tasks",
