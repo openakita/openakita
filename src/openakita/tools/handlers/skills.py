@@ -42,6 +42,7 @@ class SkillsHandler:
         "install_skill",
         "load_skill",
         "reload_skill",
+        "manage_skill_enabled",
     ]
 
     def __init__(self, agent: "Agent"):
@@ -63,6 +64,8 @@ class SkillsHandler:
             return self._load_skill(params)
         elif tool_name == "reload_skill":
             return self._reload_skill(params)
+        elif tool_name == "manage_skill_enabled":
+            return self._manage_skill_enabled(params)
         else:
             return f"❌ Unknown skills tool: {tool_name}"
 
@@ -364,6 +367,114 @@ class SkillsHandler:
         except Exception as e:
             logger.error(f"Failed to reload skill {skill_name}: {e}")
             return f"❌ 重新加载技能时出错: {e}"
+
+
+    def _manage_skill_enabled(self, params: dict) -> str:
+        """批量启用/禁用外部技能"""
+        import json
+
+        changes: list[dict] = params.get("changes", [])
+        reason: str = params.get("reason", "")
+
+        if not changes:
+            return "❌ 未指定要变更的技能"
+
+        try:
+            from openakita.config import settings
+            cfg_path = settings.project_root / "data" / "skills.json"
+        except Exception:
+            cfg_path = Path.cwd() / "data" / "skills.json"
+
+        # 读取现有 allowlist
+        existing_allowlist: set[str] | None = None
+        try:
+            if cfg_path.exists():
+                raw = cfg_path.read_text(encoding="utf-8")
+                cfg = json.loads(raw) if raw.strip() else {}
+                al = cfg.get("external_allowlist", None)
+                if isinstance(al, list):
+                    existing_allowlist = {str(x).strip() for x in al if str(x).strip()}
+        except Exception:
+            pass
+
+        # 如果没有 allowlist 文件，初始化为当前所有外部技能
+        if existing_allowlist is None:
+            all_skills = self.agent.skill_registry.list_all()
+            existing_allowlist = {s.name for s in all_skills if not s.system}
+
+        # 收集所有已知外部技能名（包括被 prune 的）
+        all_external_names = set(existing_allowlist)
+        loader = getattr(self.agent, "skill_loader", None)
+        if loader:
+            for name, skill in loader._loaded_skills.items():
+                if not getattr(skill.metadata, "system", False):
+                    all_external_names.add(name)
+
+        applied: list[str] = []
+        skipped: list[str] = []
+
+        for change in changes:
+            name = change.get("skill_name", "").strip()
+            enabled = change.get("enabled", True)
+            if not name:
+                continue
+
+            # 系统技能不可禁用
+            skill = self.agent.skill_registry.get(name)
+            if skill and skill.system:
+                skipped.append(f"{name}（系统技能，不可禁用）")
+                continue
+
+            if name not in all_external_names:
+                skipped.append(f"{name}（未找到）")
+                continue
+
+            if enabled:
+                existing_allowlist.add(name)
+            else:
+                existing_allowlist.discard(name)
+            applied.append(f"{name} → {'启用' if enabled else '禁用'}")
+
+        if not applied:
+            msg = "未执行任何变更。"
+            if skipped:
+                msg += f"\n跳过: {', '.join(skipped)}"
+            return msg
+
+        # 写入 data/skills.json
+        content = {
+            "version": 1,
+            "external_allowlist": sorted(existing_allowlist),
+            "updated_at": __import__("datetime").datetime.now().isoformat(),
+        }
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(
+            json.dumps(content, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        # 热重载
+        try:
+            effective = loader.compute_effective_allowlist(existing_allowlist) if loader else existing_allowlist
+            if loader:
+                loader.prune_external_by_allowlist(effective)
+            catalog = getattr(self.agent, "skill_catalog", None)
+            if catalog:
+                catalog.invalidate_cache()
+                self.agent._skill_catalog_text = catalog.generate_catalog()
+        except Exception as e:
+            logger.warning(f"Post-manage reload failed: {e}")
+
+        output = f"✅ 技能状态已更新（{len(applied)} 项变更）\n\n"
+        if reason:
+            output += f"**原因**: {reason}\n\n"
+        output += "**变更详情**:\n"
+        for item in applied:
+            output += f"- {item}\n"
+        if skipped:
+            output += f"\n**跳过**: {', '.join(skipped)}\n"
+
+        return output
 
 
 def create_handler(agent: "Agent"):

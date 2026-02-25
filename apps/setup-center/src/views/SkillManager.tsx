@@ -302,6 +302,11 @@ export function SkillManager({
   const [installing, setInstalling] = useState<string | null>(null);
   const [manualUrl, setManualUrl] = useState("");
   const [manualInstalling, setManualInstalling] = useState(false);
+  const [enabledDraft, setEnabledDraft] = useState<Record<string, boolean>>({});
+  const [enabledDirty, setEnabledDirty] = useState(false);
+  const [savingEnabled, setSavingEnabled] = useState(false);
+  const [installedSearch, setInstalledSearch] = useState("");
+  const [aiOrganizing, setAiOrganizing] = useState(false);
   const marketRequestId = useRef(0);  // 用于取消过期请求
   const { t } = useTranslation();
 
@@ -359,6 +364,11 @@ export function SkillManager({
         configComplete: true,  // 由 useMemo 动态计算，这里先占位
       }));
       setSkills(list);
+      // 同步 enabledDraft 到后端最新状态
+      const draft: Record<string, boolean> = {};
+      for (const s of list) draft[s.name] = s.enabled !== false;
+      setEnabledDraft(draft);
+      setEnabledDirty(false);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -379,14 +389,26 @@ export function SkillManager({
     });
   }
 
-  // 动态计算每个技能的 configComplete 状态（响应 envDraft 变化，但不触发后端调用）
+  // 动态计算每个技能的 configComplete 和 enabled 状态
   const skillsWithConfig = useMemo(() =>
     skills.map((s) => ({
       ...s,
+      enabled: enabledDraft[s.name] ?? (s.enabled !== false),
       configComplete: checkConfigComplete(s.config, envDraft),
     })),
-    [skills, envDraft],
+    [skills, envDraft, enabledDraft],
   );
+
+  // 已安装技能搜索过滤
+  const filteredSkills = useMemo(() => {
+    const q = installedSearch.trim().toLowerCase();
+    if (!q) return skillsWithConfig;
+    return skillsWithConfig.filter((s) =>
+      s.name.toLowerCase().includes(q) ||
+      (s.description && s.description.toLowerCase().includes(q)) ||
+      (s.category && s.category.toLowerCase().includes(q))
+    );
+  }, [skillsWithConfig, installedSearch]);
 
   // ── 保存技能配置 ──
   const handleSaveConfig = useCallback(async (skill: SkillInfo) => {
@@ -413,43 +435,48 @@ export function SkillManager({
     }
   }, [onSaveEnvKeys, loadSkills, onEnvChange]);
 
-  // ── 切换启用/禁用 ──
-  const handleToggleEnabled = useCallback(async (skill: SkillInfo) => {
-    const newEnabled = !(skill.enabled !== false);
+  // ── 切换启用/禁用（仅更新本地 draft，不自动保存） ──
+  const handleToggleEnabled = useCallback((skill: SkillInfo) => {
+    const cur = enabledDraft[skill.name] ?? (skill.enabled !== false);
+    setEnabledDraft((prev) => ({ ...prev, [skill.name]: !cur }));
+    setEnabledDirty(true);
+  }, [enabledDraft]);
 
-    // Update local state immediately
-    setSkills((prev) => prev.map((s) =>
-      s.name === skill.name ? { ...s, enabled: newEnabled } : s
-    ));
-
-    // Compute new allowlist from updated state
-    const updatedSkills = skills.map((s) =>
-      s.name === skill.name ? { ...s, enabled: newEnabled } : s
-    );
-    const externalAllowlist = updatedSkills
-      .filter((s) => !s.system && s.enabled !== false)
-      .map((s) => s.name);
-
-    const content = {
-      version: 1,
-      external_allowlist: externalAllowlist,
-      updated_at: new Date().toISOString(),
-    };
-
+  // ── 保存启用/禁用状态到后端 ──
+  const handleSaveEnabledState = useCallback(async () => {
+    setSavingEnabled(true);
+    setError(null);
     try {
+      const externalAllowlist = skills
+        .filter((s) => !s.system && (enabledDraft[s.name] ?? (s.enabled !== false)))
+        .map((s) => s.name);
+
+      const content = {
+        version: 1,
+        external_allowlist: externalAllowlist,
+        updated_at: new Date().toISOString(),
+      };
+
       if (serviceRunning && apiBaseUrl) {
-        await fetch(`${apiBaseUrl}/api/config/skills`, {
+        const res = await fetch(`${apiBaseUrl}/api/config/skills`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content }),
           signal: AbortSignal.timeout(5000),
         });
-        fetch(`${apiBaseUrl}/api/skills/reload`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-          signal: AbortSignal.timeout(10_000),
-        }).catch(() => {});
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        // 通知后端热重载
+        try {
+          await fetch(`${apiBaseUrl}/api/skills/reload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(10_000),
+          });
+        } catch { /* reload 失败不阻塞 */ }
       } else if (dataMode !== "remote" && currentWorkspaceId) {
         await invoke("workspace_write_file", {
           workspaceId: currentWorkspaceId,
@@ -457,10 +484,71 @@ export function SkillManager({
           content: JSON.stringify(content, null, 2) + "\n",
         });
       }
+
+      setEnabledDirty(false);
+      // 刷新技能列表确认后端状态
+      await loadSkills();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setSavingEnabled(false);
     }
-  }, [skills, serviceRunning, apiBaseUrl, dataMode, currentWorkspaceId]);
+  }, [skills, enabledDraft, serviceRunning, apiBaseUrl, dataMode, currentWorkspaceId, loadSkills]);
+
+  // ── AI 整理技能 ──
+  const handleAiOrganize = useCallback(async () => {
+    if (!serviceRunning || !apiBaseUrl) return;
+    setAiOrganizing(true);
+    setError(null);
+    try {
+      const skillSummary = skillsWithConfig
+        .filter((s) => !s.system)
+        .map((s) => `${s.name} [${s.enabled ? "启用" : "禁用"}]: ${s.description}`)
+        .join("\n");
+
+      const message = [
+        "请帮我整理技能。以下是我当前安装的外部技能列表：",
+        "",
+        skillSummary,
+        "",
+        "请根据以下原则给出建议并使用 manage_skill_enabled 工具执行：",
+        "1. 功能重复或相似的技能，只保留最好的一个",
+        "2. 通用性强、常用的技能保持启用",
+        "3. 非常小众或几乎不会用到的技能可以禁用",
+        "4. 先列出你的分析和建议，征得我同意后再执行变更",
+      ].join("\n");
+
+      const res = await fetch(`${apiBaseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          conversation_id: `skill-organize-${Date.now()}`,
+          depth: "deep",
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // SSE 流式消息只需触发，AI 的回复在聊天界面可见
+      // 读完流确保不 abort
+      const reader = res.body?.getReader();
+      if (reader) {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      }
+
+      // 完成后刷新技能列表
+      await loadSkills();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setAiOrganizing(false);
+    }
+  }, [serviceRunning, apiBaseUrl, skillsWithConfig, loadSkills]);
 
   // ── 搜索 skills.sh 市场技能 ──
   const parseMarketplaceResponse = useCallback((data: Record<string, unknown>) => {
@@ -734,6 +822,31 @@ export function SkillManager({
       {/* 已安装技能 */}
       {tab === "installed" && (
         <div style={{ display: "grid", gap: 10 }}>
+          {/* 搜索 + AI 整理 */}
+          {skillsWithConfig.length > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ flex: 1, position: "relative" }}>
+                <IconSearch size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} />
+                <input
+                  value={installedSearch}
+                  onChange={(e) => setInstalledSearch(e.target.value)}
+                  placeholder={t("skills.filterPlaceholder")}
+                  style={{ width: "100%", fontSize: 13, paddingLeft: 32 }}
+                />
+              </div>
+              {serviceRunning && (
+                <button
+                  onClick={handleAiOrganize}
+                  disabled={aiOrganizing}
+                  style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer", whiteSpace: "nowrap" }}
+                  title={t("skills.aiOrganizeHint")}
+                >
+                  {aiOrganizing ? t("common.loading") : t("skills.aiOrganize")}
+                </button>
+              )}
+            </div>
+          )}
+
           {loading && skillsWithConfig.length === 0 && <div className="cardHint">{t("skills.loading")}</div>}
           {!loading && skillsWithConfig.length === 0 && (
             <div className="card" style={{ textAlign: "center", padding: "30px 20px" }}>
@@ -742,7 +855,12 @@ export function SkillManager({
               <div className="help">{t("skills.noSkillsHint")}</div>
             </div>
           )}
-          {skillsWithConfig.map((skill) => (
+          {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (
+            <div className="cardHint" style={{ textAlign: "center", padding: 16 }}>
+              {t("skills.noResults")}
+            </div>
+          )}
+          {filteredSkills.map((skill) => (
             <SkillCard
               key={skill.name}
               skill={skill}
@@ -755,6 +873,40 @@ export function SkillManager({
               saving={saving}
             />
           ))}
+
+          {/* 保存启用/禁用状态 */}
+          {enabledDirty && (
+            <div style={{
+              position: "sticky",
+              bottom: 0,
+              padding: "12px 0",
+              background: "var(--bg)",
+              borderTop: "1px solid var(--line)",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              zIndex: 10,
+            }}>
+              <span style={{ fontSize: 12, opacity: 0.6, flex: 1 }}>
+                {t("skills.unsavedChanges")}
+              </span>
+              <button
+                onClick={() => { loadSkills(); }}
+                disabled={savingEnabled}
+                style={{ fontSize: 12, padding: "6px 16px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}
+              >
+                {t("skills.discardChanges")}
+              </button>
+              <button
+                className="btnPrimary"
+                onClick={handleSaveEnabledState}
+                disabled={savingEnabled}
+                style={{ fontSize: 13, padding: "6px 20px" }}
+              >
+                {savingEnabled ? t("skills.saving") : t("skills.saveEnabledState")}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

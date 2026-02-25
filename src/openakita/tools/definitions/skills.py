@@ -196,4 +196,45 @@ SKILLS_TOOLS = [
             "required": ["skill_name"],
         },
     },
+    {
+        "name": "manage_skill_enabled",
+        "category": "Skills",
+        "description": "Enable or disable external skills by updating the allowlist. Use when: (1) User asks to organize/clean up skills, (2) User wants to disable unused skills to reduce noise, (3) AI recommends enabling/disabling skills based on usage patterns.",
+        "detail": """启用或禁用外部技能。
+
+**功能**：
+- 批量设置多个技能的启用/禁用状态
+- 修改后立即生效（自动写入 data/skills.json 并热重载）
+
+**适用场景**：
+- 用户要求整理技能（禁用不常用的、启用需要的）
+- 根据工作场景调整技能集合
+- 减少技能噪声，提升响应质量
+
+**注意**：
+- 系统技能不可禁用，仅外部技能支持
+- changes 中未提及的技能保持原状""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "skill_name": {"type": "string", "description": "技能名称"},
+                            "enabled": {"type": "boolean", "description": "true=启用, false=禁用"},
+                        },
+                        "required": ["skill_name", "enabled"],
+                    },
+                    "description": "要变更的技能列表",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "变更原因（展示给用户）",
+                },
+            },
+            "required": ["changes"],
+        },
+    },
 ]
