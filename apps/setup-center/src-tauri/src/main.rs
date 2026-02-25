@@ -1706,7 +1706,7 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
         const PERSONA_BOYFRIEND: &str = include_str!("../../../../identity/personas/boyfriend.md");
         const PERSONA_FAMILY: &str = include_str!("../../../../identity/personas/family.md");
         const PERSONA_JARVIS: &str = include_str!("../../../../identity/personas/jarvis.md");
-        const PERSONA_USER_CUSTOM: &str = include_str!("../../../../identity/personas/user_custom.md");
+        const PERSONA_USER_CUSTOM: &str = include_str!("../../../../identity/personas/user_custom.md.example");
 
         let personas_dir = dir.join("identity").join("personas");
         fs::create_dir_all(&personas_dir)
