@@ -2028,6 +2028,8 @@ fn main() {
             workspace_write_file,
             workspace_update_env,
             detect_python,
+            validate_python_path,
+            validate_venv_path,
             check_python_for_pip,
             install_embedded_python,
             create_venv,
@@ -2966,6 +2968,64 @@ fn detect_python() -> Vec<PythonCandidate> {
         });
     }
     out
+}
+
+/// Validate a user-supplied Python interpreter path: check existence, execute --version,
+/// and return a PythonCandidate if the path is a real Python >= 3.11.
+#[tauri::command]
+fn validate_python_path(path: String) -> Result<PythonCandidate, String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在: {}", path));
+    }
+    let mut c = Command::new(&p);
+    c.arg("--version");
+    apply_no_window(&mut c);
+    let out = c.output().map_err(|e| format!("无法执行: {e}"))?;
+    if !out.status.success() {
+        return Err("执行 --version 失败，可能不是有效的 Python 解释器".into());
+    }
+    let version_text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let is_usable = python_version_ok(&version_text);
+    if !is_usable {
+        return Err(format!("Python 版本不满足要求（需要 3.11+）: {}", version_text));
+    }
+    Ok(PythonCandidate {
+        command: vec![path],
+        version_text,
+        is_usable,
+    })
+}
+
+/// Validate a user-supplied venv directory: check that it contains a valid Python interpreter.
+#[tauri::command]
+fn validate_venv_path(path: String) -> Result<PythonCandidate, String> {
+    let venv = PathBuf::from(&path);
+    if !venv.exists() || !venv.is_dir() {
+        return Err(format!("目录不存在: {}", path));
+    }
+    let py = if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    };
+    if !py.exists() {
+        return Err(format!(
+            "未找到虚拟环境中的 Python 解释器: {}",
+            py.display()
+        ));
+    }
+    let mut c = Command::new(&py);
+    c.arg("--version");
+    apply_no_window(&mut c);
+    let out = c.output().map_err(|e| format!("无法执行 venv Python: {e}"))?;
+    let version_text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let is_usable = python_version_ok(&version_text);
+    Ok(PythonCandidate {
+        command: vec![py.to_string_lossy().to_string()],
+        version_text: format!("venv: {} ({})", version_text, path),
+        is_usable,
+    })
 }
 
 #[derive(Debug, Deserialize)]

@@ -334,7 +334,12 @@ def _build_runtime_section() -> str:
     import sys as _sys
 
     from ..config import settings
-    from ..runtime_env import IS_FROZEN, can_pip_install, get_python_executable
+    from ..runtime_env import (
+        IS_FROZEN,
+        can_pip_install,
+        get_configured_venv_path,
+        get_python_executable,
+    )
 
     current_time = _get_current_time(settings.scheduler_timezone)
 
@@ -342,8 +347,9 @@ def _build_runtime_section() -> str:
     deploy_mode = _detect_deploy_mode()
     ext_python = get_python_executable()
     pip_ok = can_pip_install()
+    venv_path = get_configured_venv_path()
 
-    python_info = _build_python_info(IS_FROZEN, ext_python, pip_ok, settings)
+    python_info = _build_python_info(IS_FROZEN, ext_python, pip_ok, settings, venv_path)
 
     # --- 版本号 ---
     try:
@@ -458,29 +464,43 @@ def _detect_deploy_mode() -> str:
     return "source"
 
 
-def _build_python_info(is_frozen: bool, ext_python: str | None, pip_ok: bool, settings) -> str:
+def _build_python_info(
+    is_frozen: bool,
+    ext_python: str | None,
+    pip_ok: bool,
+    settings,
+    venv_path: str | None = None,
+) -> str:
     """根据部署模式构建 Python 环境信息"""
     import sys as _sys
 
     if not is_frozen:
         in_venv = _sys.prefix != _sys.base_prefix
         env_type = "venv" if in_venv else "system"
-        return (
-            f"- **Python**: {_sys.version.split()[0]} ({env_type})\n"
-            f"- **解释器**: {_sys.executable}\n"
-            f"- **pip**: 可用"
-        )
+        lines = [
+            f"- **Python**: {_sys.version.split()[0]} ({env_type})",
+            f"- **解释器**: {_sys.executable}",
+        ]
+        if in_venv:
+            lines.append(f"- **虚拟环境**: {_sys.prefix}")
+        lines.append("- **pip**: 可用")
+        lines.append("- **注意**: 执行 Python 脚本时使用上述解释器路径，pip install 会安装到当前环境中")
+        return "\n".join(lines)
 
     # 打包模式
     if ext_python:
-        return (
-            f"- **Python**: 可用（外置环境已自动配置）\n"
-            f"- **解释器**: {ext_python}\n"
-            f"- **pip**: {'可用' if pip_ok else '不可用'}"
-        )
+        lines = [
+            "- **Python**: 可用（外置环境已自动配置）",
+            f"- **解释器**: {ext_python}",
+        ]
+        if venv_path:
+            lines.append(f"- **虚拟环境**: {venv_path}")
+        lines.append(f"- **pip**: {'可用' if pip_ok else '不可用'}")
+        lines.append("- **注意**: 执行 Python 脚本时请使用上述解释器路径，pip install 会安装到该虚拟环境中")
+        return "\n".join(lines)
 
     # 打包模式 + 无外置 Python
-    venv_path = settings.project_root / "data" / "venv"
+    fallback_venv = settings.project_root / "data" / "venv"
     if platform.system() == "Windows":
         install_cmd = "winget install Python.Python.3.12"
     else:
@@ -489,7 +509,7 @@ def _build_python_info(is_frozen: bool, ext_python: str | None, pip_ok: bool, se
     return (
         f"- **Python**: ⚠️ 未检测到可用的 Python 环境\n"
         f"  - 推荐操作：通过 `run_shell` 执行 `{install_cmd}` 安装 Python\n"
-        f"  - 安装后创建工作区虚拟环境：`python -m venv {venv_path}`\n"
+        f"  - 安装后创建工作区虚拟环境：`python -m venv {fallback_venv}`\n"
         f"  - 创建完成后系统将自动检测并使用该环境，无需重启\n"
         f"  - 此环境为系统专用，与用户个人 Python 环境隔离"
     )

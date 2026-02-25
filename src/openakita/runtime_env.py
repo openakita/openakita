@@ -117,6 +117,54 @@ def _get_python_from_env_var() -> str | None:
     return None
 
 
+def _get_python_from_configured_venv() -> str | None:
+    """从 PYTHON_VENV_PATH 环境变量（由 .env 配置注入）获取虚拟环境中的 Python。
+    Setup Center 在用户选择/创建 venv 后会将路径写入工作区 .env 中。"""
+    import os
+    venv_path = os.environ.get("PYTHON_VENV_PATH", "").strip()
+    if not venv_path:
+        return None
+    venv_dir = Path(venv_path).expanduser()
+    if not venv_dir.is_dir():
+        return None
+    py = _find_python_in_dir(venv_dir)
+    if py:
+        logger.debug(f"使用配置的 venv Python (PYTHON_VENV_PATH): {py}")
+        return str(py)
+    return None
+
+
+def get_configured_venv_path() -> str | None:
+    """获取虚拟环境路径（供提示词构建等模块使用）。
+
+    优先级: PYTHON_VENV_PATH 环境变量 > 从当前 Python 解释器路径推断。
+    """
+    import os
+
+    venv_path = os.environ.get("PYTHON_VENV_PATH", "").strip()
+    if venv_path:
+        p = Path(venv_path).expanduser()
+        if p.is_dir():
+            return str(p)
+
+    if not IS_FROZEN:
+        if sys.prefix != sys.base_prefix:
+            return sys.prefix
+        return None
+
+    py = get_python_executable()
+    if not py:
+        return None
+    py_path = Path(py)
+    # Scripts/python.exe -> venv root, or bin/python -> venv root
+    if py_path.parent.name in ("Scripts", "bin"):
+        venv_root = py_path.parent.parent
+        pyvenv_cfg = venv_root / "pyvenv.cfg"
+        if pyvenv_cfg.exists():
+            return str(venv_root)
+    return None
+
+
 def _get_openakita_root() -> Path:
     """获取 ~/.openakita 根目录路径 (避免循环导入 config)"""
     return Path.home() / ".openakita"
@@ -126,13 +174,18 @@ def get_python_executable() -> str | None:
     """获取可用的 Python 解释器路径。
 
     PyInstaller 环境下: 查找外置 Python
-      (workspace venv > home venv > embedded > PATH)
+      (configured venv > workspace venv > home venv > embedded > env var > PATH)
     常规环境下: 返回 sys.executable
     """
     if not IS_FROZEN:
         return sys.executable
 
-    # 0. 检查 {project_root}/data/venv/ — 工作区虚拟环境（系统专用，与用户环境隔离）
+    # 0a. 用户通过 Setup Center 配置的 venv 路径（PYTHON_VENV_PATH）— 最高优先级
+    configured = _get_python_from_configured_venv()
+    if configured:
+        return configured
+
+    # 0b. 检查 {project_root}/data/venv/ — 工作区虚拟环境（系统专用，与用户环境隔离）
     try:
         from .config import settings
         workspace_venv = settings.project_root / "data" / "venv"

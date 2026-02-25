@@ -1112,6 +1112,11 @@ export function App() {
   const [pypiVersions, setPypiVersions] = useState<string[]>([]);
   const [pypiVersionsLoading, setPypiVersionsLoading] = useState(false);
   const [selectedPypiVersion, setSelectedPypiVersion] = useState<string>(""); // "" = 推荐同版本
+  // custom python / venv
+  const [customPythonPath, setCustomPythonPath] = useState<string>("");
+  const [customVenvPath, setCustomVenvPath] = useState<string>("");
+  const [customPathStatus, setCustomPathStatus] = useState<string>("");
+  const [customVenvStatus, setCustomVenvStatus] = useState<string>("");
 
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -1791,9 +1796,109 @@ export function App() {
       setVenvReady(true);
       setOpenakitaInstalled(false);
       setNotice("venv 已准备好，可以安装 openakita");
+      await persistPythonEnvConfig(venvDir);
     } catch (e) {
       setError(String(e));
       setVenvStatus(`创建 venv 失败：${String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function persistPythonEnvConfig(venvPath: string, pythonExe?: string) {
+    if (!currentWorkspaceId) return;
+    try {
+      const entries: { key: string; value: string }[] = [
+        { key: "PYTHON_VENV_PATH", value: venvPath },
+      ];
+      if (pythonExe) {
+        entries.push({ key: "PYTHON_EXECUTABLE", value: pythonExe });
+      }
+      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries });
+      setEnvDraft((prev) => {
+        const next = { ...prev };
+        next["PYTHON_VENV_PATH"] = venvPath;
+        if (pythonExe) next["PYTHON_EXECUTABLE"] = pythonExe;
+        return next;
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
+  async function doValidateCustomPython() {
+    if (!customPythonPath.trim()) return;
+    setCustomPathStatus(t("config.pyValidating"));
+    try {
+      const cand = await invoke<PythonCandidate>("validate_python_path", { path: customPythonPath.trim() });
+      setPythonCandidates((prev) => {
+        const cmd = cand.command.join(" ");
+        return [cand, ...prev.filter((p) => p.command.join(" ") !== cmd)];
+      });
+      setSelectedPythonIdx(0);
+      setCustomPathStatus(t("config.pyValidateOk") + `: ${cand.versionText}`);
+    } catch (e) {
+      setCustomPathStatus(t("config.pyValidateFail") + `: ${String(e)}`);
+    }
+  }
+
+  async function doValidateCustomVenv() {
+    if (!customVenvPath.trim()) return;
+    setCustomVenvStatus(t("config.pyValidating"));
+    try {
+      const cand = await invoke<PythonCandidate>("validate_venv_path", { path: customVenvPath.trim() });
+      setPythonCandidates((prev) => {
+        const cmd = cand.command.join(" ");
+        return [cand, ...prev.filter((p) => p.command.join(" ") !== cmd)];
+      });
+      setSelectedPythonIdx(0);
+      setCustomVenvStatus(t("config.pyVenvValidateOk") + `: ${cand.versionText}`);
+    } catch (e) {
+      setCustomVenvStatus(t("config.pyVenvValidateFail") + `: ${String(e)}`);
+    }
+  }
+
+  async function doUseCustomVenvAsActive() {
+    if (!customVenvPath.trim()) return;
+    setBusy(t("config.pyValidating"));
+    try {
+      const cand = await invoke<PythonCandidate>("validate_venv_path", { path: customVenvPath.trim() });
+      if (!cand.isUsable) {
+        setError(t("config.pyVenvValidateFail"));
+        return;
+      }
+      await persistPythonEnvConfig(customVenvPath.trim(), cand.command[0]);
+      setVenvStatus(t("config.pyVenvReady") + `: ${customVenvPath.trim()}`);
+      setVenvReady(true);
+      setPythonCandidates((prev) => {
+        const cmd = cand.command.join(" ");
+        return [cand, ...prev.filter((p) => p.command.join(" ") !== cmd)];
+      });
+      setSelectedPythonIdx(0);
+      setNotice(t("config.pyVenvReady"));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doCreateVenvFromPython() {
+    if (!canUsePython) return;
+    setError(null);
+    setBusy(t("config.pyCreatingVenv"));
+    try {
+      setVenvStatus(t("config.pyCreatingVenv"));
+      const py = pythonCandidates[selectedPythonIdx].command;
+      await invoke<string>("create_venv", { pythonCommand: py, venvDir });
+      setVenvStatus(t("config.pyVenvCreated", { path: venvDir }));
+      setVenvReady(true);
+      setOpenakitaInstalled(false);
+      await persistPythonEnvConfig(venvDir);
+      setNotice(t("config.pyVenvReady"));
+    } catch (e) {
+      setError(String(e));
+      setVenvStatus(t("config.pyVenvCreateFail") + `: ${String(e)}`);
     } finally {
       setBusy(null);
     }
@@ -1842,6 +1947,7 @@ export function App() {
       setOpenakitaInstalled(false);
       setVenvStatus(`venv 就绪：${venvDir}`);
       setInstallProgress({ stage: "venv 就绪", percent: 30 });
+      await persistPythonEnvConfig(venvDir);
 
       // 2) pip install
       setInstallProgress({ stage: "pip 安装", percent: 35 });
@@ -4940,6 +5046,14 @@ export function App() {
         });
         setOpenakitaInstalled(true);
 
+        // Phase 2.5: Persist Python venv path
+        try {
+          await invoke("workspace_update_env", {
+            workspaceId: "default",
+            entries: [{ key: "PYTHON_VENV_PATH", value: curVenvDir }],
+          });
+        } catch { /* best-effort */ }
+
         // Phase 3: Write default .env
         setQuickSetupPhase(3);
         const tauriEntries = Object.entries(QUICK_ENV_DEFAULTS).map(([key, value]) => ({ key, value }));
@@ -5237,9 +5351,91 @@ export function App() {
               </div>
             </div>
           )}
+
+          {/* One-click create venv from selected Python */}
+          {canUsePython && (
+            <div style={{ marginTop: 12 }}>
+              <button className="btnPrimary" onClick={doCreateVenvFromPython} disabled={!!busy}>
+                {t("config.pyCreateVenv")}
+              </button>
+              <span className="help" style={{ marginLeft: 8 }}>venv: {venvDir}</span>
+            </div>
+          )}
+
           {venvStatus && <div className="okBox" style={{ marginTop: 10 }}>{venvStatus}</div>}
           {canUsePython && <div className="okBox" style={{ marginTop: 10 }}>{t("config.pyReady")}</div>}
         </div>
+
+        {/* Custom Python path */}
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="cardTitle" style={{ fontSize: 14 }}>{t("config.pyCustomPath")}</div>
+          <div className="cardHint">{t("config.pyCustomPathHint")}</div>
+          <div className="row" style={{ gap: 8, marginTop: 8, alignItems: "center" }}>
+            <input
+              style={{ flex: 1 }}
+              placeholder={
+                navigator.platform.startsWith("Win")
+                  ? "C:\\Python313\\python.exe"
+                  : "/usr/bin/python3"
+              }
+              value={customPythonPath}
+              onChange={(e) => setCustomPythonPath(e.target.value)}
+              disabled={!!busy}
+            />
+            <button onClick={doValidateCustomPython} disabled={!!busy || !customPythonPath.trim()}>
+              {t("config.pyValidate")}
+            </button>
+          </div>
+          {customPathStatus && (
+            <div className={customPathStatus.includes(t("config.pyValidateOk")) ? "okBox" : "errBox"} style={{ marginTop: 8 }}>
+              {customPathStatus}
+            </div>
+          )}
+        </div>
+
+        {/* Custom venv path */}
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="cardTitle" style={{ fontSize: 14 }}>{t("config.pyCustomVenv")}</div>
+          <div className="cardHint">{t("config.pyCustomVenvHint")}</div>
+          <div className="row" style={{ gap: 8, marginTop: 8, alignItems: "center" }}>
+            <input
+              style={{ flex: 1 }}
+              placeholder={
+                navigator.platform.startsWith("Win")
+                  ? "C:\\myproject\\.venv"
+                  : "/home/user/myproject/.venv"
+              }
+              value={customVenvPath}
+              onChange={(e) => setCustomVenvPath(e.target.value)}
+              disabled={!!busy}
+            />
+            <button onClick={doValidateCustomVenv} disabled={!!busy || !customVenvPath.trim()}>
+              {t("config.pyValidate")}
+            </button>
+          </div>
+          {customVenvStatus && (
+            <div className={customVenvStatus.includes(t("config.pyVenvValidateOk")) ? "okBox" : "errBox"} style={{ marginTop: 8 }}>
+              {customVenvStatus}
+            </div>
+          )}
+          {customVenvPath.trim() && customVenvStatus.includes(t("config.pyVenvValidateOk")) && (
+            <div style={{ marginTop: 8 }}>
+              <button className="btnPrimary" onClick={doUseCustomVenvAsActive} disabled={!!busy}>
+                {t("config.pyUseAsActive")}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Active env summary */}
+        {envDraft["PYTHON_VENV_PATH"] && (
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="cardTitle" style={{ fontSize: 14 }}>{t("config.pyActiveEnv")}</div>
+            <div className="okBox">
+              PYTHON_VENV_PATH = {envDraft["PYTHON_VENV_PATH"]}
+            </div>
+          </div>
+        )}
       </>
     );
   }
