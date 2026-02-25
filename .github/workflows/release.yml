@@ -378,26 +378,63 @@ jobs:
 
           for artifact in "${ARTIFACTS[@]}"; do
             echo "Submitting for notarization: ${artifact}"
-            success=0
-            for attempt in 1 2 3; do
-              echo "Notarization attempt ${attempt}/3"
-              if xcrun notarytool submit "${artifact}" \
-                --keychain-profile "${PROFILE_NAME}" \
-                --wait \
-                --timeout 25m; then
-                success=1
-                break
-              fi
-              if [ "${attempt}" -lt 3 ]; then
-                echo "Notarization attempt ${attempt} failed, retrying in 45s..."
-                sleep 45
-              fi
-            done
-
-            if [ "${success}" -ne 1 ]; then
-              echo "Notarization failed after 3 attempts: ${artifact}" >&2
+            submit_json="$(xcrun notarytool submit "${artifact}" \
+              --keychain-profile "${PROFILE_NAME}" \
+              --output-format json)"
+            submission_id="$(printf '%s' "${submit_json}" | python -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+            if [ -z "${submission_id}" ]; then
+              echo "Failed to parse notarization submission ID for ${artifact}" >&2
+              echo "${submit_json}" >&2
               exit 1
             fi
+            echo "Submission ID: ${submission_id}"
+
+            MAX_WAIT_SECONDS=$((3 * 60 * 60))
+            POLL_INTERVAL_SECONDS=30
+            START_TS=$(date +%s)
+            while true; do
+              if ! info_json="$(xcrun notarytool info "${submission_id}" \
+                --keychain-profile "${PROFILE_NAME}" \
+                --output-format json)"; then
+                echo "Failed to query submission ${submission_id}, retrying in ${POLL_INTERVAL_SECONDS}s..."
+                sleep "${POLL_INTERVAL_SECONDS}"
+                continue
+              fi
+
+              status="$(printf '%s' "${info_json}" | python -c 'import json,sys; print(json.load(sys.stdin).get("status","").strip().lower())')"
+              NOW_TS=$(date +%s)
+              ELAPSED_SECONDS=$((NOW_TS - START_TS))
+
+              case "${status}" in
+                accepted)
+                  echo "Notarization accepted in ${ELAPSED_SECONDS}s for ${artifact}"
+                  break
+                  ;;
+                invalid|rejected)
+                  echo "Notarization failed with status '${status}' for ${artifact}" >&2
+                  echo "Submission ID: ${submission_id}" >&2
+                  echo "Fetching notarization log..." >&2
+                  xcrun notarytool log "${submission_id}" \
+                    --keychain-profile "${PROFILE_NAME}" || true
+                  exit 1
+                  ;;
+                "in progress")
+                  echo "Current status: In Progress (elapsed ${ELAPSED_SECONDS}s)"
+                  ;;
+                *)
+                  echo "Current status: ${status:-unknown} (elapsed ${ELAPSED_SECONDS}s)"
+                  ;;
+              esac
+
+              if [ "${ELAPSED_SECONDS}" -ge "${MAX_WAIT_SECONDS}" ]; then
+                echo "Timed out waiting ${MAX_WAIT_SECONDS}s for submission ${submission_id}." >&2
+                echo "Apple service may still be processing it. Check later with:" >&2
+                echo "xcrun notarytool info ${submission_id} --keychain-profile ${PROFILE_NAME}" >&2
+                exit 1
+              fi
+
+              sleep "${POLL_INTERVAL_SECONDS}"
+            done
 
             echo "Stapling ticket: ${artifact}"
             xcrun stapler staple -v "${artifact}"
