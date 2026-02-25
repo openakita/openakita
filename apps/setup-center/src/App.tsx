@@ -8725,7 +8725,7 @@ export function App() {
                   } catch (e) {
                     console.warn("ob: create default workspace failed:", e);
                   }
-                  setObStep("ob-llm");
+                  setObStep("ob-agreement");
                 }}
               >
                 {t("onboarding.welcome.start")}
@@ -8769,6 +8769,76 @@ export function App() {
           </div>
         );
 
+      case "ob-agreement":
+        return (
+          <div className="obPage">
+            <div className="obContent">
+              <h2 className="obStepTitle">{t("onboarding.agreement.title")}</h2>
+              <p className="obStepDesc">{t("onboarding.agreement.subtitle")}</p>
+              <div className="obFormArea" style={{ textAlign: "left" }}>
+                <div style={{
+                  whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.7,
+                  maxHeight: 340, overflowY: "auto",
+                  padding: "16px 20px", borderRadius: 8,
+                  background: "var(--bg-secondary, #f5f5f5)",
+                  border: "1px solid var(--border-color, #e0e0e0)",
+                  marginBottom: 20,
+                }}>
+                  {t("onboarding.agreement.content")}
+                </div>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 8, fontSize: 14 }}>
+                  {t("onboarding.agreement.confirmLabel")}
+                </label>
+                <input
+                  type="text"
+                  value={obAgreementInput}
+                  onChange={(e) => { setObAgreementInput(e.target.value); setObAgreementError(false); }}
+                  placeholder={t("onboarding.agreement.confirmPlaceholder")}
+                  style={{
+                    width: "100%", padding: "10px 14px", fontSize: 15,
+                    borderRadius: 6, border: obAgreementError ? "2px solid #e53e3e" : "1px solid var(--border-color, #ccc)",
+                    outline: "none", boxSizing: "border-box",
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      if (obAgreementInput.trim() === t("onboarding.agreement.confirmText")) {
+                        setObAgreementError(false);
+                        setObStep("ob-llm");
+                      } else {
+                        setObAgreementError(true);
+                      }
+                    }
+                  }}
+                />
+                {obAgreementError && (
+                  <p style={{ color: "#e53e3e", fontSize: 13, marginTop: 6 }}>
+                    {t("onboarding.agreement.errorMismatch")}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="obFooter">
+              {stepIndicator}
+              <div className="obFooterBtns">
+                <button onClick={() => setObStep("ob-welcome")}>{t("config.prev")}</button>
+                <button
+                  className="btnPrimary"
+                  onClick={() => {
+                    if (obAgreementInput.trim() === t("onboarding.agreement.confirmText")) {
+                      setObAgreementError(false);
+                      setObStep("ob-llm");
+                    } else {
+                      setObAgreementError(true);
+                    }
+                  }}
+                >
+                  {t("onboarding.agreement.proceed")}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
       case "ob-llm":
         return (
           <div className="obPage">
@@ -8781,7 +8851,7 @@ export function App() {
             <div className="obFooter">
               {stepIndicator}
               <div className="obFooterBtns">
-                <button onClick={() => setObStep("ob-welcome")}>{t("config.prev")}</button>
+                <button onClick={() => setObStep("ob-agreement")}>{t("config.prev")}</button>
                 {savedEndpoints.length > 0 ? (
                   <button className="btnPrimary" onClick={() => setObStep("ob-im")}>
                     {t("config.next")}

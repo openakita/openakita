@@ -155,6 +155,11 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
  !insertmacro MUI_PAGE_LICENSE "${LICENSE}"
 !endif
 
+; 2.5 AI 使用风险确认页面 (自定义)
+Var RiskAckInput
+Var RiskAckError
+Page custom PageRiskAck PageLeaveRiskAck
+
 ; 3. Install mode (if it is set to `both`)
 !if "${INSTALLMODE}" == "both"
  !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -413,6 +418,65 @@ Page custom PageCliSetup PageLeaveCliSetup
 Function RunMainBinary
  ; 安装后首次启动，传入 --first-run 触发 Onboarding Wizard
  nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "--first-run"
+FunctionEnd
+
+; ── AI 使用风险确认页面实现 ──
+Function PageRiskAck
+ ; passive/silent 模式跳过
+ ${If} $PassiveMode = 1
+  Abort
+ ${EndIf}
+ ; update 模式跳过（已确认过）
+ ${If} $UpdateMode = 1
+  Abort
+ ${EndIf}
+
+ !insertmacro MUI_HEADER_TEXT "使用风险须知" "请仔细阅读并确认"
+
+ nsDialogs::Create 1018
+ Pop $0
+ ${IfThen} $0 == "error" ${|} Abort ${|}
+ ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
+
+ ; 滚动文本区域 - 风险说明
+ ${NSD_CreateGroupBox} 0 0 100% 128u "AI Agent 使用风险须知"
+ Pop $0
+
+ ${NSD_CreateLabel} 8u 12u -16u 110u \
+   "OpenAkita 是基于大语言模型（LLM）驱动的 AI Agent。使用前请了解：$\n$\n\
+1. 行为不可完全预测 — AI 输出具有概率性，可能执行非预期的文件操$\n\
+作、发送非预期消息或调用非预期工具。$\n$\n\
+2. 使用过程必须监督 — 请勿在无人监督时开启自动确认模式。$\n$\n\
+3. 可能的风险 — 数据丢失或损坏、发送不当消息、执行危险命令、产$\n\
+生非预期 API 费用等。$\n$\n\
+4. 免责声明 — 本软件按「现状」提供，不附带任何担保。维护者和贡$\n\
+献者不对因使用产生的任何损害承担责任。$\n$\n\
+5. 数据安全 — 对话内容可能发送至第三方 LLM 服务商，请勿输入敏感$\n\
+信息。"
+ Pop $0
+
+ ; 输入确认区域
+ ${NSD_CreateLabel} 0 134u 100% 12u "请在下方输入「我已知晓」以确认你已阅读并理解上述内容："
+ Pop $0
+ SetCtlColors $0 "" "transparent"
+
+ ${NSD_CreateText} 0 150u 200u 14u ""
+ Pop $RiskAckInput
+
+ ; 错误提示（初始隐藏）
+ ${NSD_CreateLabel} 210u 152u -210u 12u ""
+ Pop $RiskAckError
+ SetCtlColors $RiskAckError "CC0000" "transparent"
+
+ nsDialogs::Show
+FunctionEnd
+
+Function PageLeaveRiskAck
+ ${NSD_GetText} $RiskAckInput $0
+ ${If} $0 != "我已知晓"
+  ${NSD_SetText} $RiskAckError "输入不正确，请准确输入「我已知晓」"
+  Abort
+ ${EndIf}
 FunctionEnd
 
 ; ── 环境检测页面实现 ──

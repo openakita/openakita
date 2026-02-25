@@ -38,6 +38,7 @@ class SetupWizard:
         """运行完整的安装向导"""
         try:
             self._show_welcome()
+            self._confirm_risk_agreement()
             self._check_environment()
             self._choose_locale()          # 先选语言/地区，影响后续所有默认值
             self._create_directories()
@@ -83,6 +84,72 @@ Press Ctrl+C at any time to cancel.
         console.print()
 
         Prompt.ask("[cyan]Press Enter to continue[/cyan]", default="")
+
+    def _confirm_risk_agreement(self):
+        """显示使用风险须知，要求用户输入确认文字"""
+        agreement_text = """
+## ⚠ 使用风险须知 / Risk Acknowledgment
+
+OpenAkita 是一款基于大语言模型（LLM）驱动的 AI Agent 软件。
+在使用前，你需要了解并接受以下事项：
+
+**1. 行为不可完全预测**
+AI Agent 的行为受底层大语言模型驱动，其输出具有概率性和不确定性。
+即使在相同输入下，Agent 也可能产生不同的行为结果，包括但不限于：
+执行非预期的文件操作、发送非预期的消息、调用非预期的工具等。
+
+**2. 使用过程必须监督**
+你有责任在使用过程中保持对 AI Agent 行为的监督。对于需要审批的
+工具调用（如文件删除、系统命令执行、消息发送等），请在确认操作
+内容合理后再批准执行。强烈建议不要在无人监督的情况下开启自动
+确认模式（AUTO_CONFIRM）。
+
+**3. 可能造成的风险**
+AI Agent 在执行任务时可能导致：
+- 数据丢失或损坏（如误删文件、覆盖重要数据）
+- 发送不当消息（如通过 IM 通道发送错误内容）
+- 执行危险系统命令
+- 产生非预期的 API 调用和费用消耗
+- 其他无法预见的副作用
+
+**4. 免责声明**
+OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗示
+担保。项目维护者和贡献者不对因使用本软件而产生的任何直接、间接、
+偶然、特殊或后果性损害承担责任。你应当自行承担使用本软件的全部
+风险。
+
+**5. 数据安全**
+你的对话内容、配置信息和工具调用记录可能被发送至第三方 LLM 服务
+商。请勿在对话中提供敏感的个人信息、密码、密钥等机密数据，除非
+你充分了解并接受相关风险。
+"""
+        console.print(Panel(Markdown(agreement_text), title="Risk Acknowledgment", border_style="yellow"))
+        console.print()
+
+        confirm_phrase_zh = "我已知晓"
+        confirm_phrase_en = "I ACKNOWLEDGE"
+
+        console.print(
+            f'[bold]请输入「{confirm_phrase_zh}」或 "{confirm_phrase_en}" 以确认你已阅读并理解上述内容：[/bold]'
+        )
+        console.print()
+
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            user_input = Prompt.ask("[cyan]确认输入 / Confirmation[/cyan]").strip()
+            if user_input in (confirm_phrase_zh, confirm_phrase_en):
+                console.print("\n[green]✓ 已确认，继续安装向导。[/green]\n")
+                return
+            remaining = max_attempts - attempt - 1
+            if remaining > 0:
+                console.print(
+                    f'[red]输入不匹配。请准确输入「{confirm_phrase_zh}」或 "{confirm_phrase_en}"'
+                    f"（剩余 {remaining} 次尝试）[/red]\n"
+                )
+            else:
+                console.print("\n[red]多次输入不正确，安装向导已退出。[/red]")
+                console.print("[dim]如需继续，请重新运行 openakita init[/dim]")
+                sys.exit(1)
 
     def _check_environment(self):
         """检查运行环境"""
