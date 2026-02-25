@@ -59,11 +59,15 @@ class MemoryStorage:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
 
-        current_version = self._get_schema_version()
-        if current_version < _SCHEMA_VERSION:
-            self._migrate_schema(current_version)
-        else:
-            self._create_tables()
+        try:
+            current_version = self._get_schema_version()
+            if current_version < _SCHEMA_VERSION:
+                self._migrate_schema(current_version)
+            else:
+                self._create_tables()
+        except Exception as e:
+            logger.error(f"[MemoryStorage] Schema init failed: {e}", exc_info=True)
+            raise
 
         logger.debug(f"MemoryStorage initialized: {self._db_path} (schema v{_SCHEMA_VERSION})")
 
@@ -88,16 +92,28 @@ class MemoryStorage:
         self._conn.commit()
 
     def _migrate_schema(self, from_version: int) -> None:
-        """Migrate from old schema to current version."""
+        """Migrate from old schema to current version.
+
+        All DDL + DML run inside a single transaction so the database
+        never ends up in a half-migrated state.  If anything fails the
+        transaction is rolled back and the old schema version is preserved.
+        """
         logger.info(f"[MemoryStorage] Migrating schema v{from_version} → v{_SCHEMA_VERSION}")
 
-        self._create_tables()
+        try:
+            self._create_tables()
 
-        if from_version < 2:
-            self._migrate_v1_to_v2()
+            if from_version < 2:
+                self._migrate_v1_to_v2()
 
-        self._set_schema_version(_SCHEMA_VERSION)
-        logger.info("[MemoryStorage] Schema migration complete")
+            self._set_schema_version(_SCHEMA_VERSION)
+            logger.info("[MemoryStorage] Schema migration complete")
+        except Exception:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def _migrate_v1_to_v2(self) -> None:
         """Add v2 columns to existing memories table."""
@@ -118,9 +134,27 @@ class MemoryStorage:
         self._conn.commit()
 
     def _create_tables(self) -> None:
+        """Create all tables, indexes, FTS virtual tables and triggers.
+
+        Execution is split into strict phases so that no index / trigger
+        can ever reference a table that hasn't been created yet:
+
+          Phase 1 – CREATE TABLE  (all regular tables)
+          Phase 2 – CREATE INDEX  (all indexes, including cross-table)
+          Phase 3 – FTS5 virtual tables + sync triggers (best-effort)
+        """
         c = self._conn
 
-        # --- memories (v2: with subject/predicate/confidence/decay) ---
+        # ==============================================================
+        # Phase 1: CREATE TABLE — all regular tables first
+        # ==============================================================
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS _schema_meta (
+                key TEXT PRIMARY KEY, value TEXT
+            )
+        """)
+
         c.execute("""
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
@@ -144,47 +178,7 @@ class MemoryStorage:
                 source_episode_id TEXT
             )
         """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(priority)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_subject ON memories(subject)")
 
-        # --- FTS5 full-text index ---
-        try:
-            c.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-                    content, subject, predicate, tags,
-                    content=memories, content_rowid=rowid,
-                    tokenize='unicode61'
-                )
-            """)
-        except sqlite3.OperationalError as e:
-            logger.warning(f"[MemoryStorage] FTS5 creation skipped: {e}")
-
-        # FTS5 sync triggers
-        for trigger_sql in [
-            """CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
-                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
-            END""",
-            """CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
-                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
-            END""",
-            """CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
-                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
-                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
-                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
-            END""",
-        ]:
-            try:
-                c.execute(trigger_sql)
-            except sqlite3.OperationalError:
-                pass
-
-        # --- episodes ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS episodes (
                 id TEXT PRIMARY KEY,
@@ -204,13 +198,7 @@ class MemoryStorage:
                 source TEXT DEFAULT 'session_end'
             )
         """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_time ON episodes(started_at)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_episode ON memories(source_episode_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_episode ON conversation_turns(episode_id)")
 
-        # --- scratchpad ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS scratchpad (
                 user_id TEXT PRIMARY KEY,
@@ -223,7 +211,6 @@ class MemoryStorage:
             )
         """)
 
-        # --- conversation_turns ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS conversation_turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,12 +228,7 @@ class MemoryStorage:
                 UNIQUE(session_id, turn_index)
             )
         """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_session ON conversation_turns(session_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON conversation_turns(timestamp)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_tool ON conversation_turns(has_tool_calls)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_extracted ON conversation_turns(extracted)")
 
-        # --- extraction_queue ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS extraction_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -262,24 +244,7 @@ class MemoryStorage:
                 last_attempted_at TEXT
             )
         """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_eq_status ON extraction_queue(status)")
-        try:
-            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)")
-        except sqlite3.IntegrityError:
-            # 已有重复 (session_id, turn_index) 数据，先去重再建索引
-            logger.warning("[MemoryStorage] extraction_queue has duplicate (session_id, turn_index), deduplicating...")
-            c.execute("""
-                DELETE FROM extraction_queue
-                WHERE id NOT IN (
-                    SELECT MAX(id) FROM extraction_queue
-                    GROUP BY session_id, turn_index
-                )
-            """)
-            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)")
-        except sqlite3.OperationalError:
-            pass
 
-        # --- attachments (文件/媒体记忆) ---
         c.execute("""
             CREATE TABLE IF NOT EXISTS attachments (
                 id TEXT PRIMARY KEY,
@@ -300,12 +265,79 @@ class MemoryStorage:
                 created_at TEXT NOT NULL
             )
         """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS embedding_cache (
+                content_hash TEXT PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                model TEXT NOT NULL,
+                dimensions INTEGER DEFAULT 1024,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # ==============================================================
+        # Phase 2: CREATE INDEX — all tables already exist at this point
+        # ==============================================================
+
+        # memories
+        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(priority)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_subject ON memories(subject)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_episode ON memories(source_episode_id)")
+
+        # episodes
+        c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_time ON episodes(started_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)")
+
+        # conversation_turns
+        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_session ON conversation_turns(session_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON conversation_turns(timestamp)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_tool ON conversation_turns(has_tool_calls)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_extracted ON conversation_turns(extracted)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_turns_episode ON conversation_turns(episode_id)")
+
+        # extraction_queue
+        c.execute("CREATE INDEX IF NOT EXISTS idx_eq_status ON extraction_queue(status)")
+        try:
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)")
+        except sqlite3.IntegrityError:
+            logger.warning("[MemoryStorage] extraction_queue has duplicate (session_id, turn_index), deduplicating...")
+            c.execute("""
+                DELETE FROM extraction_queue
+                WHERE id NOT IN (
+                    SELECT MAX(id) FROM extraction_queue
+                    GROUP BY session_id, turn_index
+                )
+            """)
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)")
+        except sqlite3.OperationalError:
+            pass
+
+        # attachments
         c.execute("CREATE INDEX IF NOT EXISTS idx_attach_session ON attachments(session_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_attach_mime ON attachments(mime_type)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_attach_direction ON attachments(direction)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_attach_created ON attachments(created_at)")
 
-        # FTS5 for attachment search
+        # ==============================================================
+        # Phase 3: FTS5 virtual tables + sync triggers (best-effort)
+        # ==============================================================
+
+        try:
+            c.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    content, subject, predicate, tags,
+                    content=memories, content_rowid=rowid,
+                    tokenize='unicode61'
+                )
+            """)
+        except sqlite3.OperationalError as e:
+            logger.warning(f"[MemoryStorage] FTS5 creation skipped: {e}")
+
         try:
             c.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS attachments_fts USING fts5(
@@ -318,6 +350,20 @@ class MemoryStorage:
             pass
 
         for trigger_sql in [
+            """CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
+                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
+                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
+            END""",
+            """CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
+                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
+            END""",
+            """CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
+                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
+                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
+                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
+            END""",
             """CREATE TRIGGER IF NOT EXISTS attachments_fts_ai AFTER INSERT ON attachments BEGIN
                 INSERT INTO attachments_fts(rowid, description, transcription, extracted_text, filename, tags)
                 VALUES (new.rowid, new.description, new.transcription, new.extracted_text, new.filename, new.tags);
@@ -337,22 +383,6 @@ class MemoryStorage:
                 c.execute(trigger_sql)
             except sqlite3.OperationalError:
                 pass
-
-        # --- embedding_cache (for API embedding backend) ---
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS embedding_cache (
-                content_hash TEXT PRIMARY KEY,
-                embedding BLOB NOT NULL,
-                model TEXT NOT NULL,
-                dimensions INTEGER DEFAULT 1024,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        # --- schema meta ---
-        c.execute(
-            "CREATE TABLE IF NOT EXISTS _schema_meta (key TEXT PRIMARY KEY, value TEXT)"
-        )
 
         c.commit()
 
