@@ -82,6 +82,8 @@
     "startService": "启动服务",
     "connectService": "连接已有服务",
     "serviceHint": "聊天功能需要后台服务运行中。你可以启动本工作区的服务，或连接一个已运行的 serve 实例。",
+    "backendServiceHint": "请确认后台服务（openakita serve）已启动，且 HTTP API 端口（18900）可访问。",
+    "backendOnlineUpstreamHint": "后端服务已在线（/api/health 可访问）。本次失败更可能是模型上游网络波动或服务暂时不可用，请稍后重试。",
     "title": "AI 聊天助手",
     "thoughtFor": "思考了 {{seconds}}s",
     "showChain": "显示思维链",

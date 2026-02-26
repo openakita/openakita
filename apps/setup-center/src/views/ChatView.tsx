@@ -2495,8 +2495,15 @@ export function ChatView({
         ));
       } else {
         const errMsg = e instanceof Error ? e.message : String(e);
+        let guidance = t("chat.backendServiceHint");
+        try {
+          const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(2000) });
+          if (healthRes.ok) {
+            guidance = t("chat.backendOnlineUpstreamHint");
+          }
+        } catch { /* health probe failed -> keep backend guidance */ }
         setMessages((prev) => prev.map((m) =>
-          m.id === assistantMsg.id ? { ...m, content: `连接失败：${errMsg}\n\n请确认后台服务（openakita serve）已启动，且 HTTP API 端口（18900）可访问。`, streaming: false } : m
+          m.id === assistantMsg.id ? { ...m, content: `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
         ));
       }
     } finally {
@@ -2541,7 +2548,7 @@ export function ChatView({
         });
       }
     }
-  }, [inputText, pendingAttachments, isStreaming, activeConvId, planMode, selectedEndpoint, apiBase, slashCommands, thinkingMode, thinkingDepth]);
+  }, [inputText, pendingAttachments, isStreaming, activeConvId, planMode, selectedEndpoint, apiBase, slashCommands, thinkingMode, thinkingDepth, t]);
 
   // ── 处理用户回答 (ask_user) ──
   const handleAskAnswer = useCallback((msgId: string, answer: string) => {
