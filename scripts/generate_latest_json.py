@@ -39,12 +39,12 @@ PLATFORM_PATTERNS = {
     },
     "darwin-aarch64": {
         "extensions": [".app.tar.gz", ".dmg"],
-        "keywords": [],
+        "keywords": ["macos-arm64", "aarch64", "arm64"],
         "exclude": [],
     },
     "darwin-x86_64": {
         "extensions": [".app.tar.gz", ".dmg"],
-        "keywords": [],
+        "keywords": ["macos-x64", "x86_64", "intel"],
         "exclude": [],
     },
     "linux-x86_64": {
@@ -196,9 +196,14 @@ def main():
             "keywords": ["core"],
             "exclude": ["full", "uninstall"],
         },
-        "macos": {
+        "macos-arm64": {
             "extensions": [".dmg"],
-            "keywords": [],
+            "keywords": ["macos-arm64", "aarch64", "arm64"],
+            "exclude": [],
+        },
+        "macos-x64": {
+            "extensions": [".dmg"],
+            "keywords": ["macos-x64", "x86_64", "intel"],
             "exclude": [],
         },
         "linux-deb-ubuntu22-amd64": {
@@ -237,6 +242,12 @@ def main():
                 dl_entry["github_url"] = github_url
             downloads[dl_key] = dl_entry
             print(f"  download.{dl_key}: {asset['name']} → {download_url} ✓")
+
+    # Backward compatibility: keep generic "macos" key pointing to arm64 first.
+    if "macos-arm64" in downloads:
+        downloads["macos"] = downloads["macos-arm64"]
+    elif "macos-x64" in downloads:
+        downloads["macos"] = downloads["macos-x64"]
 
     manifest = {
         "version": version,

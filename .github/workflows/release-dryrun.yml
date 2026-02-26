@@ -41,16 +41,17 @@ jobs:
           # macOS - Apple Silicon (arm64)
           - platform: macos-latest
             bundles: "dmg"
-            args: ""
+            args: "--target aarch64-apple-darwin"
+            rust_target: "aarch64-apple-darwin"
             build_mode: "core"
-            suffix: ""
+            suffix: "-macos-arm64"
           # macOS - Intel (x86_64)
           - platform: macos-13
             bundles: "dmg"
             args: "--target x86_64-apple-darwin"
             rust_target: "x86_64-apple-darwin"
             build_mode: "core"
-            suffix: "-macos-intel"
+            suffix: "-macos-x64"
 
     runs-on: ${{ matrix.platform }}
     steps:
