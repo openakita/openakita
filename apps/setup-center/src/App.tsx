@@ -8953,7 +8953,7 @@ export function App() {
 
               <div className="obModuleList">
                 {/* openakita 命令 */}
-                <label className={`obModuleItem ${obCliOpenakita ? "" : ""}`} style={obCliOpenakita ? { borderColor: "var(--brand)", background: "var(--nav-active)" } : {}}>
+                <label className={`obModuleItem`} style={obCliOpenakita ? { borderColor: "var(--brand)", background: "var(--panel2)" } : {}}>
                   <input
                     type="checkbox"
                     checked={obCliOpenakita}
@@ -8966,7 +8966,7 @@ export function App() {
                 </label>
 
                 {/* oa 命令 */}
-                <label className={`obModuleItem`} style={obCliOa ? { borderColor: "var(--brand)", background: "var(--nav-active)" } : {}}>
+                <label className={`obModuleItem`} style={obCliOa ? { borderColor: "var(--brand)", background: "var(--panel2)" } : {}}>
                   <input
                     type="checkbox"
                     checked={obCliOa}
@@ -8976,11 +8976,11 @@ export function App() {
                     <strong style={{ fontFamily: "monospace", fontSize: 15 }}>oa</strong>
                     <span className="obModuleDesc">简短别名，推荐日常使用</span>
                   </div>
-                  <span className="obModuleBadge" style={{ background: "#e0e7ff", color: "#4f46e5" }}>推荐</span>
+                  <span className="obModuleBadge obModuleBadgeRec">推荐</span>
                 </label>
 
                 {/* PATH 选项 */}
-                <label className={`obModuleItem`} style={obCliAddToPath ? { borderColor: "var(--brand)", background: "var(--nav-active)" } : {}}>
+                <label className={`obModuleItem`} style={obCliAddToPath ? { borderColor: "var(--brand)", background: "var(--panel2)" } : {}}>
                   <input
                     type="checkbox"
                     checked={obCliAddToPath}
@@ -8993,8 +8993,8 @@ export function App() {
                 </label>
 
                 {/* 开机自启 */}
-                <div style={{ borderTop: "1px solid #e2e8f0", margin: "8px 0" }} />
-                <label className={`obModuleItem`} style={obAutostart ? { borderColor: "var(--brand)", background: "var(--nav-active)" } : {}}>
+                <div style={{ borderTop: "1px solid var(--line)", margin: "8px 0" }} />
+                <label className={`obModuleItem`} style={obAutostart ? { borderColor: "var(--brand)", background: "var(--panel2)" } : {}}>
                   <input
                     type="checkbox"
                     checked={obAutostart}
@@ -9004,30 +9004,30 @@ export function App() {
                     <strong>{t("onboarding.autostart.label")}</strong>
                     <span className="obModuleDesc">{t("onboarding.autostart.desc")}</span>
                   </div>
-                  <span className="obModuleBadge" style={{ background: "#e0e7ff", color: "#4f46e5" }}>{t("onboarding.autostart.recommended")}</span>
+                  <span className="obModuleBadge obModuleBadgeRec">{t("onboarding.autostart.recommended")}</span>
                 </label>
               </div>
 
               {/* 命令预览 */}
               {(obCliOpenakita || obCliOa) && (
                 <div className="obFormArea" style={{ marginTop: 16, padding: "16px 20px" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#475569", marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)", marginBottom: 10 }}>
                     安装后可使用的命令示例
                   </div>
                   <div style={{
-                    background: "#1e293b", borderRadius: 8, padding: "14px 18px",
+                    background: "#0f172a", borderRadius: 8, padding: "14px 18px",
                     fontFamily: "'Cascadia Code', 'Fira Code', 'SF Mono', Consolas, monospace",
-                    fontSize: 13, lineHeight: 1.9, color: "#e2e8f0", overflowX: "auto",
+                    fontSize: 13, lineHeight: 1.9, color: "#e5e7eb", overflowX: "auto",
                   }}>
                     {obCliOa && <>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> serve <span style={{ color: "var(--muted)", marginLeft: 24 }}># 启动后端服务</span></div>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> status <span style={{ color: "var(--muted)", marginLeft: 16 }}># 查看运行状态</span></div>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> run <span style={{ color: "var(--muted)", marginLeft: 36 }}># 单次对话</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> serve <span style={{ color: "#94a3b8", marginLeft: 24 }}># 启动后端服务</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> status <span style={{ color: "#94a3b8", marginLeft: 16 }}># 查看运行状态</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> run <span style={{ color: "#94a3b8", marginLeft: 36 }}># 单次对话</span></div>
                     </>}
                     {obCliOa && obCliOpenakita && <div style={{ height: 4 }} />}
                     {obCliOpenakita && <>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#a5b4fc" }}>openakita</span> init <span style={{ color: "var(--muted)", marginLeft: 8 }}># 初始化工作区</span></div>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#a5b4fc" }}>openakita</span> serve <span style={{ color: "#64748b" }}># 启动后端服务</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#a5b4fc" }}>openakita</span> init <span style={{ color: "#94a3b8", marginLeft: 8 }}># 初始化工作区</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#a5b4fc" }}>openakita</span> serve <span style={{ color: "#94a3b8" }}># 启动后端服务</span></div>
                     </>}
                   </div>
                 </div>
@@ -9301,7 +9301,7 @@ export function App() {
     if (view === "memory") {
       return (
         <div>
-          {_disableToggle("memory", "记忆管理")}
+          {_disableToggle("memory", t("sidebar.memory"))}
           {disabledViews.includes("memory") ? (
             <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
               <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，点击上方开关启用</p>
@@ -9553,8 +9553,8 @@ export function App() {
           <div className={`navItem ${view === "scheduler" ? "navItemActive" : ""}`} onClick={() => setView("scheduler")} role="button" tabIndex={0} title={t("sidebar.scheduler")} style={disabledViews.includes("scheduler") ? { opacity: 0.4 } : undefined}>
             <IconCalendar size={16} /> {!sidebarCollapsed && <span>{t("sidebar.scheduler")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
           </div>
-          <div className={`navItem ${view === "memory" ? "navItemActive" : ""}`} onClick={() => setView("memory")} role="button" tabIndex={0} title="记忆管理" style={disabledViews.includes("memory") ? { opacity: 0.4 } : undefined}>
-            <IconBrain size={16} /> {!sidebarCollapsed && <span>记忆管理 <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
+          <div className={`navItem ${view === "memory" ? "navItemActive" : ""}`} onClick={() => setView("memory")} role="button" tabIndex={0} title={t("sidebar.memory")} style={disabledViews.includes("memory") ? { opacity: 0.4 } : undefined}>
+            <IconBrain size={16} /> {!sidebarCollapsed && <span>{t("sidebar.memory")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
           </div>
           <div className={`navItem ${view === "modules" ? "navItemActive" : ""}`} onClick={() => { setView("modules"); obLoadModules(); }} role="button" tabIndex={0} title={t("sidebar.modules")} style={disabledViews.includes("modules") ? { opacity: 0.4 } : undefined}>
             <IconGear size={16} /> {!sidebarCollapsed && <span>{t("sidebar.modules")}</span>}

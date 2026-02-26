@@ -2360,7 +2360,44 @@ button:disabled {
 .obModuleItem input[type="checkbox"] {
   width: 18px;
   height: 18px;
-  accent-color: var(--brand);
+  flex-shrink: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.obModuleItem input[type="checkbox"]::after {
+  content: "";
+  width: 5px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-0.5px, -0.5px);
+  opacity: 0;
+}
+
+.obModuleItem input[type="checkbox"]:checked {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.obModuleItem input[type="checkbox"]:checked::after {
+  opacity: 1;
+}
+
+.obModuleItem input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.obModuleItem input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
 }
 
 .obModuleInstalled {
@@ -2395,6 +2432,12 @@ button:disabled {
   padding: 2px 8px;
   border-radius: 10px;
   white-space: nowrap;
+}
+
+.obModuleBadgeRec {
+  color: var(--brand2);
+  background: var(--nav-hover);
+  border: 1px solid var(--nav-active-border);
 }
 
 /* Progress log */
