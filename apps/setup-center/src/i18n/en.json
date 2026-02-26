@@ -82,6 +82,8 @@
     "startService": "Start Service",
     "connectService": "Connect to Running Service",
     "serviceHint": "Chat requires the backend service running. Start this workspace's service or connect to an existing serve instance.",
+    "backendServiceHint": "Please confirm the backend service (openakita serve) is running and HTTP API port 18900 is reachable.",
+    "backendOnlineUpstreamHint": "Backend service is online (/api/health is reachable). This failure is more likely caused by upstream model network jitter or temporary provider unavailability. Please try again later.",
     "title": "AI Chat Assistant",
     "thoughtFor": "Thought for {{seconds}}s",
     "showChain": "Show thinking chain",
