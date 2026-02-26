@@ -187,7 +187,11 @@ async function fetchModelsDirectly(params: {
     // Anthropic: GET /v1/models
     const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
     const resp = await proxyFetch(url, {
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      headers: {
+        "x-api-key": apiKey,
+        Authorization: `Bearer ${apiKey}`,
+        "anthropic-version": "2023-06-01",
+      },
       timeoutSecs: 30,
     });
     if (resp.status >= 400) throw new Error(`Anthropic API ${resp.status}: ${resp.body.slice(0, 200)}`);

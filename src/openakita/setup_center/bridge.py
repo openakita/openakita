@@ -89,6 +89,8 @@ async def _list_models_anthropic(api_key: str, base_url: str, provider_slug: str
             url,
             headers={
                 "x-api-key": api_key,
+                # 部分 Anthropic 兼容网关仅识别 Bearer。
+                "Authorization": f"Bearer {api_key}",
                 "anthropic-version": "2023-06-01",
             },
         )

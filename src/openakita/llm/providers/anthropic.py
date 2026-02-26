@@ -49,6 +49,11 @@ class AnthropicProvider(LLMProvider):
         """获取 base URL"""
         return self.config.base_url.rstrip("/")
 
+    def _messages_url(self) -> str:
+        """构建 messages API URL，避免 /v1 重复拼接。"""
+        b = self.base_url
+        return f"{b}/messages" if b.endswith("/v1") else f"{b}/v1/messages"
+
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端
 
@@ -110,7 +115,7 @@ class AnthropicProvider(LLMProvider):
         # 发送请求
         try:
             response = await client.post(
-                f"{self.base_url}/v1/messages",
+                self._messages_url(),
                 headers=self._build_headers(),
                 json=body,
             )
@@ -146,7 +151,7 @@ class AnthropicProvider(LLMProvider):
         try:
             async with client.stream(
                 "POST",
-                f"{self.base_url}/v1/messages",
+                self._messages_url(),
                 headers=self._build_headers(),
                 json=body,
             ) as response:
@@ -182,6 +187,8 @@ class AnthropicProvider(LLMProvider):
         return {
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
+            # 部分 Anthropic 兼容网关仅识别 Bearer，保留 x-api-key 以兼容官方 Anthropic。
+            "Authorization": f"Bearer {self.api_key}",
             "anthropic-version": self.ANTHROPIC_VERSION,
         }
 
