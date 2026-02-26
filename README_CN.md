@@ -9,21 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/openakita/openakita/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License" height="20" />
-  </a>
-  <a href="https://www.python.org/downloads/">
-    <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python Version" height="20" />
-  </a>
-  <a href="https://github.com/openakita/openakita/releases">
-    <img src="https://img.shields.io/github/v/release/openakita/openakita?style=flat-square" alt="Release" height="20" />
-  </a>
-  <a href="https://pypi.org/project/openakita/">
-    <img src="https://img.shields.io/pypi/v/openakita?color=green&style=flat-square" alt="PyPI" height="20" />
-  </a>
-  <a href="https://github.com/openakita/openakita/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/openakita/openakita/ci.yml?branch=main&style=flat-square" alt="Build Status" height="20" />
-  </a>
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License" height="20" />
+  <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python Version" height="20" />
+  <img src="https://img.shields.io/github/v/release/openakita/openakita?style=flat-square" alt="Release" height="20" />
+  <img src="https://img.shields.io/pypi/v/openakita?color=green&style=flat-square" alt="PyPI" height="20" />
+  <img src="https://img.shields.io/github/actions/workflow/status/openakita/openakita/ci.yml?branch=main&style=flat-square" alt="Build Status" height="20" />
 </p>
 
 <p align="center">
