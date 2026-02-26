@@ -24,7 +24,21 @@ import logging
 from importlib import import_module
 from pathlib import Path
 
+from .anthropic import AnthropicRegistry
 from .base import ModelInfo, ProviderInfo, ProviderRegistry
+from .dashscope import DashScopeRegistry
+from .openrouter import OpenRouterRegistry
+from .siliconflow import SiliconFlowRegistry
+
+__all__ = [
+    "AnthropicRegistry",
+    "DashScopeRegistry",
+    "ModelInfo",
+    "OpenRouterRegistry",
+    "ProviderInfo",
+    "ProviderRegistry",
+    "SiliconFlowRegistry",
+]
 
 _logger = logging.getLogger(__name__)
 

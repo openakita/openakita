@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +19,6 @@ from pathlib import Path
 from .extractor import MemoryExtractor
 from .types import (
     ConversationTurn,
-    Episode,
     MemoryPriority,
     MemoryType,
     SemanticMemory,
@@ -246,7 +244,7 @@ class LifecycleManager:
             by_type[mem.type.value].append(mem)
 
         deleted = 0
-        for mem_type, group in by_type.items():
+        for _mem_type, group in by_type.items():
             if len(group) < 2:
                 continue
             clusters = self._cluster_by_content(group, threshold=0.7)

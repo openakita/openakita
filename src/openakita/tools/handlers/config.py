@@ -314,7 +314,7 @@ class ConfigHandler:
         if not grouped:
             return "未找到匹配的配置项。"
 
-        parts.append(f"## 当前配置" + (f" (分类: {category_filter})" if category_filter else "") + "\n")
+        parts.append("## 当前配置" + (f" (分类: {category_filter})" if category_filter else "") + "\n")
         for cat in sorted(grouped.keys()):
             parts.append(f"### {cat}")
             parts.extend(grouped[cat])
@@ -331,7 +331,7 @@ class ConfigHandler:
             return ["- ⚠️ 无法读取端点配置"]
 
         lines = []
-        for i, ep in enumerate(endpoints, 1):
+        for _i, ep in enumerate(endpoints, 1):
             key_info = ""
             if ep.api_key_env:
                 has_key = bool(os.environ.get(ep.api_key_env))
@@ -439,7 +439,7 @@ class ConfigHandler:
         result_lines = ["✅ 配置已更新:\n"] + changes
 
         if errors:
-            result_lines.append(f"\n⚠️ 部分字段被拒绝:")
+            result_lines.append("\n⚠️ 部分字段被拒绝:")
             result_lines.extend(f"  {e}" for e in errors)
 
         if restart_needed:
@@ -800,8 +800,8 @@ class ConfigHandler:
                 f"  slug: `{p.slug}` | 协议: {p.api_type} | URL: {p.default_base_url}"
             )
         lines.append(
-            f"\n自定义服务商文件: data/custom_providers.json\n"
-            f"使用 operation=add 添加新服务商，operation=update 修改已有服务商。"
+            "\n自定义服务商文件: data/custom_providers.json\n"
+            "使用 operation=add 添加新服务商，operation=update 修改已有服务商。"
         )
         return "\n".join(lines)
 
@@ -821,7 +821,7 @@ class ConfigHandler:
 
         base_url = entry["default_base_url"].strip()
         if not base_url.startswith(("http://", "https://")):
-            return f"default_base_url 必须以 http:// 或 https:// 开头"
+            return "default_base_url 必须以 http:// 或 https:// 开头"
 
         return None
 
@@ -834,8 +834,8 @@ class ConfigHandler:
             return f"❌ {err}"
 
         from ...llm.registries import (
-            load_custom_providers,
             list_providers,
+            load_custom_providers,
             reload_registries,
             save_custom_providers,
         )

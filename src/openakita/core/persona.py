@@ -342,6 +342,7 @@ class PersonaManager:
         """获取当前上下文信息"""
         try:
             from zoneinfo import ZoneInfo
+
             from ..config import settings
             tz = ZoneInfo(settings.scheduler_timezone)
             now = datetime.now(tz)

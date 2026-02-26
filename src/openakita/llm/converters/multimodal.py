@@ -8,8 +8,6 @@ import base64
 import logging as _multimodal_logging
 import re
 
-_converter_logger = _multimodal_logging.getLogger(__name__)
-
 from ..types import (
     AudioBlock,
     AudioContent,
@@ -19,10 +17,11 @@ from ..types import (
     ImageBlock,
     ImageContent,
     TextBlock,
-    UnsupportedMediaError,
     VideoBlock,
     VideoContent,
 )
+
+_converter_logger = _multimodal_logging.getLogger(__name__)
 
 # 图片格式检测
 IMAGE_SIGNATURES = {

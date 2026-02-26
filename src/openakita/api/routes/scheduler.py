@@ -246,10 +246,7 @@ async def trigger_task(request: Request, task_id: str):
 async def list_channels(request: Request):
     """List available IM channels with chat_id for notification targeting."""
     agent = getattr(request.app.state, "agent", None)
-    if agent is None:
-        local = None
-    else:
-        local = getattr(agent, "_local_agent", agent)
+    local = None if agent is None else getattr(agent, "_local_agent", agent)
 
     gateway = None
     executor = getattr(local, "_task_executor", None)

@@ -7,6 +7,7 @@ Skills route: GET /api/skills, POST /api/skills/config, GET /api/skills/marketpl
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Request
@@ -18,14 +19,13 @@ router = APIRouter()
 SKILLS_SH_API = "https://skills.sh/api/search"
 
 
-def _read_external_allowlist() -> tuple["Path", set[str] | None]:
+def _read_external_allowlist() -> tuple[Path, set[str] | None]:
     """Read external_allowlist from data/skills.json.
 
     Returns (base_path, allowlist). allowlist is None when the file doesn't
     exist or has no external_allowlist key (meaning "all external skills enabled").
     """
     import json
-    from pathlib import Path
 
     try:
         from openakita.config import settings

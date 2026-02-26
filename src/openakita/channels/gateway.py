@@ -29,6 +29,7 @@ from .types import OutgoingMessage, UnifiedMessage
 
 if TYPE_CHECKING:
     from ..core.brain import Brain
+    from ..llm.stt_client import STTClient
 
 logger = logging.getLogger(__name__)
 
@@ -569,7 +570,7 @@ class ThinkingCommandHandler:
         for key, label in self.DEPTH_LABELS.items():
             marker = " ⬅️" if key == (current_depth or "medium") else ""
             lines.append(f"• `{key}` — {label}{marker}")
-        lines.append(f"\n用法: `/thinking_depth low|medium|high`")
+        lines.append("\n用法: `/thinking_depth low|medium|high`")
         return "\n".join(lines)
 
 
@@ -937,8 +938,8 @@ class MessageGateway:
             [(base64_data, media_type), ...] 列表
         """
         import asyncio
-        import tempfile
         import shutil
+        import tempfile
 
         self._ensure_ffmpeg()
         if not shutil.which("ffmpeg"):
@@ -1039,7 +1040,7 @@ class MessageGateway:
             self._whisper_loaded = True
             logger.info(f"Whisper model '{model_name}' loaded successfully")
 
-        except ImportError as e:
+        except ImportError:
             from openakita.tools._import_helper import import_or_hint
             hint = import_or_hint("whisper")
             logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")

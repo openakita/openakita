@@ -25,7 +25,8 @@ async def health(request: Request):
     """Basic health check - returns 200 if server is running."""
     import os
 
-    from openakita import __version__ as backend_version, __git_hash__, get_version_string
+    from openakita import __git_hash__, get_version_string
+    from openakita import __version__ as backend_version
 
     return {
         "status": "ok",

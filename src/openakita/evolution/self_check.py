@@ -604,7 +604,7 @@ ID: {result.test_id}
             DailyReport
         """
         logger.info(
-            f"Starting self-check (LLM-driven)"
+            "Starting self-check (LLM-driven)"
             + (f", since={since.isoformat()}" if since else ", first run")
             + "..."
         )

@@ -15,7 +15,6 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -283,7 +282,7 @@ async def _upload_to_worker(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _pack_images(zf: zipfile.ZipFile, images: Optional[list[UploadFile]]) -> None:
+async def _pack_images(zf: zipfile.ZipFile, images: list[UploadFile] | None) -> None:
     """Write uploaded images into a zip file."""
     if not images:
         return
@@ -301,7 +300,7 @@ async def submit_bug_report(
     steps: str = Form(""),
     upload_logs: bool = Form(True),
     upload_debug: bool = Form(True),
-    images: Optional[list[UploadFile]] = File(None),
+    images: list[UploadFile] | None = File(None),  # noqa: B008
 ):
     """Submit a bug report with system info, logs, and LLM debug files."""
     if len(title) < 2 or len(title) > 200:
@@ -369,7 +368,7 @@ async def submit_feature_request(
     turnstile_token: str = Form(...),
     contact_email: str = Form(""),
     contact_wechat: str = Form(""),
-    images: Optional[list[UploadFile]] = File(None),
+    images: list[UploadFile] | None = File(None),  # noqa: B008
 ):
     """Submit a feature/requirement request with optional contact info and attachments."""
     if len(title) < 2 or len(title) > 200:

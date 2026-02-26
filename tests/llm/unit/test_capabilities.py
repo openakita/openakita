@@ -182,7 +182,9 @@ class TestHelperFunctions:
                 if "pdf" in caps:
                     assert isinstance(caps["pdf"], bool)
 class TestAudioPdfInference:
-    """audio/pdf 能力推断测试"""    def test_ut_c13_audio_keyword_inference(self):
+    """audio/pdf 能力推断测试"""
+
+    def test_ut_c13_audio_keyword_inference(self):
         """UT-C13: audio 关键词推断"""
         # "audio" 关键词
         caps = infer_capabilities("some-audio-model")
@@ -196,9 +198,13 @@ class TestAudioPdfInference:
         """UT-C14: pdf 关键词推断"""
         # "claude" 关键词
         caps = infer_capabilities("claude-custom-model")
-        assert caps["pdf"] == True        # "gemini" 关键词也推断 pdf
+        assert caps["pdf"] == True
+
+        # "gemini" 关键词也推断 pdf
         caps = infer_capabilities("gemini-custom-model")
-        assert caps["pdf"] == True    def test_ut_c15_gpt4o_audio_exact_match(self):
+        assert caps["pdf"] == True
+
+    def test_ut_c15_gpt4o_audio_exact_match(self):
         """UT-C15: gpt-4o-audio 精确匹配"""
         caps = infer_capabilities("gpt-4o-audio", provider_slug="openai")
         assert caps["audio"] == True

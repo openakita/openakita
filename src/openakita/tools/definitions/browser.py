@@ -23,7 +23,11 @@ BROWSER_TOOLS = [
         "description": "Intelligent browser task - delegates to browser-use Agent for complex multi-step interactions. Best for: (1) Complex workflows like login + fill form + submit, (2) Tasks requiring multiple clicks and interactions on the SAME page. **NOT recommended for search tasks** - use browser_navigate with URL params instead (e.g. https://www.baidu.com/s?wd=keyword). If browser_task fails once, switch to manual steps (browser_navigate + browser_get_content).",
         "related_tools": [
             {"name": "web_search", "relation": "仅需快速获取搜索结果（无需页面交互）时改用 web_search，更快更省资源"},
-            {"name": "browser_navigate", "relation": "搜索类任务优先用 browser_navigate 拼 URL 参数直达，更可靠"},
+            {"name": "browser_navigate", "relation": "搜索类任务优先使用，拼 URL 参数直达"},
+            {
+                "name": "view_image",
+                "relation": "browser_task 完成后务必截图+view_image 验证结果",
+            },
         ],
         "detail": build_detail(
             summary="智能浏览器任务 - 委托 browser-use Agent 自动执行复杂交互。",
@@ -75,13 +79,6 @@ BROWSER_TOOLS = [
                 "scenario": "表单填写",
                 "params": {"task": "填写注册表单：用户名test，邮箱test@example.com，点击提交"},
                 "expected": "Agent fills form fields and submits",
-            },
-        ],
-        "related_tools": [
-            {"name": "browser_navigate", "relation": "搜索类任务优先使用，拼 URL 参数直达"},
-            {
-                "name": "view_image",
-                "relation": "browser_task 完成后务必截图+view_image 验证结果",
             },
         ],
         "input_schema": {

@@ -246,7 +246,10 @@ class BrowserHandler:
         else:
             hints: list[str] = []
             try:
-                from ..browser.chrome_finder import detect_chrome_devtools_mcp, check_mcp_chrome_extension
+                from ..browser.chrome_finder import (
+                    check_mcp_chrome_extension,
+                    detect_chrome_devtools_mcp,
+                )
                 devtools_info = detect_chrome_devtools_mcp()
                 if devtools_info["available"]:
                     hints.append(
@@ -309,7 +312,7 @@ class BrowserHandler:
     def _model_supports_vision(self) -> bool:
         """检查当前 LLM 是否支持 vision（图片输入）。"""
         try:
-            from ...llm.capabilities import infer_capabilities, get_provider_slug_from_base_url
+            from ...llm.capabilities import get_provider_slug_from_base_url, infer_capabilities
             brain = getattr(self.agent, "brain", None)
             if not brain:
                 return False
@@ -338,8 +341,9 @@ class BrowserHandler:
             return None
 
         try:
-            from PIL import Image
             import io
+
+            from PIL import Image
 
             img = Image.open(p)
             w, h = img.size

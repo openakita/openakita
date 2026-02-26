@@ -14,13 +14,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .search_backends import SearchBackend, FTS5Backend, create_search_backend
+from .search_backends import FTS5Backend, SearchBackend, create_search_backend
 from .storage import MemoryStorage
 from .types import (
-    SemanticMemory,
+    Attachment,
     Episode,
     Scratchpad,
-    Attachment,
+    SemanticMemory,
 )
 
 logger = logging.getLogger(__name__)

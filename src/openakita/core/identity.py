@@ -181,7 +181,7 @@ class Identity:
         Args:
             include_active_task: 是否包含活跃任务（IM Session 应设为 False）
         """
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         try:
             from zoneinfo import ZoneInfo

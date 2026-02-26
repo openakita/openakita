@@ -576,9 +576,8 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
     import io
     import shutil
     import tempfile
-    import zipfile
-
     import urllib.request
+    import zipfile
 
     data: bytes | None = None
     last_err: Exception | None = None
@@ -661,9 +660,8 @@ def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None
     import io
     import shutil
     import tempfile
-    import zipfile
-
     import urllib.request
+    import zipfile
 
     data: bytes | None = None
     last_err: Exception | None = None

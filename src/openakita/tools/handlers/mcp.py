@@ -15,7 +15,6 @@ MCP 处理器
 import json
 import logging
 import shutil
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

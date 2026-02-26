@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import uuid
 from datetime import datetime
 
 from .types import (

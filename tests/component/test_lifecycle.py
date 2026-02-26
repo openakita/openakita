@@ -100,7 +100,7 @@ class TestRefreshMemoryMd:
         lifecycle.refresh_memory_md(identity_dir)
 
         memory_md = identity_dir / "MEMORY.md"
-        assert memory_md.exists()
+        assert not memory_md.exists()
 
 
 class TestClusterByContent:

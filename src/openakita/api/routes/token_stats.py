@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query, Request
 
 from openakita.storage.database import Database
-from openakita.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +74,7 @@ def _parse_range(
         e = datetime.fromisoformat(end)
         return s.strftime("%Y-%m-%d %H:%M:%S"), e.strftime("%Y-%m-%d %H:%M:%S")
 
-    from datetime import timezone
-    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    now_utc = datetime.now(UTC).replace(tzinfo=None)
 
     delta_map = {
         "1d": timedelta(days=1),

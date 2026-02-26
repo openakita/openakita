@@ -22,7 +22,23 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import bug_report, chat, chat_models, config, files, health, im, logs, mcp, memory, scheduler, sessions, skills, token_stats, upload
+from .routes import (
+    bug_report,
+    chat,
+    chat_models,
+    config,
+    files,
+    health,
+    im,
+    logs,
+    mcp,
+    memory,
+    scheduler,
+    sessions,
+    skills,
+    token_stats,
+    upload,
+)
 
 logger = logging.getLogger(__name__)
 

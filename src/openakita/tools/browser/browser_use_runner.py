@@ -128,7 +128,7 @@ class BrowserUseRunner:
             _task_timeout = max_steps * 60
             try:
                 history = await asyncio.wait_for(agent.run(), timeout=_task_timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     f"[BrowserTask] Task timed out after {_task_timeout}s "
                     f"(max_steps={max_steps}): {task}"

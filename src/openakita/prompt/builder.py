@@ -317,7 +317,7 @@ def _merge_policies(system: str, user: str) -> str:
 
 def _get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
     """获取指定时区的当前时间，避免依赖服务器本地时区"""
-    from datetime import timezone, timedelta
+    from datetime import timedelta, timezone
 
     try:
         from zoneinfo import ZoneInfo

@@ -33,7 +33,6 @@ from .types import (
     LLMResponse,
     Message,
     Tool,
-    UnsupportedMediaError,
     VideoBlock,
 )
 
@@ -461,7 +460,7 @@ class LLMClient:
                 # provider 内部已调用 mark_unhealthy()
                 logger.warning(
                     f"[LLM-Stream] endpoint={provider.name} error={e}"
-                    + (f", trying next endpoint..." if i < len(eligible) - 1 else "")
+                    + (", trying next endpoint..." if i < len(eligible) - 1 else "")
                 )
             except Exception as e:
                 last_error = e
@@ -470,7 +469,7 @@ class LLMClient:
                 provider.mark_unhealthy(str(e))
                 logger.warning(
                     f"[LLM-Stream] endpoint={provider.name} unexpected_error={e}"
-                    + (f", trying next endpoint..." if i < len(eligible) - 1 else ""),
+                    + (", trying next endpoint..." if i < len(eligible) - 1 else ""),
                     exc_info=True,
                 )
 

@@ -38,10 +38,10 @@ from .base import (
     validate_tool_definition,
     validate_tool_name,
 )
+from .browser import BROWSER_TOOLS
 
 # 工具定义
 from .config import CONFIG_TOOLS
-from .browser import BROWSER_TOOLS
 from .filesystem import FILESYSTEM_TOOLS
 from .im_channel import IM_CHANNEL_TOOLS
 from .mcp import MCP_TOOLS

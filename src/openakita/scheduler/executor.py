@@ -529,7 +529,7 @@ class TaskExecutor:
             tracker.record_memory_consolidation(result)
 
             v2_keys = ["unextracted_processed", "duplicates_removed", "memories_decayed"]
-            v1_keys = ["sessions_processed", "memories_extracted", "memories_added"]
+            _v1_keys = ["sessions_processed", "memories_extracted", "memories_added"]
 
             if any(result.get(k) for k in v2_keys):
                 summary = (

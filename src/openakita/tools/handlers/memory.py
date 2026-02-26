@@ -430,13 +430,13 @@ class MemoryHandler:
         if not mem:
             return f"未找到记忆 {memory_id}"
 
-        lines = [f"## 记忆详情\n"]
+        lines = ["## 记忆详情\n"]
         lines.append(f"- [{mem.type.value}] {mem.content}")
         lines.append(f"  重要性: {mem.importance_score:.1f}, 引用: {mem.access_count}, 置信度: {mem.confidence:.1f}")
 
         ep_id = mem.source_episode_id
         if not ep_id:
-            lines.append(f"\n该记忆没有关联情节（可能是手动添加或早期提取的）。")
+            lines.append("\n该记忆没有关联情节（可能是手动添加或早期提取的）。")
             return "\n".join(lines)
 
         ep = store.get_episode(ep_id)
@@ -444,7 +444,7 @@ class MemoryHandler:
             lines.append(f"\n关联情节 {ep_id} 已不存在。")
             return "\n".join(lines)
 
-        lines.append(f"\n## 来源情节\n")
+        lines.append("\n## 来源情节\n")
         lines.append(f"- 目标: {ep.goal or '(未记录)'}")
         lines.append(f"- 结果: {ep.outcome}")
         lines.append(f"- 摘要: {ep.summary[:200]}")
@@ -477,7 +477,7 @@ class MemoryHandler:
         if not ep:
             return f"未找到情节 {episode_id}"
 
-        lines = [f"## 情节详情\n"]
+        lines = ["## 情节详情\n"]
         lines.append(f"- 目标: {ep.goal or '(未记录)'}")
         lines.append(f"- 结果: {ep.outcome}")
         lines.append(f"- 摘要: {ep.summary[:200]}")
@@ -496,7 +496,7 @@ class MemoryHandler:
                 else:
                     lines.append(f"- (已删除) {mid[:12]}")
         else:
-            lines.append(f"\n该情节尚无关联记忆。")
+            lines.append("\n该情节尚无关联记忆。")
 
         turns = store.get_session_turns(ep.session_id)
         if turns:

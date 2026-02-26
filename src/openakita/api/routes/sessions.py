@@ -146,7 +146,7 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
             system="你是标题生成助手。只输出标题文字，不要任何额外内容。",
             max_tokens=50,
         )
-        title = response.content.strip().strip('"\'""''「」【】').strip()
+        title = response.content.strip().strip('"\'"\u201c\u201d\u2018\u2019\u300c\u300d\u3010\u3011').strip()  # noqa: B005
         if not title or len(title) > 30:
             title = body.message[:20] or "新对话"
         return {"title": title}

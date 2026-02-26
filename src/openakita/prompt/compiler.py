@@ -261,9 +261,7 @@ def _compile_with_rules(content: str, config: dict) -> str:
         if stripped.startswith(("-", "*")) or re.match(r"^\d+\.", stripped):
             if len(stripped) < 150:
                 extracted.append(stripped)
-        elif in_relevant and stripped and len(stripped) < 100:
-            extracted.append(f"- {stripped}")
-        elif not extracted and stripped and len(stripped) < 200:
+        elif in_relevant and stripped and len(stripped) < 100 or not extracted and stripped and len(stripped) < 200:
             extracted.append(f"- {stripped}")
 
     unique = list(dict.fromkeys(extracted))

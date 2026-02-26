@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .types import Attachment, SemanticMemory, Episode
+from .types import Attachment, Episode
 from .unified_store import UnifiedStore
 
 logger = logging.getLogger(__name__)
@@ -405,8 +405,7 @@ class RetrievalEngine:
             "的", "了", "吗", "吧", "呢", "啊", "哦", "嗯", "是", "在",
             "有", "和", "与", "或", "但", "不", "也", "都", "就", "还",
             "要", "会", "能", "可以", "这个", "那个", "什么", "怎么",
-            "为什么", "哪个", "哪里", "多少", "一下", "一些", "可以",
-            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "为什么", "哪个", "哪里", "多少", "一下", "一些", "the", "a", "an", "is", "are", "was", "were", "be", "been",
             "this", "that", "what", "how", "where", "when", "who", "which",
             "do", "does", "did", "will", "would", "can", "could", "should",
             "给我", "帮我", "请", "看看", "找到", "告诉我",

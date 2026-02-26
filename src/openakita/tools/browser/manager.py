@@ -286,7 +286,7 @@ class BrowserManager:
                     pw_ctx.start(), timeout=20,
                 )
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_err = f"Playwright driver 启动超时 (20s, attempt {attempt}/{max_attempts})"
                 logger.warning(f"[Browser] {last_err}")
                 await self._cleanup_playwright()

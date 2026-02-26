@@ -32,10 +32,14 @@ from pathlib import Path
 from .consolidator import MemoryConsolidator
 from .extractor import MemoryExtractor
 from .retrieval import RetrievalEngine
-from .search_backends import create_search_backend
 from .types import (
-    Attachment, AttachmentDirection, ConversationTurn, Episode,
-    Memory, MemoryPriority, MemoryType, SemanticMemory,
+    Attachment,
+    AttachmentDirection,
+    ConversationTurn,
+    Memory,
+    MemoryPriority,
+    MemoryType,
+    SemanticMemory,
 )
 from .unified_store import UnifiedStore
 from .vector_store import VectorStore
@@ -43,7 +47,7 @@ from .vector_store import VectorStore
 logger = logging.getLogger(__name__)
 
 
-def _apply_retention(memory: "SemanticMemory", duration: str | None = None) -> None:
+def _apply_retention(memory: SemanticMemory, duration: str | None = None) -> None:
     """Set expires_at based on duration hint or memory priority."""
     if memory.expires_at is not None:
         return
@@ -819,8 +823,8 @@ class MemoryManager:
             result = await lifecycle.consolidate_daily()
         except Exception as e:
             logger.error(f"[Manager] Daily consolidation failed, using legacy: {e}")
-            from .daily_consolidator import DailyConsolidator
             from ..config import settings
+            from .daily_consolidator import DailyConsolidator
             dc = DailyConsolidator(
                 data_dir=self.data_dir,
                 memory_md_path=self.memory_md_path,

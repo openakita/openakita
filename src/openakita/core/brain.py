@@ -23,7 +23,6 @@ from anthropic.types import Usage as AnthropicUsage
 from ..config import settings
 from ..llm.client import LLMClient
 from ..llm.config import get_default_config_path, load_endpoints_config
-from .token_tracking import record_usage as _record_token_usage
 from ..llm.types import (
     AudioBlock,
     AudioContent,
@@ -42,6 +41,7 @@ from ..llm.types import (
     VideoBlock,
     VideoContent,
 )
+from .token_tracking import record_usage as _record_token_usage
 
 logger = logging.getLogger(__name__)
 

@@ -130,7 +130,7 @@ class ToolExecutor:
             # 工具未完成 —— 是取消还是超时？
             reason = ""
             if cancel_future and cancel_future in done:
-                reason = f"用户请求取消任务"
+                reason = "用户请求取消任务"
                 logger.warning(f"[ToolExecutor] Tool '{tool_name}' cancelled by user")
             else:
                 reason = f"工具执行超时 ({self._TOOL_HARD_TIMEOUT}s)"
