@@ -184,6 +184,31 @@ jobs:
         working-directory: apps/setup-center
         run: npm ci
 
+      - name: Preflight Rust dependency check
+        working-directory: apps/setup-center/src-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fetch --locked
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cargo check --target "${{ matrix.rust_target }}"
+          else
+            cargo check
+          fi
+
+      - name: Clean Rust release intermediates for current target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_BASE="apps/setup-center/src-tauri/target"
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            RELEASE_DIR="${TARGET_BASE}/${{ matrix.rust_target }}/release"
+          else
+            RELEASE_DIR="${TARGET_BASE}/release"
+          fi
+          rm -rf "${RELEASE_DIR}/deps" "${RELEASE_DIR}/build" "${RELEASE_DIR}/.fingerprint"
+          mkdir -p "${RELEASE_DIR}"
+
       - name: Build Tauri bundles
         working-directory: apps/setup-center
         timeout-minutes: 150
