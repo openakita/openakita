@@ -188,8 +188,17 @@ async def install_skill(request: Request):
         from openakita.setup_center.bridge import install_skill as _install_skill
 
         await asyncio.to_thread(_install_skill, workspace_dir, url)
+    except FileNotFoundError as e:
+        missing = getattr(e, "filename", None) or "外部命令"
+        logger.error("Skill install missing dependency: %s", e, exc_info=True)
+        return {
+            "error": (
+                f"安装失败：未找到可执行命令 `{missing}`。"
+                "请先安装 Git 并确保在 PATH 中，或改用 GitHub 简写/单个 SKILL.md 链接。"
+            )
+        }
     except Exception as e:
-        logger.error(f"Skill install failed: {e}")
+        logger.error("Skill install failed: %s", e, exc_info=True)
         return {"error": str(e)}
 
     # 安装成功后：重新加载技能到 agent 运行时，并应用 allowlist

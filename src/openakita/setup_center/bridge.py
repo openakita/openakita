@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -542,6 +543,15 @@ def _looks_like_github_shorthand(url: str) -> bool:
     return "/" in parts and len(parts.split("/")) == 2
 
 
+def _sanitize_skill_dir_name(name: str) -> str:
+    """Sanitize user-provided skill name into a safe directory name."""
+    cleaned = (name or "").strip().replace("\\", "/").strip("/")
+    if "/" in cleaned:
+        cleaned = cleaned.split("/")[-1]
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", cleaned).strip("-._")
+    return cleaned or "custom-skill"
+
+
 def _resolve_skills_dir(workspace_dir: str) -> Path:
     """计算技能安装目录。
 
@@ -741,16 +751,17 @@ def install_skill(workspace_dir: str, url: str) -> None:
         import tempfile
 
         if "@" in url:
-            repo_part, skill_name = url.split("@", 1)
-            skill_name = skill_name.strip()
-            if not skill_name:
+            repo_part, requested_skill = url.split("@", 1)
+            requested_skill = requested_skill.strip().replace("\\", "/").strip("/")
+            if not requested_skill:
                 # "owner/repo@" → 使用仓库名作为技能名
-                skill_name = repo_part.split("/")[-1]
+                requested_skill = repo_part.split("/")[-1]
         else:
             repo_part = url
-            skill_name = url.split("/")[-1]
+            requested_skill = repo_part.split("/")[-1]
 
         owner, repo = repo_part.split("/", 1)
+        skill_name = _sanitize_skill_dir_name(requested_skill)
         target = skills_dir / skill_name
 
         if target.exists():
@@ -766,22 +777,39 @@ def install_skill(workspace_dir: str, url: str) -> None:
             else:
                 _download_github_zip(owner, repo, tmp_dir)
 
-            # 优先查找 skills/<skill_name> 子目录（常见的多技能仓库布局）
-            skill_sub = tmp_dir / "skills" / skill_name
-            if skill_sub.is_dir():
-                shutil.copytree(str(skill_sub), str(target))
-            else:
-                # 其次查找仓库根目录下的 <skill_name> 子目录
-                alt_sub = tmp_dir / skill_name
-                if alt_sub.is_dir():
-                    shutil.copytree(str(alt_sub), str(target))
+            # 支持 skillId 为子路径（如 "skills/web-search"）
+            preferred_rel_paths: list[str] = []
+            if requested_skill:
+                preferred_rel_paths.append(requested_skill)
+                if requested_skill.startswith("skills/"):
+                    stripped = requested_skill[len("skills/"):]
+                    if stripped:
+                        preferred_rel_paths.append(stripped)
                 else:
-                    # 整个仓库就是一个技能
-                    shutil.copytree(str(tmp_dir), str(target))
-                    # 清理克隆产生的 .git 目录
-                    git_dir = target / ".git"
-                    if git_dir.exists():
-                        shutil.rmtree(str(git_dir), ignore_errors=True)
+                    preferred_rel_paths.append(f"skills/{requested_skill}")
+            if skill_name:
+                preferred_rel_paths.extend([f"skills/{skill_name}", skill_name])
+
+            source_dir: Path | None = None
+            seen: set[str] = set()
+            for rel in preferred_rel_paths:
+                rel_norm = rel.replace("\\", "/").strip("/")
+                if not rel_norm or rel_norm in seen:
+                    continue
+                seen.add(rel_norm)
+                candidate = tmp_dir / rel_norm
+                if candidate.is_dir():
+                    source_dir = candidate
+                    break
+
+            # 若未命中子目录，则按“整个仓库就是一个技能”处理
+            source_dir = source_dir or tmp_dir
+            shutil.copytree(str(source_dir), str(target))
+            if source_dir == tmp_dir:
+                # 清理克隆产生的 .git 目录
+                git_dir = target / ".git"
+                if git_dir.exists():
+                    shutil.rmtree(str(git_dir), ignore_errors=True)
         finally:
             shutil.rmtree(str(tmp_parent), ignore_errors=True)
     else:
