@@ -10,6 +10,7 @@
     "modules": "模块",
     "mcp": "MCP",
     "scheduler": "计划任务",
+    "memory": "记忆管理",
     "status": "状态",
     "tokenStats": "Token 统计",
     "config": "配置",

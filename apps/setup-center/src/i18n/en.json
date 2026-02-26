@@ -10,6 +10,7 @@
     "modules": "Modules",
     "mcp": "MCP",
     "scheduler": "Tasks",
+    "memory": "Memory",
     "status": "Status",
     "tokenStats": "Token Stats",
     "config": "Config",
