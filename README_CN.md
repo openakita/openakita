@@ -77,7 +77,7 @@ OpenAkita 提供跨平台的 **桌面终端** 应用（基于 Tauri + React）�
 不需要命令行，不需要改配置文件。**3 分钟从安装到对话**：
 
 <p align="center">
-  <img src="docs/assets/desktop_quick_config.png" alt="OpenAkita 快速配置 vs 完整配置" width="800" />
+  <img src="docs/assets/desktop_quick_config.gif" alt="OpenAkita 快速配置 vs 完整配置" width="800" />
 </p>
 
 <table>
