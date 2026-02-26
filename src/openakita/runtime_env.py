@@ -7,7 +7,6 @@ PyInstaller 打包后 sys.executable 指向 openakita-server.exe 而非 Python �
 
 import logging
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -77,95 +76,10 @@ def verify_python_executable(path: str) -> bool:
         return False
 
 
-def _which_real_python() -> str | None:
-    """在 PATH 中查找真正可用的 Python 3.x，跳过假桩并验证可执行。"""
-    if sys.platform == "win32":
-        candidates = ["python", "python3"]
-    else:
-        candidates = ["python3", "python"]
 
-    for name in candidates:
-        path = shutil.which(name)
-        if not path:
-            continue
-        if _is_windows_store_stub(path):
-            logger.debug("跳过 Windows Store 假桩: %s", path)
-            continue
-        if verify_python_executable(path):
-            return path
-        logger.debug("PATH 中 %s 验证失败，跳过: %s", name, path)
-    return None
-
-
-def _scan_common_python_dirs() -> str | None:
-    """扫描各平台常见 Python 安装目录（PATH 失效时的兜底）。
-
-    找到候选后会通过 verify_python_executable() 验证其确实可用。
-    """
-    import glob
-
-    candidates: list[str] = []
-
-    if sys.platform == "win32":
-        patterns = [
-            r"C:\Python3*\python.exe",
-            r"C:\Program Files\Python3*\python.exe",
-            r"C:\Program Files (x86)\Python3*\python.exe",
-        ]
-        for pattern in patterns:
-            candidates.extend(sorted(glob.glob(pattern), reverse=True))
-        # 用户级安装 (AppData\Local\Programs\Python)
-        local_programs = Path.home() / "AppData" / "Local" / "Programs" / "Python"
-        if local_programs.exists():
-            for py_dir in sorted(local_programs.iterdir(), reverse=True):
-                py = py_dir / "python.exe"
-                if py.exists():
-                    candidates.append(str(py))
-        # Microsoft Store 安装的 Python (WindowsApps 下的真实安装)
-        win_apps = Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps"
-        if win_apps.exists():
-            for item in win_apps.iterdir():
-                if item.is_dir() and "PythonSoftwareFoundation.Python.3" in item.name:
-                    py = item / "python.exe"
-                    if py.exists():
-                        candidates.append(str(py))
-    elif sys.platform == "darwin":
-        for pattern in [
-            "/opt/homebrew/bin/python3",
-            "/usr/local/bin/python3",
-            "/Library/Frameworks/Python.framework/Versions/3.*/bin/python3",
-            "/usr/bin/python3",
-        ]:
-            candidates.extend(sorted(glob.glob(pattern), reverse=True))
-    else:
-        for pattern in [
-            "/usr/bin/python3",
-            "/usr/bin/python3.*",
-            "/usr/local/bin/python3",
-            str(Path.home() / ".pyenv/shims/python3"),
-            str(Path.home() / ".local/bin/python3"),
-        ]:
-            candidates.extend(sorted(glob.glob(pattern), reverse=True))
-
-    for c in candidates:
-        if verify_python_executable(c):
-            return c
-        logger.debug("扫描到但验证失败: %s", c)
-    return None
-
-
-def _get_python_from_env_var() -> str | None:
-    """从环境变量 PYTHON / PYTHON3 / OPENAKITA_PYTHON 获取 Python 路径。
-    用户可以通过设置环境变量来显式指定 Python 解释器。"""
-    import os
-    for var in ("OPENAKITA_PYTHON", "PYTHON3", "PYTHON"):
-        val = os.environ.get(var)
-        if not val or not Path(val).is_file():
-            continue
-        if verify_python_executable(val):
-            return val
-        logger.warning("环境变量 %s=%s 指向的 Python 验证失败", var, val)
-    return None
+# NOTE: _which_real_python / _scan_common_python_dirs / _get_python_from_env_var
+# 已移除 — 不再搜索用户系统中的 Python，只使用项目自带/自行安装的 Python。
+# 这消除了因用户 Anaconda、Windows Store 假桩、版本不一致等导致的冲突。
 
 
 def _get_python_from_configured_venv() -> str | None:
@@ -225,44 +139,85 @@ def _get_openakita_root() -> Path:
     return Path.home() / ".openakita"
 
 
+def _get_bundled_internal_python() -> str | None:
+    """查找 PyInstaller 打包时捆绑在 _internal/ 目录中的 Python 解释器。
+
+    构建时 openakita.spec 会将 sys.executable 和 pip 一起复制到 _internal/，
+    因此该 Python 版本与构建环境完全一致，不会产生兼容性问题。
+    """
+    if not IS_FROZEN:
+        return None
+    exe_dir = Path(sys.executable).parent
+    internal_dir = exe_dir if exe_dir.name == "_internal" else exe_dir / "_internal"
+    if not internal_dir.is_dir():
+        return None
+    if sys.platform == "win32":
+        candidates = ["python.exe", "python3.exe"]
+    else:
+        candidates = ["python3", "python"]
+    for name in candidates:
+        py = internal_dir / name
+        if py.exists() and verify_python_executable(str(py)):
+            logger.debug("使用打包内置 Python (_internal): %s", py)
+            return str(py)
+    return None
+
+
 def get_python_executable() -> str | None:
     """获取可用的 Python 解释器路径。
 
-    PyInstaller 环境下: 查找外置 Python
-      (configured venv > workspace venv > home venv > embedded > env var > PATH)
-    常规环境下: 返回 sys.executable
+    **只使用项目自带或项目自行安装的 Python，不使用用户系统 Python。**
+
+    PyInstaller 环境下查找优先级:
+      1. Setup Center 配置的 venv (PYTHON_VENV_PATH)
+      2. 工作区 venv ({project_root}/data/venv/)
+      3. 全局 venv (~/.openakita/venv/)
+      4. 打包内置 Python (_internal/python.exe)
+      5. 嵌入式 Python (~/.openakita/runtime/python/)
+
+    常规开发环境下: 返回 sys.executable
     """
     if not IS_FROZEN:
         return sys.executable
 
-    # 0a. 用户通过 Setup Center 配置的 venv 路径（PYTHON_VENV_PATH）— 最高优先级
+    # 1. 用户通过 Setup Center 配置的 venv 路径（PYTHON_VENV_PATH）— 最高优先级
     configured = _get_python_from_configured_venv()
     if configured:
         return configured
 
-    # 0b. 检查 {project_root}/data/venv/ — 工作区虚拟环境（系统专用，与用户环境隔离）
+    # 2. 检查 {project_root}/data/venv/ — 工作区虚拟环境
     try:
         from .config import settings
         workspace_venv = settings.project_root / "data" / "venv"
         py = _find_python_in_dir(workspace_venv)
-        if py:
+        if py and verify_python_executable(str(py)):
             logger.debug(f"使用工作区 venv Python: {py}")
             return str(py)
+        elif py:
+            logger.warning(f"工作区 venv Python 存在但验证失败，跳过: {py}")
     except Exception:
         pass
 
     root = _get_openakita_root()
 
-    # 1. 检查 ~/.openakita/venv/
+    # 3. 检查 ~/.openakita/venv/
     if sys.platform == "win32":
         venv_python = root / "venv" / "Scripts" / "python.exe"
     else:
         venv_python = root / "venv" / "bin" / "python"
     if venv_python.exists():
-        logger.debug(f"使用 venv Python: {venv_python}")
-        return str(venv_python)
+        if verify_python_executable(str(venv_python)):
+            logger.debug(f"使用 venv Python: {venv_python}")
+            return str(venv_python)
+        else:
+            logger.warning(f"全局 venv Python 验证失败，跳过: {venv_python}")
 
-    # 2. 检查 embedded python (~/.openakita/runtime/python/)
+    # 4. 打包内置 Python（_internal/ 目录，构建时捆绑的同版本 Python + pip）
+    bundled = _get_bundled_internal_python()
+    if bundled:
+        return bundled
+
+    # 5. 检查 embedded python (~/.openakita/runtime/python/)
     runtime_dir = root / "runtime" / "python"
     if runtime_dir.exists():
         for tag_dir in sorted(runtime_dir.iterdir(), reverse=True):
@@ -272,33 +227,15 @@ def get_python_executable() -> str | None:
                 if not asset_dir.is_dir():
                     continue
                 py = _find_python_in_dir(asset_dir)
-                if py:
+                if py and verify_python_executable(str(py)):
                     logger.debug(f"使用 embedded Python: {py}")
                     return str(py)
 
-    # 3. 环境变量显式指定 (OPENAKITA_PYTHON / PYTHON3 / PYTHON)
-    env_py = _get_python_from_env_var()
-    if env_py:
-        logger.info(f"使用环境变量指定的 Python: {env_py}")
-        return env_py
-
-    # 4. PATH 中的 python（跳过 Windows Store 假桩）
-    py_path = _which_real_python()
-    if py_path:
-        logger.info(f"使用 PATH Python: {py_path}")
-        return py_path
-
-    # 5. 常见安装目录扫描（PATH 失效时的兜底，支持 Windows/macOS/Linux）
-    py_path = _scan_common_python_dirs()
-    if py_path:
-        logger.info(f"使用扫描发现的 Python: {py_path}")
-        return py_path
-
     logger.warning(
-        "未找到可用的 Python 解释器。"
-        "已搜索: 配置的 venv → 工作区 venv → ~/.openakita/venv → embedded python → "
-        "环境变量 → PATH → 常见安装目录。"
-        "请前往「设置中心 → Python 环境」使用「一键修复」或手动配置 Python 路径。"
+        "未找到项目自带的 Python 解释器。"
+        "已搜索: 配置的 venv → 工作区 venv → ~/.openakita/venv → "
+        "打包内置 Python → 嵌入式 Python。"
+        "请前往「设置中心 → Python 环境」使用「一键修复」自动下载安装。"
     )
     return None
 
@@ -314,99 +251,51 @@ def can_pip_install() -> bool:
     return True
 
 
-def get_pip_command(packages: list[str]) -> list[str] | None:
-    """获取 pip install 命令列表。
+_DEFAULT_PIP_INDEX = "https://mirrors.aliyun.com/pypi/simple/"
+_DEFAULT_PIP_TRUSTED_HOST = "mirrors.aliyun.com"
+
+
+def get_pip_command(packages: list[str], *, index_url: str | None = None) -> list[str] | None:
+    """获取 pip install 命令列表（默认使用国内镜像源）。
+
+    Args:
+        packages: 要安装的包名列表
+        index_url: 自定义镜像源 URL，为 None 时使用阿里云镜像
 
     Returns:
-        命令参数列表 (如 ["python", "-m", "pip", "install", "pkg"])，
-        若不支持则返回 None。
+        命令参数列表，若不支持则返回 None。
     """
+    import os
+
     py = get_python_executable()
     if not py:
         return None
-    # PyInstaller 打包环境需要外置 Python 才能 pip install
     if IS_FROZEN and py == sys.executable:
         return None
-    return [py, "-m", "pip", "install", *packages]
 
-
-def inject_python_site_packages(python_executable: str | None = None) -> int:
-    """将指定 Python 解释器的 site-packages 目录追加注入到当前进程 sys.path。
-
-    典型场景：PyInstaller 进程通过外部 Python 执行 `pip install` 后，
-    需要在不重启服务的情况下立即 import 新装的包。
-
-    注意：
-    - 只做 append，不会覆盖 PyInstaller 内置依赖的优先级。
-    - 失败时仅记录日志并返回 0，不抛异常影响主流程。
-    """
-    import subprocess
-
-    py = python_executable or get_python_executable()
-    if not py:
-        return 0
-
-    code = (
-        "import json,os,site,sysconfig;"
-        "paths=[];"
-        "purelib=sysconfig.get_path('purelib');"
-        "platlib=sysconfig.get_path('platlib');"
-        "usersite=getattr(site,'getusersitepackages',lambda:None)();"
-        "getsites=getattr(site,'getsitepackages',lambda:[])();"
-        "paths.extend([purelib,platlib,usersite]);"
-        "paths.extend(getsites if isinstance(getsites,list) else [getsites]);"
-        "norm=[os.path.normpath(str(p)) for p in paths if p];"
-        "uniq=list(dict.fromkeys(norm));"
-        "print(json.dumps(uniq, ensure_ascii=False))"
+    effective_index = (
+        os.environ.get("PIP_INDEX_URL", "").strip()
+        or index_url
+        or _DEFAULT_PIP_INDEX
     )
+    trusted_host = effective_index.split("//")[1].split("/")[0] if "//" in effective_index else ""
 
-    try:
-        kwargs: dict = {
-            "capture_output": True,
-            "text": True,
-            "encoding": "utf-8",
-            "errors": "replace",
-            "timeout": 8,
-        }
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        result = subprocess.run([py, "-c", code], **kwargs)
-        if result.returncode != 0:
-            logger.warning(
-                "inject_python_site_packages: probe failed (exit %s): %s",
-                result.returncode,
-                (result.stderr or result.stdout or "").strip()[-300:],
-            )
-            return 0
+    return [
+        py, "-m", "pip", "install",
+        "-i", effective_index,
+        "--trusted-host", trusted_host,
+        "--prefer-binary",
+        *packages,
+    ]
 
-        raw = (result.stdout or "").strip()
-        if not raw:
-            return 0
-        candidates = json.loads(raw)
-        if not isinstance(candidates, list):
-            return 0
-    except Exception as e:
-        logger.warning("inject_python_site_packages: probe error: %s", e)
-        return 0
 
-    injected = 0
-    for p in candidates:
-        try:
-            p_str = str(p).strip()
-            if not p_str:
-                continue
-            p_path = Path(p_str)
-            if not p_path.is_dir():
-                continue
-            if p_str not in sys.path:
-                sys.path.append(p_str)
-                injected += 1
-        except Exception:
-            continue
+def get_channel_deps_dir() -> Path:
+    """获取 IM 通道依赖的隔离安装目录。
 
-    if injected > 0:
-        logger.info("Injected %d external site-packages path(s) from: %s", injected, py)
-    return injected
+    路径: ~/.openakita/modules/channel-deps/site-packages
+    该目录会被 inject_module_paths() 自动扫描并注入到 sys.path。
+    """
+    return _get_openakita_root() / "modules" / "channel-deps" / "site-packages"
 
 
 def ensure_ssl_certs() -> None:

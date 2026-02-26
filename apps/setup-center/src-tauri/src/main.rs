@@ -295,49 +295,8 @@ fn find_pip_python() -> Option<PathBuf> {
             }
         }
     }
-    // 4. PATH python（验证实际可执行，不再仅凭路径排除 WindowsApps）
-    //    Microsoft Store 安装的 Python 也位于 WindowsApps，是真正可用的；
-    //    仅 AppInstallerPythonRedirector 是假桩（exit 9009）。通过 --version 统一验证。
-    let candidates = if cfg!(windows) {
-        vec!["python.exe", "python3.exe"]
-    } else {
-        vec!["python3", "python"]
-    };
-    for name in candidates {
-        let mut wc = Command::new(if cfg!(windows) { "where" } else { "which" });
-        wc.arg(name);
-        apply_no_window(&mut wc);
-        if let Ok(output) = wc.output() {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                for line in path_str.lines() {
-                    let line = line.trim();
-                    if line.is_empty() { continue; }
-                    let p = PathBuf::from(line);
-                    if !p.exists() { continue; }
-
-                    // 快速排除已知的 Store 重定向桩
-                    let path_lower = p.to_string_lossy().to_lowercase();
-                    if path_lower.contains("appinstallerpythonredirector") {
-                        continue;
-                    }
-
-                    // 运行 --version 验证：排除假桩（exit 9009）、损坏安装和版本过低
-                    let mut vc = Command::new(&p);
-                    vc.arg("--version");
-                    apply_no_window(&mut vc);
-                    if let Ok(ver) = vc.output() {
-                        if ver.status.success() {
-                            let ver_str = String::from_utf8_lossy(&ver.stdout).trim().to_string();
-                            if python_version_ok(&ver_str) {
-                                return Some(p);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // 不再搜索用户系统 PATH 中的 Python，只使用项目自带/自行安装的 Python，
+    // 避免用户系统环境中的版本冲突、Anaconda 干扰、Windows Store 假桩等问题。
     None
 }
 
@@ -446,7 +405,7 @@ async fn install_module(
     });
 
     // ── 查找 Python 解释器 ──
-    // 优先级：venv > 打包内 _internal/python.exe > embedded python > PATH > 自动下载
+    // 优先级：venv > 打包内 _internal/python.exe > embedded python > 自动下载
     let python_exe = match find_pip_python() {
         Some(p) => p,
         None => {
@@ -3809,17 +3768,14 @@ fn venv_python_path(venv_dir: &str) -> PathBuf {
 }
 
 /// 解析可用的 Python 解释器路径，并可选返回需要设置的 PYTHONPATH（bundled 模式）。
-/// 查找顺序：venv → bundled _internal/python.exe → embedded → PATH Python
+/// 只使用项目自带/自行安装的 Python：venv → bundled _internal/python.exe → embedded python
 fn resolve_python(venv_dir: &str) -> Result<(PathBuf, Option<String>), String> {
     let venv_py = venv_python_path(venv_dir);
     if venv_py.exists() {
         return Ok((venv_py, None));
     }
     let py = find_pip_python().ok_or_else(|| {
-        format!(
-            "No Python interpreter available. Tried venv: {}, bundled and PATH Python also not found.",
-            venv_py.to_string_lossy()
-        )
+        "未找到项目自带的 Python 解释器。请前往「设置中心 → Python 环境」点击「一键修复」自动下载安装。".to_string()
     })?;
     let bundled = bundled_backend_dir();
     let internal_dir = bundled.join("_internal");

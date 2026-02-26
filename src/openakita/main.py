@@ -167,9 +167,13 @@ def _patch_backports_zstd() -> None:
 
 def _ensure_channel_deps() -> None:
     """
-    检查已启用的 IM 通道所需依赖，缺失的自动 pip install。
+    检查已启用的 IM 通道所需依赖，缺失的自动安装到隔离目录。
 
-    在适配器实例化之前调用，确保依赖就绪。
+    安装策略：使用 ``pip install --target`` 将缺失依赖安装到
+    ``~/.openakita/modules/channel-deps/site-packages``，与外部 Python
+    环境完全隔离，避免版本冲突。该目录会被 ``inject_module_paths()``
+    自动扫描并注入 sys.path。
+
     Telegram 为核心依赖，始终包含在安装包中，不需检查。
     """
     _patch_backports_zstd()
@@ -189,16 +193,6 @@ def _ensure_channel_deps() -> None:
     if not enabled_channels:
         return
 
-    # 在打包环境下，先注入“外部 Python”的 site-packages，
-    # 避免已安装依赖因为路径未注入而被误判为缺失。
-    try:
-        from openakita.runtime_env import inject_python_site_packages
-
-        inject_python_site_packages()
-    except Exception as e:
-        logger.debug(f"Pre-inject python site-packages skipped: {e}")
-
-    # 收集缺失的包
     missing: list[str] = []
     for channel in enabled_channels:
         for import_name, pip_name in _CHANNEL_DEPS.get(channel, []):
@@ -219,61 +213,103 @@ def _ensure_channel_deps() -> None:
     pkg_list = ", ".join(missing)
     logger.info(f"IM 通道依赖自动安装: {pkg_list} ...")
 
-    # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
-    from openakita.runtime_env import get_pip_command
-    pip_cmd = get_pip_command(missing)
-    if not pip_cmd:
-        logger.warning("当前环境不支持自动安装依赖，请通过设置中心的模块管理安装")
+    from openakita.runtime_env import get_channel_deps_dir, get_python_executable, IS_FROZEN
+
+    py = get_python_executable()
+    if not py or (IS_FROZEN and py == sys.executable):
+        logger.warning("未找到项目自带的 Python，无法自动安装依赖")
         console.print(
-            f"[yellow]⚠[/yellow] 当前环境不支持自动安装依赖: [bold]{pkg_list}[/bold]\n"
-            f"  请通过设置中心的模块管理功能安装，或手动运行: [bold]pip install {' '.join(missing)}[/bold]"
+            f"[yellow]⚠[/yellow] 未找到 Python 解释器，无法自动安装: [bold]{pkg_list}[/bold]\n"
+            f"  请前往「设置中心 → Python 环境」点击「一键修复」"
         )
         return
 
-    console.print(
-        f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] ..."
-    )
-    try:
-        extra: dict = {}
-        if sys.platform == "win32":
-            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-        result = subprocess.run(
-            pip_cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=180,
-            **extra,
-        )
-        if result.returncode == 0:
-            logger.info(f"依赖安装成功: {pkg_list}")
-            console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
-            # 安装后清除 importlib 缓存，让后续 import 能找到新包
-            importlib.invalidate_caches()
-            # 关键：把用于 pip install 的解释器 site-packages 注入当前进程，
-            # 确保本次启动内即可 import 新装依赖（无需等待重启）
-            try:
-                from openakita.runtime_env import inject_python_site_packages
+    target_dir = get_channel_deps_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
 
-                inject_python_site_packages()
-            except Exception as e:
-                logger.debug(f"Post-install site-packages injection skipped: {e}")
-        else:
-            err_tail = (result.stderr or result.stdout or "").strip()[-500:]
-            logger.error(f"依赖安装失败 (exit {result.returncode}): {err_tail}")
+    # 国内镜像多源回退（与 Rust 端 install_module 行为一致）
+    # 尊重用户已配置的 PIP_INDEX_URL 环境变量
+    _user_index = os.environ.get("PIP_INDEX_URL", "").strip()
+    _mirror_sources: list[tuple[str, str]] = []
+    if _user_index:
+        _host = _user_index.split("//")[1].split("/")[0] if "//" in _user_index else ""
+        _mirror_sources.append((_user_index, _host))
+    _mirror_sources.extend([
+        ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
+        ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
+        ("https://pypi.org/simple/", "pypi.org"),
+    ])
+
+    extra: dict = {}
+    if sys.platform == "win32":
+        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+    # 当使用打包内置 Python (_internal/python.exe) 时设置 PYTHONPATH
+    pip_env = os.environ.copy()
+    pip_env.pop("PIP_INDEX_URL", None)
+    from pathlib import Path as _Path
+    py_path = _Path(py)
+    if IS_FROZEN and py_path.parent.name == "_internal":
+        pip_env["PYTHONPATH"] = str(py_path.parent)
+
+    installed = False
+    for idx, (index_url, trusted_host) in enumerate(_mirror_sources):
+        source_label = trusted_host or index_url
+        if idx == 0:
             console.print(
-                f"[red]✗[/red] 依赖安装失败: {pkg_list}\n"
-                f"  请手动运行: [bold]pip install {' '.join(missing)}[/bold]"
+                f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] "
+                f"(源: {source_label}) ..."
             )
-    except subprocess.TimeoutExpired:
-        logger.error("依赖安装超时（180s），请手动运行: pip install " + " ".join(missing))
+        else:
+            console.print(
+                f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ..."
+            )
+
+        pip_cmd = [
+            py, "-m", "pip", "install",
+            "--target", str(target_dir),
+            "-i", index_url,
+            "--trusted-host", trusted_host,
+            "--prefer-binary",
+            "--timeout", "60",
+            *missing,
+        ]
+
+        try:
+            result = subprocess.run(
+                pip_cmd,
+                env=pip_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                **extra,
+            )
+            if result.returncode == 0:
+                logger.info(f"依赖安装成功 (source={source_label}, target={target_dir}): {pkg_list}")
+                console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
+                importlib.invalidate_caches()
+                target_str = str(target_dir)
+                if target_str not in sys.path:
+                    sys.path.append(target_str)
+                    logger.info(f"已注入通道依赖路径: {target_str}")
+                installed = True
+                break
+            else:
+                err_tail = (result.stderr or result.stdout or "").strip()[-300:]
+                logger.warning(f"镜像源 {source_label} 安装失败 (exit {result.returncode}): {err_tail}")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"镜像源 {source_label} 安装超时")
+        except Exception as e:
+            logger.warning(f"镜像源 {source_label} 安装异常: {e}")
+
+    if not installed:
+        logger.error(f"所有镜像源均安装失败: {pkg_list}")
         console.print(
-            f"[red]✗[/red] 依赖安装超时，请手动运行: [bold]pip install {' '.join(missing)}[/bold]"
+            f"[red]✗[/red] 依赖安装失败（已尝试所有镜像源）: {pkg_list}\n"
+            f"  请检查网络连接，或前往「设置中心 → Python 环境」点击「一键修复」"
         )
-    except Exception as e:
-        logger.error(f"依赖安装异常: {e}")
-        console.print(f"[red]✗[/red] 依赖安装异常: {e}")
 
 
 async def ensure_session_manager():
