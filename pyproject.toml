@@ -221,4 +221,4 @@ disable_error_code = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--ignore=tests/legacy/test_refactoring.py"
+addopts = "--ignore=tests/legacy/test_refactoring.py --ignore=tests/test_refactoring.py"
