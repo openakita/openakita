@@ -3731,7 +3731,7 @@ export function App() {
       const useHttpApi = serviceAlive;
       if (useHttpApi) {
         // ── Try HTTP API, fall back to Tauri on failure ──
-        let httpOk = false;
+        let endpointSummaryResolved = false;
         try {
           // Try new config API (may not exist in older service versions)
           const envRes = await fetch(`${effectiveApiBaseUrl}/api/config/env`);
@@ -3760,8 +3760,10 @@ export function App() {
                   };
                 })
                 .filter((e: any) => e.name);
-              setEndpointSummary(list);
-              httpOk = true;
+              if (list.length > 0) {
+                setEndpointSummary(list);
+                endpointSummaryResolved = true;
+              }
             }
           }
         } catch {
@@ -3769,7 +3771,7 @@ export function App() {
         }
 
         // Fall back: try /api/models (always available in running service)
-        if (!httpOk) {
+        if (!endpointSummaryResolved) {
           try {
             const modelsRes = await fetch(`${effectiveApiBaseUrl}/api/models`);
             if (modelsRes.ok) {
@@ -3786,6 +3788,7 @@ export function App() {
               })).filter((e: any) => e.name);
               if (list.length > 0) {
                 setEndpointSummary(list);
+                endpointSummaryResolved = true;
                 // Also populate endpointHealth from /api/models status
                 const healthFromModels: Record<string, any> = {};
                 for (const m of models) {
@@ -3796,13 +3799,12 @@ export function App() {
                 }
                 setEndpointHealth((prev: any) => ({ ...healthFromModels, ...prev }));
               }
-              httpOk = true;
             }
           } catch { /* ignore */ }
         }
 
         // Fall back to Tauri local file system if HTTP API completely failed
-        if (!httpOk && currentWorkspaceId) {
+        if (!endpointSummaryResolved && currentWorkspaceId) {
           try {
             const env = await ensureEnvLoaded(currentWorkspaceId);
             const raw = await readWorkspaceFile("data/llm_endpoints.json");
@@ -3817,7 +3819,10 @@ export function App() {
                 model: String(e?.model || ""), keyEnv, keyPresent,
               };
             }).filter((e: any) => e.name);
-            setEndpointSummary(list);
+            if (list.length > 0) {
+              setEndpointSummary(list);
+              endpointSummaryResolved = true;
+            }
           } catch { /* ignore */ }
         }
 
@@ -3876,7 +3881,6 @@ export function App() {
 
       // ── Local mode: use Tauri commands (original logic) ──
       if (!currentWorkspaceId) {
-        setEndpointSummary([]);
         setSkillSummary(null);
         setSkillsDetail(null);
         return;
@@ -3972,6 +3976,26 @@ export function App() {
       setStatusLoading(false);
     }
   }
+
+  // 进入聊天页时，如果端点列表为空，触发一次受控自愈刷新。
+  // 这能覆盖启动竞态（服务已起但端点摘要尚未装载）的偶发场景。
+  useEffect(() => {
+    if (view !== "chat") return;
+    if (endpointSummary.length > 0) return;
+    if (dataMode !== "remote" && !serviceStatus?.running) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      void refreshStatus(undefined, undefined, true).catch(() => {});
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, endpointSummary.length, dataMode, serviceStatus?.running, currentWorkspaceId, apiBaseUrl]);
 
   /**
    * 轮询等待后端 HTTP 服务就绪。
