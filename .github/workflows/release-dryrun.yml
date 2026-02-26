@@ -39,11 +39,18 @@ jobs:
             build_mode: "core"
             suffix: "-ubuntu24-arm64"
           # macOS - Apple Silicon (arm64)
-          # Intel Mac 用户可通过 Rosetta 2 运行 arm64 版本
           - platform: macos-latest
             bundles: "dmg"
+            args: ""
             build_mode: "core"
             suffix: ""
+          # macOS - Intel (x86_64)
+          - platform: macos-13
+            bundles: "dmg"
+            args: "--target x86_64-apple-darwin"
+            rust_target: "x86_64-apple-darwin"
+            build_mode: "core"
+            suffix: "-macos-intel"
 
     runs-on: ${{ matrix.platform }}
     steps:
