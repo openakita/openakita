@@ -155,33 +155,13 @@ class TestExtractFromTurnV2:
 
 
 class TestExtractQuickFacts:
-    def test_extracts_preference(self, extractor_no_brain):
+    """extract_quick_facts is deprecated (always returns []).
+    Tests verify the deprecated stub behaves correctly."""
+
+    def test_deprecated_returns_empty(self, extractor_no_brain):
         messages = [{"role": "user", "content": "我喜欢使用 Vim 编辑器"}]
         facts = extractor_no_brain.extract_quick_facts(messages)
-        assert len(facts) >= 1
-        assert facts[0].type == MemoryType.PREFERENCE
-
-    def test_extracts_rule(self, extractor_no_brain):
-        messages = [{"role": "user", "content": "不要在生产环境使用 console.log"}]
-        facts = extractor_no_brain.extract_quick_facts(messages)
-        assert len(facts) >= 1
-        assert facts[0].type == MemoryType.RULE
-
-    def test_extracts_path(self, extractor_no_brain):
-        messages = [{"role": "user", "content": "项目在 D:\\coder\\myagent 目录下"}]
-        facts = extractor_no_brain.extract_quick_facts(messages)
-        assert len(facts) >= 1
-        assert "路径" in facts[0].content
-
-    def test_ignores_assistant_messages(self, extractor_no_brain):
-        messages = [{"role": "assistant", "content": "我喜欢帮助你"}]
-        facts = extractor_no_brain.extract_quick_facts(messages)
-        assert len(facts) == 0
-
-    def test_ignores_short_messages(self, extractor_no_brain):
-        messages = [{"role": "user", "content": "好"}]
-        facts = extractor_no_brain.extract_quick_facts(messages)
-        assert len(facts) == 0
+        assert facts == []
 
     def test_limit_to_5(self, extractor_no_brain):
         messages = [
