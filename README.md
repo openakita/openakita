@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/openakita/openakita/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" />
+    <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" />
   </a>
   <a href="https://www.python.org/downloads/">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version" />
@@ -301,7 +301,7 @@ Channels ─── CLI · Telegram · Feishu · WeCom · DingTalk · QQ Official
 
 ## License
 
-MIT License — See [LICENSE](LICENSE)
+Apache License 2.0 — See [LICENSE](LICENSE)
 
 Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 

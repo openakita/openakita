@@ -3,7 +3,7 @@ name = "openakita"
 version = "1.24.2"
 description = "全能自进化AI Agent - 基于Ralph Wiggum模式，永不放弃"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 authors = [
     { name = "OpenAkita", email = "zacon365@gmail.com" }
@@ -12,7 +12,7 @@ keywords = ["ai", "agent", "claude", "autonomous", "self-evolving"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]

@@ -85,7 +85,7 @@ The following skills are inspired by or adapted from the
 ## OpenAkita Original Skills
 
 All skills under `skills/system/` and the following are original to this
-project, licensed under the same [MIT License](LICENSE) as the main project:
+project, licensed under the same [Apache License 2.0](LICENSE) as the main project:
 
 - `datetime-tool` — Date/time utilities
 - `file-manager` — File system operations
