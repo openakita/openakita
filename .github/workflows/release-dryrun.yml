@@ -15,33 +15,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Windows
           - platform: windows-latest
             bundles: "nsis"
             build_mode: "core"
             suffix: "-core"
+          # Linux Ubuntu 22.04
           - platform: ubuntu-22.04
-            bundles: "deb,appimage"
+            bundles: "deb"
             build_mode: "core"
-            suffix: ""
+            suffix: "-ubuntu22-amd64"
+          - platform: ubuntu-22.04-arm
+            bundles: "deb"
+            build_mode: "core"
+            suffix: "-ubuntu22-arm64"
+          # Linux Ubuntu 24.04
+          - platform: ubuntu-24.04
+            bundles: "deb"
+            build_mode: "core"
+            suffix: "-ubuntu24-amd64"
+          - platform: ubuntu-24.04-arm
+            bundles: "deb"
+            build_mode: "core"
+            suffix: "-ubuntu24-arm64"
           # macOS - Apple Silicon (arm64)
+          # Intel Mac 用户可通过 Rosetta 2 运行 arm64 版本
           - platform: macos-latest
             bundles: "dmg"
             build_mode: "core"
             suffix: ""
-          # macOS - Intel (x86_64) 在 Apple Silicon runner 上通过 Rosetta 2 交叉编译
-          - platform: macos-latest
-            bundles: "dmg"
-            build_mode: "core"
-            suffix: "-x86_64"
-            rust_target: "x86_64-apple-darwin"
-            python_arch: "x64"
 
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux system dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -90,9 +99,17 @@ jobs:
           rm -rf build/openakita-server
           rm -rf build/pyinstaller_work
           rm -rf build/modules
+          # macOS: clear stale PyInstaller temp dirs to avoid PYI-6038 symlink conflicts
+          if [ "$(uname)" = "Darwin" ]; then
+            find "${TMPDIR:-/tmp}" -maxdepth 1 -name "_MEI*" -type d -exec rm -rf {} + 2>/dev/null || true
+          fi
 
       - name: Package Python backend (PyInstaller)
         run: python build/build_backend.py --mode ${{ matrix.build_mode }}
+
+      - name: Bundle optional modules (full mode only)
+        if: matrix.build_mode == 'full'
+        run: python build/bundle_modules.py
 
       - name: Copy backend to Tauri resources
         shell: bash
@@ -101,8 +118,46 @@ jobs:
           mkdir -p "$RESOURCE_DIR"
           rm -rf "$RESOURCE_DIR/openakita-server"
           cp -r dist/openakita-server "$RESOURCE_DIR/openakita-server"
+          if [ "${{ matrix.build_mode }}" = "full" ] && [ -d "build/modules" ]; then
+            rm -rf "$RESOURCE_DIR/modules"
+            cp -r build/modules "$RESOURCE_DIR/modules"
+          fi
           echo "Resources copied:"
           du -sh "$RESOURCE_DIR"/*
+
+      - name: Codesign embedded binaries for macOS notarization
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        shell: bash
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No APPLE_CERTIFICATE configured, skipping codesign."
+            exit 0
+          fi
+          RESOURCE_DIR="apps/setup-center/src-tauri/resources"
+          IDENTITY="${APPLE_SIGNING_IDENTITY}"
+
+          echo "Importing certificate to keychain..."
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          echo "Signing embedded binaries with identity: ${IDENTITY}"
+          find "$RESOURCE_DIR" -type f -perm +111 | while read -r bin; do
+            echo "  Signing: $bin"
+            codesign --force --options runtime --timestamp --sign "$IDENTITY" "$bin"
+          done
+          echo "All embedded binaries signed."
 
       - name: Create gitignored placeholders for Rust build
         shell: bash
@@ -118,7 +173,48 @@ jobs:
 
       - name: Build Tauri bundles
         working-directory: apps/setup-center
-        run: npx tauri build --bundles "${{ matrix.bundles }}" ${{ matrix.rust_target && format('--target {0}', matrix.rust_target) || '' }}
+        timeout-minutes: 150
+        env:
+          TAURI_CONFIG: ${{ matrix.build_mode == 'full' && '{"bundle":{"resources":["resources/openakita-server/","resources/modules/"]}}' || '{}' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NO_STRIP: true
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        shell: bash
+        run: |
+          set +e
+          MAX_ATTEMPTS=2
+          ATTEMPT=1
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "=== Build attempt $ATTEMPT/$MAX_ATTEMPTS ==="
+            npx tauri build --bundles "${{ matrix.bundles }}" ${{ matrix.args }}
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 0 ]; then
+              echo "Build succeeded on attempt $ATTEMPT"
+              exit 0
+            fi
+            echo "Build failed (exit $EXIT_CODE) on attempt $ATTEMPT"
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ $ATTEMPT -le $MAX_ATTEMPTS ]; then
+              echo "Waiting 30s before retry..."
+              sleep 30
+            fi
+          done
+          echo "All $MAX_ATTEMPTS attempts failed"
+          exit 1
+
+      - name: List bundle outputs
+        shell: bash
+        run: |
+          echo "== release dir =="
+          ls -la "apps/setup-center/src-tauri/target/release" || true
+          echo "== bundle dir =="
+          ls -la "apps/setup-center/src-tauri/target/release/bundle" || true
+          echo "== bundle tree (depth 4) =="
+          find "apps/setup-center/src-tauri/target/release/bundle" -maxdepth 4 -type f -print || true
 
       - name: Collect installer bundles
         shell: bash
@@ -167,10 +263,21 @@ jobs:
                     ;;
                 esac
               fi
+
               copy_norm "$f"
               found=$((found+1))
             done < <(find "${BUNDLE_DIR}" -type f -name "*.${ext}" -print0)
           done
+
+          # 收集 .sig 签名文件（如果存在）
+          sig_count=0
+          while IFS= read -r -d '' sigf; do
+            cp -f "$sigf" "${OUT_DIR}/"
+            sig_count=$((sig_count+1))
+          done < <(find "${BUNDLE_DIR}" -type f -name "*.sig" -print0)
+          if [ "${sig_count}" -gt 0 ]; then
+            echo "Collected ${sig_count} signature file(s)."
+          fi
 
           echo "Collected ${found} installer(s) into ${OUT_DIR}:"
           ls -la "${OUT_DIR}" || true
@@ -183,6 +290,6 @@ jobs:
       - name: Upload build artifacts (for inspection)
         uses: actions/upload-artifact@v4
         with:
-          name: dryrun-${{ matrix.platform }}-${{ matrix.build_mode }}
+          name: dryrun-${{ matrix.platform }}-${{ matrix.build_mode }}${{ matrix.suffix }}
           path: apps/setup-center/src-tauri/target/release/bundle/_upload/
           retention-days: 3
