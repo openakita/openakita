@@ -478,6 +478,24 @@ class LifecycleManager:
                     report["kept"] += len(batch)
                     continue
 
+                # Guardrail: avoid catastrophic over-pruning from noisy LLM output.
+                destructive = 0
+                for d in decisions:
+                    if not isinstance(d, dict):
+                        continue
+                    action = str(d.get("action", "keep")).lower()
+                    if action in ("delete", "merge"):
+                        destructive += 1
+                if destructive > max(3, int(len(batch) * 0.4)):
+                    logger.warning(
+                        "[Lifecycle] Skip risky review batch %s: destructive=%s/%s",
+                        i // batch_size,
+                        destructive,
+                        len(batch),
+                    )
+                    report["kept"] += len(batch)
+                    continue
+
                 decision_map = {d["id"]: d for d in decisions if isinstance(d, dict) and "id" in d}
 
                 for mem in batch:

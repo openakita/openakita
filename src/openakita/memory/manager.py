@@ -174,10 +174,13 @@ class MemoryManager:
         """Load memories from SQLite (authoritative source) into in-memory cache.
 
         memories.json is kept as a secondary copy for backward compat,
-        but SQLite is the single source of truth — never restore from JSON.
+        and legacy JSON will be backfilled into SQLite when needed.
         """
         try:
             all_mems = self.store.load_all_memories()
+            migrated = self._backfill_legacy_json_memories(all_mems)
+            if migrated > 0:
+                all_mems = self.store.load_all_memories()
             with self._memories_lock:
                 for mem in all_mems:
                     self._memories[mem.id] = mem
@@ -189,6 +192,87 @@ class MemoryManager:
         # Sync in-memory cache → JSON (keep JSON in sync, not the other way around)
         if self._memories:
             self._save_memories()
+
+    def _backfill_legacy_json_memories(self, existing_mems: list[Memory]) -> int:
+        """Backfill old memories.json into SQLite when SQLite is incomplete.
+
+        This protects users upgrading from old versions where memories were
+        primarily persisted in JSON.
+        """
+        if not self.memories_file.exists():
+            return 0
+
+        try:
+            raw = json.loads(self.memories_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"[Manager] Failed to read legacy memories.json: {e}")
+            return 0
+
+        if not isinstance(raw, list) or not raw:
+            return 0
+
+        existing_ids = {m.id for m in existing_mems if getattr(m, "id", "")}
+        if len(existing_ids) >= len(raw):
+            return 0
+
+        existing_fingerprints = {
+            (
+                (getattr(m, "subject", "") or "").strip().lower(),
+                (getattr(m, "predicate", "") or "").strip().lower(),
+                (getattr(m, "content", "") or "").strip(),
+            )
+            for m in existing_mems
+            if (getattr(m, "content", "") or "").strip()
+        }
+
+        migrated = 0
+        skipped = 0
+        for item in raw:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+
+            try:
+                mem = Memory.from_dict(item)
+            except Exception:
+                content = str(item.get("content", "")).strip()
+                if not content:
+                    skipped += 1
+                    continue
+                mem = Memory(
+                    content=content,
+                    type=MemoryType.FACT,
+                    priority=MemoryPriority.SHORT_TERM,
+                    source=str(item.get("source", "legacy_json")),
+                    subject=str(item.get("subject", "")).strip(),
+                    predicate=str(item.get("predicate", "")).strip(),
+                    importance_score=float(item.get("importance_score", 0.5) or 0.5),
+                )
+
+            if not (mem.content or "").strip():
+                skipped += 1
+                continue
+
+            fingerprint = (
+                (mem.subject or "").strip().lower(),
+                (mem.predicate or "").strip().lower(),
+                (mem.content or "").strip(),
+            )
+            if mem.id in existing_ids or fingerprint in existing_fingerprints:
+                skipped += 1
+                continue
+
+            self.store.save_semantic(mem)
+            existing_ids.add(mem.id)
+            existing_fingerprints.add(fingerprint)
+            migrated += 1
+
+        if migrated:
+            logger.info(
+                f"[Manager] Backfilled {migrated} memories from legacy JSON "
+                f"(skipped={skipped}, sqlite_before={len(existing_mems)}, json_total={len(raw)})"
+            )
+        return migrated
 
     def _save_memories(self) -> None:
         """Save to memories.json (backward compat, dual-write)"""
