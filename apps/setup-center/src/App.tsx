@@ -7775,8 +7775,10 @@ export function App() {
   }
 
   function renderOnboarding() {
-    const obStepDots = ["ob-welcome", "ob-agreement", "ob-llm", "ob-im", "ob-modules", "ob-cli", "ob-progress", "ob-done"] as OnboardingStep[];
-    const obCurrentIdx = obStepDots.indexOf(obStep);
+    // Progress/done are transitional states and should not create extra indicator dots.
+    const obStepDots = ["ob-welcome", "ob-agreement", "ob-llm", "ob-im", "ob-modules", "ob-cli"] as OnboardingStep[];
+    const obCurrentIdxRaw = obStepDots.indexOf(obStep);
+    const obCurrentIdx = obCurrentIdxRaw >= 0 ? obCurrentIdxRaw : obStepDots.length - 1;
 
     const stepIndicator = (
       <div className="obStepIndicator">
@@ -8179,9 +8181,7 @@ export function App() {
               <div className="obFooterBtns">
                 <button onClick={() => setObStep("ob-modules")}>{t("config.prev")}</button>
                 <button className="btnPrimary" onClick={() => { setObStep("ob-progress"); obRunSetup(); }}>
-                  {obSelectedModules.size > 0
-                    ? t("onboarding.modules.installAndContinue")
-                    : t("onboarding.modules.skipAndContinue")}
+                  {t("onboarding.modules.startInstall")}
                 </button>
               </div>
             </div>

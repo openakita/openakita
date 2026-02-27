@@ -742,7 +742,8 @@
       "installed": "已安装",
       "loading": "正在检测模块...",
       "installAndContinue": "安装并继续",
-      "skipAndContinue": "跳过，直接开始"
+      "skipAndContinue": "跳过，直接开始",
+      "startInstall": "开始安装"
     },
     "system": {
       "title": "终端命令与系统设置",

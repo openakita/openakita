@@ -742,7 +742,8 @@
       "installed": "Installed",
       "loading": "Detecting modules...",
       "installAndContinue": "Install & Continue",
-      "skipAndContinue": "Skip, start now"
+      "skipAndContinue": "Skip, start now",
+      "startInstall": "Start Installation"
     },
     "system": {
       "title": "CLI & System Settings",
