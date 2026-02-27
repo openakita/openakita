@@ -1235,17 +1235,26 @@ button:disabled {
   flex-shrink: 0;
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 
 /* 端点连接测试结果 */
-.connTestResult {
+.connTestSlot {
   margin: 0 24px 8px;
+  min-height: 40px;
+}
+.connTestResult {
+  margin: 0;
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.4;
+}
+.connTestPlaceholder {
+  visibility: hidden;
+  border: 1px solid transparent;
+  background: transparent;
 }
 .connTestOk {
   background: rgba(16, 185, 129, 0.08);
@@ -1256,6 +1265,27 @@ button:disabled {
   background: rgba(239, 68, 68, 0.06);
   border: 1px solid rgba(239, 68, 68, 0.2);
   color: #dc2626;
+}
+.endpointFooterBtn {
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.endpointPrimaryWrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.endpointPrimaryHint {
+  min-height: 16px;
+  max-width: 260px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
 }
 
 /* Capability chips */

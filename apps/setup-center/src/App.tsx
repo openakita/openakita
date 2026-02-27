@@ -5129,22 +5129,25 @@ export function App() {
               </details>
               </div>
 
-              {/* 连接测试结果 */}
-              {connTestResult && (
-                <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
-                  {connTestResult.ok
-                    ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                    : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-                </div>
-              )}
+              {/* 连接测试结果（预留固定高度，避免把底部按钮“顶”动） */}
+              <div className="connTestSlot">
+                {connTestResult ? (
+                  <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
+                    {connTestResult.ok
+                      ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                      : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
+                  </div>
+                ) : (
+                  <div className="connTestResult connTestPlaceholder" />
+                )}
+              </div>
 
               {/* Footer — fixed at bottom */}
               <div className="dialogFooter">
-                <button className="btnSmall" style={{ padding: "8px 18px" }} onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
+                <button className="btnSecondary endpointFooterBtn" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <button
-                    className="btnSmall"
-                    style={{ padding: "8px 18px" }}
+                    className="btnSecondary endpointFooterBtn"
                     disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || connTesting}
                     onClick={() => doTestConnection({ testApiType: apiType, testBaseUrl: baseUrl, testApiKey: apiKeyValue.trim() || (isLocalProvider(selectedProvider) ? localProviderPlaceholderKey(selectedProvider) : ""), testProviderSlug: selectedProvider?.slug })}
                   >
@@ -5159,15 +5162,17 @@ export function App() {
                     if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
                     const btnDisabled = missing.length > 0 || !!busy;
                     return (
-                      <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                        <button className="btnPrimary" style={{ padding: "8px 18px" }} onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
+                      <div className="endpointPrimaryWrap">
+                        <button className="btnPrimary endpointFooterBtn" onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
                           {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
                         </button>
-                        {btnDisabled && !busy && missing.length > 0 && (
-                          <span style={{ fontSize: 11, color: "var(--muted)", maxWidth: 220, textAlign: "right" }}>
+                        <span className="endpointPrimaryHint">
+                          {btnDisabled && !busy && missing.length > 0 ? (
+                            <>
                             {t("common.missingFields") || "缺少"}: {missing.join(", ")}
-                          </span>
-                        )}
+                            </>
+                          ) : null}
+                        </span>
                       </div>
                     );
                   })()}
