@@ -140,6 +140,7 @@ type StreamEvent =
   | { type: "thinking_end"; duration_ms?: number; has_thinking?: boolean }
   | { type: "chain_text"; content: string }
   | { type: "text_delta"; content: string }
+  | { type: "text"; content?: string; text?: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
   | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean }
   | { type: "plan_created"; plan: ChatPlan }
@@ -2309,6 +2310,9 @@ export function ChatView({
               case "text_delta":
                 currentContent += event.content;
                 break;
+              case "text":
+                currentContent += event.content ?? event.text ?? "";
+                break;
               case "tool_call_start": {
                 currentToolCalls = [...currentToolCalls, { tool: event.tool, args: event.args, status: "running", id: event.id }];
                 const _tcId = event.id || genId();
@@ -2525,6 +2529,28 @@ export function ChatView({
         setMessages((prev) => prev.map((m) =>
           m.id === assistantMsg.id ? { ...m, streaming: false } : m
         ));
+        // 兜底对账：若本轮未收到文本增量，但后端已完成回复，则立刻从 history 回填本条助手消息
+        if (gracefulDone && !currentContent.trim() && convId) {
+          fetch(`${apiBase}/api/sessions/${encodeURIComponent(convId)}/history`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              const rows = Array.isArray(data?.messages) ? data.messages : [];
+              // Prefer assistant replies generated after this user turn; fallback to latest assistant.
+              const candidates = rows.filter((m: { role?: string; content?: string }) => m?.role === "assistant" && typeof m?.content === "string");
+              const newerThanUser = candidates.filter((m: { timestamp?: number }) => typeof m?.timestamp === "number" && m.timestamp >= userMsg.timestamp);
+              const lastAssistant = (newerThanUser.length > 0 ? newerThanUser : candidates).slice(-1)[0];
+              if (!lastAssistant?.content) return;
+              setMessages((prev) => prev.map((m) => {
+                if (m.id !== assistantMsg.id) return m;
+                const patched: ChatMessage = { ...m, content: m.content || lastAssistant.content };
+                if ((!m.thinkingChain || m.thinkingChain.length === 0) && Array.isArray(lastAssistant.chain_summary) && lastAssistant.chain_summary.length > 0) {
+                  patched.thinkingChain = buildChainFromSummary(lastAssistant.chain_summary);
+                }
+                return patched;
+              }));
+            })
+            .catch(() => {});
+        }
       }
     } catch (e: unknown) {
       // ── 兼容多种 abort 错误形式 ──
