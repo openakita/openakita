@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -459,7 +459,8 @@ type StepId =
   | "llm"
   | "im"
   | "tools"
-  | "agent";
+  | "agent"
+  | "advanced";
 
 type Step = {
   id: StepId;
@@ -1014,6 +1015,7 @@ export function App() {
       { id: "im" as StepId, title: t("config.imTitle"), desc: t("config.step.imDesc") },
       { id: "tools" as StepId, title: t("config.step.tools"), desc: t("config.step.toolsDesc") },
       { id: "agent" as StepId, title: t("config.step.agent"), desc: t("config.step.agentDesc") },
+      { id: "advanced" as StepId, title: t("config.step.advanced"), desc: t("config.step.advancedDesc") },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [t],
@@ -1198,6 +1200,11 @@ export function App() {
   const [repairPercent, setRepairPercent] = useState<number>(0);
   const [repairDetail, setRepairDetail] = useState<string>("");
 
+  // advanced panel state
+  const [advSysInfo, setAdvSysInfo] = useState<Record<string, string> | null>(null);
+  const [advLoading, setAdvLoading] = useState<Record<string, boolean>>({});
+  const advLoadedRef = useRef(false);
+
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [providerSlug, setProviderSlug] = useState<string>("");
@@ -1351,17 +1358,7 @@ export function App() {
         // ── Auto-detect step completion on startup ──
         if (!cancelled) {
           try {
-            // Detect Python
-            const cands = await invoke<PythonCandidate[]>("detect_python");
-            if (!cancelled) {
-              setPythonCandidates(cands);
-              const firstUsable = cands.findIndex((c: PythonCandidate) => c.isUsable);
-              setSelectedPythonIdx(firstUsable);
-            }
-          } catch { /* ignore */ }
-
-          try {
-            // Check if openakita is installed in venv
+            // Check if openakita is installed (file-based fast path, subprocess fallback)
             const plat = await invoke<PlatformInfo>("get_platform_info");
             const vd = joinPath(plat.openakitaRootDir, "venv");
             const v = await invoke<string>("openakita_version", { venvDir: vd });
@@ -3601,6 +3598,31 @@ export function App() {
   }
 
 
+  // auto-load all advanced panel data when entering the page
+  useEffect(() => {
+    if (stepId !== "advanced") { advLoadedRef.current = false; return; }
+    if (advLoadedRef.current) return;
+    advLoadedRef.current = true;
+
+    const apiUrl = shouldUseHttpApi() ? httpApiBase() : null;
+
+    if (apiUrl) {
+      // System info
+      setAdvLoading((p) => ({ ...p, sysinfo: true }));
+      safeFetch(`${apiUrl}/api/system-info`, { signal: AbortSignal.timeout(8_000) })
+        .then((r) => r.json())
+        .then((data) => {
+          const info: Record<string, string> = {};
+          if (data.os) info["OS"] = data.os;
+          if (data.openakita_version) info["Backend"] = data.openakita_version;
+          setAdvSysInfo(info);
+        })
+        .catch(() => {})
+        .finally(() => setAdvLoading((p) => ({ ...p, sysinfo: false })));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId]);
+
   // keep env draft in sync when workspace changes
   useEffect(() => {
     if (!currentWorkspaceId) return;
@@ -4474,6 +4496,7 @@ export function App() {
     im: <IconIM size={14} />,
     tools: <IconSkills size={14} />,
     agent: <IconBot size={14} />,
+    advanced: <IconGear size={14} />,
   };
 
   const StepDot = ({ stepId: sid }: { stepId: StepId }) => (
@@ -6598,6 +6621,203 @@ export function App() {
     );
   }
 
+  function renderAdvanced() {
+
+    async function runDiagnose() {
+      if (!venvDir) return;
+      setBusy(t("adv.diagnosing"));
+      try {
+        const d = await invoke<NonNullable<typeof pyDiag>>("diagnose_python_env", { venvDir });
+        setPyDiag(d);
+      } catch (e) { setError(String(e)); } finally { setBusy(null); }
+    }
+
+    async function runRepair() {
+      if (!venvDir) return;
+      setBusy(t("adv.repairing"));
+      setRepairStage(""); setRepairPercent(0); setRepairDetail("");
+      const unlisten = await listen("python_repair_event", (ev) => {
+        const p = ev.payload as any;
+        if (!p || typeof p !== "object") return;
+        if (p.stage) setRepairStage(String(p.stage));
+        if (typeof p.percent === "number") setRepairPercent(p.percent);
+        if (p.detail) setRepairDetail(String(p.detail));
+      });
+      try {
+        const d = await invoke<NonNullable<typeof pyDiag>>("repair_python_env", { venvDir });
+        setPyDiag(d);
+        if (d && d.issues.length === 0) setNotice(t("adv.repairDone"));
+        else if (d) setError(t("adv.repairPartial"));
+      } catch (e) { setError(String(e)); } finally { unlisten(); setBusy(null); setRepairStage(""); }
+    }
+
+    async function runReset(removeVenv: boolean, removeEmbedded: boolean) {
+      setBusy(t("adv.resetting"));
+      try {
+        await invoke<string>("remove_openakita_runtime", { removeVenv: removeVenv, removeEmbeddedPython: removeEmbedded });
+        setPyDiag(null);
+        setNotice(t("adv.resetDone"));
+      } catch (e) { setError(String(e)); } finally { setBusy(null); }
+    }
+
+    async function fetchSystemInfo() {
+      const url = shouldUseHttpApi() ? httpApiBase() : null;
+      if (!url) { setError(t("adv.needService")); return; }
+      try {
+        const res = await safeFetch(`${url}/api/system-info`, { signal: AbortSignal.timeout(8_000) });
+        const data = await res.json();
+        const info: Record<string, string> = {};
+        if (data.os) info[t("adv.sysOs")] = data.os;
+        if (data.openakita_version) info[t("adv.sysVersion")] = data.openakita_version;
+        setAdvSysInfo(info);
+      } catch (e) { setError(String(e)); }
+    }
+
+
+    async function exportEnv() {
+      if (!currentWorkspaceId) return;
+      try {
+        const content = await invoke<string>("workspace_read_file", { workspaceId: currentWorkspaceId, relativePath: ".env" });
+        const blob = new Blob([content], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `openakita-${currentWorkspaceId}.env`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setNotice(t("adv.exportDone"));
+      } catch (e) { setError(String(e)); }
+    }
+
+    async function importEnv() {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".env,text/plain";
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file || !currentWorkspaceId) return;
+        try {
+          const text = await file.text();
+          const parsed = parseEnv(text);
+          setEnvDraft((prev) => {
+            let draft = prev;
+            for (const [k, v] of Object.entries(parsed)) {
+              draft = envSet(draft, k, v);
+            }
+            return draft;
+          });
+          setNotice(t("adv.importDone", { count: Object.keys(parsed).length }));
+        } catch (e) { setError(String(e)); }
+      };
+      input.click();
+    }
+
+    const sectionHeader = (key: string, title: string) => (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0" }}>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{title}</span>
+        {advLoading[key] && <span className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />}
+      </div>
+    );
+
+    const diagItem = (label: string, ok: boolean | undefined, detail?: string | null) => (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: ok ? "#10b981" : "#ef4444" }} />
+        <span style={{ fontWeight: 500, minWidth: 140 }}>{label}</span>
+        <span style={{ color: "var(--muted)", fontSize: 12, wordBreak: "break-all" }}>{detail || (ok ? "OK" : "—")}</span>
+      </div>
+    );
+
+    return (
+      <>
+        {/* ── Python 环境诊断 ── */}
+        <div className="card">
+          {sectionHeader("python", t("adv.pythonTitle"))}
+            <div style={{ paddingLeft: 22 }}>
+              <div className="cardHint" style={{ marginBottom: 8 }}>{t("adv.pythonHint")}</div>
+              {pyDiag ? (
+                <>
+                  {diagItem(t("adv.pyEmbedded"), pyDiag.embeddedPythonOk, pyDiag.embeddedPythonPath)}
+                  {diagItem(t("adv.pyVenv"), pyDiag.venvOk, pyDiag.venvPythonVersion ? `${pyDiag.venvPythonVersion} — ${pyDiag.venvPath}` : pyDiag.venvPath)}
+                  {diagItem(t("adv.pyOpenakita"), pyDiag.openakitaInstalled, pyDiag.openakitaVersion)}
+                  {pyDiag.issues.length > 0 && (
+                    <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, fontSize: 12, color: "var(--warning)" }}>
+                      {pyDiag.issues.map((issue, i) => <div key={i} style={{ padding: "2px 0" }}>⚠ {issue}</div>)}
+                    </div>
+                  )}
+                </>
+              ) : advLoading.python ? (
+                <div className="cardHint" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="spinner" style={{ width: 14, height: 14 }} />
+                  {t("adv.diagnosing")}
+                </div>
+              ) : (
+                <div className="cardHint">{t("adv.pyNoDiag")}</div>
+              )}
+              {repairStage && (
+                <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(14,165,233,0.1)", borderRadius: 8, fontSize: 12 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{repairStage}</div>
+                  <div style={{ width: "100%", height: 6, background: "var(--line)", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${repairPercent}%`, height: "100%", background: "var(--brand, #0ea5e9)", borderRadius: 3, transition: "width 0.3s" }} />
+                  </div>
+                  {repairDetail && <div style={{ marginTop: 4, color: "var(--muted)" }}>{repairDetail}</div>}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button className="btnSmall" onClick={runDiagnose} disabled={!!busy}>{t("adv.diagnose")}</button>
+                <button className="btnSmall btnSmallPrimary" onClick={runRepair} disabled={!!busy || !pyDiag?.issues.length}>{t("adv.repair")}</button>
+                <button className="btnSmall btnSmallDanger" onClick={() => {
+                  if (confirm(t("adv.resetConfirm"))) runReset(true, true);
+                }} disabled={!!busy}>{t("adv.reset")}</button>
+              </div>
+            </div>
+        </div>
+
+        {/* ── 系统信息 ── */}
+        <div className="card" style={{ marginTop: 12 }}>
+          {sectionHeader("sysinfo", t("adv.sysTitle"))}
+            <div style={{ paddingLeft: 22 }}>
+              {!advSysInfo ? (
+                advLoading.sysinfo ? (
+                  <div className="cardHint" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="spinner" style={{ width: 14, height: 14 }} />
+                    {t("common.loading")}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btnSmall" onClick={fetchSystemInfo} disabled={!!busy || !serviceStatus?.running}>{t("adv.sysLoad")}</button>
+                    {!serviceStatus?.running && <span className="cardHint">{t("adv.needService")}</span>}
+                  </div>
+                )
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 16px", fontSize: 13 }}>
+                  {Object.entries(advSysInfo).map(([k, v]) => (
+                    <Fragment key={k}>
+                      <span style={{ fontWeight: 500, color: "var(--muted)" }}>{k}</span>
+                      <span>{v}</span>
+                    </Fragment>
+                  ))}
+                  <span style={{ fontWeight: 500, color: "var(--muted)" }}>Desktop</span>
+                  <span>{desktopVersion}</span>
+                </div>
+              )}
+            </div>
+        </div>
+
+        {/* ── 配置导出/导入 ── */}
+        <div className="card" style={{ marginTop: 12 }}>
+          {sectionHeader("backup", t("adv.backupTitle"))}
+            <div style={{ paddingLeft: 22 }}>
+              <div className="cardHint" style={{ marginBottom: 8 }}>{t("adv.backupHint")}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btnSmall" onClick={exportEnv} disabled={!currentWorkspaceId || !!busy}>{t("adv.export")}</button>
+                <button className="btnSmall" onClick={importEnv} disabled={!currentWorkspaceId || !!busy}>{t("adv.import")}</button>
+              </div>
+            </div>
+        </div>
+      </>
+    );
+  }
+
   function renderIntegrations() {
     const keysCore = [
       // network/proxy
@@ -8365,6 +8585,8 @@ export function App() {
         return renderTools();
       case "agent":
         return renderAgentSystem();
+      case "advanced":
+        return renderAdvanced();
       default:
         return renderLLM();
     }
