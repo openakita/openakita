@@ -1571,44 +1571,78 @@ export function ChatView({
   }, [messages, activeConvId, isStreaming]);
 
   // ── 切换对话时加载对应消息 ──
-  const prevConvIdRef = useRef<string | null>(activeConvId);
   const skipConvLoadRef = useRef(false); // sendMessage 创建新对话时跳过加载
-  useEffect(() => {
-    if (activeConvId && activeConvId !== prevConvIdRef.current) {
-      if (skipConvLoadRef.current) {
-        skipConvLoadRef.current = false;
-      } else {
-        try {
-          const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + activeConvId);
-          if (raw) {
-            setMessages(JSON.parse(raw));
-          } else {
-            setMessages([]);
-            // localStorage empty — try to restore from backend session
-            if (serviceRunning) {
-              const convId = activeConvId;
-              fetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history`)
-                .then((r) => r.ok ? r.json() : null)
-                .then((data) => {
-                  if (!data?.messages?.length) return;
-                  const restored: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[] }) => ({
-                    id: m.id,
-                    role: m.role as "user" | "assistant" | "system",
-                    content: m.content,
-                    timestamp: m.timestamp,
-                    ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
-                  }));
-                  setMessages(restored);
-                })
-                .catch(() => {});
-            }
-          }
-        } catch { setMessages([]); }
-      }
-      isInitialScrollRef.current = true;
+  const hydrateSeqRef = useRef(0);
+
+  const mapBackendHistoryToMessages = useCallback(
+    (rows: { id: string; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[] }[]): ChatMessage[] => {
+      return rows.map((m) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant" | "system",
+        content: m.content,
+        timestamp: m.timestamp,
+        ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
+      }));
+    },
+    [],
+  );
+
+  const hydrateConversationMessages = useCallback(async (convId: string, expectedCount = 0) => {
+    // 统一恢复入口：localStorage 为缓存，后端 history 为真相源
+    const seq = ++hydrateSeqRef.current;
+    let localMsgs: ChatMessage[] = [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + convId);
+      localMsgs = raw ? JSON.parse(raw) : [];
+    } catch {
+      localMsgs = [];
     }
-    prevConvIdRef.current = activeConvId;
-  }, [activeConvId, serviceRunning, apiBaseUrl]);
+
+    const localCount = Array.isArray(localMsgs) ? localMsgs.length : 0;
+    const shouldSyncBackend = serviceRunning && (localCount === 0 || (expectedCount > 0 && localCount < expectedCount));
+
+    if (!shouldSyncBackend) {
+      if (seq === hydrateSeqRef.current) setMessages(localMsgs);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history`);
+      const data = res.ok ? await res.json() : null;
+      const backendMsgs = Array.isArray(data?.messages) ? mapBackendHistoryToMessages(data.messages) : [];
+
+      // 后端历史更完整时优先采用，避免“计数有 22 但只显示 1 条”
+      const chosen = backendMsgs.length >= localCount ? backendMsgs : localMsgs;
+      if (seq === hydrateSeqRef.current) setMessages(chosen);
+
+      if (backendMsgs.length >= localCount) {
+        try {
+          const toSave = backendMsgs.map(({ streaming, ...rest }) => rest);
+          localStorage.setItem(STORAGE_KEY_MSGS_PREFIX + convId, JSON.stringify(toSave));
+        } catch {
+          // ignore localStorage write failures
+        }
+      }
+    } catch {
+      if (seq === hydrateSeqRef.current) setMessages(localMsgs);
+    }
+  }, [serviceRunning, apiBaseUrl, mapBackendHistoryToMessages, STORAGE_KEY_MSGS_PREFIX]);
+
+  useEffect(() => {
+    if (!activeConvId) {
+      setMessages([]);
+      return;
+    }
+    if (skipConvLoadRef.current) {
+      skipConvLoadRef.current = false;
+      return;
+    }
+
+    const activeMeta = conversations.find((c) => c.id === activeConvId);
+    const expectedCount = activeMeta?.messageCount || 0;
+    void hydrateConversationMessages(activeConvId, expectedCount);
+    isInitialScrollRef.current = true;
+  }, [activeConvId, conversations, hydrateConversationMessages]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isInitialScrollRef = useRef(true); // first scroll should be instant, not smooth
@@ -1661,21 +1695,6 @@ export function ChatView({
 
         const firstConvId = restoredConvs[0].id;
         setActiveConvId(firstConvId);
-
-        const histRes = await fetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(firstConvId)}/history`);
-        if (!histRes.ok || cancelled) return;
-        const histData = await histRes.json();
-        const restoredMsgs: ChatMessage[] = (histData.messages || []).map((m: { id: string; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[] }) => ({
-          id: m.id,
-          role: m.role as "user" | "assistant" | "system",
-          content: m.content,
-          timestamp: m.timestamp,
-          ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
-        }));
-        if (restoredMsgs.length > 0) {
-          skipConvLoadRef.current = true;
-          setMessages(restoredMsgs);
-        }
       } catch { /* backend not available yet, ignore */ }
     })();
     return () => { cancelled = true; };
