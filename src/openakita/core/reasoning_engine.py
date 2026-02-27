@@ -834,8 +834,18 @@ class ReasoningEngine:
                         # 保留其他工具的 tool_result 内容
                         other_tool_results = other_results if other_results else []
 
-                    # 提取 ask_user 的问题文本
-                    ask_input = ask_user_calls[0].get("input", {})
+                    # 提取 ask_user 的问题文本（兼容 input/arguments + JSON 字符串参数）
+                    ask_raw = ask_user_calls[0].get("input")
+                    if not ask_raw:
+                        ask_raw = ask_user_calls[0].get("arguments", {})
+                    ask_input = ask_raw
+                    if isinstance(ask_input, str):
+                        try:
+                            ask_input = json.loads(ask_input)
+                        except Exception:
+                            ask_input = {}
+                    if not isinstance(ask_input, dict):
+                        ask_input = {}
                     question = ask_input.get("question", "")
                     ask_tool_id = ask_user_calls[0].get("id", "ask_user_0")
 
@@ -1615,7 +1625,17 @@ class ReasoningEngine:
                             })
 
                         # ask_user 事件
-                        ask_input = ask_user_calls[0].get("input", {})
+                        ask_raw = ask_user_calls[0].get("input")
+                        if not ask_raw:
+                            ask_raw = ask_user_calls[0].get("arguments", {})
+                        ask_input = ask_raw
+                        if isinstance(ask_input, str):
+                            try:
+                                ask_input = json.loads(ask_input)
+                            except Exception:
+                                ask_input = {}
+                        if not isinstance(ask_input, dict):
+                            ask_input = {}
                         ask_q = ask_input.get("question", "")
                         ask_options = ask_input.get("options")
                         ask_allow_multiple = ask_input.get("allow_multiple", False)
@@ -1659,6 +1679,10 @@ class ReasoningEngine:
                             react_trace, conversation_id, session_type, "ask_user", _trace_started_at
                         )
                         self._last_exit_reason = "ask_user"
+                        try:
+                            state.transition(TaskStatus.WAITING_USER)
+                        except ValueError:
+                            state.status = TaskStatus.WAITING_USER
                         yield {"type": "done"}
                         return
 
