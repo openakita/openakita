@@ -18,10 +18,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+FEEDBACK_TEMP_DIR: Path | None = None
 
 # Cloudflare Worker endpoint (overridden by config)
 _BUG_REPORT_ENDPOINT: str = ""
@@ -282,6 +285,89 @@ async def _upload_to_worker(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _feedback_temp_dir() -> Path:
+    global FEEDBACK_TEMP_DIR
+    if FEEDBACK_TEMP_DIR is None:
+        try:
+            from openakita.config import settings
+            FEEDBACK_TEMP_DIR = settings.project_root / "temp-feedback"
+        except Exception:
+            FEEDBACK_TEMP_DIR = Path.cwd() / "temp-feedback"
+    FEEDBACK_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    return FEEDBACK_TEMP_DIR
+
+
+def _save_zip_locally(report_id: str, zip_bytes: bytes) -> Path:
+    """Save a feedback zip to a local temp directory and return the file path."""
+    out = _feedback_temp_dir() / f"{report_id}.zip"
+    out.write_bytes(zip_bytes)
+    return out
+
+
+async def _try_upload_or_save(
+    *,
+    report_id: str,
+    report_type: str,
+    title: str,
+    summary: str,
+    extra_info: str,
+    turnstile_token: str,
+    zip_bytes: bytes,
+) -> dict:
+    """Try uploading to the cloud worker. On failure, save locally and return
+    a response that tells the frontend about the local fallback."""
+    try:
+        result = await _upload_to_worker(
+            report_id=report_id,
+            report_type=report_type,
+            title=title,
+            summary=summary,
+            extra_info=extra_info,
+            turnstile_token=turnstile_token,
+            zip_bytes=zip_bytes,
+        )
+        return result
+    except HTTPException as exc:
+        local_path = _save_zip_locally(report_id, zip_bytes)
+        logger.warning(
+            "Cloud upload failed (%s %s), saved locally: %s",
+            exc.status_code, exc.detail, local_path,
+        )
+        return {
+            "status": "upload_failed",
+            "report_id": report_id,
+            "error": f"{exc.status_code}: {exc.detail}",
+            "local_path": str(local_path),
+            "download_url": f"/api/feedback-download/{report_id}",
+        }
+    except Exception as exc:
+        local_path = _save_zip_locally(report_id, zip_bytes)
+        logger.warning(
+            "Cloud upload failed (%s), saved locally: %s", exc, local_path,
+        )
+        return {
+            "status": "upload_failed",
+            "report_id": report_id,
+            "error": str(exc),
+            "local_path": str(local_path),
+            "download_url": f"/api/feedback-download/{report_id}",
+        }
+
+
+@router.get("/api/feedback-download/{report_id}")
+async def download_feedback_package(report_id: str):
+    """Download a locally saved feedback zip package."""
+    safe_id = "".join(c for c in report_id if c.isalnum())
+    path = _feedback_temp_dir() / f"{safe_id}.zip"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Report not found")
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=f"openakita-feedback-{safe_id}.zip",
+    )
+
+
 async def _pack_images(zf: zipfile.ZipFile, images: list[UploadFile] | None) -> None:
     """Write uploaded images into a zip file."""
     if not images:
@@ -350,7 +436,7 @@ async def submit_bug_report(
                     pass
 
     sys_info_brief = f"OS: {sys_info.get('os', '?')} | Python: {sys_info.get('python', '?')} | OpenAkita: {sys_info.get('openakita_version', '?')}"
-    return await _upload_to_worker(
+    return await _try_upload_or_save(
         report_id=report_id,
         report_type="bug",
         title=title,
@@ -401,7 +487,7 @@ async def submit_feature_request(
         ] if f
     ) or "(no contact)"
 
-    return await _upload_to_worker(
+    return await _try_upload_or_save(
         report_id=report_id,
         report_type="feature",
         title=title,

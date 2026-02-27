@@ -811,7 +811,10 @@
     "legacyNotice": "The modules below are carried over from previous versions. You don't need to install them unless you have specific requirements. These modules will be phased out in upcoming releases, with their functionality provided natively in a more lightweight manner."
   },
   "feedback": {
-    "trigger": "Feedback"
+    "trigger": "Feedback",
+    "uploadFailedSaved": "Upload failed ({{error}}). The report has been saved locally. You can download and send it to technical support manually.",
+    "uploadFailedNetwork": "Network connection failed. Please check your network and try again.",
+    "saveLocal": "💾 Download Feedback Package"
   },
   "bugReport": {
     "title": "Bug Report",

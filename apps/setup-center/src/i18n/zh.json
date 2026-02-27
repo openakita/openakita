@@ -811,7 +811,10 @@
     "legacyNotice": "以下模块为旧版本延续，如无特殊需求可不必安装。后续版本将陆续取消这些模块，届时相关功能将以更轻量的方式内置提供。"
   },
   "feedback": {
-    "trigger": "反馈"
+    "trigger": "反馈",
+    "uploadFailedSaved": "上传失败（{{error}}）。报告数据已保存到本地，您可以下载后手动发送给技术支持。",
+    "uploadFailedNetwork": "网络连接失败，无法提交反馈。请检查网络后重试。",
+    "saveLocal": "💾 下载反馈数据包"
   },
   "bugReport": {
     "title": "错误报告",

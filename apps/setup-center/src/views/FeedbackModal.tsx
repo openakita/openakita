@@ -48,7 +48,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
 
   // State
   const [submitting, setSubmitting] = useState(false);
-  const [submitResult, setSubmitResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ ok: boolean; msg: string; downloadUrl?: string } | null>(null);
   const [turnstileToken, setTurnstileToken] = useState("");
   const turnstileRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -169,10 +169,20 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       }
 
       const data = await res.json();
+
+      if (data.status === "upload_failed") {
+        const dlUrl = data.download_url ? `${apiBase}${data.download_url}` : undefined;
+        setSubmitResult({
+          ok: false,
+          msg: t("feedback.uploadFailedSaved", { error: data.error || "unknown" }),
+          downloadUrl: dlUrl,
+        });
+        return;
+      }
+
       const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
       setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
 
-      // Reset form
       setTitle("");
       setDescription("");
       setSteps("");
@@ -181,7 +191,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       setImageFiles([]);
       setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
     } catch (err: any) {
-      setSubmitResult({ ok: false, msg: err?.message || String(err) });
+      setSubmitResult({ ok: false, msg: `${t("feedback.uploadFailedNetwork")}\n${err?.message || String(err)}` });
     } finally {
       setSubmitting(false);
     }
@@ -430,7 +440,21 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
               background: submitResult.ok ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
               color: submitResult.ok ? "#16a34a" : "#dc2626", lineHeight: 1.5,
             }}>
-              {submitResult.msg}
+              <div style={{ whiteSpace: "pre-wrap" }}>{submitResult.msg}</div>
+              {submitResult.downloadUrl && (
+                <a
+                  href={submitResult.downloadUrl}
+                  download
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    marginTop: 8, padding: "6px 14px", borderRadius: 6,
+                    background: "var(--brand, #0ea5e9)", color: "#fff",
+                    textDecoration: "none", fontSize: 13, fontWeight: 500,
+                  }}
+                >
+                  {t("feedback.saveLocal")}
+                </a>
+              )}
             </div>
           )}
         </div>
