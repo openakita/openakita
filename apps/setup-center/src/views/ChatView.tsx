@@ -2187,43 +2187,15 @@ export function ChatView({
         // ── 2. 再次检查 abort（read 可能返回 done:true 而非抛异常） ──
         if (abort.signal.aborted) break;
 
+        // 拆行：done 时 flush 全部 buffer，否则保留不完整的末行
+        let lines: string[];
         if (done) {
-          // 流结束：处理 buffer 中可能的残余内容（最后一行无换行符的情况）
-          if (buffer.trim()) {
-            const remaining = buffer.split("\n");
-            for (const line of remaining) {
-              if (!line.startsWith("data: ")) continue;
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") continue;
-              try {
-                const event: StreamEvent = JSON.parse(data);
-                if (event.type === "text_delta") currentContent += event.content;
-                else if (event.type === "plan_created") currentPlan = event.plan;
-                else if (event.type === "plan_step_updated" && currentPlan) {
-                  const newSteps = currentPlan.steps.map((s) => {
-                    const matched = event.stepId ? s.id === event.stepId : false;
-                    return matched ? { ...s, status: event.status as ChatPlanStep["status"] } : s;
-                  });
-                  currentPlan = { ...currentPlan, steps: newSteps } as ChatPlan;
-                } else if (event.type === "plan_completed" && currentPlan) {
-                  currentPlan = { ...currentPlan, status: "completed" as const } as ChatPlan;
-                } else if (event.type === "plan_cancelled" && currentPlan) {
-                  currentPlan = { ...currentPlan, status: "cancelled" } as ChatPlan;
-                }
-                if (event.type === "done") {
-                  gracefulDone = true;
-                  if (currentPlan && currentPlan.status === "in_progress") {
-                    currentPlan = { ...currentPlan, status: "completed" as const };
-                  }
-                }
-              } catch { /* ignore malformed */ }
-            }
-          }
-          break;
+          lines = buffer.split("\n");
+          buffer = "";
+        } else {
+          lines = buffer.split("\n");
+          buffer = lines.pop() || "";
         }
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
 
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
@@ -2536,6 +2508,8 @@ export function ChatView({
             // ignore malformed SSE
           }
         }
+
+        if (done) break;
       }
 
       // ── 循环结束后：判断是正常完成还是被用户中止 ──
