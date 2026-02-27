@@ -1,0 +1,176 @@
+name: Update Download Manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "目标 release tag（如 v1.24.4）"
+        required: true
+        type: string
+      channel:
+        description: "发布渠道（auto = 自动检测，stable = 稳定版，dev = 开发版）"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - stable
+          - dev
+      force_update:
+        description: "强制覆盖 latest.json（跳过版本号比较）"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  update_manifest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+      HAS_R2_KEY: ${{ secrets.R2_ACCESS_KEY_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Detect release channel
+        id: detect
+        run: |
+          TAG="${{ inputs.tag }}"
+          INPUT_CHANNEL="${{ inputs.channel }}"
+
+          if [ "$INPUT_CHANNEL" != "auto" ]; then
+            IS_STABLE=$( [ "$INPUT_CHANNEL" = "stable" ] && echo "true" || echo "false" )
+            echo "is_stable=${IS_STABLE}" >> "$GITHUB_OUTPUT"
+            echo "channel=${INPUT_CHANNEL}" >> "$GITHUB_OUTPUT"
+            echo "Using manual channel: ${INPUT_CHANNEL} (is_stable=${IS_STABLE})"
+          else
+            MAJOR_MINOR=$(echo "$TAG" | sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/')
+            STABLE_BRANCH="v${MAJOR_MINOR}.x"
+            echo "Auto-detecting: tag=$TAG, expected branch=$STABLE_BRANCH"
+
+            if git ls-remote --exit-code --heads origin "$STABLE_BRANCH" > /dev/null 2>&1; then
+              git fetch origin "$STABLE_BRANCH"
+              TAG_SHA=$(git rev-list -n 1 "$TAG" 2>/dev/null || echo "")
+              if [ -n "$TAG_SHA" ] && git merge-base --is-ancestor "$TAG_SHA" "origin/$STABLE_BRANCH" 2>/dev/null; then
+                echo "is_stable=true" >> "$GITHUB_OUTPUT"
+                echo "channel=stable" >> "$GITHUB_OUTPUT"
+                echo "✅ Stable release (tag on $STABLE_BRANCH)"
+              else
+                echo "is_stable=false" >> "$GITHUB_OUTPUT"
+                echo "channel=dev" >> "$GITHUB_OUTPUT"
+                echo "⚠️ Dev release (tag not on $STABLE_BRANCH)"
+              fi
+            else
+              echo "is_stable=false" >> "$GITHUB_OUTPUT"
+              echo "channel=dev" >> "$GITHUB_OUTPUT"
+              echo "⚠️ Dev release (no $STABLE_BRANCH branch)"
+            fi
+          fi
+
+      - name: Generate manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          IS_STABLE="${{ steps.detect.outputs.is_stable }}"
+          CHANNEL="${{ steps.detect.outputs.channel }}"
+          FORCE="${{ inputs.force_update }}"
+
+          echo "Tag: ${TAG}, Channel: ${CHANNEL}, Force: ${FORCE}"
+
+          CDN_ARGS=""
+          if [ -n "${HAS_R2_KEY}" ]; then
+            CDN_ARGS="--cdn-base-url https://dl.openakita.ai"
+          fi
+          python scripts/generate_latest_json.py \
+            --tag "${TAG}" \
+            --output latest-this.json \
+            --repo "${{ github.repository }}" \
+            ${CDN_ARGS}
+
+          NEW_VER=$(python -c "import json; print(json.load(open('latest-this.json'))['version'])")
+          echo "Generated manifest for version: ${NEW_VER}"
+
+          if [ "$IS_STABLE" = "true" ]; then
+            SHOULD_UPDATE="true"
+
+            if [ "$FORCE" != "true" ]; then
+              if curl -sf "https://openakita.ai/api/latest.json" -o existing-latest.json 2>/dev/null; then
+                OLD_VER=$(python -c "import json; print(json.load(open('existing-latest.json'))['version'])" 2>/dev/null || echo "0.0.0")
+                echo "Existing stable version: ${OLD_VER}"
+                IS_NEWER=$(python -c "old=list(map(int,'${OLD_VER}'.split('.')));new=list(map(int,'${NEW_VER}'.split('.')));print('true' if new>old else 'false')")
+                if [ "$IS_NEWER" = "false" ]; then
+                  echo "⏭️ Skipping: ${NEW_VER} <= ${OLD_VER} (use force_update to override)"
+                  SHOULD_UPDATE="false"
+                fi
+              else
+                echo "No existing latest.json found, will create"
+              fi
+            else
+              echo "⚡ Force update enabled, skipping version comparison"
+            fi
+
+            if [ "$SHOULD_UPDATE" = "true" ]; then
+              cp latest-this.json latest.json
+              echo "📦 Will update latest.json (${NEW_VER})"
+            fi
+            echo "SHOULD_UPDATE_STABLE=${SHOULD_UPDATE}" >> "$GITHUB_ENV"
+          else
+            cp latest-this.json latest-dev.json
+            echo "🔧 Will update latest-dev.json (${NEW_VER})"
+            echo "SHOULD_UPDATE_STABLE=false" >> "$GITHUB_ENV"
+          fi
+
+          echo "=== manifest ==="
+          cat latest-this.json
+
+      - name: Upload manifest to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" latest-this.json --clobber || echo "Warning: failed to upload to release (may not exist)"
+
+      - name: Push to website repo
+        if: ${{ env.HAS_WEBSITE_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+          IS_STABLE: ${{ steps.detect.outputs.is_stable }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/openakita/openakita-web.git" /tmp/openakita-web
+          mkdir -p /tmp/openakita-web/api
+          cd /tmp/openakita-web
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          CHANGED="false"
+
+          if [ "$IS_STABLE" = "true" ] && [ "$SHOULD_UPDATE_STABLE" = "true" ]; then
+            cp "$GITHUB_WORKSPACE/latest.json" api/latest.json
+            git add api/latest.json
+            CHANGED="true"
+            echo "Will update latest.json"
+          fi
+
+          if [ "$IS_STABLE" != "true" ]; then
+            cp "$GITHUB_WORKSPACE/latest-dev.json" api/latest-dev.json
+            git add api/latest-dev.json
+            CHANGED="true"
+            echo "Will update latest-dev.json"
+          fi
+
+          if [ "$CHANGED" = "true" ] && ! git diff --cached --quiet; then
+            git commit -m "chore: update manifest for ${{ inputs.tag }} (${{ steps.detect.outputs.channel }}) [manual]"
+            git push
+            echo "✅ Pushed to openakita-web"
+          else
+            echo "No changes to push"
+          fi
