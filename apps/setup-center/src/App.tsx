@@ -5145,7 +5145,7 @@ export function App() {
               {/* Footer — fixed at bottom */}
               <div className="dialogFooter">
                 <button className="btnSecondary endpointFooterBtn" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <button
                     className="btnSecondary endpointFooterBtn"
                     disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || connTesting}

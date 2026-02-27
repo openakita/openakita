@@ -1203,6 +1203,39 @@ button:disabled {
   padding-left: 24px;
   padding-right: 24px;
 }
+.feedbackOptions {
+  margin-bottom: 12px;
+}
+.feedbackOptionRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg1);
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.feedbackOptionRow:last-of-type {
+  margin-bottom: 4px;
+}
+.feedbackOptionText {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text);
+}
+.feedbackOptionCheckbox {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.feedbackOptionHint {
+  font-size: 11px;
+  color: #f59e0b;
+  line-height: 1.4;
+  padding-left: 2px;
+}
 .dialogLabel {
   font-size: 12px;
   font-weight: 700;

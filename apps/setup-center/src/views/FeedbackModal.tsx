@@ -389,22 +389,28 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
 
           {/* Bug: Checkboxes */}
           {isBug && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ marginBottom: 6 }}>
-                <label style={{ fontSize: 13, cursor: "pointer" }}>
-                  <input type="checkbox" checked={uploadLogs} onChange={(e) => setUploadLogs(e.target.checked)} style={{ marginRight: 6, verticalAlign: "middle" }} />
-                  <span style={{ verticalAlign: "middle" }}>{t("bugReport.uploadLogs")}</span>
-                </label>
-              </div>
-              <div>
-                <label style={{ fontSize: 13, cursor: "pointer" }}>
-                  <input type="checkbox" checked={uploadDebug} onChange={(e) => setUploadDebug(e.target.checked)} style={{ marginRight: 6, verticalAlign: "middle" }} />
-                  <span style={{ verticalAlign: "middle" }}>{t("bugReport.uploadDebug")}</span>
-                </label>
-                <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 3, paddingLeft: 22, lineHeight: 1.4 }}>
-                  <IconInfo size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />
-                  {t("bugReport.debugWarning")}
-                </div>
+            <div className="feedbackOptions">
+              <label className="feedbackOptionRow">
+                <span className="feedbackOptionText">{t("bugReport.uploadLogs")}</span>
+                <input
+                  className="feedbackOptionCheckbox"
+                  type="checkbox"
+                  checked={uploadLogs}
+                  onChange={(e) => setUploadLogs(e.target.checked)}
+                />
+              </label>
+              <label className="feedbackOptionRow">
+                <span className="feedbackOptionText">{t("bugReport.uploadDebug")}</span>
+                <input
+                  className="feedbackOptionCheckbox"
+                  type="checkbox"
+                  checked={uploadDebug}
+                  onChange={(e) => setUploadDebug(e.target.checked)}
+                />
+              </label>
+              <div className="feedbackOptionHint">
+                <IconInfo size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />
+                {t("bugReport.debugWarning")}
               </div>
             </div>
           )}
