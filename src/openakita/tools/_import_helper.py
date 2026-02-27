@@ -90,7 +90,8 @@ def import_or_hint(package: str) -> str | None:
     try:
         importlib.import_module(package)
         return None
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("import_or_hint: %s import failed: %s", package, exc, exc_info=True)
         return _build_hint(package)
 
 

@@ -44,9 +44,10 @@ def _import_lark():
             import lark_oapi as lark
 
             lark_oapi = lark
-        except ImportError:
+        except ImportError as exc:
+            logger.error("lark_oapi import failed: %s", exc, exc_info=True)
             from openakita.tools._import_helper import import_or_hint
-            raise ImportError(import_or_hint("lark_oapi"))
+            raise ImportError(import_or_hint("lark_oapi")) from exc
 
 
 @dataclass

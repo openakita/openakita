@@ -14,6 +14,7 @@ import os
 import sys
 import shutil
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 # Project root directory
 PROJECT_ROOT = Path(SPECPATH).parent
@@ -217,9 +218,9 @@ hidden_imports_core = [
     "telegram.request",         # HTTPXRequest (自定义超时配置)
     "telegram.constants",       # Telegram API 常量
     "telegram.error",           # Telegram 异常类
-    "lark_oapi",                # Feishu/Lark (~3MB)
-    "lark_oapi.ws",             # Feishu WebSocket
-    "lark_oapi.ws.client",      # Feishu WebSocket 客户端
+    # lark_oapi: 10K+ 文件，PyInstaller hidden_imports 无法完整收集其子模块
+    # (from .api import * / from .core import * 等)。由 _ensure_channel_deps()
+    # 在运行时自动安装到 channel-deps 隔离目录。
     "dingtalk_stream",          # DingTalk Stream (~2MB)
     "Crypto",                   # pycryptodome for WeWork (~3MB)
     "Crypto.Cipher",
@@ -296,7 +297,7 @@ hidden_imports_core = [
     "portalocker",              # bubus 依赖: 文件锁
     "uuid7",                    # bubus 依赖: UUID v7
     "uuid_extensions",          # uuid7 运行时依赖
-    "simplejson",               # browser-use JSON 序列化
+    *collect_submodules("simplejson"),  # browser-use JSON 序列化 (需要完整收集子模块，否则 requests 会因缺少 simplejson.errors 而崩溃)
     "cloudpickle",              # browser-use 序列化
     "backoff",                  # posthog 依赖: 重试
     "monotonic",                # posthog 依赖: 单调时钟

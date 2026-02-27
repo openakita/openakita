@@ -420,6 +420,7 @@ async fn install_module(
                 return Err(format!("自动安装嵌入式 Python 后仍找不到: {}", p.display()));
             }
             let mut ep = Command::new(&p);
+            strip_harmful_python_env(&mut ep);
             ep.args(["-m", "ensurepip", "--upgrade"]);
             apply_no_window(&mut ep);
             let _ = ep.output();
@@ -465,6 +466,7 @@ async fn install_module(
             "message": format!("正在安装 {} (离线 wheels) ...", module_id),
         }));
         let mut c = Command::new(&python_exe);
+        strip_harmful_python_env(&mut c);
         c.args(["-m", "pip", "install", "--no-index", "--find-links"]);
         c.arg(&bundled_wheels);
         c.arg("--target").arg(&target_dir);
@@ -515,6 +517,7 @@ async fn install_module(
         // 尝试用第一个镜像源预装 torch
         let (first_mirror, ref first_host) = mirror_list[0];
         let mut torch_cmd = Command::new(&python_exe);
+        strip_harmful_python_env(&mut torch_cmd);
         torch_cmd.args(["-m", "pip", "install", "--target"]);
         torch_cmd.arg(&target_dir);
         torch_cmd.args(["-i", first_mirror]);
@@ -554,14 +557,13 @@ async fn install_module(
         }));
 
         let mut c = Command::new(&python_exe);
+        strip_harmful_python_env(&mut c);
         c.args(["-m", "pip", "install", "--target"]);
         c.arg(&target_dir);
         c.args(["-i", mirror_url]);
         c.args(["--trusted-host", trusted_host.as_str()]);
         let timeout = if idx == 0 { base_timeout } else { retry_timeout };
         c.args(["--timeout", timeout]);
-        // --prefer-binary: 优先使用预编译 wheel，避免在无编译工具链的打包环境中构建失败
-        // --no-cache-dir: 避免缓存损坏导致的安装失败
         c.args(["--prefer-binary", "--no-cache-dir"]);
         for pkg in *packages { c.arg(*pkg); }
         apply_no_window(&mut c);
@@ -2200,6 +2202,33 @@ fn apply_no_window(cmd: &mut Command) {
 #[cfg(not(windows))]
 fn apply_no_window(_cmd: &mut Command) {}
 
+/// 清除可能干扰 Python 运行环境的外部环境变量。
+///
+/// 常见场景：用户安装了 Anaconda/Miniconda、系统设置了 PYTHONPATH 等，
+/// 这些变量会在 Python 启动时被注入到 sys.path 最前面，覆盖 PyInstaller
+/// 内置的包（如 pydantic_core），导致 C 扩展不兼容而崩溃。
+///
+/// 同时清除 pip 行为干扰变量（PIP_TARGET/PIP_PREFIX 等），
+/// 避免 pip install --target 时被用户配置覆盖。
+fn strip_harmful_python_env(cmd: &mut Command) {
+    // Python 运行时变量
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONSTARTUP");
+    // 虚拟环境 / Conda 变量
+    cmd.env_remove("VIRTUAL_ENV");
+    cmd.env_remove("CONDA_PREFIX");
+    cmd.env_remove("CONDA_DEFAULT_ENV");
+    cmd.env_remove("CONDA_SHLVL");
+    cmd.env_remove("CONDA_PYTHON_EXE");
+    // pip 行为干扰变量
+    cmd.env_remove("PIP_TARGET");
+    cmd.env_remove("PIP_PREFIX");
+    cmd.env_remove("PIP_USER");
+    cmd.env_remove("PIP_INDEX_URL");
+    cmd.env_remove("PIP_REQUIRE_VIRTUALENV");
+}
+
 async fn spawn_blocking_result<R: Send + 'static>(
     f: impl FnOnce() -> Result<R, String> + Send + 'static,
 ) -> Result<R, String> {
@@ -2339,6 +2368,11 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     let mut cmd = Command::new(&backend_exe);
     cmd.current_dir(&ws_dir);
     cmd.args(&backend_args);
+
+    // ── 清除可能干扰 PyInstaller 打包环境的外部 Python 变量 ──
+    // 用户电脑的 Anaconda、系统 PYTHONPATH 等会污染模块搜索路径，
+    // 导致内置包（如 pydantic_core）被外部版本覆盖后崩溃。
+    strip_harmful_python_env(&mut cmd);
 
     // Force UTF-8 output on Windows and make logs clean & realtime.
     // Without this, Rich may try to write unicode symbols (e.g. ✓) using GBK and crash.
@@ -3310,6 +3344,7 @@ async fn repair_python_env(
             // Upgrade pip first (best-effort)
             let mut pip_up = Command::new(&venv_py);
             apply_no_window(&mut pip_up);
+            strip_harmful_python_env(&mut pip_up);
             pip_up.env("PYTHONUTF8", "1");
             pip_up.args(["-m", "pip", "install", "--upgrade", "pip"]);
             let _ = pip_up.status();
@@ -3317,6 +3352,7 @@ async fn repair_python_env(
             // Install openakita
             let mut install = Command::new(&venv_py);
             apply_no_window(&mut install);
+            strip_harmful_python_env(&mut install);
             install.env("PYTHONUTF8", "1");
             install.env("PYTHONIOENCODING", "utf-8");
             install.args(["-m", "pip", "install", "openakita[all]"]);
@@ -3746,6 +3782,7 @@ async fn create_venv(python_command: Vec<String>, venv_dir: String) -> Result<St
             c.args(&cmd[1..]);
         }
         apply_no_window(&mut c);
+        strip_harmful_python_env(&mut c);
         c.args(["-m", "venv"])
             .arg(&venv)
             .status()
@@ -3945,6 +3982,7 @@ async fn pip_install(
         emit_stage("升级 pip（best-effort）", 40);
         let mut up = Command::new(&py);
         apply_no_window(&mut up);
+        strip_harmful_python_env(&mut up);
         up.env("PYTHONUTF8", "1");
         up.env("PYTHONIOENCODING", "utf-8");
         up.args(["-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]);
@@ -3957,6 +3995,7 @@ async fn pip_install(
         emit_stage("安装 openakita（pip）", 70);
         let mut c = Command::new(&py);
         apply_no_window(&mut c);
+        strip_harmful_python_env(&mut c);
         c.env("PYTHONUTF8", "1");
         c.env("PYTHONIOENCODING", "utf-8");
         c.args(["-m", "pip", "install", "-U", &package_spec]);
@@ -3979,6 +4018,7 @@ async fn pip_install(
         emit_line("\n=== verify ===\n");
         let mut verify = Command::new(&py);
         apply_no_window(&mut verify);
+        strip_harmful_python_env(&mut verify);
         verify.env("PYTHONUTF8", "1");
         verify.env("PYTHONIOENCODING", "utf-8");
         verify.args([
@@ -4020,6 +4060,7 @@ async fn pip_uninstall(venv_dir: String, package_name: String) -> Result<String,
 
         let mut c = Command::new(&py);
         apply_no_window(&mut c);
+        strip_harmful_python_env(&mut c);
         c.args(["-m", "pip", "uninstall", "-y", package_name.trim()]);
         let status = c
             .status()
@@ -4060,6 +4101,7 @@ fn run_python_module_json(
 
     let mut c = Command::new(&py);
     apply_no_window(&mut c);
+    strip_harmful_python_env(&mut c);
     c.env("PYTHONUTF8", "1");
     c.env("PYTHONIOENCODING", "utf-8");
     if let Some(ref pp) = pythonpath {
@@ -4146,6 +4188,7 @@ async fn openakita_version(venv_dir: String) -> Result<String, String> {
         let (py, pythonpath) = resolve_python(&venv_dir)?;
         let mut c = Command::new(&py);
         apply_no_window(&mut c);
+        strip_harmful_python_env(&mut c);
         c.env("PYTHONUTF8", "1");
         c.env("PYTHONIOENCODING", "utf-8");
         if let Some(ref pp) = pythonpath {

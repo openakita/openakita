@@ -194,6 +194,7 @@ def _ensure_channel_deps() -> None:
         return
 
     missing: list[str] = []
+    failed_import_names: list[str] = []
     for channel in enabled_channels:
         for import_name, pip_name in _CHANNEL_DEPS.get(channel, []):
             try:
@@ -201,6 +202,7 @@ def _ensure_channel_deps() -> None:
             except ImportError:
                 if pip_name not in missing:
                     missing.append(pip_name)
+                failed_import_names.append(import_name)
             except Exception as e:
                 logger.warning(
                     f"Import check for {import_name} ({channel}) hit unexpected error: "
@@ -244,9 +246,19 @@ def _ensure_channel_deps() -> None:
     if sys.platform == "win32":
         extra["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    # 当使用打包内置 Python (_internal/python.exe) 时设置 PYTHONPATH
     pip_env = os.environ.copy()
-    pip_env.pop("PIP_INDEX_URL", None)
+    # 清除可能干扰 pip 行为和 Python 运行时的外部环境变量，
+    # 避免用户 Anaconda/Miniconda/系统 Python 配置影响安装。
+    for _harmful_key in (
+        "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+        "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
+        "CONDA_SHLVL", "CONDA_PYTHON_EXE",
+        "PIP_INDEX_URL", "PIP_TARGET", "PIP_PREFIX",
+        "PIP_USER", "PIP_REQUIRE_VIRTUALENV",
+    ):
+        pip_env.pop(_harmful_key, None)
+    # 当使用打包内置 Python (_internal/python.exe) 时，需要设置 PYTHONPATH
+    # 使其能找到 pip 等内置模块
     from pathlib import Path as _Path
     py_path = _Path(py)
     if IS_FROZEN and py_path.parent.name == "_internal":
@@ -289,6 +301,18 @@ def _ensure_channel_deps() -> None:
             if result.returncode == 0:
                 logger.info(f"依赖安装成功 (source={source_label}, target={target_dir}): {pkg_list}")
                 console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
+
+                # 清理之前失败的导入在 sys.modules 中留下的残余条目，
+                # 确保后续 import 能从新安装的路径加载完整模块。
+                stale = [
+                    k for k in sys.modules
+                    if any(k == n or k.startswith(n + ".") for n in failed_import_names)
+                ]
+                for k in stale:
+                    del sys.modules[k]
+                if stale:
+                    logger.debug(f"Cleared {len(stale)} stale sys.modules entries: {stale[:10]}")
+
                 importlib.invalidate_caches()
                 target_str = str(target_dir)
                 if target_str not in sys.path:
@@ -309,6 +333,21 @@ def _ensure_channel_deps() -> None:
         console.print(
             f"[red]✗[/red] 依赖安装失败（已尝试所有镜像源）: {pkg_list}\n"
             f"  请检查网络连接，或前往「设置中心 → Python 环境」点击「一键修复」"
+        )
+        return
+
+    # 安装后验证：确保模块真正可导入
+    still_broken: list[str] = []
+    for name in failed_import_names:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:
+            logger.error(f"依赖 {name} 安装后仍无法导入: {exc}", exc_info=True)
+            still_broken.append(name)
+    if still_broken:
+        console.print(
+            f"[yellow]⚠[/yellow] 以下依赖安装成功但导入失败: {', '.join(still_broken)}\n"
+            f"  日志中有详细错误信息，请反馈给开发者"
         )
 
 

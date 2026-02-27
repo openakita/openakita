@@ -364,6 +364,53 @@ def ensure_ssl_certs() -> None:
     )
 
 
+def _sanitize_sys_path() -> None:
+    """检测并清理 sys.path 中可能由外部环境泄漏的路径（纵深防御）。
+
+    即使 Tauri 端已在启动时清除了 PYTHONPATH 等有害环境变量，
+    仍可能有路径通过其他途径被注入（如 .pth 文件、site-packages 钩子等）。
+    此函数移除不属于项目自有路径的 site-packages 目录，
+    防止用户 Anaconda、系统 Python 等环境中的包覆盖内置模块。
+    """
+    if not IS_FROZEN:
+        return
+
+    import os
+
+    meipass = getattr(sys, "_MEIPASS", "")
+    openakita_root = str(_get_openakita_root())
+
+    suspicious = []
+    for p in list(sys.path):
+        if not p:
+            continue
+        # 允许: PyInstaller 内部路径
+        if meipass and p.startswith(meipass):
+            continue
+        # 允许: 项目数据目录 (~/.openakita/)
+        if p.startswith(openakita_root):
+            continue
+        # 允许: 当前工作目录 ('' 或 '.')
+        if p in ("", "."):
+            continue
+        # 允许: 临时目录（部分运行时动态生成）
+        tmp = os.environ.get("TEMP", os.environ.get("TMPDIR", ""))
+        if tmp and p.startswith(tmp):
+            continue
+        # 检测: 含有 site-packages 的外部路径是危险信号
+        p_lower = p.lower().replace("\\", "/")
+        if "site-packages" in p_lower or "dist-packages" in p_lower:
+            suspicious.append(p)
+
+    if suspicious:
+        for p in suspicious:
+            sys.path.remove(p)
+        logger.warning(
+            f"已清理 {len(suspicious)} 个外部 site-packages 路径 "
+            f"(可能来自用户 Anaconda/系统 Python): {suspicious[:5]}"
+        )
+
+
 def inject_module_paths() -> None:
     """将可选模块的 site-packages 目录注入 sys.path。
 
@@ -382,6 +429,9 @@ def inject_module_paths() -> None:
     """
     if not IS_FROZEN:
         return
+
+    # 先清理外部路径泄漏，再注入项目自有路径
+    _sanitize_sys_path()
 
     import os
 
