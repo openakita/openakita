@@ -52,13 +52,45 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
 
     from openakita.llm.capabilities import infer_capabilities
 
+    def _is_minimax_provider() -> bool:
+        slug = (provider_slug or "").strip().lower()
+        b = (base_url or "").strip().lower()
+        return slug in {"minimax", "minimax-cn", "minimax-int"} or "minimax" in b or "minimaxi" in b
+
+    def _minimax_fallback_models() -> list[dict]:
+        # MiniMax Anthropic/OpenAI 兼容文档仅列出固定模型，且未提供 /models 列表接口。
+        ids = [
+            "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.1",
+            "MiniMax-M2.1-highspeed",
+            "MiniMax-M2",
+        ]
+        out = [
+            {
+                "id": mid,
+                "name": mid,
+                "capabilities": infer_capabilities(mid, provider_slug="minimax"),
+            }
+            for mid in ids
+        ]
+        out.sort(key=lambda x: x["id"])
+        return out
+
+    # MiniMax 兼容接口无模型列表端点，直接返回文档内置候选，避免无效探测和误报。
+    if _is_minimax_provider():
+        return _minimax_fallback_models()
+
     url = base_url.rstrip("/") + "/models"
     # 本地服务（Ollama/LM Studio 等）不需要真实 API Key，使用 placeholder
     effective_key = api_key.strip() or "local"
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers={"Authorization": f"Bearer {effective_key}"})
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {effective_key}"})
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError:
+            raise
 
     out: list[dict] = []
     for m in data.get("data", []):
@@ -81,21 +113,50 @@ async def _list_models_anthropic(api_key: str, base_url: str, provider_slug: str
 
     from openakita.llm.capabilities import infer_capabilities
 
+    def _is_minimax_provider() -> bool:
+        slug = (provider_slug or "").strip().lower()
+        b = (base_url or "").strip().lower()
+        return slug in {"minimax", "minimax-cn", "minimax-int"} or "minimax" in b or "minimaxi" in b
+
+    def _minimax_fallback_models() -> list[dict]:
+        ids = [
+            "MiniMax-M2.5",
+            "MiniMax-M2.5-highspeed",
+            "MiniMax-M2.1",
+            "MiniMax-M2.1-highspeed",
+            "MiniMax-M2",
+        ]
+        return [
+            {
+                "id": mid,
+                "name": mid,
+                "capabilities": infer_capabilities(mid, provider_slug="minimax"),
+            }
+            for mid in ids
+        ]
+
+    # MiniMax 兼容接口无模型列表端点，直接返回文档内置候选，避免无效探测和误报。
+    if _is_minimax_provider():
+        return _minimax_fallback_models()
+
     b = base_url.rstrip("/")
     url = b + "/models" if b.endswith("/v1") else b + "/v1/models"
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            url,
-            headers={
-                "x-api-key": api_key,
-                # 部分 Anthropic 兼容网关仅识别 Bearer。
-                "Authorization": f"Bearer {api_key}",
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = await client.get(
+                url,
+                headers={
+                    "x-api-key": api_key,
+                    # 部分 Anthropic 兼容网关仅识别 Bearer。
+                    "Authorization": f"Bearer {api_key}",
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError:
+            raise
 
     out: list[dict] = []
     for m in data.get("data", []):

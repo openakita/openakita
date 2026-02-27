@@ -168,9 +168,32 @@ function inferCapabilities(modelName: string, _providerSlug?: string | null): Re
   // Thinking
   if (["thinking", "r1", "qwq", "qvq", "o1"].some(kw => m.includes(kw))) caps.thinking = true;
   // Tools
-  if (["qwen", "gpt", "claude", "deepseek", "kimi", "glm", "gemini", "moonshot"].some(kw => m.includes(kw))) caps.tools = true;
+  if (["qwen", "gpt", "claude", "deepseek", "kimi", "glm", "gemini", "moonshot", "minimax"].some(kw => m.includes(kw))) caps.tools = true;
+  if (m.includes("minimax") && m.includes("m2")) caps.thinking = true;
 
   return caps;
+}
+
+function isMiniMaxProvider(providerSlug: string | null, baseUrl: string): boolean {
+  const slug = (providerSlug || "").toLowerCase();
+  const base = (baseUrl || "").toLowerCase();
+  return ["minimax", "minimax-cn", "minimax-int"].includes(slug) || base.includes("minimax") || base.includes("minimaxi");
+}
+
+function miniMaxFallbackModels(providerSlug: string | null): ListedModel[] {
+  // MiniMax 兼容文档仅列出固定候选模型，且未提供 /models 列表接口。
+  const ids = [
+    "MiniMax-M2.5",
+    "MiniMax-M2.5-highspeed",
+    "MiniMax-M2.1",
+    "MiniMax-M2.1-highspeed",
+    "MiniMax-M2",
+  ];
+  return ids.map((id) => ({
+    id,
+    name: id,
+    capabilities: inferCapabilities(id, providerSlug),
+  }));
 }
 
 /**
@@ -184,6 +207,10 @@ async function fetchModelsDirectly(params: {
   const base = baseUrl.replace(/\/+$/, "");
 
   if (apiType === "anthropic") {
+    if (isMiniMaxProvider(providerSlug, baseUrl)) {
+      return miniMaxFallbackModels(providerSlug);
+    }
+
     // Anthropic: GET /v1/models
     const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
     const resp = await proxyFetch(url, {
@@ -194,7 +221,12 @@ async function fetchModelsDirectly(params: {
       },
       timeoutSecs: 30,
     });
-    if (resp.status >= 400) throw new Error(`Anthropic API ${resp.status}: ${resp.body.slice(0, 200)}`);
+    if (resp.status >= 400) {
+      if (resp.status === 404 && isMiniMaxProvider(providerSlug, baseUrl)) {
+        return miniMaxFallbackModels(providerSlug);
+      }
+      throw new Error(`Anthropic API ${resp.status}: ${resp.body.slice(0, 200)}`);
+    }
     const data = JSON.parse(resp.body);
     return (data.data ?? [])
       .map((m: any) => ({
@@ -206,12 +238,21 @@ async function fetchModelsDirectly(params: {
   }
 
   // OpenAI-compatible: GET /models
+  if (isMiniMaxProvider(providerSlug, baseUrl)) {
+    return miniMaxFallbackModels(providerSlug);
+  }
+
   const url = `${base}/models`;
   const resp = await proxyFetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
     timeoutSecs: 30,
   });
-  if (resp.status >= 400) throw new Error(`API ${resp.status}: ${resp.body.slice(0, 200)}`);
+  if (resp.status >= 400) {
+    if (resp.status === 404 && isMiniMaxProvider(providerSlug, baseUrl)) {
+      return miniMaxFallbackModels(providerSlug);
+    }
+    throw new Error(`API ${resp.status}: ${resp.body.slice(0, 200)}`);
+  }
   const data = JSON.parse(resp.body);
   return (data.data ?? [])
     .map((m: any) => ({
@@ -2190,6 +2231,15 @@ export function App() {
     setCodingPlanMode(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerSlug]);
+
+  // MiniMax 不支持 /models：进入该服务商时直接提供内置候选模型，并允许继续手填。
+  useEffect(() => {
+    if (!selectedProvider) return;
+    if (isMiniMaxProvider(selectedProvider.slug, selectedProvider.default_base_url || "")) {
+      setModels(miniMaxFallbackModels(selectedProvider.slug));
+      return;
+    }
+  }, [selectedProvider]);
 
   async function doFetchModels() {
     setError(null);

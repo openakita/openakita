@@ -414,19 +414,40 @@ MODEL_CAPABILITIES = {
     },
     "minimax": {
         # MiniMax 官方（不支持 /v1/models 端点）
+        "minimax-m2.5": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
+        "minimax-m2.5-highspeed": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
         "minimax-m2.1": {
             "text": True,
             "vision": False,
             "video": False,
             "tools": True,
-            "thinking": False,
+            "thinking": True,
+        },
+        "minimax-m2.1-highspeed": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
         },
         "minimax-m2": {
             "text": True,
             "vision": False,
             "video": False,
             "tools": True,
-            "thinking": False,
+            "thinking": True,
         },
         "abab6.5s-chat": {
             "text": True,
