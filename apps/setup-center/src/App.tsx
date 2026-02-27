@@ -22,7 +22,7 @@ import {
   IconEdit, IconTrash, IconEye, IconEyeOff, IconInfo, IconClipboard,
   DotGreen, DotGray, DotYellow, DotRed,
   IconBook, IconZap, IconGear, IconMoon, IconSun, IconLaptop, IconPlug, IconCalendar,
-  IconBug, IconBrain, IconGitHub, IconGitee,
+  IconBug, IconBrain, IconGitHub, IconGitee, IconBot,
   LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ,
 } from "./icons";
 import logoUrl from "./assets/logo.png";
@@ -1034,8 +1034,6 @@ export function App() {
   const [stepId, setStepId] = useState<StepId>("llm");
   const currentStepIdxRaw = useMemo(() => steps.findIndex((s) => s.id === stepId), [steps, stepId]);
   const currentStepIdx = currentStepIdxRaw < 0 ? 0 : currentStepIdxRaw;
-  const isFirst = currentStepIdx <= 0;
-  const isLast = currentStepIdx >= steps.length - 1;
 
   // ── Onboarding Wizard (首次安装引导) ──
   type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-modules" | "ob-cli" | "ob-progress" | "ob-done";
@@ -1697,11 +1695,6 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pipIndexPresetId]);
 
-  const done = useMemo(() => {
-    const d = new Set<StepId>();
-    if (savedEndpoints.length > 0) d.add("llm");
-    return d;
-  }, [savedEndpoints.length]);
 
   // Keep boolean flags in sync with the visible status string (best-effort).
   useEffect(() => {
@@ -3526,27 +3519,6 @@ export function App() {
 
   const step = steps[currentStepIdx] || steps[0];
 
-  async function goNext() {
-    setNotice(null);
-    setError(null);
-    if (stepId === "llm" && savedEndpoints.length === 0) {
-      setError("当前工作区还没有任何 LLM 端点。请先新增至少 1 个端点，再进入下一步。");
-      return;
-    }
-    if (currentWorkspaceId) {
-      try {
-        const autoSaveKeys = getAutoSaveKeysForStep(stepId);
-        if (autoSaveKeys.length > 0) {
-          setBusy("自动保存配置...");
-          await saveEnvKeys(autoSaveKeys);
-          setBusy(null);
-        }
-      } catch {
-        setBusy(null);
-      }
-    }
-    setStepId(steps[Math.min(currentStepIdx + 1, steps.length - 1)].id);
-  }
 
   /** 根据当前步骤返回需要自动保存的 env key 列表 */
   function getAutoSaveKeysForStep(sid: StepId): string[] {
@@ -3628,11 +3600,6 @@ export function App() {
     }
   }
 
-  function goPrev() {
-    setNotice(null);
-    setError(null);
-    setStepId(steps[Math.max(currentStepIdx - 1, 0)].id);
-  }
 
   // keep env draft in sync when workspace changes
   useEffect(() => {
@@ -4501,18 +4468,17 @@ export function App() {
     }
   }
 
-  // Only count done items that are actually in the current steps list
-  const doneCount = steps.filter((s) => done.has(s.id)).length;
-  const totalSteps = steps.length;
 
-  // Auto-collapse config section when all steps done
-  useEffect(() => {
-    if (doneCount >= totalSteps) setConfigExpanded(false);
-  }, [doneCount, totalSteps]);
+  const stepIcons: Record<StepId, React.ReactNode> = {
+    llm: <IconZap size={14} />,
+    im: <IconIM size={14} />,
+    tools: <IconSkills size={14} />,
+    agent: <IconBot size={14} />,
+  };
 
-  const StepDot = ({ idx, isDone }: { idx: number; isDone: boolean }) => (
-    <div className={`stepDot ${isDone ? "stepDotDone" : ""}`}>
-      {isDone ? <IconCheck size={14} /> : idx + 1}
+  const StepDot = ({ stepId: sid }: { stepId: StepId }) => (
+    <div className="stepDot">
+      {stepIcons[sid]}
     </div>
   );
 
@@ -8517,7 +8483,6 @@ export function App() {
             <div className="stepList">
               {steps.map((s, idx) => {
                 const isActive = view === "wizard" && s.id === stepId;
-                const isDone = done.has(s.id);
                 return (
                   <div
                     key={s.id}
@@ -8525,7 +8490,7 @@ export function App() {
                     onClick={() => { setView("wizard"); setStepId(s.id); }}
                     role="button" tabIndex={0}
                   >
-                    <StepDot idx={idx} isDone={isDone} />
+                    <StepDot stepId={s.id} />
                     <div className="stepMeta"><div className="stepTitle">{s.title}</div></div>
                   </div>
                 );
@@ -8983,32 +8948,23 @@ export function App() {
 
         {view === "wizard" ? (() => {
           const saveConfig = getFooterSaveConfig();
-          return (
-            <div className="footer">
+          return saveConfig ? (
+            <div className="footer" style={{ justifyContent: "flex-end" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div className="statusLine">{t("config.configuring")}</div>
-                {saveConfig && (
-                  <>
-                    <button className="btnPrimary"
-                      onClick={() => renderIntegrationsSave(saveConfig.keys, saveConfig.savedMsg)}
-                      disabled={!currentWorkspaceId || !!busy}>
-                      {t("config.saveEnv")}
-                    </button>
-                    <button className="btnApplyRestart"
-                      onClick={() => applyAndRestart(saveConfig.keys)}
-                      disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
-                      title={t("config.applyRestartHint")}>
-                      {t("config.applyRestart")}
-                    </button>
-                  </>
-                )}
-              </div>
-              <div className="btnRow">
-                <button onClick={goPrev} disabled={isFirst || !!busy}>{t("config.prev")}</button>
-                <button className="btnPrimary" onClick={goNext} disabled={isLast || !!busy}>{t("config.next")}</button>
+                <button className="btnPrimary"
+                  onClick={() => renderIntegrationsSave(saveConfig.keys, saveConfig.savedMsg)}
+                  disabled={!currentWorkspaceId || !!busy}>
+                  {t("config.saveEnv")}
+                </button>
+                <button className="btnApplyRestart"
+                  onClick={() => applyAndRestart(saveConfig.keys)}
+                  disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
+                  title={t("config.applyRestartHint")}>
+                  {t("config.applyRestart")}
+                </button>
               </div>
             </div>
-          );
+          ) : null;
         })() : null}
       </main>
 
