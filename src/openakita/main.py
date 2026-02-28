@@ -1489,14 +1489,18 @@ def serve():
         api_task = None
         _api_fatal = False
         try:
-            from openakita.api.server import start_api_server
+            from openakita.api.server import API_HOST, API_PORT, start_api_server
+            api_host = API_HOST
+            api_port = API_PORT
             api_task = await start_api_server(
                 agent=agent_or_master,
                 shutdown_event=shutdown_event,
                 session_manager=_session_manager,
                 gateway=_message_gateway,
+                host=api_host,
+                port=api_port,
             )
-            console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
+            console.print(f"[green]✓[/green] HTTP API 已启动: http://{api_host}:{api_port}")
             _heartbeat_phase = "running"
             _heartbeat_http_ready = True
             _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
