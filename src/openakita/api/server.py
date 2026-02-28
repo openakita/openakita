@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import socket
 import time
 from typing import Any
@@ -42,8 +43,8 @@ from .routes import (
 
 logger = logging.getLogger(__name__)
 
-API_HOST = "127.0.0.1"
-API_PORT = 18900
+API_HOST = os.environ.get("API_HOST", "0.0.0.0")
+API_PORT = int(os.environ.get("API_PORT", "18900"))
 
 
 def is_port_free(host: str, port: int) -> bool:
@@ -232,7 +233,8 @@ async def start_api_server(
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(1.0)
-                s.connect((host, port))
+                check_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+                s.connect((check_host, port))
                 logger.info(f"HTTP API server confirmed listening on http://{host}:{port}")
                 return task
         except (ConnectionRefusedError, OSError, TimeoutError):
