@@ -102,7 +102,7 @@ wework = [
 
 # OneBot 协议通道 (NapCat/Lagrange 等)
 onebot = [
-    "websockets>=12.0",
+    "websockets>=15.0.1",
 ]
 
 # QQ 官方机器人
@@ -142,7 +142,7 @@ all = [
     "dingtalk-stream>=0.24.0",
     "aiohttp>=3.9.0",
     "pycryptodome>=3.19.0",
-    "websockets>=12.0",
+    "websockets>=15.0.1",
     "qq-botpy>=1.1.5",
     "pilk>=0.2.1",
     # -- 语音 / 桌面 --

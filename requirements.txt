@@ -85,7 +85,7 @@ pycryptodome>=3.19.0      # 企业微信消息加解密 (AES-256-CBC)
 dingtalk-stream>=0.24.0   # 钉钉 Stream SDK
 
 # OneBot 协议 (NapCat/Lagrange 等)
-websockets>=12.0          # OneBot WebSocket 支持
+websockets>=15.0.1          # OneBot WebSocket 支持
 
 # QQ 官方机器人
 qq-botpy>=1.1.5           # QQ 开放平台官方 Bot SDK

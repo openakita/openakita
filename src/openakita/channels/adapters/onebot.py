@@ -110,7 +110,7 @@ class OneBotAdapter(ChannelAdapter):
         try:
             self._ws = await websockets.connect(
                 self.config.ws_url,
-                extra_headers=headers,
+                additional_headers=headers,
             )
             logger.info(f"OneBot adapter connected to {self.config.ws_url}")
             return True
