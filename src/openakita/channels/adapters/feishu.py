@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from openakita.python_compat import patch_simplejson_jsondecodeerror
+
 from ..base import ChannelAdapter
 from ..types import (
     MediaFile,
@@ -41,11 +43,17 @@ def _import_lark():
     global lark_oapi
     if lark_oapi is None:
         try:
+            patch_simplejson_jsondecodeerror(logger=logger)
             import lark_oapi as lark
 
             lark_oapi = lark
         except ImportError as exc:
             logger.error("lark_oapi import failed: %s", exc, exc_info=True)
+            if "JSONDecodeError" in str(exc) and "simplejson" in str(exc):
+                raise ImportError(
+                    "飞书 SDK 依赖冲突：simplejson 缺少 JSONDecodeError。"
+                    "请前往「设置中心 → Python 环境」执行一键修复后重启。"
+                ) from exc
             from openakita.tools._import_helper import import_or_hint
             raise ImportError(import_or_hint("lark_oapi")) from exc
 

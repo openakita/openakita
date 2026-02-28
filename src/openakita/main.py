@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -25,6 +26,7 @@ from rich.table import Table
 from .config import settings
 from .core.agent import Agent
 from .logging import setup_logging
+from .python_compat import patch_simplejson_jsondecodeerror
 
 # 配置日志系统（使用新的日志模块）
 setup_logging(
@@ -165,6 +167,72 @@ def _patch_backports_zstd() -> None:
     logger.debug("Patched backports.zstd: added missing ZstdError stub")
 
 
+def _build_isolated_pip_env(py_path: Path, *, is_frozen: bool) -> dict[str, str]:
+    """Build a sanitized subprocess env for ``python -m pip`` execution."""
+    pip_env = os.environ.copy()
+    for harmful_key in (
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_SHLVL",
+        "CONDA_PYTHON_EXE",
+        "PIP_INDEX_URL",
+        "PIP_TARGET",
+        "PIP_PREFIX",
+        "PIP_USER",
+        "PIP_REQUIRE_VIRTUALENV",
+    ):
+        pip_env.pop(harmful_key, None)
+
+    if is_frozen and py_path.parent.name == "_internal":
+        path_parts = [str(py_path.parent)]
+        for sub in ("Lib", "DLLs"):
+            p = py_path.parent / sub
+            if p.is_dir():
+                path_parts.append(str(p))
+        pip_env["PYTHONPATH"] = os.pathsep.join(path_parts)
+
+    return pip_env
+
+
+def _probe_python_runtime(py: str, env: dict[str, str], *, extra: dict) -> tuple[bool, str]:
+    """Probe whether a Python executable can import encodings/pip normally."""
+    try:
+        result = subprocess.run(
+            [py, "-c", "import encodings, pip; print('ok')"],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            **extra,
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+    if result.returncode == 0:
+        return True, ""
+    tail = (result.stderr or result.stdout or "").strip()
+    return False, tail[-600:]
+
+
+def _find_bundled_channel_wheels() -> Path | None:
+    """Locate bundled offline wheels for IM deps if present."""
+    exe = Path(sys.executable).resolve()
+    candidates = [
+        exe.parent.parent / "modules" / "channel-deps" / "wheels",
+        exe.parent / "modules" / "channel-deps" / "wheels",
+    ]
+    for p in candidates:
+        if p.is_dir():
+            return p
+    return None
+
+
 def _ensure_channel_deps() -> None:
     """
     检查已启用的 IM 通道所需依赖，缺失的自动安装到隔离目录。
@@ -177,6 +245,12 @@ def _ensure_channel_deps() -> None:
     Telegram 为核心依赖，始终包含在安装包中，不需检查。
     """
     _patch_backports_zstd()
+    patch_simplejson_jsondecodeerror(logger=logger)
+    try:
+        from openakita.runtime_env import inject_module_paths_runtime
+        inject_module_paths_runtime()
+    except Exception:
+        pass
 
     enabled_channels: list[str] = []
     if settings.feishu_enabled:
@@ -199,7 +273,23 @@ def _ensure_channel_deps() -> None:
         for import_name, pip_name in _CHANNEL_DEPS.get(channel, []):
             try:
                 importlib.import_module(import_name)
-            except ImportError:
+            except ImportError as exc:
+                # requests 在检测到 simplejson 时会导入 JSONDecodeError。
+                # 某些旧/损坏的 simplejson 缺失该符号，导致 lark_oapi 导入失败。
+                if (
+                    import_name == "lark_oapi"
+                    and "JSONDecodeError" in str(exc)
+                    and "simplejson" in str(exc)
+                ):
+                    patch_simplejson_jsondecodeerror(logger=logger)
+                    try:
+                        importlib.import_module(import_name)
+                        logger.info(
+                            "lark_oapi import recovered after simplejson compatibility patch"
+                        )
+                        continue
+                    except Exception:
+                        pass
                 if pip_name not in missing:
                     missing.append(pip_name)
                 failed_import_names.append(import_name)
@@ -246,26 +336,92 @@ def _ensure_channel_deps() -> None:
     if sys.platform == "win32":
         extra["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    pip_env = os.environ.copy()
-    # 清除可能干扰 pip 行为和 Python 运行时的外部环境变量，
-    # 避免用户 Anaconda/Miniconda/系统 Python 配置影响安装。
-    for _harmful_key in (
-        "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
-        "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
-        "CONDA_SHLVL", "CONDA_PYTHON_EXE",
-        "PIP_INDEX_URL", "PIP_TARGET", "PIP_PREFIX",
-        "PIP_USER", "PIP_REQUIRE_VIRTUALENV",
-    ):
-        pip_env.pop(_harmful_key, None)
-    # 当使用打包内置 Python (_internal/python.exe) 时，需要设置 PYTHONPATH
-    # 使其能找到 pip 等内置模块
-    from pathlib import Path as _Path
-    py_path = _Path(py)
-    if IS_FROZEN and py_path.parent.name == "_internal":
-        pip_env["PYTHONPATH"] = str(py_path.parent)
+    py_path = Path(py)
+    pip_env = _build_isolated_pip_env(py_path, is_frozen=IS_FROZEN)
+
+    # _internal/python.exe 在部分用户机器上会因为 PythonHome 未稳定而报
+    # "No module named encodings"。先做探测，必要时追加 PYTHONHOME 再重试。
+    runtime_ok, probe_err = _probe_python_runtime(py, pip_env, extra=extra)
+    if not runtime_ok and IS_FROZEN and py_path.parent.name == "_internal":
+        pip_env["PYTHONHOME"] = str(py_path.parent)
+        runtime_ok, probe_err = _probe_python_runtime(py, pip_env, extra=extra)
+        if runtime_ok:
+            logger.info("内置 Python 通过 PYTHONHOME 修正后可用: %s", py)
+
+    if not runtime_ok:
+        logger.error("自动安装依赖前的 Python 运行时探测失败: %s", probe_err)
+        console.print(
+            "[red]✗[/red] Python 运行环境异常，无法安装 IM 依赖。\n"
+            "  建议：前往「设置中心 → Python 环境」点击「一键修复」。"
+        )
+        return
+
+    def _on_install_success(source_label: str) -> None:
+        logger.info(f"依赖安装成功 (source={source_label}, target={target_dir}): {pkg_list}")
+        console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
+
+        # 清理之前失败的导入在 sys.modules 中留下的残余条目，
+        # 确保后续 import 能从新安装的路径加载完整模块。
+        stale = [
+            k for k in sys.modules
+            if any(k == n or k.startswith(n + ".") for n in failed_import_names)
+        ]
+        for k in stale:
+            del sys.modules[k]
+        if stale:
+            logger.debug(f"Cleared {len(stale)} stale sys.modules entries: {stale[:10]}")
+
+        importlib.invalidate_caches()
+        target_str = str(target_dir)
+        if target_str not in sys.path:
+            sys.path.append(target_str)
+            logger.info(f"已注入通道依赖路径: {target_str}")
+        try:
+            from openakita.runtime_env import inject_module_paths_runtime
+            inject_module_paths_runtime()
+        except Exception:
+            pass
 
     installed = False
+
+    # 离线优先：若安装包内带了 channel-deps wheels，先走离线安装。
+    bundled_wheels = _find_bundled_channel_wheels() if IS_FROZEN else None
+    if bundled_wheels is not None:
+        console.print(
+            f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] "
+            f"(源: offline wheels)"
+        )
+        offline_cmd = [
+            py, "-m", "pip", "install",
+            "--no-index",
+            "--find-links", str(bundled_wheels),
+            "--target", str(target_dir),
+            "--prefer-binary",
+            *missing,
+        ]
+        try:
+            offline = subprocess.run(
+                offline_cmd,
+                env=pip_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=180,
+                **extra,
+            )
+            if offline.returncode == 0:
+                _on_install_success("offline")
+                installed = True
+            else:
+                err_tail = (offline.stderr or offline.stdout or "").strip()[-400:]
+                logger.warning("离线 wheels 安装失败，回退在线镜像: %s", err_tail)
+        except Exception as e:
+            logger.warning(f"离线 wheels 安装异常，回退在线镜像: {e}")
+
     for idx, (index_url, trusted_host) in enumerate(_mirror_sources):
+        if installed:
+            break
         source_label = trusted_host or index_url
         if idx == 0:
             console.print(
@@ -281,11 +437,12 @@ def _ensure_channel_deps() -> None:
             py, "-m", "pip", "install",
             "--target", str(target_dir),
             "-i", index_url,
-            "--trusted-host", trusted_host,
             "--prefer-binary",
             "--timeout", "60",
             *missing,
         ]
+        if trusted_host:
+            pip_cmd.extend(["--trusted-host", trusted_host])
 
         try:
             result = subprocess.run(
@@ -299,25 +456,7 @@ def _ensure_channel_deps() -> None:
                 **extra,
             )
             if result.returncode == 0:
-                logger.info(f"依赖安装成功 (source={source_label}, target={target_dir}): {pkg_list}")
-                console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
-
-                # 清理之前失败的导入在 sys.modules 中留下的残余条目，
-                # 确保后续 import 能从新安装的路径加载完整模块。
-                stale = [
-                    k for k in sys.modules
-                    if any(k == n or k.startswith(n + ".") for n in failed_import_names)
-                ]
-                for k in stale:
-                    del sys.modules[k]
-                if stale:
-                    logger.debug(f"Cleared {len(stale)} stale sys.modules entries: {stale[:10]}")
-
-                importlib.invalidate_caches()
-                target_str = str(target_dir)
-                if target_str not in sys.path:
-                    sys.path.append(target_str)
-                    logger.info(f"已注入通道依赖路径: {target_str}")
+                _on_install_success(source_label)
                 installed = True
                 break
             else:
@@ -632,8 +771,12 @@ async def start_im_channels(agent_or_master):
     # 启动网关
     if adapters_started:
         await _message_gateway.start()
-        logger.info(f"MessageGateway started with adapters: {adapters_started}")
-        return adapters_started
+        started = _message_gateway.get_started_adapters()
+        failed = _message_gateway.get_failed_adapters()
+        if failed:
+            logger.warning(f"IM adapters failed to start: {', '.join(failed)}")
+        logger.info(f"MessageGateway started with adapters: {started}")
+        return started
 
     return []
 
@@ -843,7 +986,7 @@ async def run_interactive():
     if im_channels:
         console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
     else:
-        console.print("[yellow]ℹ[/yellow] 未启用任何 IM 通道 (可在 .env 中配置)")
+        console.print("[yellow]ℹ[/yellow] 未成功启动任何 IM 通道（可能未启用或启动失败）")
 
     console.print()
 
@@ -1476,7 +1619,7 @@ def serve():
         im_channels = await start_im_channels(agent_or_master)
 
         if not im_channels:
-            console.print("[yellow]⚠[/yellow] 没有启用任何 IM 通道（HTTP API 仍可使用）")
+            console.print("[yellow]⚠[/yellow] 未成功启动任何 IM 通道（HTTP API 仍可使用）")
 
         if im_channels:
             console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")

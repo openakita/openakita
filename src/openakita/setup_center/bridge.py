@@ -599,6 +599,64 @@ def ensure_channel_deps(workspace_dir: str) -> None:
     import importlib
     import subprocess
 
+    from openakita.python_compat import patch_simplejson_jsondecodeerror
+    from openakita.runtime_env import get_channel_deps_dir, get_python_executable, inject_module_paths_runtime
+
+    def _build_pip_env(py_path: Path) -> dict[str, str]:
+        e = os.environ.copy()
+        for k in (
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+            "VIRTUAL_ENV",
+            "CONDA_PREFIX",
+            "CONDA_DEFAULT_ENV",
+            "CONDA_SHLVL",
+            "CONDA_PYTHON_EXE",
+            "PIP_INDEX_URL",
+            "PIP_TARGET",
+            "PIP_PREFIX",
+            "PIP_USER",
+            "PIP_REQUIRE_VIRTUALENV",
+        ):
+            e.pop(k, None)
+        if py_path.parent.name == "_internal":
+            parts = [str(py_path.parent)]
+            for sub in ("Lib", "DLLs"):
+                p = py_path.parent / sub
+                if p.is_dir():
+                    parts.append(str(p))
+            e["PYTHONPATH"] = os.pathsep.join(parts)
+        return e
+
+    def _probe_python(py: str, env: dict[str, str], extra: dict) -> tuple[bool, str]:
+        try:
+            p = subprocess.run(
+                [py, "-c", "import encodings, pip; print('ok')"],
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                **extra,
+            )
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+        if p.returncode == 0:
+            return True, ""
+        return False, (p.stderr or p.stdout or "").strip()[-600:]
+
+    def _find_offline_wheels(py_path: Path) -> Path | None:
+        candidates = [
+            py_path.parent.parent / "modules" / "channel-deps" / "wheels",
+            py_path.parent / "modules" / "channel-deps" / "wheels",
+        ]
+        for c in candidates:
+            if c.is_dir():
+                return c
+        return None
+
     wd = Path(workspace_dir).expanduser().resolve()
 
     # 读取 .env
@@ -630,6 +688,9 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         "qqbot": "QQBOT_ENABLED",
     }
 
+    inject_module_paths_runtime()
+    patch_simplejson_jsondecodeerror()
+
     missing: list[str] = []
     for channel, enabled_key in enabled_key_map.items():
         if env.get(enabled_key, "").strip().lower() not in ("true", "1", "yes"):
@@ -637,7 +698,18 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         for import_name, pip_name in channel_deps.get(channel, []):
             try:
                 importlib.import_module(import_name)
-            except ImportError:
+            except ImportError as exc:
+                if (
+                    import_name == "lark_oapi"
+                    and "JSONDecodeError" in str(exc)
+                    and "simplejson" in str(exc)
+                ):
+                    patch_simplejson_jsondecodeerror()
+                    try:
+                        importlib.import_module(import_name)
+                        continue
+                    except Exception:
+                        pass
                 if pip_name not in missing:
                     missing.append(pip_name)
 
@@ -645,60 +717,128 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         _json_print({"status": "ok", "installed": [], "message": "所有依赖已就绪"})
         return
 
-    # 执行安装 (PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器)
-    from openakita.runtime_env import get_pip_command
-    pip_cmd = get_pip_command(missing)
-    if not pip_cmd:
+    py = get_python_executable() or sys.executable
+    py_path = Path(py)
+    target_dir = get_channel_deps_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    extra: dict = {}
+    if sys.platform == "win32":
+        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+    pip_env = _build_pip_env(py_path)
+    ok, probe = _probe_python(py, pip_env, extra)
+    if not ok and py_path.parent.name == "_internal":
+        pip_env["PYTHONHOME"] = str(py_path.parent)
+        ok, probe = _probe_python(py, pip_env, extra)
+    if not ok:
         _json_print({
             "status": "error",
             "installed": [],
             "missing": missing,
-            "message": "当前环境不支持自动安装依赖，请通过设置中心的模块管理安装",
+            "message": f"Python 运行时异常（无法导入 encodings/pip）: {probe}",
         })
         return
 
-    try:
-        extra: dict = {}
-        if sys.platform == "win32":
-            extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-        result = subprocess.run(
-            pip_cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=180,
-            **extra,
-        )
-        if result.returncode == 0:
-            importlib.invalidate_caches()
-            _json_print({
-                "status": "ok",
-                "installed": missing,
-                "message": f"已安装: {', '.join(missing)}",
-            })
-        else:
-            err = (result.stderr or result.stdout or "").strip()[-500:]
-            _json_print({
-                "status": "error",
-                "installed": [],
-                "missing": missing,
-                "message": f"安装失败: {err}",
-            })
-    except subprocess.TimeoutExpired:
-        _json_print({
-            "status": "error",
-            "installed": [],
-            "missing": missing,
-            "message": "安装超时（180s）",
-        })
-    except Exception as e:
-        _json_print({
-            "status": "error",
-            "installed": [],
-            "missing": missing,
-            "message": str(e),
-        })
+    # 离线优先（若安装包内置了 wheels）
+    wheels_dir = _find_offline_wheels(py_path)
+    if wheels_dir is not None:
+        try:
+            offline_cmd = [
+                py,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                str(wheels_dir),
+                "--target",
+                str(target_dir),
+                "--prefer-binary",
+                *missing,
+            ]
+            off = subprocess.run(
+                offline_cmd,
+                env=pip_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=240,
+                **extra,
+            )
+            if off.returncode == 0:
+                importlib.invalidate_caches()
+                inject_module_paths_runtime()
+                _json_print({
+                    "status": "ok",
+                    "installed": missing,
+                    "message": f"已安装(offline): {', '.join(missing)}",
+                })
+                return
+        except Exception:
+            pass
+
+    # 在线镜像回退
+    user_index = os.environ.get("PIP_INDEX_URL", "").strip()
+    mirrors: list[tuple[str, str]] = []
+    if user_index:
+        host = user_index.split("//")[1].split("/")[0] if "//" in user_index else ""
+        mirrors.append((user_index, host))
+    mirrors.extend([
+        ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
+        ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
+        ("https://pypi.org/simple/", "pypi.org"),
+    ])
+
+    last_err = ""
+    for index_url, trusted_host in mirrors:
+        cmd = [
+            py,
+            "-m",
+            "pip",
+            "install",
+            "--target",
+            str(target_dir),
+            "-i",
+            index_url,
+            "--prefer-binary",
+            "--timeout",
+            "60",
+            *missing,
+        ]
+        if trusted_host:
+            cmd.extend(["--trusted-host", trusted_host])
+        try:
+            result = subprocess.run(
+                cmd,
+                env=pip_env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=180,
+                **extra,
+            )
+            if result.returncode == 0:
+                importlib.invalidate_caches()
+                inject_module_paths_runtime()
+                _json_print({
+                    "status": "ok",
+                    "installed": missing,
+                    "message": f"已安装: {', '.join(missing)}",
+                })
+                return
+            last_err = (result.stderr or result.stdout or "").strip()[-500:]
+        except Exception as e:
+            last_err = str(e)
+
+    _json_print({
+        "status": "error",
+        "installed": [],
+        "missing": missing,
+        "message": f"安装失败: {last_err}",
+    })
 
 
 def list_skills(workspace_dir: str) -> None:
@@ -1251,10 +1391,11 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    from openakita.runtime_env import IS_FROZEN, ensure_ssl_certs
+    from openakita.runtime_env import IS_FROZEN, ensure_ssl_certs, inject_module_paths
 
     if IS_FROZEN:
         ensure_ssl_certs()
+        inject_module_paths()
 
     try:
         main()
@@ -1262,4 +1403,3 @@ if __name__ == "__main__":
         sys.stderr.write(str(e))
         sys.stderr.write("\n")
         raise
-

@@ -2229,6 +2229,18 @@ fn strip_harmful_python_env(cmd: &mut Command) {
     cmd.env_remove("PIP_REQUIRE_VIRTUALENV");
 }
 
+/// 判断 .env 中的键是否会污染 Python 运行时（应在启动后端时忽略）。
+fn is_harmful_python_env_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case("PYTHONPATH")
+        || key.eq_ignore_ascii_case("PYTHONHOME")
+        || key.eq_ignore_ascii_case("PYTHONSTARTUP")
+        || key.eq_ignore_ascii_case("VIRTUAL_ENV")
+        || key.eq_ignore_ascii_case("CONDA_PREFIX")
+        || key.eq_ignore_ascii_case("CONDA_DEFAULT_ENV")
+        || key.eq_ignore_ascii_case("CONDA_SHLVL")
+        || key.eq_ignore_ascii_case("CONDA_PYTHON_EXE")
+}
+
 async fn spawn_blocking_result<R: Send + 'static>(
     f: impl FnOnce() -> Result<R, String> + Send + 'static,
 ) -> Result<R, String> {
@@ -2383,7 +2395,12 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     cmd.env("NO_COLOR", "1");
 
     // inherit current env, then overlay workspace .env
+    // 注意：忽略会污染 Python 运行时的键，避免用户导入旧 .env 后把
+    // _internal/venv 的模块搜索路径破坏（典型表现：No module named encodings）。
     for (k, v) in read_env_kv(&ws_dir.join(".env")) {
+        if is_harmful_python_env_key(&k) {
+            continue;
+        }
         cmd.env(k, v);
     }
     cmd.env("LLM_ENDPOINTS_CONFIG", ws_dir.join("data").join("llm_endpoints.json"));
@@ -3817,7 +3834,18 @@ fn resolve_python(venv_dir: &str) -> Result<(PathBuf, Option<String>), String> {
     let bundled = bundled_backend_dir();
     let internal_dir = bundled.join("_internal");
     let pythonpath = if py.starts_with(&internal_dir) {
-        Some(internal_dir.to_string_lossy().to_string())
+        let mut parts = vec![internal_dir.clone()];
+        let lib = internal_dir.join("Lib");
+        if lib.is_dir() {
+            parts.push(lib);
+        }
+        let dlls = internal_dir.join("DLLs");
+        if dlls.is_dir() {
+            parts.push(dlls);
+        }
+        let joined = std::env::join_paths(parts)
+            .map_err(|e| format!("构建 bundled PYTHONPATH 失败: {e}"))?;
+        Some(joined.to_string_lossy().to_string())
     } else {
         None
     };
@@ -3845,7 +3873,7 @@ async fn pip_install(
     index_url: Option<String>,
 ) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let (py, _pythonpath) = resolve_python(&venv_dir)?;
+        let (py, pythonpath) = resolve_python(&venv_dir)?;
 
         let mut log = String::new();
 
@@ -3985,6 +4013,9 @@ async fn pip_install(
         strip_harmful_python_env(&mut up);
         up.env("PYTHONUTF8", "1");
         up.env("PYTHONIOENCODING", "utf-8");
+        if let Some(ref pp) = pythonpath {
+            up.env("PYTHONPATH", pp);
+        }
         up.args(["-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]);
         up.args(["-i", effective_index]);
         if !effective_host.is_empty() {
@@ -3998,6 +4029,9 @@ async fn pip_install(
         strip_harmful_python_env(&mut c);
         c.env("PYTHONUTF8", "1");
         c.env("PYTHONIOENCODING", "utf-8");
+        if let Some(ref pp) = pythonpath {
+            c.env("PYTHONPATH", pp);
+        }
         c.args(["-m", "pip", "install", "-U", &package_spec]);
         c.args(["-i", effective_index]);
         if !effective_host.is_empty() {
@@ -4021,6 +4055,9 @@ async fn pip_install(
         strip_harmful_python_env(&mut verify);
         verify.env("PYTHONUTF8", "1");
         verify.env("PYTHONIOENCODING", "utf-8");
+        if let Some(ref pp) = pythonpath {
+            verify.env("PYTHONPATH", pp);
+        }
         verify.args([
             "-c",
             "import openakita; import openakita.setup_center.bridge; print(getattr(openakita,'__version__',''))",
@@ -4053,7 +4090,7 @@ async fn pip_install(
 #[tauri::command]
 async fn pip_uninstall(venv_dir: String, package_name: String) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let (py, _pythonpath) = resolve_python(&venv_dir)?;
+        let (py, pythonpath) = resolve_python(&venv_dir)?;
         if package_name.trim().is_empty() {
             return Err("package_name is empty".into());
         }
@@ -4061,6 +4098,9 @@ async fn pip_uninstall(venv_dir: String, package_name: String) -> Result<String,
         let mut c = Command::new(&py);
         apply_no_window(&mut c);
         strip_harmful_python_env(&mut c);
+        if let Some(ref pp) = pythonpath {
+            c.env("PYTHONPATH", pp);
+        }
         c.args(["-m", "pip", "uninstall", "-y", package_name.trim()]);
         let status = c
             .status()

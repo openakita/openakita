@@ -54,6 +54,7 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.3",
+    "simplejson>=3.19.2",
 
     # HTTP API (serve mode + Desktop Terminal)
     "fastapi>=0.110.0",

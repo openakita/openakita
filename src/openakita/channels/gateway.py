@@ -815,6 +815,8 @@ class MessageGateway:
         # 处理任务
         self._processing_task: asyncio.Task | None = None
         self._running = False
+        self._started_adapters: list[str] = []
+        self._failed_adapters: list[str] = []
 
         # 中间件
         self._pre_process_hooks: list[Callable[[UnifiedMessage], Awaitable[UnifiedMessage]]] = []
@@ -886,6 +888,9 @@ class MessageGateway:
                 failed.append(name)
                 logger.error(f"Failed to start adapter {name}: {e}")
 
+        self._started_adapters = started
+        self._failed_adapters = failed
+
         # 启动消息处理循环
         self._processing_task = asyncio.create_task(self._process_loop())
 
@@ -896,6 +901,14 @@ class MessageGateway:
             )
         else:
             logger.info(f"MessageGateway started with {len(started)} adapters")
+
+    def get_started_adapters(self) -> list[str]:
+        """获取启动成功的适配器列表。"""
+        return list(self._started_adapters)
+
+    def get_failed_adapters(self) -> list[str]:
+        """获取启动失败的适配器列表。"""
+        return list(self._failed_adapters)
 
     async def _preload_whisper_async(self) -> None:
         """异步预加载 Whisper 模型"""
