@@ -134,6 +134,9 @@ class ReasoningEngine:
         # _finalize_session 据此决定是否自动关闭 Plan
         self._last_exit_reason: str = "normal"
 
+        # 上一次推理中 deliver_artifacts 的交付回执
+        self._last_delivery_receipts: list[dict] = []
+
         # Checkpoint 数据中 messages_snapshot 可含大量工具结果，
         # 在 session 结束时清理以释放内存
         self._max_working_messages_kept = 0  # 清理时保留的条数（0=全部释放）
@@ -476,6 +479,7 @@ class ReasoningEngine:
         """
         self._last_exit_reason = "normal"
         self._last_react_trace = []
+        self._last_delivery_receipts: list[dict] = []
         self._supervisor.reset()
         self._budget = create_budget_from_settings()
         self._budget.start()
@@ -958,6 +962,9 @@ class ReasoningEngine:
                             tools_executed_in_task = True
                             executed_tool_names.extend(other_executed)
                             state.record_tool_execution(other_executed)
+                        if other_receipts:
+                            delivery_receipts = other_receipts
+                            self._last_delivery_receipts = other_receipts
                         # 保留其他工具的 tool_result 内容
                         other_tool_results = other_results if other_results else []
 
@@ -1124,6 +1131,7 @@ class ReasoningEngine:
 
                 if receipts:
                     delivery_receipts = receipts
+                    self._last_delivery_receipts = receipts
 
                 # ==================== OBSERVE 阶段 ====================
                 logger.info(
@@ -1344,6 +1352,7 @@ class ReasoningEngine:
         tools = tools or []
         self._last_exit_reason = "normal"
         self._last_react_trace = []
+        self._last_delivery_receipts = []
         self._supervisor.reset()
         self._budget = create_budget_from_settings()
         self._budget.start()
@@ -2058,9 +2067,14 @@ class ReasoningEngine:
                         # deliver_artifacts 回执收集（与 run() 一致）
                         if tool_name == "deliver_artifacts" and result_text:
                             try:
-                                _receipts_data = json.loads(result_text)
+                                _rt = result_text
+                                _lm = "\n\n[执行日志]"
+                                if _lm in _rt:
+                                    _rt = _rt[:_rt.index(_lm)]
+                                _receipts_data = json.loads(_rt)
                                 if isinstance(_receipts_data, dict) and "receipts" in _receipts_data:
                                     delivery_receipts = _receipts_data["receipts"]
+                                    self._last_delivery_receipts = delivery_receipts
                             except (json.JSONDecodeError, TypeError):
                                 pass
 

@@ -287,6 +287,34 @@ async def _stream_chat(
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass
 
+            # Forward artifact receipts from sub-agents (via orchestrator delegation).
+            # delegate_parallel may contain multiple __ARTIFACT_RECEIPTS__ blocks.
+            _delegation_tools = ("delegate_to_agent", "delegate_parallel", "spawn_agent")
+            if event_type == "tool_call_end" and event.get("tool") in _delegation_tools:
+                _art_marker = "__ARTIFACT_RECEIPTS__\n"
+                _del_result = event.get("result", "")
+                _search_pos = 0
+                while _art_marker in _del_result[_search_pos:]:
+                    try:
+                        _idx = _del_result.index(_art_marker, _search_pos) + len(_art_marker)
+                        _eol = _del_result.find("\n", _idx)
+                        _chunk = _del_result[_idx:] if _eol < 0 else _del_result[_idx:_eol]
+                        _search_pos = _idx + len(_chunk)
+                        for receipt in json.loads(_chunk):
+                            if isinstance(receipt, dict) and receipt.get("file_url"):
+                                art_data = {
+                                    "artifact_type": receipt.get("type", "file"),
+                                    "file_url": receipt["file_url"],
+                                    "path": receipt.get("path", ""),
+                                    "name": receipt.get("name", ""),
+                                    "caption": receipt.get("caption", ""),
+                                    "size": receipt.get("size"),
+                                }
+                                _collected_artifacts.append(art_data)
+                                yield _sse("artifact", art_data)
+                    except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+                        break
+
             # Inject ui_preference events for system_config set_ui results
             if event_type == "tool_call_end" and event.get("tool") == "system_config":
                 try:

@@ -698,6 +698,28 @@ class AgentOrchestrator:
                 _persist_sub_agent_record(agent, session, message, result, _start)
             except Exception as e:
                 logger.warning(f"[Orchestrator] Failed to persist sub-agent record: {e}")
+
+            # Forward artifact delivery receipts from sub-agent so the parent
+            # SSE stream can emit artifact events to the frontend.
+            try:
+                re = getattr(agent, "reasoning_engine", None)
+                receipts = getattr(re, "_last_delivery_receipts", None) if re else None
+                if receipts:
+                    delivered = [
+                        r for r in receipts
+                        if isinstance(r, dict)
+                        and r.get("status") == "delivered"
+                        and r.get("file_url")
+                    ]
+                    if delivered:
+                        import json as _json
+                        result += (
+                            "\n\n__ARTIFACT_RECEIPTS__\n"
+                            + _json.dumps(delivered, ensure_ascii=False)
+                        )
+            except Exception:
+                pass
+
             return result
         finally:
             agent._is_sub_agent_call = False
@@ -931,20 +953,55 @@ class AgentOrchestrator:
         logger.info("[Orchestrator] Shutdown complete")
 
 
-def _extract_file_paths(text: str) -> list[str]:
-    """Extract unique file paths from text (Windows & Unix)."""
+def _extract_file_paths_from_text(text: str) -> list[str]:
+    """Extract file paths from plain text using regex (Windows & Unix)."""
     patterns = [
         r'[A-Za-z]:[/\\][\w./\\_\u4e00-\u9fff -]+\.\w{2,5}',
         r'/(?:home|tmp|var|opt|usr)/[\w./_ -]+\.\w{2,5}',
     ]
+    results: list[str] = []
+    for pat in patterns:
+        results.extend(re.findall(pat, text))
+    return results
+
+
+def _extract_output_files(record: dict) -> list[str]:
+    """Extract output file paths from a sub-agent record.
+
+    Checks multiple sources in priority order:
+    1. deliver_artifacts tool inputs (most reliable — explicit deliverables)
+    2. write_file tool inputs (explicit file writes)
+    3. run_shell outputs that mention file paths
+    4. result_full text (fallback regex scan)
+    """
     seen: set[str] = set()
     result_paths: list[str] = []
-    for pat in patterns:
-        for fp in re.findall(pat, text):
-            fp_norm = fp.replace("\\", "/").rstrip(". ")
-            if fp_norm not in seen:
-                seen.add(fp_norm)
-                result_paths.append(fp)
+
+    def _add(fp: str) -> None:
+        fp_norm = fp.replace("\\", "/").rstrip(". ")
+        if fp_norm and fp_norm not in seen:
+            seen.add(fp_norm)
+            result_paths.append(fp)
+
+    for tool in record.get("tools_used", []):
+        name = tool.get("name", "")
+        preview = tool.get("input_preview", "")
+
+        if name == "deliver_artifacts":
+            for m in re.finditer(r"'path'\s*:\s*'([^']+)'", preview):
+                _add(m.group(1))
+            for m in re.finditer(r'"path"\s*:\s*"([^"]+)"', preview):
+                _add(m.group(1))
+
+        elif name == "write_file":
+            for m in re.finditer(r"'path'\s*:\s*'([^']+)'", preview):
+                _add(m.group(1))
+            for m in re.finditer(r'"path"\s*:\s*"([^"]+)"', preview):
+                _add(m.group(1))
+
+    for fp in _extract_file_paths_from_text(record.get("result_full", "")):
+        _add(fp)
+
     return result_paths[:10]
 
 
@@ -1032,7 +1089,7 @@ def _persist_sub_agent_record(
         "completed_at": datetime.now().isoformat(),
     }
 
-    record["output_files"] = _extract_file_paths(result or "")
+    record["output_files"] = _extract_output_files(record)
     record["work_summary"] = _build_work_summary(record)
 
     ctx = getattr(session, "context", None)
