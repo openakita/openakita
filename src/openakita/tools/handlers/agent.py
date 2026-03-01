@@ -228,6 +228,8 @@ class AgentToolHandler:
         # Clean up ephemeral clones that the orchestrator didn't already clean
         self._cleanup_ephemeral_ids(ephemeral_ids, store)
 
+        _art_marker = "\n\n__ARTIFACT_RECEIPTS__\n"
+        all_receipt_blocks: list[str] = []
         parts = []
         for i, res in enumerate(raw_results):
             if isinstance(res, BaseException):
@@ -235,8 +237,31 @@ class AgentToolHandler:
                 parts.append(f"## Agent: {display}\n❌ Failed: {res}")
             else:
                 display_id, result = res
+                # Extract __ARTIFACT_RECEIPTS__ from each sub-agent result
+                # so they survive _guard_truncate on the combined string.
+                while _art_marker in result:
+                    idx = result.index(_art_marker)
+                    block_start = idx + len(_art_marker)
+                    eol = result.find("\n", block_start)
+                    block = result[block_start:] if eol < 0 else result[block_start:eol]
+                    all_receipt_blocks.append(block)
+                    result = result[:idx] + (result[block_start + len(block):] if eol >= 0 else "")
                 parts.append(f"## Agent: {display_id}\n{result}")
-        return "\n\n---\n\n".join(parts)
+        combined = "\n\n---\n\n".join(parts)
+        # Re-append all receipt blocks as a single merged JSON array at the end
+        if all_receipt_blocks:
+            import json as _json
+            merged: list = []
+            for block in all_receipt_blocks:
+                try:
+                    parsed = _json.loads(block)
+                    if isinstance(parsed, list):
+                        merged.extend(parsed)
+                except (ValueError, TypeError):
+                    pass
+            if merged:
+                combined += _art_marker.rstrip("\n") + "\n" + _json.dumps(merged, ensure_ascii=False)
+        return combined
 
     @staticmethod
     def _cleanup_ephemeral_ids(ephemeral_ids: list[str], store) -> None:

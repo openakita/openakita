@@ -713,12 +713,19 @@ class AgentOrchestrator:
                     ]
                     if delivered:
                         import json as _json
-                        result += (
-                            "\n\n__ARTIFACT_RECEIPTS__\n"
-                            + _json.dumps(delivered, ensure_ascii=False)
+                        _payload = _json.dumps(delivered, ensure_ascii=False)
+                        result += "\n\n__ARTIFACT_RECEIPTS__\n" + _payload
+                        logger.info(
+                            f"[Orchestrator] Forwarding {len(delivered)} artifact receipts "
+                            f"from sub-agent to parent SSE stream"
                         )
-            except Exception:
-                pass
+                    else:
+                        logger.debug(
+                            f"[Orchestrator] Sub-agent had {len(receipts)} receipts "
+                            f"but none with status=delivered + file_url"
+                        )
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Failed to forward artifact receipts: {e}")
 
             return result
         finally:

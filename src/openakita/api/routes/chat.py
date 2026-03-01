@@ -272,7 +272,9 @@ async def _stream_chat(
                     if _log_marker in result_str:
                         result_str = result_str[: result_str.index(_log_marker)]
                     result_data = json.loads(result_str)
-                    for receipt in result_data.get("receipts", []):
+                    _receipts = result_data.get("receipts", [])
+                    _emitted = 0
+                    for receipt in _receipts:
                         if receipt.get("status") == "delivered" and receipt.get("file_url"):
                             art_data = {
                                 "artifact_type": receipt.get("type", "file"),
@@ -284,6 +286,11 @@ async def _stream_chat(
                             }
                             _collected_artifacts.append(art_data)
                             yield _sse("artifact", art_data)
+                            _emitted += 1
+                    logger.info(
+                        f"[Chat API] Artifact SSE: tool={event.get('tool')}, "
+                        f"receipts={len(_receipts)}, emitted={_emitted}"
+                    )
                 except (json.JSONDecodeError, TypeError, KeyError) as exc:
                     logger.warning(
                         f"[Chat API] Artifact parse failed for {event.get('tool')}: {exc!r}, "
@@ -297,6 +304,7 @@ async def _stream_chat(
                 _art_marker = "__ARTIFACT_RECEIPTS__\n"
                 _del_result = event.get("result", "")
                 _search_pos = 0
+                _del_emitted = 0
                 while _art_marker in _del_result[_search_pos:]:
                     try:
                         _idx = _del_result.index(_art_marker, _search_pos) + len(_art_marker)
@@ -315,8 +323,18 @@ async def _stream_chat(
                                 }
                                 _collected_artifacts.append(art_data)
                                 yield _sse("artifact", art_data)
-                    except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+                                _del_emitted += 1
+                    except (json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+                        logger.warning(
+                            f"[Chat API] Delegation artifact parse failed: {exc!r}, "
+                            f"chunk preview: {_del_result[max(0, _search_pos - 50):_search_pos + 100]}"
+                        )
                         break
+                if _art_marker in _del_result:
+                    logger.info(
+                        f"[Chat API] Delegation artifact SSE: tool={event.get('tool')}, "
+                        f"emitted={_del_emitted}"
+                    )
 
             # Inject ui_preference events for system_config set_ui results
             if event_type == "tool_call_end" and event.get("tool") == "system_config":

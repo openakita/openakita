@@ -2933,6 +2933,7 @@ export function ChatView({
                 if (event.language) i18n.changeLanguage(event.language);
                 break;
               case "artifact":
+                console.log("[Artifact SSE] Received:", event.name, event.file_url, event.artifact_type);
                 currentArtifacts = [...currentArtifacts, {
                   artifact_type: event.artifact_type,
                   file_url: event.file_url,
