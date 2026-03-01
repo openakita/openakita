@@ -3046,7 +3046,14 @@ class ReasoningEngine:
             # 模型明确声明纯文本回复 → 跳过 ForceToolCall 重试
             logger.info("[IntentTag] REPLY — accepting text response, skip ForceToolCall retry")
             cleaned = clean_llm_response(stripped_text)
-            return cleaned or stripped_text
+            if cleaned and cleaned.strip():
+                return cleaned
+            if stripped_text and stripped_text.strip():
+                return stripped_text
+            return (
+                "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
+                "请重试、或更换端点/模型后再执行。"
+            )
 
         # ACTION 或无标记 → 走 ForceToolCall 重试
         max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)

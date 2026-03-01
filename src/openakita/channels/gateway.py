@@ -2071,6 +2071,15 @@ class MessageGateway:
             for hook in self._post_process_hooks:
                 response_text = await hook(message, response_text)
 
+            # 7.5 空回复保护
+            if not response_text or not response_text.strip():
+                logger.warning(
+                    f"[IM] Agent returned empty response for message {message.id} "
+                    f"(channel={message.channel}, user={message.user_id}), "
+                    f"raw={response_text!r}"
+                )
+                response_text = "⚠️ 处理完成，但未生成有效回复。请重试。"
+
             # 8. 记录响应到会话（含思维链摘要 + 工具执行摘要）
             _chain_summary = None
             try:
@@ -2181,7 +2190,7 @@ class MessageGateway:
                 await self._send_response(interrupt_msg, response_text)
 
             except Exception as e:
-                logger.error(f"Error processing interrupt message: {e}")
+                logger.error(f"Error processing interrupt message: {e}", exc_info=True)
                 await self._send_error(interrupt_msg, str(e))
 
     async def _preprocess_media(self, message: UnifiedMessage) -> None:
@@ -2557,7 +2566,7 @@ class MessageGateway:
             return response
 
         except Exception as e:
-            logger.error(f"Agent error: {e}")
+            logger.error(f"Agent error: {e}", exc_info=True)
             return f"处理出错: {str(e)}"
 
     # 各渠道单条消息最大字符数（留余量）
@@ -2674,7 +2683,7 @@ class MessageGateway:
                             f"Failed to send response part {i + 1}/{len(messages)} "
                             f"after 3 attempts: {e}"
                         )
-                        with contextlib.suppress(BaseException):
+                        with contextlib.suppress(Exception):
                             await adapter.send_text(
                                 chat_id=original.chat_id,
                                 text=f"消息发送失败（第 {i + 1}/{len(messages)} 段），请稍后重试。",
@@ -2865,8 +2874,8 @@ class MessageGateway:
             **kwargs,
         )
 
-        # 记录到 session 历史（用指定的 role）
-        if self.session_manager:
+        # 记录到 session 历史（用指定的 role）；发送失败时不记录，避免上下文不一致
+        if self.session_manager and result is not None:
             try:
                 session.add_message(role=role, content=text, source="send_to_session")
                 self.session_manager.mark_dirty()  # 触发保存
