@@ -156,6 +156,8 @@ openakita                              # Interactive chat
 openakita run "Build a calculator"     # Execute a single task
 openakita serve                        # Service mode (IM channels)
 openakita serve --dev                  # Dev mode with hot reload
+openakita serve --host 0.0.0.0 --port 18080  # Custom API bind address/port
+API_HOST=0.0.0.0 API_PORT=18080 openakita serve  # Configure via env vars
 openakita daemon start                 # Background daemon
 openakita status                       # Check status
 ```

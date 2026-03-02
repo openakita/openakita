@@ -156,6 +156,8 @@ openakita                          # 交互式聊天
 openakita run "帮我写个计算器"       # 执行单个任务
 openakita serve                    # 服务模式（接入 IM）
 openakita serve --dev              # 开发模式，热加载
+openakita serve --host 0.0.0.0 --port 18080  # 自定义 API 监听地址/端口
+API_HOST=0.0.0.0 API_PORT=18080 openakita serve  # 通过环境变量配置
 openakita daemon start             # 后台守护进程
 openakita status                   # 查看运行状态
 ```

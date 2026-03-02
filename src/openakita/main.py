@@ -1291,6 +1291,18 @@ def _reset_globals():
 @app.command()
 def serve(
     dev: bool = typer.Option(False, "--dev", help="开发模式：监控 src/ 目录的 .py 文件变化，自动重启服务"),
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        help="HTTP API 监听地址（默认: API_HOST 或 127.0.0.1）",
+    ),
+    port: int | None = typer.Option(
+        None,
+        "--port",
+        min=1,
+        max=65535,
+        help="HTTP API 监听端口（默认: API_PORT 或 18900）",
+    ),
 ):
     """
     启动服务模式 (无 CLI，只运行 IM 通道)
@@ -1308,9 +1320,31 @@ def serve(
     from pathlib import Path
 
     from openakita import config as cfg
+    from openakita.api.server import API_HOST as DEFAULT_API_HOST
+    from openakita.api.server import API_PORT as DEFAULT_API_PORT
 
     # 压制 Windows asyncio 关闭时的 ResourceWarning
     warnings.filterwarnings("ignore", category=ResourceWarning, module="asyncio")
+
+    resolved_api_host = (host or os.environ.get("API_HOST", DEFAULT_API_HOST)).strip()
+    if not resolved_api_host:
+        resolved_api_host = DEFAULT_API_HOST
+
+    if port is not None:
+        resolved_api_port = port
+    else:
+        env_api_port = os.environ.get("API_PORT", "").strip()
+        if env_api_port:
+            try:
+                resolved_api_port = int(env_api_port)
+            except ValueError as e:
+                raise typer.BadParameter(
+                    "环境变量 API_PORT 必须是 1-65535 之间的整数"
+                ) from e
+            if not 1 <= resolved_api_port <= 65535:
+                raise typer.BadParameter("环境变量 API_PORT 必须是 1-65535 之间的整数")
+        else:
+            resolved_api_port = DEFAULT_API_PORT
 
     # PyInstaller 打包模式 / NO_COLOR 环境：禁用 Rich 颜色渲染和高亮，
     # 避免 legacy_windows_render 产生无法显示的字符。
@@ -1438,8 +1472,10 @@ def serve(
                 gateway=_message_gateway,
                 orchestrator=_orchestrator,
                 agent_pool=_desktop_pool,
+                host=resolved_api_host,
+                port=resolved_api_port,
             )
-            console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
+            console.print(f"[green]✓[/green] HTTP API 已启动: http://{resolved_api_host}:{resolved_api_port}")
             _heartbeat_phase = "running"
             _heartbeat_http_ready = True
             _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
@@ -1453,7 +1489,9 @@ def serve(
         if _api_fatal:
             # HTTP API 是 Setup Center 的核心依赖，启动失败时应退出进程
             # 让 Tauri 能正确检测到进程退出并报错给用户
-            console.print("[red]HTTP API 启动失败，进程即将退出。请检查端口 18900 是否被占用。[/red]")
+            console.print(
+                f"[red]HTTP API 启动失败，进程即将退出。请检查 {resolved_api_host}:{resolved_api_port} 是否被占用。[/red]"
+            )
             shutdown_event.set()
 
         console.print()
@@ -1581,13 +1619,14 @@ def serve(
 
             # 等待端口释放（旧 uvicorn 关闭后 TCP socket 可能处于 TIME_WAIT）
             try:
-                from openakita.api.server import API_HOST, API_PORT, wait_for_port_free
-                _api_port = int(os.environ.get("API_PORT", API_PORT))
-                console.print(f"[dim]等待端口 {_api_port} 释放...[/dim]")
-                if not wait_for_port_free(API_HOST, _api_port, timeout=15.0):
-                    console.print(f"[yellow]⚠[/yellow] 端口 {_api_port} 仍被占用，继续尝试启动...")
+                from openakita.api.server import wait_for_port_free
+                console.print(f"[dim]等待端口 {resolved_api_host}:{resolved_api_port} 释放...[/dim]")
+                if not wait_for_port_free(resolved_api_host, resolved_api_port, timeout=15.0):
+                    console.print(
+                        f"[yellow]⚠[/yellow] 端口 {resolved_api_host}:{resolved_api_port} 仍被占用，继续尝试启动..."
+                    )
                 else:
-                    console.print(f"[dim]端口 {_api_port} 已就绪[/dim]")
+                    console.print(f"[dim]端口 {resolved_api_host}:{resolved_api_port} 已就绪[/dim]")
             except Exception as e:
                 logger.debug(f"Port wait check failed (non-critical): {e}")
 
