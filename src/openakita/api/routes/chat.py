@@ -230,15 +230,12 @@ async def _stream_chat(
         else:
             assistant_text_to_save = _full_reply
 
-        # Append tool execution summary so next turn's LLM sees what was done
+        # Collect tool execution summary as structured metadata
+        _tool_summary = None
         try:
-            _tool_summary = actual_agent.build_tool_trace_summary()
+            _tool_summary = actual_agent.build_tool_trace_summary() or None
             if _tool_summary:
-                if assistant_text_to_save:
-                    assistant_text_to_save += _tool_summary
-                else:
-                    assistant_text_to_save = _tool_summary.lstrip("\n")
-                logger.debug(f"[Chat API] Appended tool trace summary ({len(_tool_summary)} chars)")
+                logger.debug(f"[Chat API] Tool trace summary ({len(_tool_summary)} chars)")
         except Exception:
             pass
 
@@ -252,11 +249,12 @@ async def _stream_chat(
 
         if session and assistant_text_to_save:
             try:
-                session.add_message(
-                    "assistant",
-                    assistant_text_to_save,
-                    **({"chain_summary": _chain_summary} if _chain_summary else {}),
-                )
+                _msg_meta: dict = {}
+                if _chain_summary:
+                    _msg_meta["chain_summary"] = _chain_summary
+                if _tool_summary:
+                    _msg_meta["tool_summary"] = _tool_summary
+                session.add_message("assistant", assistant_text_to_save, **_msg_meta)
                 if session_manager:
                     session_manager.mark_dirty()
             except Exception:

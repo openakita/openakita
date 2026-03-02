@@ -2899,15 +2899,15 @@ search_github → install_skill → 使用
             gateway=None,  # CLI 无 Gateway
         )
 
-        # 记录 Assistant 响应到 Session（追加工具执行摘要）
-        _cli_save_text = response
+        # 记录 Assistant 响应到 Session（工具执行摘要作为独立字段）
+        _cli_meta: dict = {}
         try:
             _cli_tool_summary = self.build_tool_trace_summary()
             if _cli_tool_summary:
-                _cli_save_text += _cli_tool_summary
+                _cli_meta["tool_summary"] = _cli_tool_summary
         except Exception:
             pass
-        self._cli_session.add_message("assistant", _cli_save_text)
+        self._cli_session.add_message("assistant", response, **_cli_meta)
 
         # 同步更新旧属性（保持向后兼容：conversation_history 属性、/status 命令等依赖）
         self._conversation_history.append(
@@ -3142,14 +3142,15 @@ search_github → install_skill → 使用
         if history_messages and history_messages[-1].get("role") == "user":
             history_messages = history_messages[:-1]
 
-        _TOOL_SUMMARY_MARKER = "\n\n[执行摘要]"
+        _TOOL_SUMMARY_LEGACY_MARKER = "\n\n[执行摘要]"
 
         messages: list[dict] = []
         for msg in history_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            if role == "assistant" and _TOOL_SUMMARY_MARKER in content:
-                content = content[:content.index(_TOOL_SUMMARY_MARKER)]
+            # Strip legacy inline tool summary from old sessions
+            if role == "assistant" and _TOOL_SUMMARY_LEGACY_MARKER in content:
+                content = content[:content.index(_TOOL_SUMMARY_LEGACY_MARKER)]
             if role in ("user", "assistant") and content:
                 if messages and messages[-1]["role"] == role:
                     messages[-1]["content"] += "\n" + content
