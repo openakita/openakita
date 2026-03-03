@@ -6638,6 +6638,7 @@ export function App() {
                       C2_PIP: t("adv.contractPip"),
                       C3_CORE: t("adv.contractCore"),
                       C0_BACKEND_OFFLINE: t("adv.contractBackendOffline"),
+                      C0_BACKEND_STARTING: t("adv.contractBackendStarting"),
                       C2_VENV_HEALTH: t("adv.contractVenv"),
                       C3_OPENAKITA_IN_VENV: t("adv.contractOpenakita"),
                     };

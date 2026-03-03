@@ -872,6 +872,7 @@
     "contractPip": "Package Manager",
     "contractCore": "Core Engine",
     "contractBackendOffline": "Backend Service",
+    "contractBackendStarting": "Backend Service (Starting)",
     "contractVenv": "Virtual Environment",
     "contractOpenakita": "OpenAkita Package",
     "summaryHealthy": "Healthy",

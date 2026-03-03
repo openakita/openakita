@@ -872,6 +872,7 @@
     "contractPip": "包管理器",
     "contractCore": "核心引擎",
     "contractBackendOffline": "后端服务",
+    "contractBackendStarting": "后端服务（启动中）",
     "contractVenv": "虚拟环境",
     "contractOpenakita": "OpenAkita 包",
     "summaryHealthy": "健康",

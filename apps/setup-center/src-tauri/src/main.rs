@@ -3342,6 +3342,7 @@ fn python_diag_generated_at() -> String {
 /// Run a full diagnostic.
 ///
 /// Strategy:
+///   0. Check heartbeat to distinguish "not started" / "starting" / "running".
 ///   1. If the backend is running → call GET /api/diagnostics (the backend
 ///      self-reports, no fragile _internal/python3 invocation needed).
 ///   2. If the backend is NOT running → basic file-existence check on the
@@ -3351,11 +3352,28 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
     let _ = venv_dir;
     let trace_id = python_diag_trace_id();
 
+    let state = read_state_file();
+    let ws_id = state.current_workspace_id.clone();
+
     // Determine the API port of the current workspace's backend.
-    let port = read_state_file()
-        .current_workspace_id
-        .and_then(|ws| read_workspace_api_port(&ws))
+    let port = ws_id.as_deref()
+        .and_then(read_workspace_api_port)
         .unwrap_or(18900);
+
+    // --- Strategy 0: check heartbeat to understand backend lifecycle ---
+    let heartbeat = ws_id.as_deref().and_then(read_heartbeat_file);
+    let backend_phase = heartbeat.as_ref().map(|hb| hb.phase.as_str()).unwrap_or("");
+    let http_ready = heartbeat.as_ref().map(|hb| hb.http_ready).unwrap_or(false);
+    let hb_fresh = heartbeat.as_ref().map(|hb| {
+        let age = now_epoch_secs() as f64 - hb.timestamp;
+        age <= 30.0
+    }).unwrap_or(false);
+
+    // Backend process is alive with fresh heartbeat but HTTP not yet ready
+    // → it's still initializing; skip the API call (would just time out).
+    if hb_fresh && !http_ready && matches!(backend_phase, "starting" | "initializing") {
+        return make_backend_starting_diagnostic(trace_id, port, backend_phase);
+    }
 
     // --- Strategy 1: ask the running backend ---
     if let Some(diag) = diagnose_via_backend_api(port) {
@@ -3366,6 +3384,12 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
             trace_id,
             generated_at: python_diag_generated_at(),
         };
+    }
+
+    // API call failed — but if heartbeat says backend is alive, give a
+    // more specific message than a generic "unreachable".
+    if hb_fresh && http_ready {
+        return make_backend_api_unreachable_diagnostic(trace_id, port);
     }
 
     // --- Strategy 2: backend not reachable — static file check ---
@@ -3408,7 +3432,6 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
         });
     }
 
-    // When backend is not running, we can't verify deeper — add an info note.
     contracts.push(PythonContractResult {
         id: "C0_BACKEND_OFFLINE".into(),
         title: "后端服务".into(),
@@ -3438,21 +3461,110 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
     }
 }
 
+/// Diagnostic result when backend is still initializing (heartbeat alive, HTTP not ready).
+fn make_backend_starting_diagnostic(trace_id: String, port: u16, phase: &str) -> PythonDiagnostic {
+    PythonDiagnostic {
+        summary: "healthy".into(),
+        contracts: vec![PythonContractResult {
+            id: "C0_BACKEND_STARTING".into(),
+            title: "后端服务".into(),
+            status: "warn".into(),
+            code: "BACKEND_STARTING".into(),
+            evidence: vec![format!("phase: {}, port {}", phase, port)],
+            auto_fix: false,
+            fix_hint: Some("后端正在启动，请稍后再试".into()),
+        }],
+        environment: PythonEnvironmentSnapshot {
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            bundled_python_path: None,
+            openakita_version: None,
+        },
+        trace_id,
+        generated_at: python_diag_generated_at(),
+    }
+}
+
+/// Diagnostic result when heartbeat says http_ready=true but API call still fails.
+fn make_backend_api_unreachable_diagnostic(trace_id: String, port: u16) -> PythonDiagnostic {
+    PythonDiagnostic {
+        summary: "healthy".into(),
+        contracts: vec![PythonContractResult {
+            id: "C0_BACKEND_OFFLINE".into(),
+            title: "后端服务".into(),
+            status: "warn".into(),
+            code: "BACKEND_API_UNREACHABLE".into(),
+            evidence: vec![format!("heartbeat ok, port {} API unreachable — retrying may help", port)],
+            auto_fix: false,
+            fix_hint: Some("后端进程正在运行但 API 暂时不可达，请稍后重试".into()),
+        }],
+        environment: PythonEnvironmentSnapshot {
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            bundled_python_path: None,
+            openakita_version: None,
+        },
+        trace_id,
+        generated_at: python_diag_generated_at(),
+    }
+}
+
 /// Call GET /api/diagnostics on the running backend and map the response
 /// to our diagnostic structures.
+///
+/// Uses a quick TCP probe first; if nothing is listening, returns None
+/// immediately without wasting time on HTTP. On transient failures
+/// (timeout, reset) retries once after a short delay.
 fn diagnose_via_backend_api(port: u16) -> Option<PythonDiagnostic> {
+    // Quick TCP probe: if nothing is listening, bail out immediately.
+    {
+        use std::net::TcpStream;
+        let addr = format!("127.0.0.1:{}", port);
+        if TcpStream::connect_timeout(
+            &addr.parse().ok()?,
+            std::time::Duration::from_secs(2),
+        ).is_err() {
+            return None;
+        }
+    }
+
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(6))
         .build()
         .ok()?;
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/api/diagnostics", port))
-        .send()
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
+
+    let url = format!("http://127.0.0.1:{}/api/diagnostics", port);
+    let max_attempts: u8 = 2;
+    let mut last_err = String::new();
+
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        match client.get(&url).send() {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>() {
+                    Ok(json) => return parse_diagnostics_json(&json),
+                    Err(e) => { last_err = format!("json parse: {e}"); continue; }
+                }
+            }
+            Ok(resp) => { last_err = format!("HTTP {}", resp.status()); continue; }
+            Err(e) => {
+                let msg = format!("{e}");
+                // Connection refused → nothing is listening, don't retry.
+                if msg.contains("onnection refused") || msg.contains("No connection") {
+                    eprintln!("[diagnose] connection refused on port {port}");
+                    return None;
+                }
+                last_err = msg;
+                continue;
+            }
+        }
     }
-    let json: serde_json::Value = resp.json().ok()?;
+
+    eprintln!("[diagnose] backend API unreachable after {max_attempts} attempts (port={port}): {last_err}");
+    None
+}
+
+fn parse_diagnostics_json(json: &serde_json::Value) -> Option<PythonDiagnostic> {
 
     let summary = json.get("summary")
         .and_then(|v| v.as_str())
