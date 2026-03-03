@@ -690,7 +690,7 @@ export function SchedulerView({ serviceRunning }: { serviceRunning: boolean }) {
           <button className="btnSmall" onClick={() => fetchTasks()} disabled={loading}>
             <IconRefresh size={14} /> {t("scheduler.refresh")}
           </button>
-          <button className="btn" onClick={openCreate}>
+          <button className="btnSmall btnSmallPrimary" onClick={openCreate}>
             <IconPlus size={14} /> {t("scheduler.addTask")}
           </button>
         </div>
@@ -858,7 +858,7 @@ export function SchedulerView({ serviceRunning }: { serviceRunning: boolean }) {
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className="btnSmall" onClick={closeForm}>{t("scheduler.cancel")}</button>
-            <button className="btn" onClick={saveTask} disabled={busy}>
+            <button className="btnSmall btnSmallPrimary" onClick={saveTask} disabled={busy}>
               {busy ? "..." : (editingId ? t("scheduler.save") : t("scheduler.addTask"))}
             </button>
           </div>
