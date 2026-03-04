@@ -1074,7 +1074,10 @@
     "customizedBadge": "已自定义",
     "resetDefault": "恢复默认",
     "resetSuccess": "已恢复为系统默认",
-    "resetFailed": "恢复默认失败"
+    "resetFailed": "恢复默认失败",
+    "import": "导入",
+    "export": "导出",
+    "exportTooltip": "导出为 .akita-agent"
   },
   "dashboard": {
     "title": "Agent 仪表盘",
@@ -1182,6 +1185,8 @@
     "hubTest": "测试连接",
     "hubTestOk": "连接成功",
     "hubTestFail": "无法连接平台（离线或地址错误）",
+    "storeToggleLabel": "显示 Agent Store / Skill Store",
+    "storeToggleHint": "开启后在侧边栏显示云平台市场入口（Beta，云平台部署后可开启）",
     "sysTitle": "系统信息",
     "sysLoad": "加载系统信息",
     "sysRefresh": "刷新",

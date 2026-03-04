@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { IconBot, IconRefresh, IconPlus, IconEdit, IconTrash } from "../icons";
+import { IconBot, IconRefresh, IconPlus, IconEdit, IconTrash, IconDownload, IconUpload } from "../icons";
 import { safeFetch } from "../providers";
 
 type AgentProfile = {
@@ -473,7 +473,8 @@ export function AgentManagerView({
             background: "var(--panel)", cursor: "pointer", fontSize: 13,
           }}
         >
-          📥 {t("agentManager.import") || "导入"}
+          <IconUpload size={14} />
+          {t("agentManager.import")}
         </button>
         <button
           onClick={openCreateEditor}
@@ -693,9 +694,10 @@ export function AgentManagerView({
                     padding: "4px 10px", borderRadius: 6, border: "1px solid var(--line)",
                     background: "transparent", cursor: "pointer", fontSize: 12,
                   }}
-                  title={t("agentManager.export") || "导出为 .akita-agent"}
+                  title={t("agentManager.exportTooltip")}
                 >
-                  📤 {t("agentManager.export") || "导出"}
+                  <IconDownload size={12} />
+                  {t("agentManager.export")}
                 </button>
                 {!isSystem && (
                   <button

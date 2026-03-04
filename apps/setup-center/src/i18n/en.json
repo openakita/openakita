@@ -1074,7 +1074,10 @@
     "customizedBadge": "Customized",
     "resetDefault": "Reset",
     "resetSuccess": "Reset to default",
-    "resetFailed": "Reset failed"
+    "resetFailed": "Reset failed",
+    "import": "Import",
+    "export": "Export",
+    "exportTooltip": "Export as .akita-agent"
   },
   "dashboard": {
     "title": "Agent Dashboard",
@@ -1182,6 +1185,8 @@
     "hubTest": "Test Connection",
     "hubTestOk": "Connection successful",
     "hubTestFail": "Cannot connect to platform (offline or wrong URL)",
+    "storeToggleLabel": "Show Agent Store / Skill Store",
+    "storeToggleHint": "Show cloud platform marketplace in sidebar (Beta — enable after platform is deployed)",
     "sysTitle": "System Information",
     "sysLoad": "Load System Info",
     "sysRefresh": "Refresh",

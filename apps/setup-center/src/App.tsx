@@ -177,6 +177,7 @@ export function App() {
   const [bugReportOpen, setBugReportOpen] = useState(false);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const [multiAgentEnabled, setMultiAgentEnabled] = useState(false);
+  const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
 
   // ── Data mode: "local" (Tauri commands) or "remote" (HTTP API) ──
   // Web mode always starts in "remote" since the backend is already running
@@ -5486,6 +5487,33 @@ export function App() {
                 {t("adv.hubTest")}
               </button>
             </div>
+
+            {/* Store visibility toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+              <div>
+                <div style={{ fontSize: 13, color: "var(--fg)" }}>{t("adv.storeToggleLabel")}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{t("adv.storeToggleHint")}</div>
+              </div>
+              <div
+                onClick={() => {
+                  const next = !storeVisible;
+                  setStoreVisible(next);
+                  localStorage.setItem("openakita_storeVisible", String(next));
+                }}
+                style={{
+                  width: 40, height: 22, borderRadius: 11, cursor: "pointer",
+                  background: storeVisible ? "var(--ok)" : "var(--line)",
+                  position: "relative", transition: "background 0.2s", flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  width: 18, height: 18, borderRadius: 9, background: "#fff",
+                  position: "absolute", top: 2,
+                  left: storeVisible ? 20 : 2,
+                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                }} />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -7592,6 +7620,7 @@ export function App() {
         disabledViews={disabledViews}
         multiAgentEnabled={multiAgentEnabled}
         onToggleMultiAgent={toggleMultiAgent}
+        storeVisible={storeVisible}
         desktopVersion={desktopVersion}
         backendVersion={backendVersion}
         serviceRunning={serviceStatus?.running ?? false}

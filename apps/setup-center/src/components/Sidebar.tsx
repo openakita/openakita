@@ -24,6 +24,7 @@ export type SidebarProps = {
   disabledViews: string[];
   multiAgentEnabled: boolean;
   onToggleMultiAgent: () => void;
+  storeVisible: boolean;
   desktopVersion: string;
   backendVersion: string | null;
   serviceRunning: boolean;
@@ -51,6 +52,7 @@ export function Sidebar({
   configExpanded, onToggleConfig,
   steps, stepId, onStepChange,
   disabledViews, multiAgentEnabled, onToggleMultiAgent,
+  storeVisible,
   desktopVersion, backendVersion, serviceRunning,
   onBugReport, onRefreshStatus, isWeb,
 }: SidebarProps) {
@@ -113,13 +115,17 @@ export function Sidebar({
             <IconBot size={16} /> {!collapsed && <span>{t("sidebar.agentManager")}</span>}
           </div>
         )}
-        <div style={{ height: 1, background: "var(--line)", margin: "6px 12px" }} />
-        <div className={`navItem ${view === "agent_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_store")} role="button" tabIndex={0} title={t("sidebar.agentStore")}>
-          <IconStorefront size={16} /> {!collapsed && <span>{t("sidebar.agentStore")}</span>}
-        </div>
-        <div className={`navItem ${view === "skill_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("skill_store")} role="button" tabIndex={0} title={t("sidebar.skillStore")}>
-          <IconPuzzle size={16} /> {!collapsed && <span>{t("sidebar.skillStore")}</span>}
-        </div>
+        {storeVisible && (
+          <>
+            <div style={{ height: 1, background: "var(--line)", margin: "6px 12px" }} />
+            <div className={`navItem ${view === "agent_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_store")} role="button" tabIndex={0} title={t("sidebar.agentStore")}>
+              <IconStorefront size={16} /> {!collapsed && <span>{t("sidebar.agentStore")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
+            </div>
+            <div className={`navItem ${view === "skill_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("skill_store")} role="button" tabIndex={0} title={t("sidebar.skillStore")}>
+              <IconPuzzle size={16} /> {!collapsed && <span>{t("sidebar.skillStore")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Collapsible Config section */}
