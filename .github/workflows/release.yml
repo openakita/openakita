@@ -591,26 +591,36 @@ jobs:
                   [ -f "${DMG_BG:-}" ] && CREATE_DMG_ARGS+=(--background "${DMG_BG}")
 
                   dmg_created=false
-                  for attempt in 1 2 3; do
+                  for attempt in 1 2; do
                     rm -f "${dmg_file}"
+                    # Timeout guard: create-dmg can hang on Intel runners
                     create-dmg "${CREATE_DMG_ARGS[@]}" \
-                      "${dmg_file}" "${DMG_STAGE}/" || true
+                      "${dmg_file}" "${DMG_STAGE}/" &
+                    CREATE_DMG_PID=$!
+                    ( sleep 300 && kill "$CREATE_DMG_PID" 2>/dev/null && echo "create-dmg timed out after 300s" ) &
+                    TIMER_PID=$!
+                    wait "$CREATE_DMG_PID" 2>/dev/null || true
+                    kill "$TIMER_PID" 2>/dev/null; wait "$TIMER_PID" 2>/dev/null || true
                     if [ -f "${dmg_file}" ]; then
                       echo "DMG created with custom layout: ${dmg_file}"
                       dmg_created=true
                       break
                     fi
-                    echo "create-dmg attempt ${attempt} failed, retrying in 3s..."
+                    echo "create-dmg attempt ${attempt} failed or timed out, retrying in 3s..."
                     sleep 3
                   done
                   rm -f "${DMG_BG:-}" 2>/dev/null || true
 
                   # Fallback to basic hdiutil if create-dmg failed
                   if [ "${dmg_created}" != "true" ]; then
-                    echo "create-dmg failed; falling back to hdiutil"
-                    ln -s /Applications "${DMG_STAGE}/Applications"
+                    echo "create-dmg failed; falling back to hdiutil (UDRW → convert UDZO)"
+                    ln -sf /Applications "${DMG_STAGE}/Applications"
+                    # Two-step DMG: create uncompressed first (fast), then convert.
+                    # Single-step UDZO can hang on Intel runners with large bundles.
                     hdiutil create -volname "${app_name}" \
-                      -srcfolder "${DMG_STAGE}" -ov -format UDZO "${dmg_file}"
+                      -srcfolder "${DMG_STAGE}" -ov -format UDRW "/tmp/_rw_$$.dmg"
+                    hdiutil convert "/tmp/_rw_$$.dmg" -format UDZO -o "${dmg_file}"
+                    rm -f "/tmp/_rw_$$.dmg"
                   fi
                 else
                   # Fallback: create-dmg not available
