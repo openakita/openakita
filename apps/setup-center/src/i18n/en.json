@@ -51,7 +51,9 @@
     "themeSystem": "Theme: Follow system",
     "themeDark": "Theme: Dark",
     "themeLight": "Theme: Light",
-    "webAccess": "Web Access"
+    "webAccess": "Web Access",
+    "remoteUrl": "Remote URL",
+    "copyRemoteUrl": "Copy remote access URL"
   },
   "tokenStats": {
     "serviceNotRunning": "Service not running, unable to view stats",

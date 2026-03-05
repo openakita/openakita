@@ -51,7 +51,9 @@
     "themeSystem": "主题: 跟随系统",
     "themeDark": "主题: 暗色",
     "themeLight": "主题: 亮色",
-    "webAccess": "网页访问"
+    "webAccess": "网页访问",
+    "remoteUrl": "远程地址",
+    "copyRemoteUrl": "复制远程访问地址"
   },
   "tokenStats": {
     "serviceNotRunning": "服务未运行，无法查看统计",

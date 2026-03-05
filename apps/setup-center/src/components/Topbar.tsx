@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceSummary } from "../types";
 import type { Theme } from "../theme";
 import {
   DotGreen, DotGray,
   IconX, IconLink, IconPower, IconRefresh,
-  IconLaptop, IconMoon, IconSun, IconGlobe,
+  IconLaptop, IconMoon, IconSun, IconGlobe, IconClipboard,
 } from "../icons";
 import { openExternalUrl } from "../platform";
 
@@ -47,6 +48,27 @@ export function Topbar({
   toggleTheme, themePrefState, isWeb, onLogout, webAccessUrl, onToggleMobileSidebar,
 }: TopbarProps) {
   const { t, i18n } = useTranslation();
+  const [remoteCopied, setRemoteCopied] = useState(false);
+
+  const copyRemoteUrl = async () => {
+    try {
+      const res = await fetch("/api/health", { signal: AbortSignal.timeout(3000) }).catch(() =>
+        fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) })
+      );
+      const data = await res.json();
+      const ip = data.local_ip || "127.0.0.1";
+      const port = location.port || "18900";
+      const url = `http://${ip}:${port}/web`;
+      await navigator.clipboard.writeText(url);
+      setRemoteCopied(true);
+      setTimeout(() => setRemoteCopied(false), 2000);
+    } catch {
+      const url = `http://127.0.0.1:18900/web`;
+      await navigator.clipboard.writeText(url).catch(() => {});
+      setRemoteCopied(true);
+      setTimeout(() => setRemoteCopied(false), 2000);
+    }
+  };
 
   return (
     <div className="topbar">
@@ -159,20 +181,37 @@ export function Topbar({
           <span>{serviceRunning ? t("topbar.running") : t("topbar.stopped")}</span>
         </span>
         {webAccessUrl && serviceRunning && !isWeb && (
-          <span
-            className="topbarWebAccess"
-            onClick={() => openExternalUrl(webAccessUrl)}
-            title={webAccessUrl}
-            style={{
-              cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 3,
-              color: "var(--accent, #5B8DEF)", opacity: 0.85,
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.85"; }}
-          >
-            <IconGlobe size={11} />
-            <span style={{ textDecoration: "underline" }}>{t("topbar.webAccess")}</span>
-          </span>
+          <>
+            <span
+              className="topbarWebAccess"
+              onClick={() => openExternalUrl(webAccessUrl)}
+              title={webAccessUrl}
+              style={{
+                cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 3,
+                color: "var(--accent, #5B8DEF)", opacity: 0.85,
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = "0.85"; }}
+            >
+              <IconGlobe size={11} />
+              <span style={{ textDecoration: "underline" }}>{t("topbar.webAccess")}</span>
+            </span>
+            <span
+              onClick={copyRemoteUrl}
+              title={t("topbar.copyRemoteUrl", "复制远程访问地址")}
+              style={{
+                cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 2,
+                color: remoteCopied ? "var(--ok, #10b981)" : "var(--accent, #5B8DEF)",
+                opacity: remoteCopied ? 1 : 0.7,
+                transition: "color 0.2s",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = remoteCopied ? "1" : "0.7"; }}
+            >
+              <IconClipboard size={11} />
+              <span>{remoteCopied ? t("common.copied", "已复制") : t("topbar.remoteUrl", "远程地址")}</span>
+            </span>
+          </>
         )}
         <span className="topbarEpCount">{t("topbar.endpoints", { count: endpointCount })}</span>
         {dataMode === "remote" && <span className="pill" style={{ fontSize: 10, marginLeft: 4, background: "#e3f2fd", color: "#1565c0" }}>{t("connect.remoteMode")}</span>}

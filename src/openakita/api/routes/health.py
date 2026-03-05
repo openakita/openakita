@@ -20,6 +20,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _get_lan_ip() -> str:
+    """Best-effort LAN IP detection via UDP connect (no traffic sent)."""
+    import socket
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 @router.get("/api/health")
 async def health(request: Request):
     """Basic health check - returns 200 if server is running."""
@@ -37,6 +51,7 @@ async def health(request: Request):
         "pid": os.getpid(),
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "agent_initialized": hasattr(request.app.state, "agent") and request.app.state.agent is not None,
+        "local_ip": _get_lan_ip(),
     }
 
 
