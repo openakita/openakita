@@ -9,6 +9,7 @@ Telegram 适配器
 - 自动代理检测（支持配置、环境变量、Windows 系统代理）
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -293,6 +294,7 @@ class TelegramAdapter(ChannelAdapter):
 
         self._app: Any | None = None
         self._bot: Any | None = None
+        self._watchdog_task: asyncio.Task | None = None
 
         # 配对管理
         self.require_pairing = require_pairing
@@ -319,7 +321,10 @@ class TelegramAdapter(ChannelAdapter):
 
         get_updates_kwargs = {
             "connection_pool_size": 4,
-            "read_timeout": 60.0,  # getUpdates 用更长的超时
+            "connect_timeout": 30.0,
+            "read_timeout": 60.0,
+            "write_timeout": 30.0,
+            "pool_timeout": 10.0,
         }
 
         if self.proxy:
@@ -338,6 +343,9 @@ class TelegramAdapter(ChannelAdapter):
             .build()
         )
         self._bot = self._app.bot
+
+        # 注册错误处理器（捕获 update 处理过程中的所有异常，防止静默丢失）
+        self._app.add_error_handler(self._on_error)
 
         # 注册命令处理器（Telegram 内置命令，优先处理）
         from telegram.ext import CommandHandler, MessageHandler, filters
@@ -402,10 +410,15 @@ class TelegramAdapter(ChannelAdapter):
             await self._app.updater.start_polling(
                 drop_pending_updates=True,
                 allowed_updates=["message"],
+                error_callback=self._on_polling_error,
             )
             logger.info("Telegram bot started with long polling")
 
         self._running = True
+
+        # 启动 polling 健康监测 watchdog
+        if not self.webhook_url:
+            self._watchdog_task = asyncio.create_task(self._polling_watchdog())
 
         # 打印配对信息（使用 logger 代替 print 避免 GBK 编码问题）
         if self.require_pairing:
@@ -421,6 +434,12 @@ class TelegramAdapter(ChannelAdapter):
         """停止 Telegram Bot"""
         self._running = False
 
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._watchdog_task
+            self._watchdog_task = None
+
         if self._app:
             # 先停止 updater
             if self._app.updater and self._app.updater.running:
@@ -430,6 +449,43 @@ class TelegramAdapter(ChannelAdapter):
             await self._app.shutdown()
 
         logger.info("Telegram bot stopped")
+
+    # ==================== 错误处理与健康监测 ====================
+
+    async def _on_error(self, update: Any, context: Any) -> None:
+        """处理 update 处理过程中的异常，防止消息静默丢失"""
+        logger.error(
+            f"[Telegram] Error handling update: {context.error}",
+            exc_info=context.error,
+        )
+
+    def _on_polling_error(self, error: Exception) -> None:
+        """处理 polling 网络错误（连接断开、超时等），库会自动重试。
+
+        注意：python-telegram-bot 要求 error_callback 必须是同步函数，不能是 coroutine。
+        """
+        logger.warning(f"[Telegram] Polling network error (will auto-retry): {error}")
+
+    async def _polling_watchdog(self) -> None:
+        """监测 polling 是否存活，停止则自动重启"""
+        await asyncio.sleep(60)
+        while self._running:
+            await asyncio.sleep(120)
+            if not self._app or not self._app.updater:
+                continue
+            if not self._app.updater.running:
+                logger.warning("[Telegram] Polling stopped unexpectedly, restarting...")
+                try:
+                    await self._app.updater.start_polling(
+                        drop_pending_updates=False,
+                        allowed_updates=["message"],
+                        error_callback=self._on_polling_error,
+                    )
+                    logger.info("[Telegram] Polling restarted successfully")
+                except Exception as e:
+                    logger.error(f"[Telegram] Failed to restart polling: {e}")
+
+    # ==================== 命令处理 ====================
 
     async def _handle_start(self, update: Any, context: Any) -> None:
         """处理 /start 命令"""
