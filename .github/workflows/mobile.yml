@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - name: Install dependencies
         run: npm ci
@@ -131,9 +131,14 @@ jobs:
       - name: Sync Capacitor iOS
         run: npx cap sync ios
 
-      - name: Install CocoaPods dependencies
-        working-directory: apps/setup-center/ios/App
-        run: pod install
+      - name: Verify iOS workspace
+        run: |
+          echo "=== ios/App contents ==="
+          ls -la ios/App/
+          if [ ! -d "ios/App/App.xcworkspace" ]; then
+            echo "xcworkspace not found, running pod install..."
+            cd ios/App && pod install
+          fi
 
       - name: Check iOS signing secrets
         id: ios_signing
