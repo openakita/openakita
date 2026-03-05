@@ -1714,6 +1714,21 @@ fn startup_reconcile() {
 }
 
 fn main() {
+    // Bypass system proxy for all localhost connections.
+    //
+    // macOS: proxy apps (Clash/V2Ray) set system proxy via Network Preferences.
+    //   hyper-util links `system-configuration` and reads these settings, causing
+    //   ALL reqwest clients (including Tauri HTTP plugin's) to route 127.0.0.1
+    //   traffic through the proxy — which fails.
+    // Windows: similar issue with system proxy set via Internet Options.
+    //
+    // Setting NO_PROXY before any HTTP client is created ensures reqwest/hyper-util
+    // skips proxy for localhost regardless of system proxy configuration.
+    // This is complementary to the explicit .no_proxy() on our own reqwest clients.
+    if std::env::var("NO_PROXY").is_err() {
+        std::env::set_var("NO_PROXY", "localhost,127.0.0.1,[::1]");
+    }
+
     // Workaround: NVIDIA drivers on Linux can cause a blank WebKitGTK window
     // due to DMA-BUF renderer incompatibility. Disable it preemptively.
     #[cfg(target_os = "linux")]
