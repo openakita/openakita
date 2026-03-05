@@ -22,7 +22,7 @@
 
 <p align="center">
   <a href="#core-capabilities">Capabilities</a> •
-  <a href="#5-minute-setup">5-Min Setup</a> •
+  <a href="#5-minute-setup">5-Minute Setup</a> •
   <a href="#desktop-app">Desktop App</a> •
   <a href="#multi-agent-collaboration">Multi-Agent</a> •
   <a href="#documentation">Docs</a>
