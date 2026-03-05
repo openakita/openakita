@@ -2,7 +2,7 @@
 // Handles JWT access/refresh token lifecycle for web mode.
 // In Tauri mode, all functions are no-ops (local requests are exempt).
 
-import { IS_WEB } from "./detect";
+import { IS_WEB, IS_CAPACITOR } from "./detect";
 
 const ACCESS_TOKEN_KEY = "openakita_access_token";
 
@@ -200,18 +200,17 @@ export async function logout(apiBase = ""): Promise<void> {
 let _interceptorInstalled = false;
 
 export function installFetchInterceptor(): void {
-  if (!IS_WEB || _interceptorInstalled) return;
+  if ((!IS_WEB && !IS_CAPACITOR) || _interceptorInstalled) return;
   _interceptorInstalled = true;
 
   const originalFetch = window.fetch.bind(window);
   window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    // Local auth mode: no token injection needed
     if (_localAuthMode) return originalFetch(input, init);
 
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-    const isSameOrigin = url.startsWith("/") || url.startsWith(window.location.origin);
+    const isApi = url.startsWith("/") || url.startsWith(window.location.origin) || url.includes("/api/");
 
-    if (isSameOrigin) {
+    if (isApi) {
       const token = getAccessToken();
       if (token) {
         const base = init?.headers

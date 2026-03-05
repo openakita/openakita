@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">OpenAkita</string>
+    <string name="title_activity_main">OpenAkita</string>
+    <string name="package_name">com.openakita.mobile</string>
+    <string name="custom_url_scheme">com.openakita.mobile</string>
+</resources>

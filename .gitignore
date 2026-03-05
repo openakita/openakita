@@ -218,3 +218,9 @@ docs/cloudflare-cdn-plan.md
 apps/setup-center/identity/personas/user_custom.md
 apps/setup-center/src-tauri/identity/personas/user_custom.md
 temp-feedback/
+
+# Capacitor Android build artifacts (keep source, ignore build outputs)
+apps/setup-center/android/app/build/
+apps/setup-center/android/.gradle/
+apps/setup-center/android/app/src/main/assets/public/
+apps/setup-center/android/app/src/main/assets/capacitor.config.json

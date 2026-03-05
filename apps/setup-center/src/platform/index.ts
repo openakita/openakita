@@ -3,8 +3,8 @@
 // Tauri-specific modules are loaded via dynamic import() so they are never
 // bundled into the web build and never evaluated when running in a browser.
 
-import { IS_TAURI, IS_WEB } from "./detect";
-export { IS_TAURI, IS_WEB };
+import { IS_TAURI, IS_WEB, IS_CAPACITOR } from "./detect";
+export { IS_TAURI, IS_WEB, IS_CAPACITOR };
 
 // ---------------------------------------------------------------------------
 // Core: invoke & listen
@@ -278,3 +278,8 @@ export async function relaunchApp(): Promise<void> {
 export { authFetch, login, logout, checkAuth } from "./auth";
 export { onWsEvent, disconnectWs, isWsConnected } from "./websocket";
 export type { WsEventHandler } from "./websocket";
+export {
+  getServers, getActiveServer, getActiveServerId,
+  addServer, updateServer, removeServer, setActiveServer, testConnection,
+} from "./servers";
+export type { ServerEntry } from "./servers";

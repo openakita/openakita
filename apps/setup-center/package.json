@@ -10,9 +10,15 @@
     "build:web": "cross-env VITE_BUILD_TARGET=web vite build",
     "preview": "vite preview",
     "preview:web": "cross-env VITE_BUILD_TARGET=web vite preview --outDir dist-web",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "cap:sync": "npx cap sync",
+    "cap:android": "npx cap open android",
+    "cap:ios": "npx cap open ios"
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",

@@ -3777,8 +3777,7 @@ button:disabled {
     grid-template-columns: 1fr !important;
     gap: 0 !important;
     padding: 0 !important;
-    height: 100vh !important;
-    height: 100dvh !important;
+    height: var(--app-height, 100dvh) !important;
     overflow: hidden !important;
   }
 
@@ -3796,6 +3795,7 @@ button:disabled {
     box-shadow: 4px 0 24px rgba(0,0,0,0.35);
     border-radius: 0 !important;
     border: none !important;
+    padding-top: env(safe-area-inset-top) !important;
   }
   .sidebar.sidebarOpen {
     transform: translateX(0);
@@ -3808,8 +3808,7 @@ button:disabled {
   .main {
     border-radius: 0 !important;
     border: none !important;
-    height: 100vh;
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
   }
 
   /* content areas: tighter padding, scroll within fixed height */
@@ -3902,6 +3901,12 @@ button:disabled {
   /* cards and dialogs: full width */
   .card { border-radius: 8px !important; }
   .modalContent { width: 95vw !important; max-width: 95vw !important; margin: 8px !important; }
+
+  /* toast: account for status bar */
+  .toastContainer {
+    top: max(16px, env(safe-area-inset-top)) !important;
+    right: max(8px, env(safe-area-inset-right)) !important;
+  }
 
   /* hide elements that don't work well on small screens */
   .topbarConnectBtn span { display: none !important; }

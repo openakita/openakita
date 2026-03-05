@@ -1,8 +1,10 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, getAppVersion, onWsEvent } from "./platform";
-import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet } from "./platform/auth";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, getAppVersion, onWsEvent } from "./platform";
+import { getActiveServer, getActiveServerId } from "./platform/servers";
+import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
+import { ServerManagerView } from "./views/ServerManagerView";
 import { ChatView } from "./views/ChatView";
 import { SkillManager } from "./views/SkillManager";
 import { IMView } from "./views/IMView";
@@ -88,13 +90,23 @@ const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
 export function App() {
   const { t, i18n } = useTranslation();
 
-  // ── Web auth gate ──
-  const [webAuthed, setWebAuthed] = useState(!IS_WEB);
-  const [authChecking, setAuthChecking] = useState(IS_WEB);
+  // ── Web / Capacitor auth gate ──
+  const needsRemoteAuth = IS_WEB || IS_CAPACITOR;
+  const [webAuthed, setWebAuthed] = useState(!needsRemoteAuth);
+  const [authChecking, setAuthChecking] = useState(needsRemoteAuth);
   const [showPwBanner, setShowPwBanner] = useState(false);
+  const [showServerManager, setShowServerManager] = useState(false);
+  const [needServerConfig, setNeedServerConfig] = useState(
+    () => IS_CAPACITOR && !getActiveServer(),
+  );
+
   useEffect(() => {
-    if (!IS_WEB) return;
-    checkAuth().then((ok) => {
+    if (!needsRemoteAuth) return;
+    if (IS_CAPACITOR && !getActiveServer()) {
+      setAuthChecking(false);
+      return;
+    }
+    checkAuth(IS_CAPACITOR ? (getActiveServer()?.url || "") : "").then((ok) => {
       if (ok) {
         installFetchInterceptor();
         if (!isPasswordUserSet() && !localStorage.getItem("openakita_pw_banner_dismissed")) {
@@ -107,6 +119,25 @@ export function App() {
     const onExpired = () => setWebAuthed(false);
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Mobile keyboard: track visual viewport for reliable height ──
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      document.documentElement.style.setProperty('--app-height', `${vv.height}px`);
+      if (Math.abs(vv.height - window.innerHeight) < 1) {
+        window.scrollTo(0, 0);
+      }
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
   }, []);
 
   const [themePrefState, setThemePrefState] = useState<Theme>(getThemePref());
@@ -187,8 +218,8 @@ export function App() {
     [t],
   );
 
-  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "agent_manager" | "agent_store" | "skill_store">(IS_WEB ? "chat" : "wizard");
-  const [appInitializing, setAppInitializing] = useState(!IS_WEB); // Web 模式无需首次运行检测
+  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "agent_manager" | "agent_store" | "skill_store">((IS_WEB || IS_CAPACITOR) ? "chat" : "wizard");
+  const [appInitializing, setAppInitializing] = useState(!(IS_WEB || IS_CAPACITOR));
   const [configExpanded, setConfigExpanded] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
@@ -200,8 +231,12 @@ export function App() {
 
   // ── Data mode: "local" (Tauri commands) or "remote" (HTTP API) ──
   // Web mode always starts in "remote" since the backend is already running
-  const [dataMode, setDataMode] = useState<"local" | "remote">(IS_WEB ? "remote" : "local");
-  const [apiBaseUrl, setApiBaseUrl] = useState(() => IS_WEB ? "" : (localStorage.getItem("openakita_apiBaseUrl") || "http://127.0.0.1:18900"));
+  const [dataMode, setDataMode] = useState<"local" | "remote">((IS_WEB || IS_CAPACITOR) ? "remote" : "local");
+  const [apiBaseUrl, setApiBaseUrl] = useState(() =>
+    IS_CAPACITOR ? (getActiveServer()?.url || "")
+    : IS_WEB ? ""
+    : (localStorage.getItem("openakita_apiBaseUrl") || "http://127.0.0.1:18900"),
+  );
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [connectAddress, setConnectAddress] = useState("");
   const [stepId, setStepId] = useState<StepId>("llm");
@@ -549,7 +584,7 @@ export function App() {
   // Web mode init: runs after auth is confirmed
   const webInitDone = useRef(false);
   useEffect(() => {
-    if (!IS_WEB || !webAuthed || webInitDone.current) return;
+    if ((!IS_WEB && !IS_CAPACITOR) || !webAuthed || webInitDone.current) return;
     webInitDone.current = true;
     let cancelled = false;
     (async () => {
@@ -885,7 +920,7 @@ export function App() {
 
   // ── Web mode: subscribe to WebSocket events (replaces Tauri listen() for real-time updates) ──
   useEffect(() => {
-    if (!IS_WEB || !webAuthed) return;
+    if ((!IS_WEB && !IS_CAPACITOR) || !webAuthed) return;
     const unsub = onWsEvent((event, data) => {
       const p = data as any;
       if (!p) return;
@@ -7513,12 +7548,38 @@ export function App() {
     );
   }
 
-  // ── Web auth gate: show login page if not authenticated ──
-  if (IS_WEB && !webAuthed) {
+  // ── Capacitor: server config gate ──
+  if (IS_CAPACITOR && (needServerConfig || showServerManager)) {
+    return <ServerManagerView
+      activeServerId={getActiveServerId()}
+      manageModeInit={showServerManager && !needServerConfig}
+      onConnect={(url) => {
+        clearAccessToken();
+        setApiBaseUrl(url);
+        setNeedServerConfig(false);
+        setShowServerManager(false);
+        setWebAuthed(false);
+        setAuthChecking(true);
+        checkAuth(url).then((ok) => {
+          if (ok) {
+            installFetchInterceptor();
+            if (!isPasswordUserSet() && !localStorage.getItem("openakita_pw_banner_dismissed")) setShowPwBanner(true);
+          }
+          setWebAuthed(ok);
+          setAuthChecking(false);
+          webInitDone.current = false;
+        });
+      }}
+      onDone={needServerConfig ? undefined : () => setShowServerManager(false)}
+    />;
+  }
+
+  // ── Web / Capacitor auth gate: show login page if not authenticated ──
+  if (needsRemoteAuth && !webAuthed) {
     if (authChecking) {
       return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", color: "var(--text3, #94a3b8)" }}>Loading...</div>;
     }
-    return <LoginView apiBaseUrl="" onLoginSuccess={() => {
+    return <LoginView apiBaseUrl={IS_CAPACITOR ? apiBaseUrl : ""} onLoginSuccess={() => {
       installFetchInterceptor();
       webInitDone.current = false;
       setWebAuthed(true);
@@ -7604,14 +7665,16 @@ export function App() {
           onRefreshAll={async () => { await refreshAll(); try { await refreshStatus(undefined, undefined, true); } catch {} }}
           toggleTheme={toggleTheme}
           themePrefState={themePrefState}
-          isWeb={IS_WEB}
-          onLogout={IS_WEB ? async () => {
+          isWeb={IS_WEB || IS_CAPACITOR}
+          onLogout={(IS_WEB || IS_CAPACITOR) ? async () => {
             const { logout } = await import("./platform/auth");
-            await logout();
+            await logout(IS_CAPACITOR ? apiBaseUrl : "");
             setWebAuthed(false);
           } : undefined}
           webAccessUrl={IS_TAURI && (serviceStatus?.running ?? false) ? `http://127.0.0.1:18900/web` : undefined}
           onToggleMobileSidebar={isMobile ? () => setMobileSidebarOpen((v) => !v) : undefined}
+          serverName={IS_CAPACITOR ? (getActiveServer()?.name || undefined) : undefined}
+          onServerManager={IS_CAPACITOR ? () => setShowServerManager(true) : undefined}
         />
 
         {showPwBanner && (
