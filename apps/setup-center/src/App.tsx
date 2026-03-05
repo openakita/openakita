@@ -7680,14 +7680,17 @@ export function App() {
 
         {showPwBanner && (
           <div style={{
-            display: "flex", alignItems: "center", gap: 10, padding: "8px 16px",
+            display: "flex", alignItems: "center", gap: isMobile ? 6 : 10,
+            padding: isMobile ? "6px 10px" : "8px 16px",
             background: "var(--warning-bg, #fef3c7)", borderBottom: "1px solid var(--warning-border, #f59e0b)",
-            color: "var(--warning-text, #92400e)", fontSize: 13,
+            color: "var(--warning-text, #92400e)", fontSize: isMobile ? 12 : 13,
           }}>
             <span style={{ flex: 1 }}>
-              {t("web.passwordBanner", { defaultValue: "当前 Web 访问密码为系统自动生成，建议前往设置页面配置自定义密码以保障远程访问安全。" })}
+              {isMobile
+                ? t("web.passwordBannerShort", { defaultValue: "访问密码为自动生成，建议设置自定义密码。" })
+                : t("web.passwordBanner", { defaultValue: "当前 Web 访问密码为系统自动生成，建议前往设置页面配置自定义密码以保障远程访问安全。" })}
             </span>
-            <button className="btnSmall" style={{ whiteSpace: "nowrap", fontWeight: 500 }} onClick={() => {
+            <button className="btnSmall" style={{ whiteSpace: "nowrap", fontWeight: 500, fontSize: isMobile ? 11 : undefined, padding: isMobile ? "2px 8px" : undefined }} onClick={() => {
               setView("wizard");
               setStepId("advanced");
               setShowPwBanner(false);
