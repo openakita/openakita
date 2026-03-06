@@ -83,12 +83,8 @@ export function Topbar({
         )}
         {onServerManager && serverName && (
           <button
+            className="topbarServerBtn"
             onClick={onServerManager}
-            style={{
-              background: "none", border: "1px solid var(--line, #e2e8f0)", borderRadius: 6,
-              padding: "2px 8px", fontSize: 11, color: "var(--brand, #0ea5e9)",
-              cursor: "pointer", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}
             title={t("server.switchServer", { defaultValue: "切换服务器" })}
           >
             {serverName}
@@ -232,7 +228,7 @@ export function Topbar({
         <span className="topbarEpCount">{t("topbar.endpoints", { count: endpointCount })}</span>
         {dataMode === "remote" && <span className="pill" style={{ fontSize: 10, marginLeft: 4, background: "#e3f2fd", color: "#1565c0" }}>{t("connect.remoteMode")}</span>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
         {isWeb ? (
           onLogout && (
             <button

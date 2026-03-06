@@ -383,6 +383,20 @@ a:hover {
   gap: 5px;
 }
 
+.topbarServerBtn {
+  background: none;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--brand, #0ea5e9);
+  cursor: pointer;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbarEpCount {
   color: var(--muted2);
 }
@@ -3835,15 +3849,16 @@ button:disabled {
     min-height: 36px !important;
   }
   .topbarStatusRow {
-    gap: 4px !important;
+    gap: 3px !important;
     font-size: 11px !important;
     flex: 1;
     min-width: 0;
     overflow: hidden;
   }
-  .topbarWs { font-size: 11px !important; padding: 1px 5px !important; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbarServerBtn { max-width: 64px !important; padding: 1px 5px !important; font-size: 10px !important; }
+  .topbarWs { font-size: 11px !important; padding: 1px 5px !important; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbarEpCount { display: none !important; }
-  .topbarIndicator span { display: none !important; }
+  .topbarIndicator { display: none !important; }
   .topbarWebAccess { display: none !important; }
 
   /* hamburger button */
@@ -3916,7 +3931,11 @@ button:disabled {
 
   /* hide elements that don't work well on small screens */
   .topbarConnectBtn span { display: none !important; }
-  .topbarConnectBtn { padding: 3px 6px !important; }
-  .topbarRefreshBtn { padding: 3px 5px !important; }
+  .topbarConnectBtn { padding: 2px 5px !important; min-width: 0 !important; }
+  .topbarRefreshBtn { padding: 2px 4px !important; min-width: 0 !important; }
   .pill { display: none !important; }
+
+  /* agent orbit: smaller on mobile */
+  .agentOrbitNode { width: 26px; height: 26px; }
+  .agentOrbitIcon { font-size: 13px; }
 }
