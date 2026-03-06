@@ -96,6 +96,7 @@ export function App() {
   const [authChecking, setAuthChecking] = useState(needsRemoteAuth);
   const [showPwBanner, setShowPwBanner] = useState(false);
   const [showServerManager, setShowServerManager] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [needServerConfig, setNeedServerConfig] = useState(
     () => IS_CAPACITOR && !getActiveServer(),
   );
@@ -7584,12 +7585,39 @@ export function App() {
         setWebAuthed(true);
       }}
       onSwitchServer={IS_CAPACITOR ? () => setShowServerManager(true) : undefined}
+      onPreview={() => {
+        setPreviewMode(true);
+        setWebAuthed(true);
+      }}
     />;
   }
 
   return (
     <EnvFieldContext.Provider value={envFieldCtx}>
-    <div className={`appShell ${sidebarCollapsed ? "appShellCollapsed" : ""}${isMobile ? " appShellMobile" : ""}`}>
+    <div className={`appShell ${sidebarCollapsed ? "appShellCollapsed" : ""}${isMobile ? " appShellMobile" : ""}`} style={previewMode ? { paddingTop: IS_CAPACITOR ? "calc(32px + env(safe-area-inset-top))" : 32 } : undefined}>
+      {previewMode && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+          background: "linear-gradient(135deg, #0ea5e9, #6366f1)",
+          color: "#fff", textAlign: "center",
+          padding: "6px 16px",
+          paddingTop: IS_CAPACITOR ? "max(6px, env(safe-area-inset-top))" : "6px",
+          fontSize: 13, fontWeight: 600,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+        }}>
+          <span>{t("preview.banner", { defaultValue: "预览模式 — 连接服务器后可使用完整功能" })}</span>
+          <button
+            onClick={() => { setPreviewMode(false); setWebAuthed(false); }}
+            style={{
+              background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
+              color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 12,
+              fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            {t("preview.connect", { defaultValue: "去连接" })}
+          </button>
+        </div>
+      )}
       {isMobile && mobileSidebarOpen && (
         <div className="sidebarOverlay" onClick={() => setMobileSidebarOpen(false)} />
       )}

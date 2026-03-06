@@ -10,10 +10,12 @@ export function LoginView({
   apiBaseUrl,
   onLoginSuccess,
   onSwitchServer,
+  onPreview,
 }: {
   apiBaseUrl: string;
   onLoginSuccess: () => void;
   onSwitchServer?: () => void;
+  onPreview?: () => void;
 }) {
   const { t } = useTranslation();
   const [password, setPassword] = useState("");
@@ -203,15 +205,58 @@ export function LoginView({
             {t("login.switchServer", { defaultValue: "切换 / 添加服务器" })}
           </button>
         )}
+
+        {/* Preview mode button */}
+        {onPreview && (
+          <button
+            type="button"
+            onClick={onPreview}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              background: "none",
+              border: "none",
+              padding: "8px 0",
+              fontSize: 13,
+              color: "var(--text3, #94a3b8)",
+              cursor: "pointer",
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+            }}
+          >
+            {t("login.preview", { defaultValue: "跳过连接，预览界面" })}
+          </button>
+        )}
       </form>
 
-      <p style={{
+      <div style={{
         marginTop: 16,
-        fontSize: 12,
-        color: "var(--text3, #94a3b8)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
       }}>
-        {t("login.hint")}
-      </p>
+        <p style={{
+          margin: 0,
+          fontSize: 12,
+          color: "var(--text3, #94a3b8)",
+        }}>
+          {t("login.hint")}
+        </p>
+        <a
+          href="https://openakita.ai"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            fontSize: 12,
+            color: "var(--brand, #0ea5e9)",
+            textDecoration: "none",
+            opacity: 0.8,
+          }}
+        >
+          openakita.ai - {t("login.downloadDesktop", { defaultValue: "下载桌面端" })}
+        </a>
+      </div>
     </div>
   );
 }
