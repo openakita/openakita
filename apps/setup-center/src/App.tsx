@@ -7664,53 +7664,56 @@ export function App() {
           onServerManager={IS_CAPACITOR ? () => setShowServerManager(true) : undefined}
         />
 
-        {showPwBanner && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: isMobile ? 6 : 10,
-            padding: isMobile ? "6px 10px" : "8px 16px",
-            background: "var(--warning-bg, #fef3c7)", borderBottom: "1px solid var(--warning-border, #f59e0b)",
-            color: "var(--warning-text, #92400e)", fontSize: isMobile ? 12 : 13,
-          }}>
-            <span style={{ flex: 1 }}>
-              {isMobile
-                ? t("web.passwordBannerShort", { defaultValue: "访问密码为自动生成，建议设置自定义密码。" })
-                : t("web.passwordBanner", { defaultValue: "当前 Web 访问密码为系统自动生成，建议前往设置页面配置自定义密码以保障远程访问安全。" })}
-            </span>
-            <button className="btnSmall" style={{ whiteSpace: "nowrap", fontWeight: 500, fontSize: isMobile ? 11 : undefined, padding: isMobile ? "2px 8px" : undefined }} onClick={() => {
-              setView("wizard");
-              setStepId("advanced");
-              setShowPwBanner(false);
-              localStorage.setItem("openakita_pw_banner_dismissed", "1");
-            }}>{t("web.passwordBannerAction", { defaultValue: "去设置" })}</button>
-            <button style={{
-              background: "none", border: "none", cursor: "pointer", padding: 2,
-              color: "var(--warning-text, #92400e)", fontSize: 16, lineHeight: 1, opacity: 0.6,
-            }} onClick={() => {
-              setShowPwBanner(false);
-              localStorage.setItem("openakita_pw_banner_dismissed", "1");
-            }} title={t("common.close", { defaultValue: "关闭" })}>×</button>
-          </div>
-        )}
+        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+          {showPwBanner && (
+            <div style={{
+              flexShrink: 0,
+              display: "flex", alignItems: "center", gap: isMobile ? 6 : 10,
+              padding: isMobile ? "6px 10px" : "8px 16px",
+              background: "var(--warning-bg, #fef3c7)", borderBottom: "1px solid var(--warning-border, #f59e0b)",
+              color: "var(--warning-text, #92400e)", fontSize: isMobile ? 12 : 13,
+            }}>
+              <span style={{ flex: 1 }}>
+                {isMobile
+                  ? t("web.passwordBannerShort", { defaultValue: "访问密码为自动生成，建议设置自定义密码。" })
+                  : t("web.passwordBanner", { defaultValue: "当前 Web 访问密码为系统自动生成，建议前往设置页面配置自定义密码以保障远程访问安全。" })}
+              </span>
+              <button className="btnSmall" style={{ whiteSpace: "nowrap", fontWeight: 500, fontSize: isMobile ? 11 : undefined, padding: isMobile ? "2px 8px" : undefined }} onClick={() => {
+                setView("wizard");
+                setStepId("advanced");
+                setShowPwBanner(false);
+                localStorage.setItem("openakita_pw_banner_dismissed", "1");
+              }}>{t("web.passwordBannerAction", { defaultValue: "去设置" })}</button>
+              <button style={{
+                background: "none", border: "none", cursor: "pointer", padding: 2,
+                color: "var(--warning-text, #92400e)", fontSize: 16, lineHeight: 1, opacity: 0.6,
+              }} onClick={() => {
+                setShowPwBanner(false);
+                localStorage.setItem("openakita_pw_banner_dismissed", "1");
+              }} title={t("common.close", { defaultValue: "关闭" })}>×</button>
+            </div>
+          )}
 
-        {/* ChatView 始终挂载，切走时隐藏以保留聊天记录 */}
-        <div className="contentChat" style={{ display: view === "chat" ? undefined : "none" }}>
-          <ChatView
-            serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl}
-            endpoints={chatEndpoints}
-            visible={view === "chat"}
-            multiAgentEnabled={multiAgentEnabled}
-            onStartService={async () => {
-              const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
-              if (!effectiveWsId) {
-                setError("未找到工作区（请先创建/选择一个工作区）");
-                return;
-              }
-              await startLocalServiceWithConflictCheck(effectiveWsId);
-            }}
-          />
-        </div>
-        <div className="content" style={{ display: view !== "chat" ? undefined : "none" }}>
-          {renderStepContent()}
+          {/* ChatView 始终挂载，切走时隐藏以保留聊天记录 */}
+          <div className="contentChat" style={{ display: view === "chat" ? undefined : "none", flex: 1, minHeight: 0 }}>
+            <ChatView
+              serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl}
+              endpoints={chatEndpoints}
+              visible={view === "chat"}
+              multiAgentEnabled={multiAgentEnabled}
+              onStartService={async () => {
+                const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
+                if (!effectiveWsId) {
+                  setError("未找到工作区（请先创建/选择一个工作区）");
+                  return;
+                }
+                await startLocalServiceWithConflictCheck(effectiveWsId);
+              }}
+            />
+          </div>
+          <div className="content" style={{ display: view !== "chat" ? undefined : "none", flex: 1, minHeight: 0 }}>
+            {renderStepContent()}
+          </div>
         </div>
 
         {/* ── Connect Dialog ── */}
