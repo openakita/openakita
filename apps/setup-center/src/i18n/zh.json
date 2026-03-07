@@ -154,7 +154,19 @@
     "reload": "刷新",
     "reloadHint": "让后端重新扫描加载所有技能",
     "refreshed": "已刷新技能列表",
-    "alreadyInstalled": "该技能已安装"
+    "alreadyInstalled": "该技能已安装",
+    "viewDetail": "查看",
+    "editContent": "编辑",
+    "cancelEdit": "取消编辑",
+    "saveAndReload": "保存并重载",
+    "contentSaved": "技能已保存并重载生效",
+    "contentSaveFailed": "保存失败",
+    "loadingContent": "正在加载技能内容...",
+    "readOnlyHint": "系统内置技能，不可编辑",
+    "filePath": "文件路径",
+    "skillType": "类型",
+    "skillCategory": "分类",
+    "requiresBackend": "需要后端服务运行中"
   },
   "status": {
     "title": "系统状态",

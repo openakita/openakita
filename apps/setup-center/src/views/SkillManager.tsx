@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import type { SkillInfo, SkillConfigField, MarketplaceSkill, EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
-import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconConfig } from "../icons";
+import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconConfig, IconEdit } from "../icons";
 
 // ─── 配置表单自动生成 ───
 
@@ -126,6 +126,7 @@ function SkillCard({
   expanded,
   onToggleExpand,
   onToggleEnabled,
+  onViewDetail,
   envDraft,
   onEnvChange,
   onSaveConfig,
@@ -135,6 +136,7 @@ function SkillCard({
   expanded: boolean;
   onToggleExpand: () => void;
   onToggleEnabled: () => void;
+  onViewDetail: () => void;
   envDraft: EnvMap;
   onEnvChange: (fn: (prev: EnvMap) => EnvMap) => void;
   onSaveConfig: () => void;
@@ -160,7 +162,7 @@ function SkillCard({
         <div style={{ width: 36, height: 36, borderRadius: 10, background: skill.system ? "rgba(14,165,233,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
           {skill.system ? <IconGear size={18} /> : <IconZap size={18} />}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={onViewDetail}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontWeight: 800, fontSize: 14 }}>{skill.name}</span>
             <span className="pill" style={{ fontSize: 11, borderColor: statusColor + "33" }}>
@@ -174,6 +176,12 @@ function SkillCard({
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <button
+            onClick={onViewDetail}
+            style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid var(--line)", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+          >
+            {t("skills.viewDetail")}
+          </button>
           <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <input
               type="checkbox"
@@ -207,6 +215,197 @@ function SkillCard({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── 技能详情弹窗 ───
+
+function SkillDetailModal({
+  skill,
+  content,
+  contentLoading,
+  contentError,
+  isEditing,
+  editContent,
+  savingContent,
+  isSystem,
+  serviceRunning,
+  onClose,
+  onStartEdit,
+  onCancelEdit,
+  onEditChange,
+  onSave,
+}: {
+  skill: SkillInfo;
+  content: string;
+  contentLoading: boolean;
+  contentError: string | null;
+  isEditing: boolean;
+  editContent: string;
+  savingContent: boolean;
+  isSystem: boolean;
+  serviceRunning: boolean;
+  onClose: () => void;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onEditChange: (v: string) => void;
+  onSave: () => void;
+}) {
+  const { t } = useTranslation();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [isEditing]);
+
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !savingContent) onClose();
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [onClose, savingContent]);
+
+  return (
+    <div className="modalOverlay" onClick={savingContent ? undefined : onClose}>
+      <div
+        className="modalContent"
+        style={{ maxWidth: 720, width: "90vw", maxHeight: "85vh", display: "flex", flexDirection: "column", padding: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ padding: "18px 24px 14px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: isSystem ? "rgba(14,165,233,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+              {isSystem ? <IconGear size={16} /> : <IconZap size={16} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>{skill.name}</div>
+              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{skill.description}</div>
+            </div>
+            <button
+              onClick={onClose}
+              disabled={savingContent}
+              style={{ background: "transparent", border: "none", cursor: savingContent ? "not-allowed" : "pointer", padding: 4, fontSize: 18, opacity: savingContent ? 0.3 : 0.5, lineHeight: 1 }}
+            >
+              <IconX size={18} />
+            </button>
+          </div>
+
+          {/* Meta info */}
+          <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12, opacity: 0.6, flexWrap: "wrap" }}>
+            <span><b>{t("skills.skillType")}:</b> {isSystem ? t("skills.system") : t("skills.external")}</span>
+            {skill.category && <span><b>{t("skills.skillCategory")}:</b> {skill.category}</span>}
+            {skill.path && (
+              <span style={{ fontFamily: "monospace", fontSize: 11, opacity: 0.8, wordBreak: "break-all" }}>
+                <b>{t("skills.filePath")}:</b> {skill.path}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Content area */}
+        <div style={{ flex: 1, overflow: "auto", padding: "16px 24px" }}>
+          {contentLoading ? (
+            <div style={{ textAlign: "center", padding: 40, opacity: 0.5 }}>{t("skills.loadingContent")}</div>
+          ) : contentError ? (
+            <div className="errorBox" style={{ margin: 0 }}>{contentError}</div>
+          ) : isEditing ? (
+            <textarea
+              ref={textareaRef}
+              value={editContent}
+              onChange={(e) => onEditChange(e.target.value)}
+              spellCheck={false}
+              style={{
+                width: "100%",
+                minHeight: 400,
+                fontFamily: "monospace",
+                fontSize: 13,
+                lineHeight: 1.6,
+                padding: 12,
+                border: "1px solid var(--brand)",
+                borderRadius: 8,
+                background: "var(--panel2)",
+                color: "var(--text)",
+                resize: "vertical",
+                outline: "none",
+                tabSize: 2,
+              }}
+            />
+          ) : (
+            <pre style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: "monospace",
+              fontSize: 13,
+              lineHeight: 1.6,
+              margin: 0,
+              padding: 12,
+              background: "var(--panel2)",
+              borderRadius: 8,
+              border: "1px solid var(--line)",
+              minHeight: 200,
+              maxHeight: "none",
+              overflow: "visible",
+            }}>
+              {content}
+            </pre>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: "12px 24px 18px",
+          borderTop: "1px solid var(--line)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexShrink: 0,
+        }}>
+          {isSystem && (
+            <span style={{ fontSize: 12, opacity: 0.5, flex: 1 }}>{t("skills.readOnlyHint")}</span>
+          )}
+          {!isSystem && !serviceRunning && (
+            <span style={{ fontSize: 12, opacity: 0.5, flex: 1 }}>{t("skills.requiresBackend")}</span>
+          )}
+          {!isSystem && serviceRunning && (
+            <>
+              <div style={{ flex: 1 }} />
+              {isEditing ? (
+                <>
+                  <button
+                    className="btnSmall"
+                    onClick={onCancelEdit}
+                    disabled={savingContent}
+                    style={{ fontSize: 12, padding: "6px 16px" }}
+                  >
+                    {t("skills.cancelEdit")}
+                  </button>
+                  <button
+                    className="btnPrimary"
+                    onClick={onSave}
+                    disabled={savingContent || editContent === content}
+                    style={{ fontSize: 12, padding: "6px 16px" }}
+                  >
+                    {savingContent ? t("skills.saving") : t("skills.saveAndReload")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={onStartEdit}
+                  disabled={contentLoading || !!contentError}
+                  style={{ padding: "6px 16px", borderRadius: 8, border: "1px solid var(--line)", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                >
+                  <IconEdit size={12} /> {t("skills.editContent")}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -309,7 +508,14 @@ export function SkillManager({
   const [savingEnabled, setSavingEnabled] = useState(false);
   const [installedSearch, setInstalledSearch] = useState("");
   const [aiOrganizing, setAiOrganizing] = useState(false);
-  const marketRequestId = useRef(0);  // 用于取消过期请求
+  const [detailSkill, setDetailSkill] = useState<SkillInfo | null>(null);
+  const [detailContent, setDetailContent] = useState("");
+  const [detailContentLoading, setDetailContentLoading] = useState(false);
+  const [detailContentError, setDetailContentError] = useState<string | null>(null);
+  const [detailEditing, setDetailEditing] = useState(false);
+  const [detailEditContent, setDetailEditContent] = useState("");
+  const [detailSaving, setDetailSaving] = useState(false);
+  const marketRequestId = useRef(0);
   const { t } = useTranslation();
 
   // ── 加载已安装技能（返回 true 表示成功，false 表示出错） ──
@@ -554,6 +760,75 @@ export function SkillManager({
       setAiOrganizing(false);
     }
   }, [serviceRunning, apiBaseUrl, skillsWithConfig, loadSkills]);
+
+  // ── 打开技能详情弹窗 ──
+  const handleViewDetail = useCallback(async (skill: SkillInfo) => {
+    setDetailSkill(skill);
+    setDetailEditing(false);
+    setDetailEditContent("");
+    setDetailContentError(null);
+    setDetailContent("");
+    setDetailContentLoading(true);
+    setDetailSaving(false);
+
+    if (!serviceRunning || !apiBaseUrl) {
+      setDetailContentError(t("skills.requiresBackend"));
+      setDetailContentLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(skill.name)}/content`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) {
+        setDetailContentError(data.error);
+      } else {
+        setDetailContent(data.content || "");
+      }
+    } catch (e) {
+      setDetailContentError(String(e));
+    } finally {
+      setDetailContentLoading(false);
+    }
+  }, [serviceRunning, apiBaseUrl, t]);
+
+  const handleCloseDetail = useCallback(() => {
+    setDetailSkill(null);
+    setDetailEditing(false);
+    setDetailEditContent("");
+    setDetailContentError(null);
+  }, []);
+
+  const handleSaveContent = useCallback(async () => {
+    if (!detailSkill || !serviceRunning || !apiBaseUrl) return;
+    setDetailSaving(true);
+    setDetailContentError(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(detailSkill.name)}/content`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: detailEditContent }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) {
+        setDetailContentError(data.error);
+      } else {
+        setDetailContent(detailEditContent);
+        setDetailEditing(false);
+        onNotice?.(t("skills.contentSaved"));
+        await loadSkills();
+      }
+    } catch (e) {
+      setDetailContentError(`${t("skills.contentSaveFailed")}: ${e}`);
+    } finally {
+      setDetailSaving(false);
+    }
+  }, [detailSkill, detailEditContent, serviceRunning, apiBaseUrl, loadSkills, onNotice, t]);
 
   // ── 搜索 skills.sh 市场技能 ──
   const parseMarketplaceResponse = useCallback((data: Record<string, unknown>) => {
@@ -885,6 +1160,7 @@ export function SkillManager({
               expanded={expandedSkill === skill.name}
               onToggleExpand={() => setExpandedSkill(expandedSkill === skill.name ? null : skill.name)}
               onToggleEnabled={() => handleToggleEnabled(skill)}
+              onViewDetail={() => handleViewDetail(skill)}
               envDraft={envDraft}
               onEnvChange={onEnvChange}
               onSaveConfig={() => handleSaveConfig(skill)}
@@ -1006,6 +1282,26 @@ export function SkillManager({
             </a>
           </div>
         </>
+      )}
+
+      {/* 技能详情弹窗 */}
+      {detailSkill && (
+        <SkillDetailModal
+          skill={detailSkill}
+          content={detailContent}
+          contentLoading={detailContentLoading}
+          contentError={detailContentError}
+          isEditing={detailEditing}
+          editContent={detailEditContent}
+          savingContent={detailSaving}
+          isSystem={detailSkill.system}
+          serviceRunning={serviceRunning}
+          onClose={handleCloseDetail}
+          onStartEdit={() => { setDetailEditing(true); setDetailEditContent(detailContent); }}
+          onCancelEdit={() => { setDetailEditing(false); setDetailEditContent(""); }}
+          onEditChange={setDetailEditContent}
+          onSave={handleSaveContent}
+        />
       )}
     </>
   );

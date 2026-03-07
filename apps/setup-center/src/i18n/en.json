@@ -154,7 +154,19 @@
     "reload": "Reload",
     "reloadHint": "Rescan and reload all skills from backend",
     "refreshed": "Skills list refreshed",
-    "alreadyInstalled": "This skill is already installed"
+    "alreadyInstalled": "This skill is already installed",
+    "viewDetail": "View",
+    "editContent": "Edit",
+    "cancelEdit": "Cancel",
+    "saveAndReload": "Save & Reload",
+    "contentSaved": "Skill saved and reloaded successfully",
+    "contentSaveFailed": "Failed to save",
+    "loadingContent": "Loading skill content...",
+    "readOnlyHint": "Built-in system skill, read-only",
+    "filePath": "File Path",
+    "skillType": "Type",
+    "skillCategory": "Category",
+    "requiresBackend": "Requires backend service running"
   },
   "status": {
     "title": "System Status",

@@ -272,6 +272,121 @@ async def reload_skills(request: Request):
         return {"error": str(e)}
 
 
+@router.get("/api/skills/{skill_name}/content")
+async def get_skill_content(skill_name: str, request: Request):
+    """读取单个技能的 SKILL.md 原始内容。
+
+    返回 { content, path, system } 供前端展示和编辑。
+    系统内置技能标记 system=true，前端可据此决定是否允许编辑。
+    """
+    from openakita.skills.loader import SkillLoader
+
+    base_path, _ = _read_external_allowlist()
+
+    # 优先从 agent 运行时的 loader 中查找（已加载的技能）
+    from openakita.core.agent import Agent
+
+    agent = getattr(request.app.state, "agent", None)
+    actual_agent = agent if isinstance(agent, Agent) else getattr(agent, "_local_agent", None)
+
+    skill = None
+    if actual_agent:
+        loader = getattr(actual_agent, "skill_loader", None)
+        if loader:
+            skill = loader.get_skill(skill_name)
+
+    if not skill:
+        # Fallback: 用临时 loader 扫描
+        try:
+            tmp_loader = SkillLoader()
+            tmp_loader.load_all(base_path=base_path)
+            skill = tmp_loader.get_skill(skill_name)
+        except Exception:
+            pass
+
+    if not skill:
+        return {"error": f"Skill '{skill_name}' not found"}
+
+    try:
+        content = skill.path.read_text(encoding="utf-8")
+    except Exception as e:
+        return {"error": f"Failed to read SKILL.md: {e}"}
+
+    return {
+        "content": content,
+        "path": str(skill.path),
+        "system": skill.metadata.system,
+    }
+
+
+@router.put("/api/skills/{skill_name}/content")
+async def update_skill_content(skill_name: str, request: Request):
+    """更新技能的 SKILL.md 内容并热重载。
+
+    POST body: { "content": "完整的 SKILL.md 内容" }
+
+    流程:
+    1. 校验新内容能被正确解析（frontmatter + body）
+    2. 写入磁盘
+    3. 热重载该技能
+    4. 返回更新后的元数据
+    """
+    from openakita.core.agent import Agent
+    from openakita.skills.parser import skill_parser
+
+    body = await request.json()
+    new_content = body.get("content", "")
+    if not new_content.strip():
+        return {"error": "content is required"}
+
+    # 查找技能
+    agent = getattr(request.app.state, "agent", None)
+    actual_agent = agent if isinstance(agent, Agent) else getattr(agent, "_local_agent", None)
+
+    skill = None
+    loader = None
+    if actual_agent:
+        loader = getattr(actual_agent, "skill_loader", None)
+        if loader:
+            skill = loader.get_skill(skill_name)
+
+    if not skill:
+        return {"error": f"Skill '{skill_name}' not found"}
+
+    if skill.metadata.system:
+        return {"error": "Cannot edit system (built-in) skills"}
+
+    # 1. 校验新内容格式
+    try:
+        parsed = skill_parser.parse_content(new_content, skill.path)
+    except Exception as e:
+        return {"error": f"Invalid SKILL.md format: {e}"}
+
+    # 2. 写入磁盘
+    try:
+        skill.path.write_text(new_content, encoding="utf-8")
+    except Exception as e:
+        return {"error": f"Failed to write SKILL.md: {e}"}
+
+    # 3. 热重载
+    reloaded = False
+    if loader:
+        try:
+            result = loader.reload_skill(skill_name)
+            if result:
+                _apply_allowlist_and_rebuild_catalog(request)
+                reloaded = True
+        except Exception as e:
+            logger.warning(f"Skill reload after edit failed: {e}")
+
+    return {
+        "status": "ok",
+        "reloaded": reloaded,
+        "name": parsed.metadata.name,
+        "description": parsed.metadata.description,
+    }
+
+
 @router.get("/api/skills/marketplace")
 async def search_marketplace(q: str = "agent"):
     """Proxy to skills.sh search API (bypasses CORS for desktop app)."""
