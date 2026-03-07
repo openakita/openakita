@@ -1,15 +1,27 @@
-// ─── Web Auth Token Management ───
-// Handles JWT access/refresh token lifecycle for web mode.
-// In Tauri mode, all functions are no-ops (local requests are exempt).
+// ─── Auth Token Management ───
+// Handles JWT access/refresh token lifecycle.
+// Tauri local: no-ops (backend exempts 127.0.0.1). Tauri remote: same as Capacitor.
 
-import { IS_TAURI, IS_WEB, IS_CAPACITOR } from "./detect";
+import { IS_TAURI, IS_CAPACITOR } from "./detect";
 
 const ACCESS_TOKEN_KEY = "openakita_access_token";
 
-const NEEDS_AUTH = !IS_TAURI;
-
+let _tauriRemoteMode = false;
 let _localAuthMode = false;
 let _passwordUserSet = true;
+
+/** Enable/disable auth for Tauri desktop connecting to a remote backend. */
+export function setTauriRemoteMode(enabled: boolean): void {
+  _tauriRemoteMode = enabled;
+  // Always reset: connecting to a new server must re-evaluate local exemption via checkAuth()
+  _localAuthMode = false;
+}
+export function isTauriRemoteMode(): boolean { return _tauriRemoteMode; }
+
+function needsAuth(): boolean { return !IS_TAURI || _tauriRemoteMode; }
+
+/** Cross-origin mode: Capacitor or Tauri remote — no httpOnly cookie refresh. */
+function isCrossOriginMode(): boolean { return IS_CAPACITOR || _tauriRemoteMode; }
 
 /** Returns true if the backend granted access via local IP exemption (no token needed). */
 export function isLocalAuthMode(): boolean { return _localAuthMode; }
@@ -24,7 +36,7 @@ export function isPasswordUserSet(): boolean { return _passwordUserSet; }
 // ---------------------------------------------------------------------------
 
 export function getAccessToken(): string | null {
-  if (!NEEDS_AUTH) return null;
+  if (!needsAuth()) return null;
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
@@ -68,10 +80,9 @@ let _refreshPromise: Promise<string | null> | null = null;
 export const AUTH_EXPIRED_EVENT = "openakita-auth-expired";
 
 export async function refreshAccessToken(apiBase = ""): Promise<string | null> {
-  // Local auth mode: no refresh needed — backend grants access by IP
   if (_localAuthMode) return null;
-  // Capacitor: refresh via httpOnly cookie is unreliable cross-origin
-  if (IS_CAPACITOR) return null;
+  // Cross-origin (Capacitor / Tauri remote): httpOnly cookie refresh is unreliable
+  if (isCrossOriginMode()) return null;
   if (_refreshPromise) return _refreshPromise;
 
   _refreshPromise = (async () => {
@@ -112,15 +123,15 @@ export async function authFetch(
   init?: RequestInit,
   apiBase = "",
 ): Promise<Response> {
-  if (!NEEDS_AUTH) return fetch(url, init);
+  if (!needsAuth()) return fetch(url, init);
 
   // Local auth mode: backend grants access by IP, no token needed
   if (_localAuthMode) return fetch(url, init);
 
   let token = getAccessToken();
 
-  if (IS_CAPACITOR) {
-    // Capacitor can't refresh via httpOnly cookie cross-origin.
+  if (isCrossOriginMode()) {
+    // Cross-origin (Capacitor / Tauri remote): can't refresh via httpOnly cookie.
     // Use existing token as-is; 401 below will trigger re-login.
   } else if (!token || isTokenExpiringSoon(token)) {
     token = await refreshAccessToken(apiBase);
@@ -143,12 +154,12 @@ export async function authFetch(
     }
   }
 
-  const credOpts: RequestInit = IS_CAPACITOR ? {} : { credentials: "include" };
+  const credOpts: RequestInit = isCrossOriginMode() ? {} : { credentials: "include" };
   const res = await fetch(url, { ...init, ...credOpts, headers });
 
   // If 401 and we had a token, try one refresh then retry
   if (res.status === 401 && token) {
-    if (IS_CAPACITOR) {
+    if (isCrossOriginMode()) {
       clearAccessToken();
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
       return res;
@@ -177,7 +188,7 @@ export async function login(
       method: "POST",
       signal: AbortSignal.timeout(IS_CAPACITOR ? 5_000 : 10_000),
     };
-    if (IS_CAPACITOR) {
+    if (isCrossOriginMode()) {
       fetchOpts.headers = { "Content-Type": "application/x-www-form-urlencoded" };
       fetchOpts.body = new URLSearchParams({ password }).toString();
     } else {
@@ -206,7 +217,7 @@ export async function logout(apiBase = ""): Promise<void> {
       method: "POST",
       signal: AbortSignal.timeout(5_000),
     };
-    if (!IS_CAPACITOR) opts.credentials = "include";
+    if (!isCrossOriginMode()) opts.credentials = "include";
     const token = getAccessToken();
     if (token) {
       opts.headers = { Authorization: `Bearer ${token}` };
@@ -223,7 +234,7 @@ export async function logout(apiBase = ""): Promise<void> {
 let _interceptorInstalled = false;
 
 export function installFetchInterceptor(): void {
-  if (!NEEDS_AUTH || _interceptorInstalled) return;
+  if (!needsAuth() || _interceptorInstalled) return;
   _interceptorInstalled = true;
 
   const originalFetch = window.fetch.bind(window);
@@ -266,7 +277,7 @@ export async function checkAuth(apiBase = ""): Promise<boolean> {
         headers,
         signal: AbortSignal.timeout(timeoutMs),
       };
-      if (!IS_CAPACITOR) fetchOpts.credentials = "include";
+      if (!isCrossOriginMode()) fetchOpts.credentials = "include";
       const res = await fetch(`${apiBase}/api/auth/check`, fetchOpts);
       if (res.ok) {
         const data = await res.json();

@@ -2,7 +2,7 @@ import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, u
 import { useTranslation } from "react-i18next";
 import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, getAppVersion, onWsEvent, reconnectWsNow, logger } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
-import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken } from "./platform/auth";
+import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
 import { ServerManagerView } from "./views/ServerManagerView";
 import { ChatView } from "./views/ChatView";
@@ -106,6 +106,8 @@ export function App() {
   const [needServerConfig, setNeedServerConfig] = useState(
     () => IS_CAPACITOR && !getActiveServer(),
   );
+  // Tauri remote auth: when Tauri desktop connects to a remote backend that requires login
+  const [tauriRemoteLoginUrl, setTauriRemoteLoginUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!needsRemoteAuth) return;
@@ -127,6 +129,7 @@ export function App() {
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // ── Mobile keyboard: track visual viewport for reliable height ──
   useEffect(() => {
@@ -246,6 +249,19 @@ export function App() {
   );
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [connectAddress, setConnectAddress] = useState("");
+
+  // Tauri remote: listen for auth expiration and redirect to login
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    const onExpired = () => {
+      if (isTauriRemoteMode()) {
+        setTauriRemoteLoginUrl(apiBaseUrl);
+      }
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, [apiBaseUrl]);
+
   const [stepId, setStepId] = useState<StepId>("llm");
   const currentStepIdxRaw = useMemo(() => steps.findIndex((s) => s.id === stepId), [steps, stepId]);
   const currentStepIdx = currentStepIdxRaw < 0 ? 0 : currentStepIdxRaw;
@@ -7657,6 +7673,27 @@ export function App() {
     />;
   }
 
+  // ── Tauri remote auth gate: remote backend requires login ──
+  if (IS_TAURI && tauriRemoteLoginUrl) {
+    return <LoginView
+      apiBaseUrl={tauriRemoteLoginUrl}
+      onLoginSuccess={() => {
+        installFetchInterceptor();
+        setTauriRemoteLoginUrl(null);
+        setDataMode("remote");
+        setServiceStatus({ running: true, pid: null, pidFile: "" });
+        setNotice(t("connect.success"));
+        void refreshStatus("remote", tauriRemoteLoginUrl, true).then(() => {
+          autoCheckEndpoints(tauriRemoteLoginUrl);
+        });
+      }}
+      onSwitchServer={() => {
+        setTauriRemoteMode(false);
+        setTauriRemoteLoginUrl(null);
+      }}
+    />;
+  }
+
   return (
     <EnvFieldContext.Provider value={envFieldCtx}>
     <div className={`appShell ${sidebarCollapsed ? "appShellCollapsed" : ""}${isMobile ? " appShellMobile" : ""}`} style={previewMode ? { paddingTop: IS_CAPACITOR ? "calc(32px + env(safe-area-inset-top))" : 32 } : undefined}>
@@ -7742,6 +7779,7 @@ export function App() {
           dataMode={dataMode}
           busy={busy}
           onDisconnect={() => {
+            setTauriRemoteMode(false);
             setDataMode("local");
             setServiceStatus({ running: false, pid: null, pidFile: "" });
             envLoadedForWs.current = null;
@@ -7849,17 +7887,28 @@ export function App() {
                   if (!addr) return;
                   const url = addr.startsWith("http") ? addr : `http://${addr}`;
                   setBusy(t("connect.testing"));
+                  let connected = false;
                   try {
                     const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(5000) });
                     const data = await res.json();
                     if (data.status === "ok") {
+                      if (IS_TAURI) setTauriRemoteMode(true);
+                      const authOk = IS_TAURI ? await checkAuth(url) : true;
+                      if (!authOk) {
+                        setApiBaseUrl(url);
+                        localStorage.setItem("openakita_apiBaseUrl", url);
+                        setConnectDialogOpen(false);
+                        setTauriRemoteLoginUrl(url);
+                        if (data.version) checkVersionMismatch(data.version);
+                        return;
+                      }
                       setApiBaseUrl(url);
                       localStorage.setItem("openakita_apiBaseUrl", url);
                       setDataMode("remote");
                       setServiceStatus({ running: true, pid: null, pidFile: "" });
                       setConnectDialogOpen(false);
+                      connected = true;
                       setNotice(t("connect.success"));
-                      // Check version mismatch
                       if (data.version) checkVersionMismatch(data.version);
                       await refreshStatus("remote", url, true);
                       autoCheckEndpoints(url);
@@ -7867,6 +7916,7 @@ export function App() {
                       setError(t("connect.fail"));
                     }
                   } catch {
+                    if (IS_TAURI && !connected) setTauriRemoteMode(false);
                     setError(t("connect.fail"));
                   } finally { setBusy(null); }
                 }}>{t("connect.confirm")}</button>

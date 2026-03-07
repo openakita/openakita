@@ -81,10 +81,22 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _is_local_ws(ws: WebSocket) -> bool:
+    """Check if WebSocket originates from localhost (handles IPv4-mapped IPv6)."""
+    if not ws.client:
+        return False
+    host = ws.client.host
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    if host.startswith("::ffff:") and host[7:] == "127.0.0.1":
+        return True
+    return False
+
+
 def _authenticate_ws(ws: WebSocket, config: WebAccessConfig) -> bool:
     """Authenticate WebSocket connection via query param or local access."""
     # Local connections are exempt
-    if ws.client and ws.client.host in ("127.0.0.1", "::1"):
+    if _is_local_ws(ws):
         import os
         trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
         if not trust_proxy:
@@ -106,7 +118,7 @@ async def ws_events(ws: WebSocket):
         await ws.close(code=4001, reason="Authentication required")
         return
 
-    is_local = bool(ws.client and ws.client.host in ("127.0.0.1", "::1"))
+    is_local = _is_local_ws(ws)
     await manager.connect(ws, is_local=is_local)
     try:
         # Send initial connection confirmation

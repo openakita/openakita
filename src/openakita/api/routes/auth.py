@@ -73,7 +73,11 @@ def _is_local_from_real_ip(request: Request) -> bool:
     """Check if request is truly from localhost, respecting TRUST_PROXY."""
     trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
     real_ip = get_client_ip(request, trust_proxy=trust_proxy)
-    return real_ip in ("127.0.0.1", "::1")
+    if real_ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    if real_ip.startswith("::ffff:") and real_ip[7:] == "127.0.0.1":
+        return True
+    return False
 
 
 # ── POST /api/auth/login ──

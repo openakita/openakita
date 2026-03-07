@@ -318,10 +318,21 @@ def get_client_ip(request: Request, *, trust_proxy: bool = False) -> str:
 
 
 def _is_local_request(request: Request) -> bool:
-    """Check if request originates from localhost (direct connection only)."""
+    """Check if request originates from localhost (direct connection only).
+
+    Handles plain IPv4/IPv6 loopback as well as IPv4-mapped IPv6 addresses
+    (``::ffff:127.0.0.1``) which some OS/Uvicorn combinations report when the
+    server binds to ``0.0.0.0`` on dual-stack systems (common on Windows).
+    """
     if not request.client:
         return False
-    return request.client.host in ("127.0.0.1", "::1")
+    host = request.client.host
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # IPv4-mapped IPv6: ::ffff:127.0.0.1
+    if host.startswith("::ffff:") and host[7:] == "127.0.0.1":
+        return True
+    return False
 
 
 def _is_auth_exempt(path: str) -> bool:

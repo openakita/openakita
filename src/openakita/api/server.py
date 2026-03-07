@@ -290,7 +290,10 @@ def create_app(
         from .auth import get_client_ip
         trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
         real_ip = get_client_ip(request, trust_proxy=trust_proxy)
-        if real_ip not in ("127.0.0.1", "::1"):
+        is_local = real_ip in ("127.0.0.1", "::1", "localhost") or (
+            real_ip.startswith("::ffff:") and real_ip[7:] == "127.0.0.1"
+        )
+        if not is_local:
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Shutdown only allowed from localhost"},

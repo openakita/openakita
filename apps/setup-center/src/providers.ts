@@ -1,7 +1,7 @@
 // ─── Provider-related utility functions for Setup Center ───
 
 import { IS_TAURI, proxyFetch } from "./platform";
-import { authFetch } from "./platform/auth";
+import { authFetch, isTauriRemoteMode } from "./platform/auth";
 import type { ProviderInfo, ListedModel } from "./types";
 
 /** 判断服务商是否为本地服务（不需要真实 API Key） */
@@ -238,12 +238,13 @@ export async function fetchModelsDirectly(params: {
  */
 export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   const effectiveInit = init?.signal ? init : { ...init, signal: AbortSignal.timeout(10_000) };
+  const useAuth = !IS_TAURI || isTauriRemoteMode();
   let apiBase = "";
-  if (!IS_TAURI && url.startsWith("http")) {
+  if (useAuth && url.startsWith("http")) {
     try { apiBase = new URL(url).origin; } catch { /* relative url, keep "" */ }
     if (!apiBase || apiBase === "null" || apiBase === window.location.origin) apiBase = "";
   }
-  const res = !IS_TAURI
+  const res = useAuth
     ? await authFetch(url, effectiveInit, apiBase)
     : await fetch(url, effectiveInit);
   if (!res.ok) {
