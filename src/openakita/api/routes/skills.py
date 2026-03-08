@@ -363,7 +363,7 @@ async def reload_skills(request: Request):
         return {"error": str(e)}
 
 
-@router.get("/api/skills/{skill_name}/content")
+@router.get("/api/skills/content/{skill_name:path}")
 async def get_skill_content(skill_name: str, request: Request):
     """读取单个技能的 SKILL.md 原始内容。
 
@@ -410,7 +410,7 @@ async def get_skill_content(skill_name: str, request: Request):
     }
 
 
-@router.put("/api/skills/{skill_name}/content")
+@router.put("/api/skills/content/{skill_name:path}")
 async def update_skill_content(skill_name: str, request: Request):
     """更新技能的 SKILL.md 内容并热重载。
 

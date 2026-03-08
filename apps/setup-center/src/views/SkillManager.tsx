@@ -871,7 +871,7 @@ export function SkillManager({
     }
 
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(skill.name)}/content`, {
+      const res = await safeFetch(`${apiBaseUrl}/api/skills/content/${encodeURIComponent(skill.name)}`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (detailRequestNameRef.current !== requestName) return;
@@ -905,7 +905,7 @@ export function SkillManager({
     setDetailSaving(true);
     setDetailContentError(null);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skills/${encodeURIComponent(detailSkill.name)}/content`, {
+      const res = await safeFetch(`${apiBaseUrl}/api/skills/content/${encodeURIComponent(detailSkill.name)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: detailEditContent }),
