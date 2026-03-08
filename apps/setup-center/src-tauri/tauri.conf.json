@@ -5,7 +5,7 @@
   "identifier": "com.openakita.setupcenter",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:web && npm run build",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },

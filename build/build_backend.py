@@ -254,6 +254,23 @@ def normalize_macos_bundled_python(output_dir: Path) -> None:
         print("  [OK] Existing macOS bundled python launcher preserved")
 
 
+def _build_web_frontend(web_src: Path, web_dist: Path) -> None:
+    """Build the web frontend (dist-web/) so packaged assets are always fresh."""
+    npm = "npm.cmd" if sys.platform == "win32" else "npm"
+    pkg_json = web_src / "package.json"
+    if not pkg_json.exists():
+        print(f"  [WARN] {pkg_json} not found, skipping web build")
+        return
+
+    node_modules = web_src / "node_modules"
+    if not node_modules.exists():
+        print("  Installing npm dependencies...")
+        run_cmd([npm, "install"], cwd=str(web_src))
+
+    print("  Building web frontend (build:web)...")
+    run_cmd([npm, "run", "build:web"], cwd=str(web_src))
+
+
 def check_pyinstaller():
     """Check if PyInstaller is installed"""
     try:
@@ -398,8 +415,10 @@ def build_backend(mode: str, fast: bool = False):
     ensure_bundled_pth_file(OUTPUT_DIR)
     verify_bundled_python_contract(OUTPUT_DIR)
 
-    # Include web frontend if available
-    web_dist = PROJECT_ROOT / "apps" / "setup-center" / "dist-web"
+    # Build & include web frontend
+    web_src = PROJECT_ROOT / "apps" / "setup-center"
+    web_dist = web_src / "dist-web"
+    _build_web_frontend(web_src, web_dist)
     if web_dist.exists() and (web_dist / "index.html").exists():
         web_dest = OUTPUT_DIR / "_internal" / "openakita" / "web"
         if web_dest.exists():
@@ -408,7 +427,7 @@ def build_backend(mode: str, fast: bool = False):
         web_files = sum(1 for _ in web_dest.rglob("*") if _.is_file())
         print(f"  [OK] Web frontend included ({web_files} files)")
     else:
-        print("  [INFO] Web frontend not found (build with: cd apps/setup-center && VITE_BUILD_TARGET=web npm run build:web)")
+        print("  [WARN] Web frontend not found after build attempt")
 
     # Calculate size
     total_size = sum(f.stat().st_size for f in OUTPUT_DIR.rglob("*") if f.is_file())
