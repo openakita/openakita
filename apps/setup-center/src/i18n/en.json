@@ -1295,6 +1295,11 @@
     "submit": "Login",
     "loggingIn": "Logging in...",
     "failed": "Login failed",
+    "invalidPassword": "Invalid password, please try again",
+    "tooManyAttempts": "Too many login attempts, please try again later",
+    "networkError": "Unable to connect to the server, please check the address and network",
+    "networkErrorMobile": "Unable to connect to the server. Please check:\n1. Phone and computer are on the same WiFi\n2. Remote access is enabled on the desktop app\n3. Server address is correct",
+    "timeout": "Connection timed out. Please check that your phone and computer are on the same WiFi",
     "hint": "Password is auto-generated on first start. View or reset it in the Desktop Setup Center."
   },
   "web": {

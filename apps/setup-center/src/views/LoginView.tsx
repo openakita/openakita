@@ -35,13 +35,14 @@ export function LoginView({
       onLoginSuccess();
     } else {
       const raw = (result.error || "").toLowerCase();
-      if (raw.includes("abort") || raw.includes("timeout")) {
-        setError(t("login.failedTimeout", { defaultValue: "连接超时，请确认手机与电脑在同一 WiFi 下" }));
+      if (raw.includes("too many")) {
+        setError(t("login.tooManyAttempts"));
+      } else if (raw.includes("invalid password")) {
+        setError(t("login.invalidPassword"));
+      } else if (raw.includes("abort") || raw.includes("timeout")) {
+        setError(t("login.timeout"));
       } else if (raw.includes("failed to fetch") || raw.includes("networkerror") || raw.includes("fetch failed") || raw.includes("network") || raw.includes("load failed")) {
-        const hint = IS_CAPACITOR
-          ? "无法连接服务器，请确认：\n1. 手机与电脑在同一 WiFi 下\n2. 桌面端已开启远程访问\n3. 服务器地址正确"
-          : "无法连接服务器，请检查地址和网络";
-        setError(hint);
+        setError(IS_CAPACITOR ? t("login.networkErrorMobile") : t("login.networkError"));
       } else {
         setError(result.error || t("login.failed"));
       }
