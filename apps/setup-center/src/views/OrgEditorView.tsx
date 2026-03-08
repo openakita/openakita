@@ -513,6 +513,7 @@ export function OrgEditorView({
   const [newNodeDept, setNewNodeDept] = useState("");
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768 || IS_CAPACITOR);
   const [showLeftPanel, setShowLeftPanel] = useState(() => !(window.innerWidth < 768 || IS_CAPACITOR));
+  const [showRightPanel, setShowRightPanel] = useState(true);
 
   useLayoutEffect(() => {
     let prev = window.innerWidth < 768 || IS_CAPACITOR;
@@ -982,7 +983,7 @@ export function OrgEditorView({
           {orgList.map((org) => (
             <div
               key={org.id}
-              onClick={() => { setSelectedOrgId(org.id); if (isMobile) setShowLeftPanel(false); }}
+              onClick={() => { setSelectedOrgId(org.id); setShowLeftPanel(false); }}
               className={`navItem ${selectedOrgId === org.id ? "navItemActive" : ""}`}
               style={{
                 padding: "8px 10px",
@@ -1196,6 +1197,23 @@ export function OrgEditorView({
                 <IconMaximize2 size={12} />
               </button>
               )}
+              {!isMobile && (
+                <>
+                  <div style={{ width: 1, height: 20, background: "var(--line)" }} />
+                  <button
+                    className="btnSmall"
+                    onClick={() => setShowRightPanel(!showRightPanel)}
+                    title={showRightPanel ? "收起设置面板" : "展开设置面板"}
+                    style={{
+                      fontWeight: showRightPanel ? 600 : 400,
+                      color: showRightPanel ? "var(--primary)" : undefined,
+                      background: showRightPanel ? "rgba(14,165,233,0.1)" : undefined,
+                    }}
+                  >
+                    <IconChevronRight size={12} style={{ transform: showRightPanel ? "rotate(0deg)" : "rotate(180deg)", transition: "transform 0.15s" }} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1302,7 +1320,7 @@ export function OrgEditorView({
       </div>
 
       {/* ── Right Panel: Node Properties ── */}
-      {isMobile && selectedNode && (
+      {isMobile && selectedNode && showRightPanel && (
         <div
           onClick={() => setSelectedNodeId(null)}
           style={{
@@ -1311,7 +1329,7 @@ export function OrgEditorView({
           }}
         />
       )}
-      {selectedNode && (
+      {selectedNode && showRightPanel && (
         <div
           style={{
             width: isMobile ? "85%" : 300,
@@ -2129,7 +2147,7 @@ export function OrgEditorView({
       )}
 
       {/* ── Right Panel: Org Settings (when no node selected) ── */}
-      {currentOrg && !selectedNode && !isMobile && (
+      {currentOrg && !selectedNode && !isMobile && showRightPanel && (
         <div
           style={{
             width: 300,
