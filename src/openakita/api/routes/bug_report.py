@@ -123,11 +123,17 @@ def _collect_system_info() -> dict:
         except Exception:
             pass
 
+    # subprocess flags: hide console window on Windows
+    import subprocess
+    _sp_kwargs: dict = {}
+    if platform.system() == "Windows":
+        _sp_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
     # Git availability (common cause of [WinError 2])
     try:
-        import subprocess
         result = subprocess.run(
             ["git", "--version"], capture_output=True, text=True, timeout=5,
+            **_sp_kwargs,
         )
         info["git_version"] = result.stdout.strip() if result.returncode == 0 else f"error: {result.stderr.strip()}"
     except FileNotFoundError:
@@ -138,9 +144,9 @@ def _collect_system_info() -> dict:
     # Node/npm availability
     for cmd in ["node", "npm"]:
         try:
-            import subprocess
             result = subprocess.run(
                 [cmd, "--version"], capture_output=True, text=True, timeout=5,
+                **_sp_kwargs,
             )
             info[f"{cmd}_version"] = result.stdout.strip() if result.returncode == 0 else "error"
         except FileNotFoundError:
