@@ -460,8 +460,7 @@ class Brain:
             usage = response.usage
             if not usage:
                 return
-            ep_info = self.get_current_endpoint_info()
-            ep_name = ep_info.get("name", "")
+            ep_name = response.endpoint_name or self.get_current_endpoint_info().get("name", "")
             cost = 0.0
             for ep in self._llm_client.endpoints:
                 if ep.name == ep_name:

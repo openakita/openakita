@@ -449,60 +449,6 @@ class MCPClient:
             except BaseException:
                 pass
 
-    async def _connect_sse(self, server_name: str, config: MCPServerConfig) -> bool:
-        """通过 SSE (Server-Sent Events) 连接到 MCP 服务器"""
-        if not MCP_SSE_AVAILABLE:
-            logger.error(
-                f"SSE transport not available for {server_name}. "
-                "Upgrade MCP SDK: pip install 'mcp>=1.2.0'"
-            )
-            return False
-
-        if not config.url:
-            logger.error(f"No URL configured for SSE server: {server_name}")
-            return False
-
-        sse_cm = None
-        client_cm = None
-        try:
-            sse_cm = sse_client(url=config.url)
-            read, write = await asyncio.wait_for(
-                sse_cm.__aenter__(), timeout=self._CONNECT_TIMEOUT,
-            )
-
-            client_cm = ClientSession(read, write)
-            client = await asyncio.wait_for(
-                client_cm.__aenter__(), timeout=self._CONNECT_TIMEOUT,
-            )
-            await asyncio.wait_for(client.initialize(), timeout=self._CONNECT_TIMEOUT)
-
-            await asyncio.wait_for(
-                self._discover_capabilities(server_name, client),
-                timeout=self._CONNECT_TIMEOUT,
-            )
-
-            self._connections[server_name] = {
-                "client": client,
-                "transport": "sse",
-                "_client_cm": client_cm,
-                "_sse_cm": sse_cm,
-            }
-            logger.info(f"Connected to MCP server via SSE: {server_name} ({config.url})")
-            return True
-        except BaseException as e:
-            logger.error(f"Failed to connect to {server_name} via SSE: {e}")
-            try:
-                if client_cm:
-                    await client_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
-            try:
-                if sse_cm:
-                    await sse_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
-            return False
-
     async def _discover_capabilities(self, server_name: str, client: Any) -> None:
         """发现 MCP 服务器的能力（工具、资源、提示词）"""
         # 获取工具

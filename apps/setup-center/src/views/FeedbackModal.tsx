@@ -5,8 +5,6 @@ import { IconX, IconInfo } from "../icons";
 import { safeFetch } from "../providers";
 import { ModalOverlay } from "../components/ModalOverlay";
 
-const TURNSTILE_SITE_KEY = "0x4AAAAAACgY6e8TLK4RVrQk";
-
 type FeedbackMode = "bug" | "feature";
 
 type SystemInfo = {
@@ -49,12 +47,17 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
   const [contactEmail, setContactEmail] = useState("");
   const [contactWechat, setContactWechat] = useState("");
 
+  // CAPTCHA config fetched from backend (no hardcoded keys in source)
+  const [captchaCfg, setCaptchaCfg] = useState<{ scene_id: string; prefix: string } | null>(null);
+
   // State
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{ ok: boolean; msg: string; downloadUrl?: string } | null>(null);
   const [downloading, setDownloading] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState("");
-  const turnstileRef = useRef<HTMLDivElement>(null);
+  const captchaTokenRef = useRef("");
+  const captchaContainerRef = useRef<HTMLDivElement>(null);
+  const captchaInstanceRef = useRef<any>(null);
+  const handleSubmitRef = useRef<() => void>(() => {});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset mode when re-opened
@@ -66,45 +69,76 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
     }
   }, [open, initialMode]);
 
-  // Fetch system info on open (only needed for bug mode, but pre-fetch)
+  // Fetch system info + CAPTCHA config on open
   useEffect(() => {
     if (!open) return;
     safeFetch(`${apiBase}/api/system-info`, { signal: AbortSignal.timeout(5000) })
       .then((r) => r.json())
       .then(setSystemInfo)
       .catch(() => setSystemInfo(null));
+
+    safeFetch(`${apiBase}/api/feedback-config`, { signal: AbortSignal.timeout(5000) })
+      .then((r) => r.json())
+      .then((cfg: any) => {
+        if (cfg.captcha_scene_id && cfg.captcha_prefix) {
+          setCaptchaCfg({ scene_id: cfg.captcha_scene_id, prefix: cfg.captcha_prefix });
+        }
+      })
+      .catch(() => {});
   }, [open, apiBase]);
 
-  // Load Turnstile on open
+  // Load Alibaba Cloud CAPTCHA 2.0 once config is available
   useEffect(() => {
-    if (!open) return;
+    if (!open || !captchaCfg) return;
+    let destroyed = false;
 
-    const loadTurnstile = () => {
-      if ((window as any).turnstile && turnstileRef.current) {
+    const initCaptcha = async () => {
+      const initFn = (window as any).initAliyunCaptcha;
+      if (typeof initFn === "function") {
+        if (destroyed || !captchaContainerRef.current) return;
         try {
-          (window as any).turnstile.render(turnstileRef.current, {
-            sitekey: TURNSTILE_SITE_KEY,
-            callback: (token: string) => setTurnstileToken(token),
-            "error-callback": () => setTurnstileToken(""),
-            "expired-callback": () => setTurnstileToken(""),
-            theme: "auto",
+          captchaContainerRef.current.innerHTML = "";
+          captchaInstanceRef.current = await initFn({
+            SceneId: captchaCfg.scene_id,
+            prefix: captchaCfg.prefix,
+            mode: "popup",
+            element: captchaContainerRef.current,
+            button: "#feedback-submit-btn",
+            captchaVerifyCallback: async (captchaVerifyParam: string) => {
+              captchaTokenRef.current = captchaVerifyParam;
+              return { captchaResult: true, bizResult: true };
+            },
+            onBizResultCallback: () => {
+              handleSubmitRef.current();
+            },
+            getInstance: (inst: any) => { captchaInstanceRef.current = inst; },
+            language: document.documentElement.lang?.startsWith("zh") ? "cn" : "en",
           });
-        } catch { /* already rendered */ }
+        } catch { /* init failed, allow submission without captcha */ }
         return;
       }
-      if (!document.querySelector('script[src*="turnstile"]')) {
+      if (!document.querySelector('script[src*="AliyunCaptcha"]')) {
         const s = document.createElement("script");
-        s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        s.src = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
         s.async = true;
-        s.onload = () => setTimeout(loadTurnstile, 100);
+        s.onload = () => setTimeout(initCaptcha, 200);
         document.head.appendChild(s);
       } else {
-        setTimeout(loadTurnstile, 200);
+        setTimeout(initCaptcha, 300);
       }
     };
-    const timer = setTimeout(loadTurnstile, 100);
-    return () => clearTimeout(timer);
-  }, [open]);
+
+    const timer = setTimeout(initCaptcha, 150);
+    return () => {
+      destroyed = true;
+      clearTimeout(timer);
+      if (captchaInstanceRef.current?.destroy) {
+        try { captchaInstanceRef.current.destroy(); } catch {}
+      }
+      captchaInstanceRef.current = null;
+      captchaTokenRef.current = "";
+    };
+  }, [open, captchaCfg]);
 
   // ─── Image handling ───
   const addImages = useCallback((files: FileList | File[]) => {
@@ -135,6 +169,10 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
   const handleSubmit = useCallback(async () => {
     if (!title.trim() || !description.trim()) return;
 
+    // When CAPTCHA is configured, the first click is intercepted by the SDK.
+    // handleSubmit is called again from onBizResultCallback after verification.
+    if (captchaCfg && !captchaTokenRef.current) return;
+
     setSubmitting(true);
     setSubmitResult(null);
 
@@ -142,7 +180,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       const form = new FormData();
       form.append("title", title.trim());
       form.append("description", description.trim());
-      form.append("turnstile_token", turnstileToken || "none");
+      form.append("captcha_verify_param", captchaTokenRef.current || "none");
       for (const img of imageFiles) {
         form.append("images", img);
       }
@@ -190,9 +228,13 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
     } catch (err: any) {
       setSubmitResult({ ok: false, msg: err?.message || t("feedback.uploadFailedNetwork") });
     } finally {
+      captchaTokenRef.current = "";
       setSubmitting(false);
     }
-  }, [mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, contactWechat, turnstileToken, imageFiles, apiBase, t]);
+  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, contactWechat, imageFiles, apiBase, t]);
+
+  // Keep ref in sync so the CAPTCHA callback always calls the latest version
+  handleSubmitRef.current = handleSubmit;
 
   const handleClose = useCallback(() => { setSubmitResult(null); onClose(); }, [onClose]);
 
@@ -434,8 +476,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
             </div>
           )}
 
-          {/* Turnstile (invisible) */}
-          <div ref={turnstileRef} style={{ marginBottom: 4 }} />
+          {/* Alibaba Cloud CAPTCHA 2.0 */}
+          <div ref={captchaContainerRef} id="aliyun-captcha-element" style={{ marginBottom: 4 }} />
 
           {/* Result */}
           {submitResult && (
@@ -488,6 +530,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
             {t("common.cancel")}
           </button>
           <button
+            id="feedback-submit-btn"
             className="btnSmall"
             disabled={submitting || !title.trim() || !description.trim()}
             onClick={handleSubmit}

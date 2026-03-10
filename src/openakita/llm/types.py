@@ -406,6 +406,7 @@ class LLMResponse:
     usage: Usage
     model: str
     reasoning_content: str | None = None  # Kimi 专用：思考内容
+    endpoint_name: str = ""  # 实际处理此请求的端点名称（由 LLMClient 填充）
 
     @property
     def text(self) -> str:

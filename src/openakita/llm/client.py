@@ -883,6 +883,7 @@ class LLMClient:
                     # 端点亲和性：记录本次成功的端点，供后续有工具上下文的调用优先使用
                     self._last_success_endpoint = provider.name
 
+                    response.endpoint_name = provider.name
                     return response
 
                 except AuthenticationError as e:

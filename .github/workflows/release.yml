@@ -20,61 +20,40 @@ env:
   CHECKOUT_REF: ${{ (github.event_name == 'workflow_dispatch' && inputs.ref != '' && inputs.ref) || (github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag) || github.ref_name }}
 
 jobs:
-  # ── Job 1: 创建 / 更新 Draft Release ──
+  # ── Job 1: 确保 Draft Release 存在（仅首次创建，重新打包时跳过） ──
   create_release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
       release_id: ${{ steps.gh_release.outputs.id }}
-      is_stable: ${{ steps.detect_channel.outputs.is_stable }}
-      channel: ${{ steps.detect_channel.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
 
-      # ── 判断发布渠道：tag 来自 v*.x 稳定分支 → stable，否则 → dev ──
-      - name: Detect release channel
-        id: detect_channel
+      - name: Check if release already exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ env.RELEASE_TAG }}"
-          # 从 tag 名提取 major.minor → 构造对应的稳定分支名 v{major}.{minor}.x
-          MAJOR_MINOR=$(echo "$TAG" | sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/')
-          STABLE_BRANCH="v${MAJOR_MINOR}.x"
-          echo "Tag: $TAG"
-          echo "Expected stable branch: $STABLE_BRANCH"
-
-          # 检查该稳定分支是否存在（远程）
-          if git ls-remote --exit-code --heads origin "$STABLE_BRANCH" > /dev/null 2>&1; then
-            # 必须先 fetch 稳定分支，否则本地没有 origin/$STABLE_BRANCH 引用
-            git fetch origin "$STABLE_BRANCH"
-            # 检查 tag 的 commit 是否在该稳定分支上
-            TAG_SHA=$(git rev-list -n 1 "$TAG" 2>/dev/null || echo "")
-            if [ -n "$TAG_SHA" ] && git merge-base --is-ancestor "$TAG_SHA" "origin/$STABLE_BRANCH" 2>/dev/null; then
-              echo "is_stable=true" >> "$GITHUB_OUTPUT"
-              echo "channel=stable" >> "$GITHUB_OUTPUT"
-              echo "✅ Stable release (tag on $STABLE_BRANCH branch)"
-            else
-              echo "is_stable=false" >> "$GITHUB_OUTPUT"
-              echo "channel=dev" >> "$GITHUB_OUTPUT"
-              echo "⚠️ Dev release (tag not on $STABLE_BRANCH, likely from main)"
-            fi
+          if gh release view "${{ env.RELEASE_TAG }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Release ${{ env.RELEASE_TAG }} already exists — will upload new artifacts to it"
           else
-            echo "is_stable=false" >> "$GITHUB_OUTPUT"
-            echo "channel=dev" >> "$GITHUB_OUTPUT"
-            echo "⚠️ Dev release (no $STABLE_BRANCH branch exists)"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "📦 Release ${{ env.RELEASE_TAG }} does not exist — will create draft"
           fi
 
-      - name: Create or update draft release
+      - name: Create draft release
+        if: steps.check_release.outputs.exists != 'true'
         id: gh_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           draft: true
           generate_release_notes: true
-          prerelease: ${{ steps.detect_channel.outputs.is_stable != 'true' }}
 
   # ── Job 2a: Python 包发布 ──
   python_release:
@@ -124,12 +103,9 @@ jobs:
         run: python -m build --wheel
       
       - name: Upload Python artifacts to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: dist/*
-          draft: true
-          overwrite_files: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ env.RELEASE_TAG }}" dist/* --clobber
       
       - name: Publish to PyPI (Trusted Publishing / OIDC)
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN == '' }}
@@ -862,239 +838,3 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
-  # ── Job 3: 全部成功后发布 Release + 生成 manifest ──
-  publish_release:
-    needs: [create_release, python_release, desktop_release]
-    if: ${{ !cancelled() && needs.create_release.result == 'success' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
-      HAS_R2_KEY: ${{ secrets.R2_ACCESS_KEY_ID }}
-      HAS_OSS_KEY: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.CHECKOUT_REF }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Publish release (remove draft flag)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IS_STABLE: ${{ needs.create_release.outputs.is_stable }}
-        run: |
-          LATEST_FLAG=""
-          if [ "$IS_STABLE" = "true" ]; then
-            LATEST_FLAG="--latest"
-          else
-            LATEST_FLAG="--latest=false"
-          fi
-          gh release edit "${{ env.RELEASE_TAG }}" \
-            --repo "${{ github.repository }}" \
-            --draft=false \
-            ${LATEST_FLAG}
-
-      - name: Generate release manifest
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IS_STABLE: ${{ needs.create_release.outputs.is_stable }}
-        run: |
-          CHANNEL="${{ needs.create_release.outputs.channel }}"
-          echo "Release channel: ${CHANNEL} (is_stable=${IS_STABLE})"
-
-          # 始终生成当前版本的 manifest
-          # 优先使用阿里云 OSS CDN（国内加速），R2 作为国际备用
-          CDN_ARGS=""
-          if [ -n "${HAS_OSS_KEY}" ]; then
-            CDN_ARGS="--cdn-base-url https://${{ secrets.ALIYUN_OSS_CDN_DOMAIN }}"
-            if [ -n "${HAS_R2_KEY}" ]; then
-              CDN_ARGS="${CDN_ARGS} --cdn-fallback-url https://dl-openakita.fzstack.com"
-            fi
-          elif [ -n "${HAS_R2_KEY}" ]; then
-            CDN_ARGS="--cdn-base-url https://dl-openakita.fzstack.com"
-          fi
-          python scripts/generate_latest_json.py \
-            --tag "${{ env.RELEASE_TAG }}" \
-            --output latest-this.json \
-            --repo "${{ github.repository }}" \
-            ${CDN_ARGS}
-
-          NEW_VER=$(python -c "import json; print(json.load(open('latest-this.json'))['version'])")
-          echo "New version: ${NEW_VER}"
-
-          if [ "$IS_STABLE" = "true" ]; then
-            # ── 稳定版：版本号更大则覆盖，相同则也覆盖（支持重新发布），更小则跳过 ──
-            SHOULD_UPDATE="true"
-            MANIFEST_CHECK_URL="https://openakita.ai/api/release.json"
-            if [ -n "${HAS_OSS_KEY}" ]; then
-              MANIFEST_CHECK_URL="https://${{ secrets.ALIYUN_OSS_CDN_DOMAIN }}/api/release.json"
-            fi
-            if curl -sf "${MANIFEST_CHECK_URL}" -o existing-release.json 2>/dev/null; then
-              OLD_VER=$(python -c "import json; print(json.load(open('existing-release.json'))['version'])" 2>/dev/null || echo "0.0.0")
-              echo "Existing stable version: ${OLD_VER}"
-              IS_OLDER=$(python -c "old=list(map(int,'${OLD_VER}'.split('.')));new=list(map(int,'${NEW_VER}'.split('.')));print('true' if new<old else 'false')")
-              if [ "$IS_OLDER" = "true" ]; then
-                echo "⏭️ Skipping release.json update: ${NEW_VER} < ${OLD_VER} (older version)"
-                SHOULD_UPDATE="false"
-              elif [ "${NEW_VER}" = "${OLD_VER}" ]; then
-                echo "🔄 Same version ${NEW_VER}, will overwrite (re-release)"
-              fi
-            else
-              echo "No existing release.json found, will create"
-            fi
-
-            if [ "$SHOULD_UPDATE" = "true" ]; then
-              cp latest-this.json release.json
-              echo "📦 Stable release → release.json (${NEW_VER})"
-            fi
-            cp latest-this.json "release-${NEW_VER}.json"
-            echo "SHOULD_UPDATE_STABLE=${SHOULD_UPDATE}" >> "$GITHUB_ENV"
-          else
-            cp latest-this.json pre-release.json
-            echo "🔧 Dev release → pre-release.json"
-            echo "SHOULD_UPDATE_STABLE=false" >> "$GITHUB_ENV"
-          fi
-
-          echo "=== manifest ==="
-          cat latest-this.json
-
-      - name: Upload manifest as release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IS_STABLE: ${{ needs.create_release.outputs.is_stable }}
-        run: |
-          # 始终把当前版本的 manifest 上传到对应 Release
-          gh release upload "${{ env.RELEASE_TAG }}" latest-this.json --clobber
-
-      # ── 下载 Release 资产到临时目录（供后续上传步骤使用） ──
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="${{ env.RELEASE_TAG }}"
-          mkdir -p /tmp/release-assets
-          gh release download "${TAG}" \
-            --repo "${{ github.repository }}" \
-            --dir /tmp/release-assets \
-            --pattern "*.exe" --pattern "*.dmg" --pattern "*.deb" \
-            --pattern "*.AppImage" --pattern "*.appimage" \
-            --pattern "*.app.tar.gz" --pattern "*.sig" \
-            --clobber || true
-          echo "Downloaded $(ls /tmp/release-assets | wc -l) asset(s)"
-
-      # ── 上传安装包 + manifest 到阿里云 OSS（国内加速） ──
-      - name: Upload to Aliyun OSS
-        if: ${{ env.HAS_OSS_KEY != '' }}
-        env:
-          OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
-          OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
-          IS_STABLE: ${{ needs.create_release.outputs.is_stable }}
-        run: |
-          set -euo pipefail
-
-          # 安装 ossutil
-          curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
-          ossutil config \
-            -e "${OSS_ENDPOINT}" \
-            -i "${OSS_ACCESS_KEY_ID}" \
-            -k "${OSS_ACCESS_KEY_SECRET}"
-
-          TAG="${{ env.RELEASE_TAG }}"
-
-          # 1) 上传安装包到 OSS（按版本号组织目录）
-          ASSET_COUNT=0
-          for file in /tmp/release-assets/*; do
-            [ -f "$file" ] || continue
-            FILENAME="$(basename "$file")"
-            echo "  Uploading: ${FILENAME}"
-            ossutil cp "$file" "oss://${OSS_BUCKET}/${TAG}/${FILENAME}" -f
-            ASSET_COUNT=$((ASSET_COUNT + 1))
-          done
-          echo "Uploaded ${ASSET_COUNT} asset(s) to OSS (${OSS_BUCKET}/${TAG}/)"
-
-          # 2) 上传 manifest 到 OSS api/ 目录（替代 push 到 openakita-web）
-          #    设置短 Cache-Control，确保客户端能快速获取最新版本信息
-          if [ "$IS_STABLE" = "true" ] && [ "$SHOULD_UPDATE_STABLE" = "true" ]; then
-            ossutil cp "$GITHUB_WORKSPACE/release.json" \
-              "oss://${OSS_BUCKET}/api/release.json" -f \
-              --meta "Cache-Control:public, max-age=60"
-            echo "✅ Uploaded release.json to OSS"
-          fi
-
-          if [ "$IS_STABLE" != "true" ]; then
-            ossutil cp "$GITHUB_WORKSPACE/pre-release.json" \
-              "oss://${OSS_BUCKET}/api/pre-release.json" -f \
-              --meta "Cache-Control:public, max-age=60"
-            echo "✅ Uploaded pre-release.json to OSS"
-          fi
-
-      # ── 上传安装包到 Cloudflare R2（国际备用） ──
-      - name: Upload release assets to Cloudflare R2
-        if: ${{ env.HAS_R2_KEY != '' }}
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          R2_BUCKET: openakita-releases
-        run: |
-          set -euo pipefail
-          pip install -q awscli
-
-          TAG="${{ env.RELEASE_TAG }}"
-          echo "Uploading release assets to R2 for ${TAG}..."
-
-          ASSET_COUNT=0
-          for file in /tmp/release-assets/*; do
-            [ -f "$file" ] || continue
-            FILENAME="$(basename "$file")"
-            echo "  Uploading: ${FILENAME}"
-            aws s3 cp "$file" "s3://${R2_BUCKET}/${TAG}/${FILENAME}" \
-              --endpoint-url "${R2_ENDPOINT}" \
-              --no-progress
-            ASSET_COUNT=$((ASSET_COUNT + 1))
-          done
-
-          echo "Uploaded ${ASSET_COUNT} asset(s) to R2 (${R2_BUCKET}/${TAG}/)"
-
-      # ── 推送到官网仓库（回退方案，仅在未配置 OSS 时使用） ──
-      - name: Push to website repo (fallback)
-        if: ${{ env.HAS_OSS_KEY == '' && env.HAS_WEBSITE_TOKEN != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
-          IS_STABLE: ${{ needs.create_release.outputs.is_stable }}
-        run: |
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/openakita/openakita-web.git" /tmp/openakita-web
-          mkdir -p /tmp/openakita-web/api
-          cd /tmp/openakita-web
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          CHANGED="false"
-
-          if [ "$IS_STABLE" = "true" ] && [ "$SHOULD_UPDATE_STABLE" = "true" ]; then
-            cp "$GITHUB_WORKSPACE/release.json" api/release.json
-            git add api/release.json
-            CHANGED="true"
-          fi
-
-          if [ "$IS_STABLE" != "true" ]; then
-            cp "$GITHUB_WORKSPACE/pre-release.json" api/pre-release.json
-            git add api/pre-release.json
-            CHANGED="true"
-          fi
-
-          if [ "$CHANGED" = "true" ] && ! git diff --cached --quiet; then
-            git commit -m "chore: update manifest for ${{ env.RELEASE_TAG }} (${{ needs.create_release.outputs.channel }})"
-            git push
-            echo "Pushed to openakita-web"
-          else
-            echo "No changes to push"
-          fi

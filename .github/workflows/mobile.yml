@@ -107,7 +107,7 @@ jobs:
       - name: Upload APK to Release
         if: startsWith(env.RELEASE_TAG, 'v')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           APK="${{ steps.find_apk.outputs.apk_path }}"
           BASENAME="OpenAkita-${{ env.RELEASE_TAG }}-android.apk"
@@ -299,7 +299,7 @@ jobs:
       - name: Upload IPA to Release
         if: steps.ios_signing.outputs.has_signing == 'true' && startsWith(env.RELEASE_TAG, 'v')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           IPA=$(find $RUNNER_TEMP/ipa -name '*.ipa' | head -1)
           BASENAME="OpenAkita-${{ env.RELEASE_TAG }}-ios.ipa"
@@ -309,3 +309,4 @@ jobs:
       - name: Clean up keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true
+

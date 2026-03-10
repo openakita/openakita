@@ -104,12 +104,9 @@ identity/runtime/.compiled_at
 identity/runtime/user.summary.md
 identity/runtime/persona.custom.md
 
-# External/downloaded skills (keep structure)
-skills/*
-!skills/.gitkeep
-!skills/system/
-!skills/mcp-installer/
-!skills/mcp-builder/
+# skills/ 目录全部是内置技能，需要被 git 完整跟踪。
+# 用户通过技能市场安装的技能存放在 ~/.openakita/workspaces/default/skills/，
+# 不在仓库目录内，无需 ignore。
 
 # Plugins (keep structure)
 plugins/*

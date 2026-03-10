@@ -6678,6 +6678,7 @@ export function App() {
       { id: "env-save", label: "保存环境变量", status: "pending" },
     ];
     
+    taskDefs.push({ id: "backend-check", label: "检查后端环境", status: "pending" });
     // CLI 注册
     const cliCommands: string[] = [];
     if (obCliOpenakita) cliCommands.push("openakita");
@@ -6785,7 +6786,47 @@ export function App() {
         hasErr = true;
       }
 
-      
+      // ── STEP: backend-check ──
+      updateTask("backend-check", { status: "running" });
+      logTask("检查后端环境", "running");
+      try {
+        const effectiveVenv = venvDir || (info ? joinPath(info.openakitaRootDir, "venv") : "");
+        const backendInfo = await invoke<{
+          bundled: boolean;
+          venvReady: boolean;
+          exePath: string;
+          bundledChecked: string;
+          venvChecked: string;
+        }>("check_backend_availability", { venvDir: effectiveVenv });
+        if (!backendInfo.bundled && !backendInfo.venvReady) {
+          log("未找到可用后端，尝试自动创建 venv 并安装 openakita...");
+          logTask("检查后端环境", "running", "创建 venv...");
+          updateTask("backend-check", { detail: "创建 venv..." });
+          const detectedPy = await invoke<Array<{ command: string[]; version: string }>>("detect_python");
+          if (detectedPy.length > 0) {
+            await invoke<string>("create_venv", { pythonCommand: detectedPy[0].command, venvDir: effectiveVenv });
+            updateTask("backend-check", { detail: "安装 openakita..." });
+            logTask("检查后端环境", "running", "安装 openakita...");
+            await invoke<string>("pip_install", { venvDir: effectiveVenv, packageSpec: "openakita" });
+            log("✓ 已自动安装后端环境");
+          } else {
+            log("⚠ 未检测到 Python 3.11+，无法自动创建后端环境");
+            log(`  已检查路径: bundled=${backendInfo.bundledChecked} venv=${backendInfo.venvChecked}`);
+            updateTask("backend-check", { status: "error", detail: "未找到 Python 3.11+" });
+            logTask("检查后端环境", "error", "未找到 Python 3.11+");
+          }
+        } else {
+          log(backendInfo.bundled ? "✓ 使用内置后端" : "✓ 使用 venv 后端");
+        }
+        if (!hasErr) {
+          updateTask("backend-check", { status: "done" });
+          logTask("检查后端环境", "done");
+        }
+      } catch (e) {
+        log(`⚠ 后端环境检查失败: ${String(e)}`);
+        updateTask("backend-check", { status: "error", detail: String(e).slice(0, 120) });
+        logTask("检查后端环境", "error", String(e));
+      }
 
       // ── STEP: cli ──
       if (cliCommands.length > 0) {

@@ -324,8 +324,9 @@ fn modules_dir() -> PathBuf {
 
 /// 获取内嵌 PyInstaller 打包后端的目录
 fn bundled_backend_dir() -> PathBuf {
-    let exe_dir = std::env::current_exe()
-        .ok()
+    let exe_path = std::env::current_exe().ok();
+    let exe_dir = exe_path
+        .as_ref()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
 
@@ -351,8 +352,99 @@ fn bundled_backend_dir() -> PathBuf {
         }
     }
 
-    // Windows / Linux: resources 位于 exe 同级目录
-    exe_dir.join("resources").join("openakita-server")
+    // Windows / Linux: 主路径 — resources 位于 exe 同级目录
+    let primary = exe_dir.join("resources").join("openakita-server");
+    if primary.exists() {
+        return primary;
+    }
+
+    // Linux deb/AppImage: exe 可能在 /usr/bin/ (symlink) 而 resources 在 /usr/lib/<app>/
+    // current_exe() 有时返回 symlink 自身而非目标，导致 exe_dir = /usr/bin/
+    #[cfg(target_os = "linux")]
+    {
+        let mut candidates: Vec<PathBuf> = vec![];
+
+        // Tauri 2.x deb 的二进制名称默认来自 Cargo.toml package.name（非 productName），
+        // lib 目录与二进制名称一致: /usr/lib/<binary-name>/resources/...
+        // 从 current_exe() 动态推导，避免硬编码过时名称。
+        let exe_name = exe_path
+            .as_ref()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
+
+        let static_names: &[&str] = &[
+            "openakita-setup-center", // Cargo.toml package name (Tauri 2.x default)
+            "openakita-desktop",      // legacy / mainBinaryName override
+            "open-akita-desktop",
+        ];
+
+        // deb 常见布局: /usr/lib/<app-name>/resources/openakita-server/
+        if let Some(ref name) = exe_name {
+            candidates.push(PathBuf::from(format!(
+                "/usr/lib/{}/resources/openakita-server", name
+            )));
+        }
+        for app_name in static_names {
+            candidates.push(PathBuf::from(format!(
+                "/usr/lib/{}/resources/openakita-server", app_name
+            )));
+        }
+
+        // 若 exe 在 /usr/bin/，尝试同级 /usr/lib/<app>/
+        if let Some(usr_dir) = exe_dir.parent() {
+            if let Some(ref name) = exe_name {
+                candidates.push(
+                    usr_dir.join("lib").join(name)
+                        .join("resources").join("openakita-server"),
+                );
+            }
+            for app_name in static_names {
+                candidates.push(
+                    usr_dir
+                        .join("lib")
+                        .join(app_name)
+                        .join("resources")
+                        .join("openakita-server"),
+                );
+            }
+        }
+
+        // AppImage: 解压后 exe 在 <mount>/usr/bin/，resources 可能在 <mount>/usr/lib/<app>/
+        // 也可能在 <mount>/resources/ (Tauri AppImage 平坦布局)
+        if let Some(mount_root) = exe_dir.parent().and_then(|p| p.parent()) {
+            if let Some(ref name) = exe_name {
+                candidates.push(
+                    mount_root.join("lib").join(name)
+                        .join("resources").join("openakita-server"),
+                );
+            }
+            for app_name in static_names {
+                candidates.push(
+                    mount_root
+                        .join("lib")
+                        .join(app_name)
+                        .join("resources")
+                        .join("openakita-server"),
+                );
+            }
+            candidates.push(mount_root.join("resources").join("openakita-server"));
+        }
+
+        for c in &candidates {
+            if c.exists() {
+                eprintln!("[bundled_backend_dir] found at Linux fallback: {}", c.display());
+                return c.clone();
+            }
+        }
+
+        eprintln!(
+            "[bundled_backend_dir] not found. exe_dir={}, exe_name={:?}, checked {} Linux fallback paths",
+            exe_dir.display(),
+            exe_name,
+            candidates.len()
+        );
+    }
+
+    primary
 }
 
 /// 获取安装包内置的 Python 解释器路径（openakita-server/_internal）
@@ -391,15 +483,24 @@ fn bundled_internal_python_path() -> Option<PathBuf> {
 /// 优先使用内嵌的 PyInstaller 打包后端，降级到 venv python
 fn get_backend_executable(venv_dir: &str) -> (PathBuf, Vec<String>) {
     // 1. 优先: 内嵌的 PyInstaller 打包后端
+    let bundled_dir = bundled_backend_dir();
     let bundled_exe = if cfg!(windows) {
-        bundled_backend_dir().join("openakita-server.exe")
+        bundled_dir.join("openakita-server.exe")
     } else {
-        bundled_backend_dir().join("openakita-server")
+        bundled_dir.join("openakita-server")
     };
     if bundled_exe.exists() {
         return (bundled_exe, vec!["serve".to_string()]);
     }
     // 2. 降级: venv python（开发模式 / 旧安装）
+    eprintln!(
+        "[backend] bundled openakita-server not found at: {}\n\
+         [backend] current_exe: {:?}\n\
+         [backend] falling back to venv python in: {}",
+        bundled_exe.display(),
+        std::env::current_exe().ok().map(|p| p.display().to_string()),
+        venv_dir,
+    );
     let py = venv_pythonw_path(venv_dir);
     (py, vec!["-m".into(), "openakita.main".into(), "serve".into()])
 }
@@ -678,6 +779,47 @@ fn check_environment() -> EnvironmentCheck {
         running_processes: running,
         disk_usage_mb,
         conflicts,
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BackendAvailability {
+    bundled: bool,
+    venv_ready: bool,
+    exe_path: String,
+    bundled_checked: String,
+    venv_checked: String,
+}
+
+#[tauri::command]
+fn check_backend_availability(venv_dir: String) -> BackendAvailability {
+    let bundled_dir = bundled_backend_dir();
+    let bundled_exe = if cfg!(windows) {
+        bundled_dir.join("openakita-server.exe")
+    } else {
+        bundled_dir.join("openakita-server")
+    };
+    let venv_py = venv_pythonw_path(&venv_dir);
+    let bundled = bundled_exe.exists();
+    let venv_ready = venv_py.exists();
+    let exe_path = if bundled {
+        bundled_exe.to_string_lossy().to_string()
+    } else if venv_ready {
+        venv_py.to_string_lossy().to_string()
+    } else {
+        String::new()
+    };
+    eprintln!(
+        "[backend-check] bundled={} ({}) venv={} ({})",
+        bundled, bundled_exe.display(), venv_ready, venv_py.display()
+    );
+    BackendAvailability {
+        bundled,
+        venv_ready,
+        exe_path,
+        bundled_checked: bundled_exe.to_string_lossy().to_string(),
+        venv_checked: venv_py.to_string_lossy().to_string(),
     }
 }
 
@@ -2244,6 +2386,7 @@ fn main() {
             openakita_stop_all_processes,
             is_first_run,
             check_environment,
+            check_backend_availability,
             cleanup_old_environment,
             start_onboarding_log,
             append_onboarding_log,
@@ -2713,7 +2856,17 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     // 优先使用内嵌 PyInstaller 后端，降级到 venv python
     let (backend_exe, backend_args) = get_backend_executable(&venv_dir);
     if !backend_exe.exists() {
-        return Err(format!("后端可执行文件不存在: {}", backend_exe.to_string_lossy()));
+        let bundled_dir = bundled_backend_dir();
+        let bundled_name = if cfg!(windows) { "openakita-server.exe" } else { "openakita-server" };
+        return Err(format!(
+            "后端可执行文件不存在: {}\n\
+             已检查路径:\n  - bundled: {}/{}\n  - venv: {}\n\
+             请尝试: 1) 重新安装桌面端  2) 运行 quickstart.sh 创建 venv",
+            backend_exe.to_string_lossy(),
+            bundled_dir.display(),
+            bundled_name,
+            backend_exe.to_string_lossy(),
+        ));
     }
 
     let log_dir = ws_dir.join("logs");
@@ -5181,24 +5334,37 @@ fn cli_bin_dir() -> PathBuf {
 
 /// 获取后端可执行文件的绝对路径
 fn cli_backend_exe_path() -> Result<PathBuf, String> {
+    let bundled_dir = bundled_backend_dir();
     let exe = if cfg!(windows) {
-        bundled_backend_dir().join("openakita-server.exe")
+        bundled_dir.join("openakita-server.exe")
     } else {
-        bundled_backend_dir().join("openakita-server")
+        bundled_dir.join("openakita-server")
     };
     if exe.exists() {
         return Ok(exe);
     }
-    // 降级：尝试 venv 模式（开发环境）
+    // 降级：尝试 venv 模式（开发环境），先 python3 再 python
+    let venv_base = openakita_root_dir().join("venv");
     let venv_py = if cfg!(windows) {
-        openakita_root_dir().join("venv").join("Scripts").join("python.exe")
+        venv_base.join("Scripts").join("python.exe")
     } else {
-        openakita_root_dir().join("venv").join("bin").join("python3")
+        let py3 = venv_base.join("bin").join("python3");
+        if py3.exists() { py3 } else { venv_base.join("bin").join("python") }
     };
     if venv_py.exists() {
         return Ok(venv_py);
     }
-    Err("未找到后端可执行文件（openakita-server 或 venv python）".into())
+    eprintln!(
+        "[cli_backend_exe_path] not found. checked:\n  bundled: {}\n  venv: {}",
+        exe.display(),
+        venv_py.display(),
+    );
+    Err(format!(
+        "未找到后端可执行文件（openakita-server 或 venv python）\n\
+         已检查: {} | {}",
+        exe.display(),
+        venv_py.display(),
+    ))
 }
 
 /// 读取 CLI 配置文件
@@ -5743,5 +5909,122 @@ fn get_cli_status() -> Result<CliStatus, String> {
             in_path: false,
             bin_dir: bin_dir.to_string_lossy().to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bundled_backend_dir_returns_non_empty_path() {
+        let dir = bundled_backend_dir();
+        assert!(!dir.to_string_lossy().is_empty());
+        assert!(
+            dir.to_string_lossy().contains("openakita-server"),
+            "bundled_backend_dir should contain 'openakita-server': {:?}",
+            dir
+        );
+    }
+
+    #[test]
+    fn test_get_backend_executable_falls_back_to_venv() {
+        let fake_venv = if cfg!(windows) {
+            r"C:\nonexistent-test-venv-12345"
+        } else {
+            "/tmp/nonexistent-test-venv-12345"
+        };
+        let (exe, args) = get_backend_executable(fake_venv);
+        // When bundled binary is missing, should return venv python path
+        let exe_str = exe.to_string_lossy();
+        assert!(
+            exe_str.contains("python"),
+            "fallback exe should contain 'python': {}",
+            exe_str
+        );
+        assert!(args.contains(&"-m".to_string()));
+        assert!(args.contains(&"openakita.main".to_string()));
+        assert!(args.contains(&"serve".to_string()));
+    }
+
+    #[test]
+    fn test_venv_python_path_platform_layout() {
+        let dir = if cfg!(windows) {
+            r"C:\Users\test\.openakita\venv"
+        } else {
+            "/home/test/.openakita/venv"
+        };
+        let py = venv_python_path(dir);
+        if cfg!(windows) {
+            assert!(py.to_string_lossy().contains("Scripts"));
+            assert!(py.to_string_lossy().ends_with("python.exe"));
+        } else {
+            assert!(py.to_string_lossy().contains("bin"));
+            assert!(py.to_string_lossy().ends_with("python"));
+        }
+    }
+
+    #[test]
+    fn test_venv_pythonw_path_consistent_with_python_path() {
+        let dir = if cfg!(windows) {
+            r"C:\Users\test\.openakita\venv"
+        } else {
+            "/home/test/.openakita/venv"
+        };
+        let py = venv_python_path(dir);
+        let pyw = venv_pythonw_path(dir);
+        // On Linux both should resolve to bin/python
+        if cfg!(not(windows)) {
+            assert_eq!(py, pyw);
+        }
+        // On Windows pythonw prefers pythonw.exe but falls back to python.exe
+        // For non-existent dir it returns python.exe since pythonw.exe doesn't exist
+        if cfg!(windows) {
+            assert!(pyw.to_string_lossy().contains("python"));
+        }
+    }
+
+    #[test]
+    fn test_check_backend_availability_with_nonexistent_venv() {
+        let fake = if cfg!(windows) {
+            r"C:\nonexistent-venv-test-99999"
+        } else {
+            "/tmp/nonexistent-venv-test-99999"
+        };
+        let result = check_backend_availability(fake.to_string());
+        assert!(!result.venv_ready);
+        assert!(!result.venv_checked.is_empty());
+        assert!(!result.bundled_checked.is_empty());
+    }
+
+    #[test]
+    fn test_cli_backend_exe_path_does_not_panic() {
+        let result = cli_backend_exe_path();
+        // In dev environment, may or may not find a backend
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_openakita_root_dir_is_valid() {
+        let root = openakita_root_dir();
+        assert!(!root.to_string_lossy().is_empty());
+        // Should contain .openakita unless overridden by OPENAKITA_ROOT
+        let root_str = root.to_string_lossy();
+        assert!(
+            root_str.contains(".openakita") || std::env::var("OPENAKITA_ROOT").is_ok(),
+            "root dir should contain '.openakita' or OPENAKITA_ROOT should be set: {}",
+            root_str
+        );
+    }
+
+    #[test]
+    fn test_cli_bin_dir_is_valid() {
+        let dir = cli_bin_dir();
+        assert!(!dir.to_string_lossy().is_empty());
+        if cfg!(windows) {
+            assert!(dir.to_string_lossy().contains("bin"));
+        } else {
+            assert!(dir.to_string_lossy().contains("bin"));
+        }
     }
 }

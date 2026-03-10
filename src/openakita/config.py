@@ -367,10 +367,21 @@ class Settings(BaseSettings):
     sticker_enabled: bool = Field(default=True, description="是否启用表情包功能")
     sticker_data_dir: str = Field(default="data/sticker", description="表情包数据目录")
 
-    # === Bug Report 配置 ===
+    # === Bug Report / Feedback 配置 ===
+    # 以下三个值是公开标识（类似 reCAPTCHA site key），不是密钥。
+    # 官方发行版需要预填默认值以实现开箱即用；
+    # fork 用户可通过 .env 覆盖为自己的值，留空则禁用对应功能。
     bug_report_endpoint: str = Field(
-        default="https://feedback.openakita.ai",
-        description="Bug report cloud endpoint URL (Cloudflare Worker). Empty = feature disabled.",
+        default="https://feedback-openakita.fzstack.com",
+        description="反馈上传端点 URL（阿里云 FC）。留空 = 禁用反馈功能。",
+    )
+    captcha_scene_id: str = Field(
+        default="jkyrkj0w",
+        description="阿里云人机验证 2.0 场景ID（公开标识，下发到前端）。留空 = 跳过验证码。",
+    )
+    captcha_prefix: str = Field(
+        default="yiqg72",
+        description="阿里云人机验证 2.0 prefix 身份标（公开标识，下发到前端）。",
     )
 
     # === OpenAkita Platform (Agent Hub / Skill Store) ===

@@ -15,8 +15,6 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
-from urllib.parse import quote
-
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -26,7 +24,6 @@ router = APIRouter()
 
 FEEDBACK_TEMP_DIR: Path | None = None
 
-# Cloudflare Worker endpoint (overridden by config)
 _BUG_REPORT_ENDPOINT: str = ""
 
 KEY_PACKAGES = [
@@ -126,11 +123,17 @@ def _collect_system_info() -> dict:
         except Exception:
             pass
 
+    # subprocess flags: hide console window on Windows
+    import subprocess
+    _sp_kwargs: dict = {}
+    if platform.system() == "Windows":
+        _sp_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
     # Git availability (common cause of [WinError 2])
     try:
-        import subprocess
         result = subprocess.run(
             ["git", "--version"], capture_output=True, text=True, timeout=5,
+            **_sp_kwargs,
         )
         info["git_version"] = result.stdout.strip() if result.returncode == 0 else f"error: {result.stderr.strip()}"
     except FileNotFoundError:
@@ -141,9 +144,9 @@ def _collect_system_info() -> dict:
     # Node/npm availability
     for cmd in ["node", "npm"]:
         try:
-            import subprocess
             result = subprocess.run(
                 [cmd, "--version"], capture_output=True, text=True, timeout=5,
+                **_sp_kwargs,
             )
             info[f"{cmd}_version"] = result.stdout.strip() if result.returncode == 0 else "error"
         except FileNotFoundError:
@@ -225,6 +228,24 @@ async def get_system_info():
     return _collect_system_info()
 
 
+@router.get("/api/feedback-config")
+async def get_feedback_config():
+    """Return public-facing feedback configuration (CAPTCHA identifiers etc.).
+
+    These are NOT secrets — they're deployment-specific public identifiers that
+    the frontend needs at runtime. Served via API so nothing is hardcoded in
+    the open-source frontend bundle.
+    """
+    try:
+        from openakita.config import settings
+        return {
+            "captcha_scene_id": getattr(settings, "captcha_scene_id", ""),
+            "captcha_prefix": getattr(settings, "captcha_prefix", ""),
+        }
+    except Exception:
+        return {"captcha_scene_id": "", "captcha_prefix": ""}
+
+
 async def _upload_to_worker(
     *,
     report_id: str,
@@ -232,10 +253,15 @@ async def _upload_to_worker(
     title: str,
     summary: str,
     extra_info: str,
-    turnstile_token: str,
+    captcha_verify_param: str,
     zip_bytes: bytes,
 ) -> dict:
-    """Upload a zip package to the Cloudflare Worker. Shared by bug report and feature request."""
+    """Upload feedback via pre-signed URL direct upload (three-phase flow).
+
+    Phase 1: POST /prepare  → FC validates captcha, rate-limits, returns pre-signed URL
+    Phase 2: PUT <url>      → Upload ZIP directly to OSS (bypasses FC)
+    Phase 3: POST /complete → FC verifies upload, creates GitHub Issue
+    """
     endpoint = _get_bug_report_endpoint()
     if not endpoint:
         raise HTTPException(status_code=503, detail="Bug report endpoint not configured")
@@ -246,42 +272,89 @@ async def _upload_to_worker(
             detail=f"Package too large: {len(zip_bytes) / 1024 / 1024:.1f} MB (max 30 MB)",
         )
 
+    import httpx
+
+    base = endpoint.rstrip("/")
+
     try:
-        import httpx
-
-        upload_url = f"{endpoint.rstrip('/')}/report/{report_id}"
-
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.put(
-                upload_url,
-                content=zip_bytes,
-                headers={
-                    "Content-Type": "application/zip",
-                    "X-Report-Title": quote(title[:200], safe=""),
-                    "X-Report-Type": report_type,
-                    "X-Report-Summary": quote(summary[:2000], safe=""),
-                    "X-Report-System-Info": quote(extra_info[:2000], safe=""),
-                    "X-Turnstile-Token": turnstile_token,
+        async with httpx.AsyncClient() as client:
+            # Phase 1: request pre-signed upload URL from FC
+            prepare_resp = await client.post(
+                f"{base}/prepare",
+                json={
+                    "report_id": report_id,
+                    "title": title[:200],
+                    "type": report_type,
+                    "summary": summary[:2000],
+                    "system_info": extra_info[:2000],
+                    "captcha_verify_param": captcha_verify_param,
                 },
+                timeout=15,
             )
 
-        if resp.status_code == 429:
-            raise HTTPException(status_code=429, detail="Rate limit reached, please try again later")
-        if resp.status_code == 403:
-            raise HTTPException(status_code=403, detail="Verification failed")
-        if resp.status_code >= 400:
-            logger.error(f"Report upload failed: {resp.status_code} {resp.text}")
-            raise HTTPException(status_code=502, detail=f"Cloud service error: {resp.status_code}")
+            if prepare_resp.status_code == 429:
+                raise HTTPException(status_code=429, detail="Rate limit reached, please try later")
+            if prepare_resp.status_code == 403:
+                raise HTTPException(status_code=403, detail="Verification failed")
+            if prepare_resp.status_code >= 400:
+                try:
+                    detail = prepare_resp.json().get("error", prepare_resp.text[:200])
+                except Exception:
+                    detail = prepare_resp.text[:200]
+                logger.error("Prepare failed: %s %s", prepare_resp.status_code, detail)
+                raise HTTPException(status_code=502, detail=f"Cloud service error: {detail}")
 
-        return {"status": "ok", "report_id": report_id, "size_bytes": len(zip_bytes)}
+            prepare_data = prepare_resp.json()
+            upload_url = prepare_data["upload_url"]
+            report_date = prepare_data["report_date"]
+
+            # Phase 2: upload ZIP directly to OSS via pre-signed URL
+            #   No Content-Type header — must match the (empty) Content-Type
+            #   used during pre-signed URL signing, otherwise OSS returns 403.
+            oss_resp = await client.put(
+                upload_url,
+                content=zip_bytes,
+                timeout=120,
+            )
+            if oss_resp.status_code >= 400:
+                oss_err = oss_resp.text[:1500]
+                logger.error(
+                    "OSS direct upload failed: status=%s body=%s url=%s",
+                    oss_resp.status_code, oss_err, upload_url[:120],
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Direct upload to storage failed ({oss_resp.status_code})",
+                )
+
+            # Phase 3: notify FC that upload is complete → creates GitHub Issue
+            complete_resp = await client.post(
+                f"{base}/complete/{report_id}",
+                json={"report_date": report_date},
+                timeout=30,
+            )
+            issue_url = None
+            if complete_resp.status_code == 200:
+                issue_url = complete_resp.json().get("issue_url")
+            else:
+                logger.warning(
+                    "Complete phase returned %s (non-fatal)", complete_resp.status_code,
+                )
+
+        return {
+            "status": "ok",
+            "report_id": report_id,
+            "size_bytes": len(zip_bytes),
+            "issue_url": issue_url,
+        }
 
     except httpx.HTTPError as e:
-        logger.error(f"Report upload error: {e}")
+        logger.error("Report upload error: %s", e)
         raise HTTPException(status_code=502, detail=f"Upload failed: {e}")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report unexpected error: {e}", exc_info=True)
+        logger.error("Report unexpected error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -311,10 +384,10 @@ async def _try_upload_or_save(
     title: str,
     summary: str,
     extra_info: str,
-    turnstile_token: str,
+    captcha_verify_param: str,
     zip_bytes: bytes,
 ) -> dict:
-    """Try uploading to the cloud worker. On failure, save locally and return
+    """Try uploading to the cloud function. On failure, save locally and return
     a response that tells the frontend about the local fallback."""
     try:
         result = await _upload_to_worker(
@@ -323,7 +396,7 @@ async def _try_upload_or_save(
             title=title,
             summary=summary,
             extra_info=extra_info,
-            turnstile_token=turnstile_token,
+            captcha_verify_param=captcha_verify_param,
             zip_bytes=zip_bytes,
         )
         return result
@@ -382,7 +455,7 @@ async def _pack_images(zf: zipfile.ZipFile, images: list[UploadFile] | None) -> 
 async def submit_bug_report(
     title: str = Form(...),
     description: str = Form(...),
-    turnstile_token: str = Form(...),
+    captcha_verify_param: str = Form("none"),
     steps: str = Form(""),
     upload_logs: bool = Form(True),
     upload_debug: bool = Form(True),
@@ -442,7 +515,7 @@ async def submit_bug_report(
         title=title,
         summary=description,
         extra_info=sys_info_brief,
-        turnstile_token=turnstile_token,
+        captcha_verify_param=captcha_verify_param,
         zip_bytes=buf.getvalue(),
     )
 
@@ -451,7 +524,7 @@ async def submit_bug_report(
 async def submit_feature_request(
     title: str = Form(...),
     description: str = Form(...),
-    turnstile_token: str = Form(...),
+    captcha_verify_param: str = Form("none"),
     contact_email: str = Form(""),
     contact_wechat: str = Form(""),
     images: list[UploadFile] | None = File(None),  # noqa: B008
@@ -493,6 +566,6 @@ async def submit_feature_request(
         title=title,
         summary=description,
         extra_info=contact_brief,
-        turnstile_token=turnstile_token,
+        captcha_verify_param=captcha_verify_param,
         zip_bytes=buf.getvalue(),
     )
