@@ -774,13 +774,18 @@ export function OrgEditorView({
       if (!Array.isArray(events) || events.length === 0) return;
       const evtTypeMap: Record<string, string> = {
         node_activated: "org:node_status",
+        node_status_change: "org:node_status",
         task_completed: "org:task_complete",
         task_assigned: "org:task_delegated",
         task_timeout: "org:task_timeout",
-        broadcast: "org:broadcast",
-        meeting_completed: "org:meeting_completed",
-        conflict_detected: "org:deadlock",
         task_failed: "org:node_status",
+        broadcast: "org:broadcast",
+        blackboard_write: "org:blackboard_update",
+        meeting_completed: "org:meeting_completed",
+        meeting_started: "org:meeting_started",
+        conflict_detected: "org:deadlock",
+        heartbeat_decision: "org:heartbeat_done",
+        tools_granted: "org:node_status",
       };
       const mapped: ActivityEvent[] = events
         .filter(e => e.event_type && evtTypeMap[e.event_type])

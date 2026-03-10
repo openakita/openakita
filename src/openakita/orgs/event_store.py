@@ -76,11 +76,14 @@ class OrgEventStore:
         until: str | None = None,
         limit: int = 100,
     ) -> list[dict]:
-        """Query events with optional filters."""
+        """Query events with optional filters. Returns newest events first."""
         results: list[dict] = []
+        enough = False
 
         files = sorted(self._events_dir.glob("*.jsonl"), reverse=True)
         for f in files:
+            if enough:
+                break
             if since:
                 day = f.stem
                 if day < since.replace("-", "")[:8]:
@@ -91,17 +94,20 @@ class OrgEventStore:
                     continue
 
             try:
-                for line in f.read_text(encoding="utf-8").strip().split("\n"):
+                lines = f.read_text(encoding="utf-8").strip().split("\n")
+                for line in reversed(lines):
                     if not line.strip():
                         continue
                     evt = json.loads(line)
+                    ts = evt.get("timestamp", "")
+                    if since and ts < since:
+                        enough = True
+                        break
+                    if until and ts > until:
+                        continue
                     if event_type and evt.get("event_type") != event_type:
                         continue
                     if actor and evt.get("actor") != actor:
-                        continue
-                    if since and evt.get("timestamp", "") < since:
-                        continue
-                    if until and evt.get("timestamp", "") > until:
                         continue
                     results.append(evt)
                     if len(results) >= limit:
@@ -109,8 +115,7 @@ class OrgEventStore:
             except Exception as e:
                 logger.warning(f"[EventStore] Failed to read {f}: {e}")
 
-        results.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
-        return results[:limit]
+        return results
 
     def get_last_pending(self, node_id: str) -> dict | None:
         """Find the last pending/in-progress event for a node (for restart recovery)."""
