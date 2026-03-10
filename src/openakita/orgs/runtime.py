@@ -273,7 +273,7 @@ class OrgRuntime:
 
         for node in org.nodes:
             if node.status in (NodeStatus.BUSY, NodeStatus.WAITING, NodeStatus.ERROR):
-                node.status = NodeStatus.IDLE
+                self._set_node_status(org, node, NodeStatus.IDLE, "org_stopped")
 
         org.status = OrgStatus.DORMANT
         org.updated_at = _now_iso()
@@ -303,7 +303,7 @@ class OrgRuntime:
 
         # 2. Reset all node statuses to idle, clear frozen state and current_task
         for node in org.nodes:
-            node.status = NodeStatus.IDLE
+            self._set_node_status(org, node, NodeStatus.IDLE, "org_reset")
             node.frozen_by = None
             node.frozen_reason = None
             node.frozen_at = None
@@ -322,6 +322,9 @@ class OrgRuntime:
         # 5. Clear blackboard
         bb = self._blackboards.pop(org_id, None)
         if bb and hasattr(bb, "clear"):
+            self.get_event_store(org_id).emit(
+                "blackboard_cleared", "system", {"reason": "org_reset"}
+            )
             bb.clear()
 
         # 6. Clear messenger queues
@@ -481,15 +484,11 @@ class OrgRuntime:
 
         if node.status == NodeStatus.ERROR:
             self._agent_cache.pop(cache_key, None)
-            self.get_event_store(org.id).emit(
-                "node_auto_recovered", node.id,
-                {"previous_status": "error"},
-            )
-            logger.info(f"[OrgRuntime] Auto-recovering node {node.id} from ERROR state")
+            self._set_node_status(org, node, NodeStatus.IDLE, "auto_recover_before_activate")
 
         agent = await self._get_or_create_agent(org, node)
 
-        node.status = NodeStatus.BUSY
+        self._set_node_status(org, node, NodeStatus.BUSY, "task_started")
         self._save_org(org)
 
         self.get_event_store(org.id).emit(
@@ -503,12 +502,15 @@ class OrgRuntime:
         try:
             session_id = f"org:{org.id}:node:{node.id}"
 
+            if hasattr(agent, "brain") and hasattr(agent.brain, "drain_usage_accumulator"):
+                agent.brain.drain_usage_accumulator()
+
             result_text, timed_out = await self._run_agent_task(
                 agent, prompt, session_id, org, node,
             )
 
             if timed_out:
-                node.status = NodeStatus.IDLE
+                self._set_node_status(org, node, NodeStatus.IDLE, "task_timeout")
                 self._save_org(org)
                 self.get_event_store(org.id).emit(
                     "task_timeout", node.id,
@@ -524,7 +526,7 @@ class OrgRuntime:
                 })
                 return {"node_id": node.id, "result": result_text, "timeout": True}
 
-            node.status = NodeStatus.IDLE
+            self._set_node_status(org, node, NodeStatus.IDLE, "task_completed")
             org.total_tasks_completed += 1
             self._save_org(org)
             self._heartbeat.record_activity(org.id)
@@ -548,7 +550,7 @@ class OrgRuntime:
 
         except Exception as e:
             logger.error(f"[OrgRuntime] Task error on {node.id}: {e}")
-            node.status = NodeStatus.ERROR
+            self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
             self._save_org(org)
             self.get_event_store(org.id).emit(
                 "task_failed", node.id, {"error": str(e)[:200]},
@@ -559,6 +561,9 @@ class OrgRuntime:
             })
             return {"node_id": node.id, "error": str(e)}
 
+        finally:
+            self._emit_llm_usage(agent, org, node)
+
     async def _run_agent_task(
         self, agent: Any, prompt: str, session_id: str,
         org: Organization, node: OrgNode,
@@ -567,7 +572,10 @@ class OrgRuntime:
 
         Returns (response_text, timed_out).
         """
-        timeout = node.timeout_s if node.timeout_s > 0 else 300
+        default_timeout = 300
+        if node.parent_id is None:
+            default_timeout = 600
+        timeout = node.timeout_s if node.timeout_s > 0 else default_timeout
         try:
             response = await asyncio.wait_for(
                 agent.chat(prompt, session_id=session_id),
@@ -583,6 +591,30 @@ class OrgRuntime:
         except Exception as e:
             logger.error(f"[OrgRuntime] Agent task error: {e}")
             raise
+
+    def _emit_llm_usage(self, agent: Any, org: Organization, node: OrgNode) -> None:
+        """Record per-node LLM usage event after a task completes."""
+        try:
+            if not (hasattr(agent, "brain") and hasattr(agent.brain, "drain_usage_accumulator")):
+                return
+            stats = agent.brain.drain_usage_accumulator()
+            if stats["calls"] == 0:
+                return
+            ep_info = agent.brain.get_current_endpoint_info() if hasattr(agent.brain, "get_current_endpoint_info") else {}
+            data = {
+                "node_id": node.id,
+                "calls": stats["calls"],
+                "tokens_in": stats["tokens_in"],
+                "tokens_out": stats["tokens_out"],
+                "model": ep_info.get("model", ""),
+            }
+            self.get_event_store(org.id).emit("llm_usage", node.id, data)
+            logger.info(
+                f"[OrgRuntime] LLM usage for {node.id}: "
+                f"calls={stats['calls']}, in={stats['tokens_in']}, out={stats['tokens_out']}"
+            )
+        except Exception as e:
+            logger.debug(f"[OrgRuntime] Failed to emit llm_usage: {e}")
 
     async def _get_or_create_agent(self, org: Organization, node: OrgNode) -> Any:
         """Get cached agent or create a new one."""
@@ -679,6 +711,15 @@ class OrgRuntime:
             "node_id": node.id,
             "tool_handler": self._tool_handler,
         }
+
+        if hasattr(agent, "brain") and hasattr(agent.brain, "set_trace_context"):
+            agent.brain.set_trace_context({
+                "org_id": org.id,
+                "org_name": org.name,
+                "node_id": node.id,
+                "node_title": node.role_title,
+                "session_id": f"org:{org.id}:node:{node.id}",
+            })
 
         self._register_org_tool_handler(agent, org.id, node.id)
 
@@ -1004,6 +1045,28 @@ class OrgRuntime:
         return self._identities[org_id]
 
     # ------------------------------------------------------------------
+    # Node status management
+    # ------------------------------------------------------------------
+
+    def _set_node_status(
+        self, org: Organization, node: OrgNode,
+        new_status: NodeStatus, reason: str = "",
+    ) -> None:
+        """Set node status with audit trail (event_store + log)."""
+        old_status = node.status
+        if old_status == new_status:
+            return
+        node.status = new_status
+        self.get_event_store(org.id).emit(
+            "node_status_change", node.id,
+            {"from": old_status.value, "to": new_status.value, "reason": reason},
+        )
+        logger.info(
+            f"[OrgRuntime] Node {node.id}: {old_status.value} -> {new_status.value}"
+            + (f" ({reason})" if reason else "")
+        )
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
@@ -1086,25 +1149,14 @@ class OrgRuntime:
         snapshot, because state.json is only written during graceful shutdown
         and may be missing or outdated after a crash.
         """
-        es = self.get_event_store(org.id)
         recovered_count = 0
         stale_statuses = {NodeStatus.BUSY, NodeStatus.WAITING, NodeStatus.ERROR}
 
         for node in org.nodes:
             if node.status in stale_statuses:
-                prev = node.status.value
-                node.status = NodeStatus.IDLE
+                self._set_node_status(org, node, NodeStatus.IDLE, "restart_cleanup")
                 self._agent_cache.pop(f"{org.id}:{node.id}", None)
                 recovered_count += 1
-
-                es.emit("node_recovered", node.id, {
-                    "previous_status": prev,
-                    "reason": "restart_cleanup",
-                })
-                logger.info(
-                    f"[OrgRuntime] Node {node.role_title} was {prev}, "
-                    f"reset to idle (restart recovery)"
-                )
 
         if recovered_count > 0:
             self._save_org(org)

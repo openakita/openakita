@@ -43,18 +43,14 @@ class OrgHeartbeat:
         permanently broken. Each heartbeat clears their agent cache and
         resets them so they can accept new tasks.
         """
-        es = self._runtime.get_event_store(org.id)
         recovered = 0
         for node in org.nodes:
             if node.status == NodeStatus.ERROR:
-                node.status = NodeStatus.IDLE
+                self._runtime._set_node_status(
+                    org, node, NodeStatus.IDLE, "heartbeat_recovery"
+                )
                 self._runtime._agent_cache.pop(f"{org.id}:{node.id}", None)
-                es.emit("node_auto_recovered", node.id, {
-                    "previous_status": "error",
-                    "reason": "heartbeat_recovery",
-                })
                 recovered += 1
-                logger.info(f"[Heartbeat] Auto-recovered ERROR node {node.role_title}")
         if recovered:
             self._runtime._save_org(org)
 

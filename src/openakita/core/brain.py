@@ -114,6 +114,14 @@ class Brain:
         # Thinking 模式状态
         self._thinking_enabled = True
 
+        # Trace context for debug dump files (org_id, node_id, session_id, etc.)
+        self._trace_context: dict[str, str] = {}
+
+        # Per-session LLM call accumulator (reset via reset_usage_accumulator)
+        self._acc_calls: int = 0
+        self._acc_tokens_in: int = 0
+        self._acc_tokens_out: int = 0
+
         # 启动信息
         endpoints = self._llm_client.endpoints
         logger.info(f"Brain initialized with {len(endpoints)} endpoints via LLMClient")
@@ -140,6 +148,10 @@ class Brain:
         else:
             self.model = settings.default_model
             self.base_url = ""
+
+    def set_trace_context(self, ctx: dict[str, str]) -> None:
+        """Set trace context (org_id, node_id, session_id, etc.) for LLM debug dumps."""
+        self._trace_context = dict(ctx)
 
     def _init_compiler_client(self) -> None:
         """从配置加载 Prompt Compiler 专属 LLMClient"""
@@ -506,6 +518,11 @@ class Brain:
             usage = response.usage
             if not usage:
                 return
+
+            self._acc_calls += 1
+            self._acc_tokens_in += usage.input_tokens
+            self._acc_tokens_out += usage.output_tokens
+
             ep_info = self.get_current_endpoint_info()
             ep_name = ep_info.get("name", "")
             cost = 0.0
@@ -528,6 +545,18 @@ class Brain:
             )
         except Exception as e:
             logger.debug(f"[Brain] _record_usage failed (non-fatal): {e}")
+
+    def drain_usage_accumulator(self) -> dict:
+        """Return accumulated LLM usage since last drain, then reset counters."""
+        stats = {
+            "calls": self._acc_calls,
+            "tokens_in": self._acc_tokens_in,
+            "tokens_out": self._acc_tokens_out,
+        }
+        self._acc_calls = 0
+        self._acc_tokens_in = 0
+        self._acc_tokens_out = 0
+        return stats
 
     # ========================================================================
     # 格式转换方法
@@ -992,16 +1021,14 @@ class Brain:
             total_estimated_tokens = estimated_system_tokens + estimated_messages_tokens + estimated_tools_tokens
 
             # ── 4. 构建完整 debug 数据（和发给 LLM 的请求结构一致）──
-            debug_data = {
+            debug_data: dict[str, Any] = {
                 "timestamp": datetime.now().isoformat(),
                 "caller": caller,
-                # === 发给 LLM 的完整请求 ===
                 "llm_request": {
                     "system": system,
                     "messages": serializable_messages,
                     "tools": full_tools,
                 },
-                # === 统计信息 ===
                 "stats": {
                     "system_prompt_length": system_length,
                     "system_prompt_tokens": estimated_system_tokens,
@@ -1012,6 +1039,8 @@ class Brain:
                     "total_estimated_tokens": total_estimated_tokens,
                 },
             }
+            if self._trace_context:
+                debug_data["context"] = dict(self._trace_context)
 
             with open(debug_file, "w", encoding="utf-8") as f:
                 json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
@@ -1061,7 +1090,7 @@ class Brain:
             # 序列化 content blocks
             content_blocks = self._serialize_response_content(response)
 
-            debug_data = {
+            debug_data: dict[str, Any] = {
                 "timestamp": datetime.now().isoformat(),
                 "caller": caller,
                 "request_id": request_id,
@@ -1079,6 +1108,8 @@ class Brain:
                     "content": content_blocks,
                 },
             }
+            if self._trace_context:
+                debug_data["context"] = dict(self._trace_context)
 
             with open(debug_file, "w", encoding="utf-8") as f:
                 json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
@@ -1157,14 +1188,8 @@ class Brain:
 
         return blocks
 
-    def _cleanup_old_debug_files(self, debug_dir: Path, max_age_days: int = 3) -> None:
-        """
-        清理超过指定天数的旧调试文件
-
-        Args:
-            debug_dir: 调试文件目录
-            max_age_days: 最大保留天数，默认 3 天
-        """
+    def _cleanup_old_debug_files(self, debug_dir: Path, max_age_days: int = 7) -> None:
+        """清理超过指定天数的旧调试文件（request + response）。"""
         try:
             import os
             from datetime import timedelta
@@ -1172,19 +1197,20 @@ class Brain:
             cutoff_time = datetime.now() - timedelta(days=max_age_days)
             deleted_count = 0
 
-            for file in debug_dir.glob("llm_request_*.json"):
-                try:
-                    # 获取文件修改时间
-                    mtime = datetime.fromtimestamp(os.path.getmtime(file))
-                    if mtime < cutoff_time:
-                        file.unlink()
-                        deleted_count += 1
-                except Exception:
-                    pass  # 忽略单个文件删除失败
+            for pattern in ("llm_request_*.json", "llm_response_*.json"):
+                for file in debug_dir.glob(pattern):
+                    try:
+                        mtime = datetime.fromtimestamp(os.path.getmtime(file))
+                        if mtime < cutoff_time:
+                            file.unlink()
+                            deleted_count += 1
+                    except Exception:
+                        pass
 
             if deleted_count > 0:
                 logger.debug(
-                    f"[LLM DEBUG] Cleaned up {deleted_count} old debug files (older than {max_age_days} days)"
+                    f"[LLM DEBUG] Cleaned up {deleted_count} old debug files "
+                    f"(older than {max_age_days} days)"
                 )
 
         except Exception as e:

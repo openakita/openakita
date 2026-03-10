@@ -19,6 +19,30 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _safe_event_set(event: asyncio.Event) -> None:
+    """Set an asyncio.Event safely, even from a different event loop thread."""
+    from openakita.core.engine_bridge import get_engine_loop, _current_loop
+
+    engine = get_engine_loop()
+    current = _current_loop()
+    if engine is not None and current is not engine:
+        engine.call_soon_threadsafe(event.set)
+    else:
+        event.set()
+
+
+def _safe_event_clear(event: asyncio.Event) -> None:
+    """Clear an asyncio.Event safely, even from a different event loop thread."""
+    from openakita.core.engine_bridge import get_engine_loop, _current_loop
+
+    engine = get_engine_loop()
+    current = _current_loop()
+    if engine is not None and current is not engine:
+        engine.call_soon_threadsafe(event.clear)
+    else:
+        event.clear()
+
+
 class TaskStatus(Enum):
     """任务执行状态（对应 ReAct 循环的各阶段）"""
 
@@ -154,11 +178,11 @@ class TaskState:
         logger.debug(f"[State] {old_status.value} -> {new_status.value} (task={self.task_id[:8]})")
 
     def cancel(self, reason: str = "用户请求停止") -> None:
-        """取消任务，同时触发 cancel_event 通知所有等待方"""
+        """取消任务，同时触发 cancel_event 通知所有等待方（跨循环安全）"""
         prev_status = self.status.value if hasattr(self.status, "value") else str(self.status)
         self.cancelled = True
         self.cancel_reason = reason
-        self.cancel_event.set()
+        _safe_event_set(self.cancel_event)
         if self.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.IDLE):
             self.status = TaskStatus.CANCELLED
         logger.info(
@@ -169,14 +193,14 @@ class TaskState:
         )
 
     def request_skip(self, reason: str = "用户请求跳过当前步骤") -> None:
-        """请求跳过当前正在执行的工具/步骤（不终止整个任务）"""
+        """请求跳过当前正在执行的工具/步骤（不终止整个任务，跨循环安全）"""
         self.skip_reason = reason
-        self.skip_event.set()
+        _safe_event_set(self.skip_event)
         logger.info(f"[State] Task {self.task_id[:8]} skip requested: {reason}")
 
     def clear_skip(self) -> None:
-        """重置跳过标志（每次工具执行开始时调用）"""
-        self.skip_event.clear()
+        """重置跳过标志（每次工具执行开始时调用，跨循环安全）"""
+        _safe_event_clear(self.skip_event)
         self.skip_reason = ""
 
     async def add_user_insert(self, text: str) -> None:

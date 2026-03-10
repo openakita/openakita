@@ -33,6 +33,9 @@ class OrgBlackboard:
     def clear(self) -> None:
         """Remove all blackboard/memory data (used during org reset)."""
         import shutil
+        logger.warning(
+            f"[Blackboard] Clearing ALL memory for org {self._org_id}"
+        )
         if self._memory_dir.exists():
             shutil.rmtree(self._memory_dir, ignore_errors=True)
             self._memory_dir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +91,10 @@ class OrgBlackboard:
             importance=importance,
         )
         self._append(bb_path, entry, MAX_ORG_MEMORIES)
+        logger.info(
+            f"[Blackboard] write_org by={source_node} type={memory_type.value} "
+            f"importance={importance} content={content[:80]!r}"
+        )
         return entry
 
     def write_department(
@@ -116,6 +123,10 @@ class OrgBlackboard:
             importance=importance,
         )
         self._append(p, entry, MAX_DEPT_MEMORIES)
+        logger.info(
+            f"[Blackboard] write_dept dept={dept_name} by={source_node} "
+            f"content={content[:80]!r}"
+        )
         return entry
 
     def write_node(
@@ -139,6 +150,9 @@ class OrgBlackboard:
         p = self._memory_dir / "nodes" / f"{node_id}.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
         self._append(p, entry, MAX_NODE_MEMORIES)
+        logger.info(
+            f"[Blackboard] write_node node={node_id} content={content[:80]!r}"
+        )
         return entry
 
     # ------------------------------------------------------------------
@@ -305,7 +319,7 @@ class OrgBlackboard:
         """Remove least important entries if over capacity."""
         if not path.is_file():
             return
-        lines = [l for l in path.read_text(encoding="utf-8").strip().split("\n") if l.strip()]
+        lines = [ln for ln in path.read_text(encoding="utf-8").strip().split("\n") if ln.strip()]
         if len(lines) <= max_entries:
             return
 
@@ -320,6 +334,12 @@ class OrgBlackboard:
 
         entries_with_line.sort(key=lambda x: x[0], reverse=True)
         kept = entries_with_line[:max_entries]
+        evicted_count = len(entries_with_line) - len(kept)
+        if evicted_count > 0:
+            logger.warning(
+                f"[Blackboard] Evicted {evicted_count} low-importance entries "
+                f"from {path.name} (capacity={max_entries})"
+            )
         path.write_text(
             "\n".join(line for _, line in kept) + "\n",
             encoding="utf-8",
