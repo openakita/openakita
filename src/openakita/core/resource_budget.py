@@ -205,24 +205,8 @@ class ResourceBudget:
         return worst
 
     def get_budget_prompt_warning(self) -> str:
-        """生成预算警告文本（注入到 system prompt 或 user 消息中）"""
-        status = self.check()
-        if status.action == BudgetAction.OK:
-            return ""
-
-        parts = []
-        for dim_status in self._check_all_dimensions():
-            if dim_status.action != BudgetAction.OK:
-                parts.append(f"- {dim_status.dimension}: {dim_status.usage_ratio:.0%} used")
-
-        if not parts:
-            return ""
-
-        return (
-            "[预算提醒] 当前任务资源消耗较高:\n"
-            + "\n".join(parts)
-            + "\n请尽快完成任务，避免不必要的操作。"
-        )
+        """Deprecated: no longer injects warnings into conversation."""
+        return ""
 
     def get_summary(self) -> dict[str, Any]:
         """获取预算摘要"""

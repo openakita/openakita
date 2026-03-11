@@ -415,23 +415,22 @@ class RuntimeSupervisor:
         return None
 
     def _check_token_anomaly(self, iteration: int) -> Intervention | None:
-        """Token 消耗速率异常检测"""
+        """Token 消耗速率异常检测（仅记录日志，不注入对话）"""
         if not self._token_per_iteration:
             return None
 
         last_tokens = self._token_per_iteration[-1]
         if last_tokens > self._token_anomaly_threshold:
+            logger.info(
+                "[Supervisor] Token usage: %d tokens (threshold: %d) — logged only, not injected",
+                last_tokens, self._token_anomaly_threshold,
+            )
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.TOKEN_ANOMALY,
                 message=f"Single iteration consumed {last_tokens} tokens (threshold: {self._token_anomaly_threshold})",
-                should_inject_prompt=True,
-                prompt_injection=(
-                    f"提示：本轮操作消耗了 {last_tokens} tokens，后续可适当优化：\n"
-                    "- 读取大文件时使用 offset/limit 分页\n"
-                    "- 工具调用尽量精简输入内容\n"
-                    "注意：这不影响当前回复质量，请正常完成任务。"
-                ),
+                should_inject_prompt=False,
+                prompt_injection="",
             )
 
         return None

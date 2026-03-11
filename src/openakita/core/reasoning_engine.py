@@ -485,8 +485,6 @@ class ReasoningEngine:
         self._supervisor.reset()
         self._budget = create_budget_from_settings()
         self._budget.start()
-        self._budget_warned_dims: set[str] = set()
-
         _session_key = conversation_id or ""
         state = self._state.get_task_for_session(_session_key) if _session_key else self._state.current_task
 
@@ -658,10 +656,8 @@ class ReasoningEngine:
                     f"已完成的工作进度已保存，请调整预算后继续。"
                 )
             elif budget_status.action in (BudgetAction.WARNING, BudgetAction.DOWNGRADE):
-                budget_warning = self._budget.get_budget_prompt_warning()
-                if budget_warning and budget_status.dimension not in self._budget_warned_dims:
-                    working_messages.append({"role": "user", "content": budget_warning})
-                    self._budget_warned_dims.add(budget_status.dimension)
+                logger.info("[Budget] %s: %s — logged only, not injected",
+                            budget_status.dimension, budget_status.message)
 
             # 任务监控
             if task_monitor:
@@ -1389,8 +1385,6 @@ class ReasoningEngine:
         self._supervisor.reset()
         self._budget = create_budget_from_settings()
         self._budget.start()
-        self._budget_warned_dims = set()
-
         react_trace: list[dict] = []
         _trace_started_at = datetime.now().isoformat()
         _endpoint_switched = False
@@ -1554,10 +1548,8 @@ class ReasoningEngine:
                     yield {"type": "done"}
                     return
                 elif budget_status.action in (BudgetAction.WARNING, BudgetAction.DOWNGRADE):
-                    budget_warning = self._budget.get_budget_prompt_warning()
-                    if budget_warning and budget_status.dimension not in self._budget_warned_dims:
-                        working_messages.append({"role": "user", "content": budget_warning})
-                        self._budget_warned_dims.add(budget_status.dimension)
+                    logger.info("[Budget] %s: %s — logged only, not injected",
+                                budget_status.dimension, budget_status.message)
 
                 # --- TaskMonitor: 迭代开始 + 模型切换检查 ---
                 if task_monitor:
