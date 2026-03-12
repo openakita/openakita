@@ -59,14 +59,7 @@ SKILL_DIRECTORIES = [
     # 用户工作区（运行时根据当前工作区动态解析）
     "__user_workspace__",
     # 项目级别（开发模式下仍可扫描）
-    ".cursor/skills",
-    ".claude/skills",
-    ".codex/skills",
     "skills",
-    # 用户级别 (全局，兼容其他产品的技能)
-    "~/.cursor/skills",
-    "~/.claude/skills",
-    "~/.codex/skills",
 ]
 
 # 系统技能目录（优先加载）
