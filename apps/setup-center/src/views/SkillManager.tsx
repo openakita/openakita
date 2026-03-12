@@ -564,6 +564,8 @@ export function SkillManager({
   const [enabledDraft, setEnabledDraft] = useState<Record<string, boolean>>({});
   const [enabledDirty, setEnabledDirty] = useState(false);
   const [savingEnabled, setSavingEnabled] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [installedSearch, setInstalledSearch] = useState("");
   const [aiOrganizing, setAiOrganizing] = useState(false);
   const [localImporting, setLocalImporting] = useState(false);
@@ -1276,9 +1278,11 @@ export function SkillManager({
         <div style={{ flex: 1 }} />
         <button
           onClick={async () => {
+            if (refreshing || loading) return;
+            setRefreshing(true);
             setError(null);
-            if (serviceRunning) {
-              try {
+            try {
+              if (serviceRunning) {
                 const res = await safeFetch(`${apiBaseUrl}/api/skills/reload`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -1287,16 +1291,20 @@ export function SkillManager({
                 });
                 const data = await res.json();
                 if (data.error) { setError(typeof data.error === "string" ? data.error : JSON.stringify(data.error)); return; }
-              } catch (e) { setError(String(e)); return; }
+              }
+              const ok = await loadSkills();
+              if (ok) onNotice?.(t("skills.refreshed"));
+            } catch (e) {
+              setError(String(e));
+            } finally {
+              setRefreshing(false);
             }
-            const ok = await loadSkills();
-            if (ok) onNotice?.(t("skills.refreshed"));
           }}
-          disabled={loading}
-          style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}
+          disabled={refreshing || loading}
+          style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid var(--line)", cursor: refreshing || loading ? "not-allowed" : "pointer", opacity: refreshing || loading ? 0.6 : 1 }}
           title={t("skills.reloadHint")}
         >
-          {loading ? t("common.loading") : t("topbar.refresh")}
+          {refreshing || loading ? t("common.loading") : t("topbar.refresh")}
         </button>
       </div>
 
@@ -1409,17 +1417,21 @@ export function SkillManager({
             {t("skills.unsavedChanges")}
           </span>
           <button
-            onClick={() => { loadSkills(); }}
-            disabled={savingEnabled}
-            style={{ fontSize: 12, padding: "6px 16px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg)", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
+            onClick={async () => {
+              if (discarding || savingEnabled) return;
+              setDiscarding(true);
+              try { await loadSkills(); } finally { setDiscarding(false); }
+            }}
+            disabled={savingEnabled || discarding}
+            style={{ fontSize: 12, padding: "6px 16px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg)", cursor: savingEnabled || discarding ? "not-allowed" : "pointer", opacity: savingEnabled || discarding ? 0.6 : 1, whiteSpace: "nowrap", flexShrink: 0 }}
           >
-            {t("skills.discardChanges")}
+            {discarding ? t("common.loading") : t("skills.discardChanges")}
           </button>
           <button
             className="btnPrimary"
             onClick={handleSaveEnabledState}
-            disabled={savingEnabled}
-            style={{ fontSize: 13, padding: "6px 20px", whiteSpace: "nowrap", flexShrink: 0 }}
+            disabled={savingEnabled || discarding}
+            style={{ fontSize: 13, padding: "6px 20px", whiteSpace: "nowrap", flexShrink: 0, cursor: savingEnabled || discarding ? "not-allowed" : "pointer", opacity: savingEnabled || discarding ? 0.6 : 1 }}
           >
             {savingEnabled ? t("skills.saving") : t("skills.saveEnabledState")}
           </button>
