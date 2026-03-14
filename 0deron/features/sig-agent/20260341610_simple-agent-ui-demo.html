@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenAkita — 非任务聊天交互模拟</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<style>
+  :root {
+    --bg-dark: #0f172a;
+    --bg-card: #1e293b;
+    --bg-card-hover: #273549;
+    --primary: #3b82f6;
+    --primary-dim: rgba(59,130,246,0.15);
+    --text: #e2e8f0;
+    --text-dim: #92a4c9;
+    --text-muted: #64748b;
+    --border: rgba(59,130,246,0.1);
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --orange: #fb923c;
+    --purple: #a78bfa;
+    --sidebar-w: 260px;
+    --right-panel-w: 380px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ========== Layout ========== */
+  .layout {
+    display: flex;
+    height: 100vh;
+  }
+
+  /* ========== Left Sidebar ========== */
+  .left-sidebar {
+    width: var(--sidebar-w);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    background: rgba(15,23,42,0.6);
+    transition: margin-left 0.3s ease;
+  }
+
+  .sidebar-brand {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sidebar-brand .brand-icon {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sidebar-brand .brand-icon .material-symbols-outlined { color: #fff; font-size: 18px; }
+  .sidebar-brand .brand-text {
+    font-size: 15px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .sidebar-actions {
+    padding: 12px 12px 0 12px;
+    flex-shrink: 0;
+  }
+
+  .btn-new-chat {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 40px;
+    border-radius: 8px;
+    border: 1px dashed rgba(59,130,246,0.4);
+    background: transparent;
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-new-chat:hover {
+    background: var(--primary-dim);
+    border-color: var(--primary);
+  }
+  .btn-new-chat .material-symbols-outlined { font-size: 18px; }
+
+  .sidebar-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    padding: 16px 16px 8px 16px;
+  }
+
+  .sidebar-sessions {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 8px 12px 8px;
+  }
+
+  .session-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+    margin-bottom: 2px;
+  }
+  .session-item:hover { background: var(--bg-card); }
+  .session-item.active {
+    background: var(--primary-dim);
+    border-color: rgba(59,130,246,0.25);
+  }
+  .session-item .session-icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--bg-card);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .session-item.active .session-icon { background: rgba(59,130,246,0.2); }
+  .session-item .session-icon .material-symbols-outlined { font-size: 15px; color: var(--text-dim); }
+  .session-item.active .session-icon .material-symbols-outlined { color: var(--primary); }
+  .session-item .session-info { flex: 1; min-width: 0; }
+  .session-item .session-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .session-item .session-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .session-item .session-meta .step-count {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .session-item .session-meta .material-symbols-outlined { font-size: 12px; }
+
+  /* ========== Center Chat Area ========== */
+  .chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+  }
+
+  .chat-header {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: rgba(15,23,42,0.5);
+    backdrop-filter: blur(8px);
+  }
+  .chat-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .chat-header-left .material-symbols-outlined { color: var(--primary); font-size: 20px; }
+  .chat-header-left span:last-child { font-size: 14px; font-weight: 600; }
+
+  /* Mode toggle */
+  .mode-toggle {
+    display: flex;
+    background: var(--bg-card);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .mode-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active {
+    background: var(--primary);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .chat-messages .message-list {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* ========== Welcome Page ========== */
+  .welcome-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 40px 20px;
+    text-align: center;
+  }
+
+  .welcome-logo {
+    width: 72px; height: 72px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+    box-shadow: 0 8px 32px rgba(59,130,246,0.3);
+  }
+  .welcome-logo .material-symbols-outlined { color: #fff; font-size: 36px; }
+
+  .welcome-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .welcome-subtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 32px;
+    max-width: 400px;
+    line-height: 1.6;
+  }
+
+  .quick-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    max-width: 440px;
+    width: 100%;
+  }
+  .quick-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(30,41,59,0.4);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+  }
+  .quick-action-btn:hover {
+    background: var(--bg-card);
+    border-color: rgba(59,130,246,0.3);
+    transform: translateY(-1px);
+  }
+  .quick-action-btn .material-symbols-outlined {
+    font-size: 20px;
+    color: var(--primary);
+  }
+
+  /* ========== Input Area ========== */
+  .input-area {
+    flex-shrink: 0;
+    padding: 12px 20px 16px 20px;
+    border-top: 1px solid var(--border);
+    background: rgba(15,23,42,0.5);
+    backdrop-filter: blur(8px);
+  }
+  .input-container {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .input-container textarea {
+    flex: 1;
+    min-height: 42px;
+    max-height: 120px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(71,85,105,0.5);
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 1.5;
+    resize: none;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-container textarea:focus { border-color: var(--primary); }
+  .input-container textarea::placeholder { color: var(--text-muted); }
+
+  .btn-send {
+    width: 42px; height: 42px;
+    border-radius: 10px;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .btn-send:hover { background: rgba(59,130,246,0.8); transform: scale(1.05); }
+  .btn-send .material-symbols-outlined { font-size: 20px; }
+
+  /* ========== Chat Message Styles ========== */
+  .msg-user {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-left: 60px;
+  }
+  .msg-user .bubble {
+    background: var(--primary);
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 16px 16px 4px 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 80%;
+    white-space: pre-wrap;
+  }
+  .msg-user .avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #fff;
+    flex-shrink: 0;
+  }
+
+  .msg-ai-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-right: 60px;
+  }
+  .ai-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ai-header .avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .ai-header .avatar .material-symbols-outlined { color: #fff; font-size: 16px; }
+  .ai-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .ai-timer-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .timer-sep {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  .msg-ai-block > .children {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding-left: 42px;
+  }
+
+  /* TTFT Timer */
+  .ttft-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .ttft-bar .ttft-label { font-weight: 600; color: var(--text-dim); }
+  .ttft-bar .ttft-value {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    color: var(--yellow);
+    font-weight: 600;
+  }
+  .ttft-bar .ttft-done { color: var(--green); }
+
+  /* ThinkingBlock */
+  .thinking-block {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: rgba(30,41,59,0.5);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .thinking-block:hover { background: var(--bg-card); }
+  .thinking-block .thinking-spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--purple);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .thinking-block .thinking-icon { color: var(--purple); font-size: 16px; }
+  .thinking-block .thinking-text { color: var(--text-dim); flex: 1; }
+  .thinking-block .thinking-toggle { color: var(--text-muted); font-size: 16px; }
+  .thinking-block.done { border-color: rgba(167,139,250,0.2); }
+  .thinking-block.done .thinking-text { color: var(--text-muted); }
+
+  /* Step Card (strip) */
+  .strip-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 46px;
+    padding: 0 16px;
+    border-radius: 8px;
+    background: rgba(30,41,59,0.6);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .strip-card:hover {
+    background: var(--bg-card);
+    border-color: rgba(59,130,246,0.15);
+  }
+  .strip-card .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--primary);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  .strip-card .check-icon { color: var(--green); font-size: 18px; flex-shrink: 0; }
+  .strip-card .step-emoji { font-size: 15px; flex-shrink: 0; }
+  .strip-card .title {
+    flex: 1;
+    font-size: 13px;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .strip-card .duration {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    flex-shrink: 0;
+  }
+  .strip-card .arrow {
+    color: var(--text-muted);
+    font-size: 16px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+  }
+  .strip-card:hover .arrow { color: var(--primary); }
+
+  /* Plan checklist */
+  .plan-checklist {
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: rgba(30,41,59,0.5);
+    border: 1px solid rgba(59,130,246,0.15);
+  }
+  .plan-checklist-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 10px;
+  }
+  .plan-checklist-header .material-symbols-outlined { font-size: 18px; color: var(--primary); }
+  .plan-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 13px;
+    color: var(--text-dim);
+    transition: color 0.2s;
+  }
+  .plan-item .plan-checkbox {
+    width: 18px; height: 18px;
+    border-radius: 4px;
+    border: 2px solid var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.3s;
+  }
+  .plan-item.checked .plan-checkbox {
+    background: var(--green);
+    border-color: var(--green);
+  }
+  .plan-item .plan-checkbox .material-symbols-outlined {
+    font-size: 14px;
+    color: #fff;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .plan-item.checked .plan-checkbox .material-symbols-outlined { opacity: 1; }
+  .plan-item.checked { color: var(--text); }
+  .plan-item .plan-number {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+    width: 16px;
+  }
+
+  /* Summary text streaming */
+  .summary-text {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #cbd5e1;
+    white-space: pre-wrap;
+  }
+  .summary-text .cursor-blink {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background: var(--primary);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 0.8s ease infinite;
+  }
+
+  /* Total timer */
+  .total-timer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .total-timer .timer-label { font-weight: 600; color: var(--text-dim); }
+  .total-timer .timer-value {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--yellow);
+    font-weight: 600;
+  }
+  .total-timer.done .timer-value { color: var(--green); }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* ========== Right Panel ========== */
+  .right-panel {
+    width: 0;
+    overflow: hidden;
+    border-left: none;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-dark);
+    transition: width 0.3s ease;
+  }
+  .right-panel.open {
+    width: var(--right-panel-w);
+    border-left: 1px solid var(--border);
+  }
+
+  .right-panel-header {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .right-panel-header .rp-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .right-panel-header .rp-title .material-symbols-outlined { font-size: 18px; color: var(--primary); flex-shrink: 0; }
+  .btn-close-panel {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .btn-close-panel:hover { background: var(--bg-card); color: var(--text); }
+
+  .right-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .rp-section {
+    margin-bottom: 20px;
+  }
+  .rp-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .rp-meta {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .rp-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .rp-meta-item .material-symbols-outlined { font-size: 14px; }
+  .rp-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .rp-status.success {
+    background: rgba(52,211,153,0.12);
+    color: var(--green);
+  }
+
+  .rp-code-block {
+    background: rgba(15,23,42,0.8);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .rp-text-block {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #cbd5e1;
+    white-space: pre-wrap;
+  }
+
+  /* ========== Animations ========== */
+  .msg-appear {
+    opacity: 0;
+    animation: fadeSlideIn 0.35s ease forwards;
+  }
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .slide-in-right {
+    animation: slideInRight 0.3s ease forwards;
+  }
+  @keyframes slideInRight {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ========== Scrollbar ========== */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(71,85,105,0.3); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(71,85,105,0.6); }
+
+  /* ========== Simulation Control ========== */
+  .sim-control {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 500;
+    display: flex;
+    gap: 8px;
+  }
+  .sim-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  }
+  .sim-btn .material-symbols-outlined { font-size: 18px; }
+  .sim-btn-primary {
+    background: var(--primary);
+    color: #fff;
+  }
+  .sim-btn-primary:hover { background: rgba(59,130,246,0.85); transform: translateY(-1px); }
+  .sim-btn-secondary {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .sim-btn-secondary:hover { background: var(--bg-card-hover); transform: translateY(-1px); }
+  .sim-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+
+  /* ========== Mobile ========== */
+  @media (max-width: 768px) {
+    .left-sidebar { margin-left: calc(-1 * var(--sidebar-w)); position: absolute; z-index: 100; height: 100vh; }
+    .left-sidebar.mobile-show { margin-left: 0; }
+    .right-panel.open { width: 100%; position: absolute; right: 0; z-index: 99; height: 100vh; }
+    .quick-actions { grid-template-columns: 1fr; }
+    .sim-control { bottom: 12px; right: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- Left Sidebar -->
+  <div class="left-sidebar" id="leftSidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">
+        <span class="material-symbols-outlined">smart_toy</span>
+      </div>
+      <span class="brand-text">SeeAgent</span>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="btn-new-chat" onclick="resetDemo()">
+        <span class="material-symbols-outlined">add</span>
+        <span>New Chat</span>
+      </button>
+    </div>
+
+    <div class="sidebar-section-title">recent</div>
+
+    <div class="sidebar-sessions" id="sessionList">
+      <div class="session-item active" id="session-0">
+        <div class="session-icon">
+          <span class="material-symbols-outlined">chat</span>
+        </div>
+        <div class="session-info">
+          <div class="session-title">新对话</div>
+          <div class="session-meta">
+            <span class="step-count">
+              <span class="material-symbols-outlined">layers</span>
+              0 步骤
+            </span>
+            <span>刚刚</span>
+          </div>
+        </div>
+      </div>
+      <div class="session-item" id="session-1">
+        <div class="session-icon">
+          <span class="material-symbols-outlined">search</span>
+        </div>
+        <div class="session-info">
+          <div class="session-title">搜索 AI 最新论文</div>
+          <div class="session-meta">
+            <span class="step-count">
+              <span class="material-symbols-outlined">layers</span>
+              2 步骤
+            </span>
+            <span>3 小时前</span>
+          </div>
+        </div>
+      </div>
+      <div class="session-item" id="session-2">
+        <div class="session-icon">
+          <span class="material-symbols-outlined">code</span>
+        </div>
+        <div class="session-info">
+          <div class="session-title">代码库架构分析</div>
+          <div class="session-meta">
+            <span class="step-count">
+              <span class="material-symbols-outlined">layers</span>
+              5 步骤
+            </span>
+            <span>昨天</span>
+          </div>
+        </div>
+      </div>
+      <div class="session-item" id="session-3">
+        <div class="session-icon">
+          <span class="material-symbols-outlined">description</span>
+        </div>
+        <div class="session-info">
+          <div class="session-title">技术方案评审</div>
+          <div class="session-meta">
+            <span class="step-count">
+              <span class="material-symbols-outlined">layers</span>
+              3 步骤
+            </span>
+            <span>2 天前</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Center Chat Area -->
+  <div class="chat-area">
+    <div class="chat-header">
+      <div class="chat-header-left">
+        <span class="material-symbols-outlined">chat_bubble</span>
+        <span id="chatTitle">新对话</span>
+      </div>
+      <div class="mode-toggle" id="modeToggle">
+        <button class="mode-btn active" id="modeNormal" onclick="selectMode('normal')">普通模式</button>
+        <button class="mode-btn" id="modePlan" onclick="selectMode('plan')">Plan模式</button>
+      </div>
+    </div>
+
+    <!-- Welcome page -->
+    <div class="chat-messages" id="chatMessages">
+      <div id="welcomePage" class="welcome-page">
+        <div class="welcome-logo">
+          <span class="material-symbols-outlined">smart_toy</span>
+        </div>
+        <div class="welcome-title">OpenAkita Agent</div>
+        <div class="welcome-subtitle">自进化 AI Agent — 永不放弃的 Ralph Wiggum 模式<br>支持自主学习、记忆管理、多 LLM 端点</div>
+        <div class="quick-actions">
+          <div class="quick-action-btn" onclick="selectMode('normal'); startSimulation()">
+            <span class="material-symbols-outlined">search</span>
+            <span>搜索最新 AI 观点</span>
+          </div>
+          <div class="quick-action-btn" onclick="selectMode('plan'); startSimulation()">
+            <span class="material-symbols-outlined">account_tree</span>
+            <span>分析代码库架构</span>
+          </div>
+          <div class="quick-action-btn" onclick="selectMode('normal'); startSimulation()">
+            <span class="material-symbols-outlined">translate</span>
+            <span>翻译技术文档</span>
+          </div>
+          <div class="quick-action-btn" onclick="selectMode('plan'); startSimulation()">
+            <span class="material-symbols-outlined">auto_fix_high</span>
+            <span>生成技术方案</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="message-list" id="messageList" style="display:none">
+        <!-- Messages injected here -->
+      </div>
+    </div>
+
+    <!-- Input area -->
+    <div class="input-area">
+      <div class="input-container">
+        <textarea id="chatInput" placeholder="输入消息..." rows="1" onkeydown="handleInputKey(event)"></textarea>
+        <button class="btn-send" onclick="startSimulation()">
+          <span class="material-symbols-outlined">send</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Panel -->
+  <div class="right-panel" id="rightPanel">
+    <div class="right-panel-header">
+      <div class="rp-title" id="rpTitle">
+        <span class="material-symbols-outlined">info</span>
+        <span>步骤详情</span>
+      </div>
+      <button class="btn-close-panel" onclick="closeRightPanel()">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+    <div class="right-panel-body" id="rpBody">
+      <!-- Detail content injected here -->
+    </div>
+  </div>
+</div>
+
+<!-- Simulation Controls -->
+<div class="sim-control" id="simControl">
+  <button class="sim-btn sim-btn-secondary" onclick="resetDemo()" id="btnReset">
+    <span class="material-symbols-outlined">refresh</span>
+    重置
+  </button>
+  <button class="sim-btn sim-btn-primary" onclick="startSimulation()" id="btnStart">
+    <span class="material-symbols-outlined">play_arrow</span>
+    开始模拟
+  </button>
+</div>
+
+<script>
+// ========== State ==========
+let currentMode = 'normal';
+let isRunning = false;
+let timers = [];
+
+// ========== Mode Selection ==========
+function selectMode(mode) {
+  currentMode = mode;
+  document.getElementById('modeNormal').classList.toggle('active', mode === 'normal');
+  document.getElementById('modePlan').classList.toggle('active', mode === 'plan');
+}
+
+// ========== Input Handling ==========
+function handleInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    startSimulation();
+  }
+}
+
+// ========== Utility ==========
+function delay(ms) {
+  return new Promise(resolve => {
+    const t = setTimeout(resolve, ms);
+    timers.push(t);
+  });
+}
+
+function scrollChat() {
+  const el = document.getElementById('chatMessages');
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+}
+
+function appendMsg(html) {
+  const list = document.getElementById('messageList');
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg-appear';
+  wrapper.innerHTML = html;
+  list.appendChild(wrapper);
+  scrollChat();
+  return wrapper;
+}
+
+async function streamText(el, text, charDelay = 25) {
+  for (let i = 0; i < text.length; i++) {
+    el.textContent += text[i];
+    scrollChat();
+    await delay(charDelay);
+  }
+}
+
+// ========== Right Panel ==========
+function openRightPanel(stepData) {
+  const panel = document.getElementById('rightPanel');
+  const titleEl = document.getElementById('rpTitle');
+  const bodyEl = document.getElementById('rpBody');
+
+  titleEl.innerHTML = `
+    <span class="material-symbols-outlined">info</span>
+    <span>${stepData.title}</span>
+  `;
+
+  bodyEl.innerHTML = `
+    <div class="rp-meta">
+      <div class="rp-meta-item">
+        <span class="rp-status success">
+          <span class="material-symbols-outlined" style="font-size:12px">check_circle</span>
+          ${stepData.status || '完成'}
+        </span>
+      </div>
+    </div>
+    <div class="rp-meta" style="margin-top: 8px;">
+      <div class="rp-meta-item">
+        <span class="material-symbols-outlined" style="font-size:14px">schedule</span>
+        <span>开始: ${stepData.startTime}</span>
+      </div>
+      <div class="rp-meta-item">
+        <span class="material-symbols-outlined" style="font-size:14px">event_available</span>
+        <span>结束: ${stepData.endTime}</span>
+      </div>
+    </div>
+    <div class="rp-meta" style="margin-top: 8px;">
+      <div class="rp-meta-item">
+        <span class="material-symbols-outlined" style="font-size:14px">input</span>
+        <span>输入 Tokens: ${stepData.inputTokens}</span>
+      </div>
+      <div class="rp-meta-item">
+        <span class="material-symbols-outlined" style="font-size:14px">output</span>
+        <span>输出 Tokens: ${stepData.outputTokens}</span>
+      </div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-section-title">输入</div>
+      <div class="rp-code-block">${stepData.input}</div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-section-title">输出</div>
+      <div class="rp-text-block">${stepData.output}</div>
+    </div>
+  `;
+
+  panel.classList.add('open');
+}
+
+function closeRightPanel() {
+  document.getElementById('rightPanel').classList.remove('open');
+}
+
+// ========== TTFT Timer ==========
+function startTTFTTimer(el) {
+  let t = 0;
+  const interval = setInterval(() => {
+    t += 10;
+    el.textContent = (t / 1000).toFixed(2) + 's';
+  }, 10);
+  timers.push(interval);
+  return {
+    stop: (finalVal) => {
+      clearInterval(interval);
+      el.textContent = finalVal || (t / 1000).toFixed(2) + 's';
+      el.classList.add('ttft-done');
+    },
+    getTime: () => (t / 1000).toFixed(2) + 's'
+  };
+}
+
+// ========== Total Timer ==========
+function startTotalTimer(el) {
+  let t = 0;
+  const interval = setInterval(() => {
+    t += 100;
+    el.textContent = (t / 1000).toFixed(1) + 's';
+  }, 100);
+  timers.push(interval);
+  return {
+    stop: () => {
+      clearInterval(interval);
+      el.textContent = (t / 1000).toFixed(1) + 's';
+      el.parentElement.classList.add('done');
+    },
+    getTime: () => (t / 1000).toFixed(1) + 's'
+  };
+}
+
+// ========== Normal Mode Simulation ==========
+async function runNormalMode() {
+  const list = document.getElementById('messageList');
+
+  // Update session title
+  document.getElementById('chatTitle').textContent = '搜索 Karpathy 最新观点';
+  document.querySelector('#session-0 .session-title').textContent = '搜索 Karpathy 最新观点';
+
+  // 1. User message
+  appendMsg(`
+    <div class="msg-user">
+      <div class="bubble">帮我搜索 Karpathy 最新观点</div>
+      <div class="avatar">U</div>
+    </div>
+  `);
+  await delay(600);
+
+  // 2. Bot response starts
+  const aiBlock = appendMsg(`
+    <div class="msg-ai-block">
+      <div class="ai-header">
+        <div class="avatar">
+          <span class="material-symbols-outlined">smart_toy</span>
+        </div>
+        <span class="ai-name">OpenAkita</span>
+        <div class="ai-timer-group">
+          <div class="ttft-bar">
+            <span class="ttft-label">TTFT</span>
+            <span class="ttft-value" id="ttftValue-normal">0.00s</span>
+          </div>
+          <span class="timer-sep">|</span>
+          <div class="total-timer" id="totalTimerWrap-normal">
+            <span class="timer-label">Total</span>
+            <span class="timer-value" id="totalTimer-normal">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="children" id="aiChildren-normal">
+      </div>
+    </div>
+  `);
+  const children = document.getElementById('aiChildren-normal');
+  // Both timers start together when bot response begins
+  const ttft = startTTFTTimer(document.getElementById('ttftValue-normal'));
+  const totalTimer = startTotalTimer(document.getElementById('totalTimer-normal'));
+
+  await delay(300);
+
+  // ThinkingBlock
+  const thinkDiv = document.createElement('div');
+  thinkDiv.className = 'thinking-block msg-appear';
+  thinkDiv.innerHTML = `
+    <div class="thinking-spinner"></div>
+    <span class="thinking-text">...Thinking...</span>
+    <span class="material-symbols-outlined thinking-toggle">expand_more</span>
+  `;
+  children.appendChild(thinkDiv);
+  scrollChat();
+
+  await delay(500);
+
+  // TTFT done (Total timer keeps running)
+  ttft.stop('0.82s');
+
+  await delay(700);
+
+  // ThinkingBlock done
+  thinkDiv.classList.add('done');
+  thinkDiv.innerHTML = `
+    <span class="material-symbols-outlined thinking-icon">psychology</span>
+    <span class="thinking-text">思考完成 — 分析用户意图，规划搜索策略</span>
+    <span class="material-symbols-outlined thinking-toggle">expand_more</span>
+  `;
+
+  await delay(300);
+
+  // Step card 1 - searching (with spinner)
+  const stepCard = document.createElement('div');
+  stepCard.className = 'strip-card msg-appear';
+  stepCard.id = 'step-normal-1';
+  stepCard.innerHTML = `
+    <div class="spinner"></div>
+    <span class="step-emoji">🔍</span>
+    <span class="title">搜索 Karpathy 2026 最新动态</span>
+    <span class="duration"></span>
+    <span class="material-symbols-outlined arrow">chevron_right</span>
+  `;
+  stepCard.onclick = () => openRightPanel({
+    title: '🔍 搜索 Karpathy 2026 最新动态',
+    status: '完成',
+    startTime: '2026-03-14 15:01:23',
+    endTime: '2026-03-14 15:01:24',
+    inputTokens: 128,
+    outputTokens: 356,
+    input: JSON.stringify({
+      query: "Karpathy 2026 latest views opinions",
+      sources: ["web_search", "arxiv", "twitter"],
+      language: "zh-CN",
+      max_results: 10
+    }, null, 2),
+    output: '搜索完成，找到 8 条相关结果：\n\n1. Karpathy 在 2026 年 1 月发表了关于 "LLM OS" 的新演讲\n2. 提出了 Software 2.0 的最新演进观点\n3. 关于 AI Agent 自主性的 Twitter 讨论串\n4. RLHF vs DPO 的技术对比分析\n5. 关于小模型蒸馏的最新研究方向'
+  });
+  children.appendChild(stepCard);
+  scrollChat();
+
+  await delay(1500);
+
+  // Step card 1 done
+  stepCard.innerHTML = `
+    <span class="material-symbols-outlined check-icon">check_circle</span>
+    <span class="step-emoji">🔍</span>
+    <span class="title">搜索 Karpathy 2026 最新动态</span>
+    <span class="duration">1.24s</span>
+    <span class="material-symbols-outlined arrow">chevron_right</span>
+  `;
+
+  await delay(400);
+
+  // Stop total timer before text streaming (show realistic value)
+  totalTimer.stop();
+
+  // Summary text streaming
+  const summaryDiv = document.createElement('div');
+  summaryDiv.className = 'summary-text msg-appear';
+  children.appendChild(summaryDiv);
+  scrollChat();
+
+  const summaryText = `以下是 Andrej Karpathy 在 2026 年的最新观点总结：
+
+📌 LLM OS 演进
+Karpathy 在 1 月的演讲中详细阐述了 "LLM 操作系统" 的概念——将 LLM 视为新一代操作系统的核心，应用程序通过自然语言接口与之交互，而非传统的 API 调用。
+
+📌 Software 3.0 展望
+他提出了 "Software 3.0" 的概念：AI Agent 不仅能写代码（Software 2.0），还能自主规划、执行和迭代，形成完整的自进化循环。
+
+📌 小模型的价值
+Karpathy 强调，不是所有场景都需要万亿参数模型。通过知识蒸馏和专门化训练，小模型在特定领域可以达到甚至超越大模型的表现。
+
+📌 关于 AI Agent
+他对当前 AI Agent 的看法比较谨慎，认为真正有用的 Agent 需要具备"失败恢复"能力——这与 OpenAkita 的 Ralph 模式理念不谋而合。`;
+
+  await streamText(summaryDiv, summaryText, 18);
+
+  // Update sidebar meta
+  document.querySelector('#session-0 .session-meta .step-count').innerHTML = `
+    <span class="material-symbols-outlined">layers</span>
+    1 步骤
+  `;
+}
+
+// ========== Plan Mode Simulation ==========
+async function runPlanMode() {
+  const list = document.getElementById('messageList');
+
+  // Update session title
+  document.getElementById('chatTitle').textContent = '分析代码库架构';
+  document.querySelector('#session-0 .session-title').textContent = '分析代码库架构';
+
+  // 1. User message
+  appendMsg(`
+    <div class="msg-user">
+      <div class="bubble">帮我全面分析这个代码库的架构</div>
+      <div class="avatar">U</div>
+    </div>
+  `);
+  await delay(600);
+
+  // 2. Bot response starts
+  const aiBlock = appendMsg(`
+    <div class="msg-ai-block">
+      <div class="ai-header">
+        <div class="avatar">
+          <span class="material-symbols-outlined">smart_toy</span>
+        </div>
+        <span class="ai-name">OpenAkita</span>
+        <div class="ai-timer-group">
+          <div class="ttft-bar">
+            <span class="ttft-label">TTFT</span>
+            <span class="ttft-value" id="ttftValue-plan">0.00s</span>
+          </div>
+          <span class="timer-sep">|</span>
+          <div class="total-timer" id="totalTimerWrap-plan">
+            <span class="timer-label">Total</span>
+            <span class="timer-value" id="totalTimer-plan">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="children" id="aiChildren-plan">
+      </div>
+    </div>
+  `);
+  const children = document.getElementById('aiChildren-plan');
+  // Both timers start together when bot response begins
+  const ttft = startTTFTTimer(document.getElementById('ttftValue-plan'));
+  const totalTimer = startTotalTimer(document.getElementById('totalTimer-plan'));
+
+  await delay(300);
+
+  // ThinkingBlock
+  const thinkDiv = document.createElement('div');
+  thinkDiv.className = 'thinking-block msg-appear';
+  thinkDiv.innerHTML = `
+    <div class="thinking-spinner"></div>
+    <span class="thinking-text">...Thinking...</span>
+    <span class="material-symbols-outlined thinking-toggle">expand_more</span>
+  `;
+  children.appendChild(thinkDiv);
+  scrollChat();
+
+  await delay(600);
+
+  // TTFT done (Total timer keeps running)
+  ttft.stop('1.05s');
+
+  await delay(400);
+
+  // ThinkingBlock done
+  thinkDiv.classList.add('done');
+  thinkDiv.innerHTML = `
+    <span class="material-symbols-outlined thinking-icon">psychology</span>
+    <span class="thinking-text">思考完成 — 识别为复杂分析任务，自动启用 Plan 模式</span>
+    <span class="material-symbols-outlined thinking-toggle">expand_more</span>
+  `;
+
+  await delay(500);
+
+  // Plan checklist
+  const planDiv = document.createElement('div');
+  planDiv.className = 'plan-checklist msg-appear';
+  planDiv.innerHTML = `
+    <div class="plan-checklist-header">
+      <span class="material-symbols-outlined">checklist</span>
+      <span>执行计划</span>
+    </div>
+    <div class="plan-item" id="plan-item-1">
+      <div class="plan-checkbox"><span class="material-symbols-outlined">check</span></div>
+      <span class="plan-number">1.</span>
+      <span>扫描项目结构和依赖</span>
+    </div>
+    <div class="plan-item" id="plan-item-2">
+      <div class="plan-checkbox"><span class="material-symbols-outlined">check</span></div>
+      <span class="plan-number">2.</span>
+      <span>分析核心模块架构</span>
+    </div>
+    <div class="plan-item" id="plan-item-3">
+      <div class="plan-checkbox"><span class="material-symbols-outlined">check</span></div>
+      <span class="plan-number">3.</span>
+      <span>梳理数据流和接口关系</span>
+    </div>
+    <div class="plan-item" id="plan-item-4">
+      <div class="plan-checkbox"><span class="material-symbols-outlined">check</span></div>
+      <span class="plan-number">4.</span>
+      <span>生成架构总结报告</span>
+    </div>
+  `;
+  children.appendChild(planDiv);
+  scrollChat();
+
+  // Step data for right panel
+  const stepDetails = [
+    {
+      title: '📂 扫描项目结构',
+      status: '完成',
+      startTime: '2026-03-14 15:02:01',
+      endTime: '2026-03-14 15:02:03',
+      inputTokens: 156,
+      outputTokens: 423,
+      input: JSON.stringify({
+        action: "scan_directory",
+        root: "./src/openakita/",
+        include: ["*.py", "*.yaml", "*.toml"],
+        exclude: ["__pycache__", ".git"],
+        depth: 4
+      }, null, 2),
+      output: '项目结构扫描完成：\n\n根目录: src/openakita/\n模块数: 8 个顶级模块\n文件总数: 47 个 Python 文件\n依赖: FastAPI, Pydantic v2, aiosqlite, structlog\n\n核心模块:\n  - core/ (4 files): Agent, Ralph Loop, Prompt Assembler\n  - llm/ (6 files): Multi-provider adapter layer\n  - evolution/ (3 files): Self-evolution engine\n  - orchestration/ (5 files): Multi-agent orchestration\n  - channels/ (7 files): IM integrations\n  - context/ (4 files): Memory & identity\n  - capability/ (3 files): Skills & MCP\n  - api/ (3 files): HTTP endpoints'
+    },
+    {
+      title: '🏗️ 分析核心模块',
+      status: '完成',
+      startTime: '2026-03-14 15:02:04',
+      endTime: '2026-03-14 15:02:07',
+      inputTokens: 892,
+      outputTokens: 1247,
+      input: JSON.stringify({
+        action: "analyze_modules",
+        targets: ["core/", "llm/", "evolution/", "orchestration/"],
+        analysis_type: ["class_hierarchy", "dependency_graph", "design_patterns"]
+      }, null, 2),
+      output: '核心模块分析完成：\n\n设计模式:\n  - Strategy Pattern: LLM adapter 层\n  - Observer Pattern: SSE 事件推送\n  - Chain of Responsibility: Ralph 重试循环\n  - Factory Pattern: SubAgent 创建\n\n关键类:\n  - MasterAgent: 多 Agent 编排主控\n  - SubAgentWorker: JIT 配置注入，单步执行\n  - RalphLoop: 永不放弃重试引擎\n  - PromptAssembler: 动态 prompt 组装\n  - TaskContext: 统一上下文传递'
+    },
+    {
+      title: '🔀 梳理数据流和接口',
+      status: '完成',
+      startTime: '2026-03-14 15:02:08',
+      endTime: '2026-03-14 15:02:11',
+      inputTokens: 1356,
+      outputTokens: 987,
+      input: JSON.stringify({
+        action: "trace_dataflow",
+        entry_points: ["api/routes.py", "channels/telegram.py"],
+        trace_depth: "full",
+        output_format: "graph"
+      }, null, 2),
+      output: '数据流分析完成：\n\n请求流:\n  User → Channel/API → Agent.run()\n    → PromptAssembler.compile()\n    → LLMAdapter.call()\n    → ResponseParser.parse()\n    → StepExecutor.execute()\n    → SSE.push()\n\n编排流:\n  MasterAgent → TaskOrchestrator\n    → build_task_context()\n    → SubAgentWorker.execute_step()\n    → complete_step()\n    → next_step / finish\n\nSSE 事件类型:\n  thinking_start, thinking_end,\n  step_start, step_progress, step_complete,\n  text_delta, task_complete'
+    },
+    {
+      title: '📋 生成架构总结',
+      status: '完成',
+      startTime: '2026-03-14 15:02:12',
+      endTime: '2026-03-14 15:02:14',
+      inputTokens: 2134,
+      outputTokens: 1568,
+      input: JSON.stringify({
+        action: "generate_summary",
+        format: "markdown",
+        include_diagram: true,
+        audience: "developer"
+      }, null, 2),
+      output: '架构总结报告已生成，包含:\n\n1. 系统架构概览图\n2. 模块依赖关系矩阵\n3. 核心流程时序图\n4. 设计决策说明\n5. 扩展点和插件机制说明\n\n总体评估:\n  架构成熟度: ★★★★☆\n  可扩展性: ★★★★★\n  代码质量: ★★★★☆\n  文档覆盖: ★★★☆☆'
+    }
+  ];
+
+  const stepEmojis = ['📂', '🏗️', '🔀', '📋'];
+  const stepTitles = ['扫描项目结构', '分析核心模块', '梳理数据流和接口', '生成架构总结'];
+  const stepDurations = ['0.86s', '1.52s', '1.18s', '0.94s'];
+
+  // Steps appear one by one
+  for (let i = 0; i < 4; i++) {
+    await delay(1200);
+
+    // Step card with spinner
+    const stepCard = document.createElement('div');
+    stepCard.className = 'strip-card msg-appear';
+    stepCard.id = `step-plan-${i + 1}`;
+    stepCard.innerHTML = `
+      <div class="spinner"></div>
+      <span class="step-emoji">${stepEmojis[i]}</span>
+      <span class="title">${stepTitles[i]}</span>
+      <span class="duration"></span>
+      <span class="material-symbols-outlined arrow">chevron_right</span>
+    `;
+    const detail = stepDetails[i];
+    stepCard.onclick = () => openRightPanel(detail);
+    children.appendChild(stepCard);
+    scrollChat();
+
+    await delay(1000);
+
+    // Step card done
+    stepCard.innerHTML = `
+      <span class="material-symbols-outlined check-icon">check_circle</span>
+      <span class="step-emoji">${stepEmojis[i]}</span>
+      <span class="title">${stepTitles[i]}</span>
+      <span class="duration">${stepDurations[i]}</span>
+      <span class="material-symbols-outlined arrow">chevron_right</span>
+    `;
+    // re-attach click handler after innerHTML replacement
+    stepCard.onclick = () => openRightPanel(detail);
+
+    // Check plan item
+    const planItem = document.getElementById(`plan-item-${i + 1}`);
+    planItem.classList.add('checked');
+
+    scrollChat();
+  }
+
+  await delay(600);
+
+  // Stop total timer before text streaming (show realistic value)
+  totalTimer.stop();
+
+  // Summary text streaming
+  const summaryDiv = document.createElement('div');
+  summaryDiv.className = 'summary-text msg-appear';
+  children.appendChild(summaryDiv);
+  scrollChat();
+
+  const summaryText = `代码库架构分析已完成！以下是核心发现：
+
+🏛️ 整体架构
+采用分层架构设计，核心层（Core）+ 适配层（LLM/Channels）+ 业务层（Evolution/Orchestration）。模块间通过清晰的接口解耦，支持灵活的扩展和替换。
+
+⚡ 核心亮点
+• Ralph 永不放弃循环 — 独特的故障恢复机制，确保任务最终完成
+• 多 Agent 编排 — MasterAgent + SubAgentWorker 的主从模式
+• TaskContext 统一上下文 — 最新重构引入，消除了之前分散的参数传递
+• 自进化引擎 — 自检、技能生成、自动修复三位一体
+
+📊 建议改进
+1. 建议增加更多单元测试覆盖（当前覆盖率约 60%）
+2. 文档可进一步完善，特别是编排层的流程说明
+3. 考虑引入更完善的错误分类体系`;
+
+  await streamText(summaryDiv, summaryText, 16);
+
+  // Update sidebar meta
+  document.querySelector('#session-0 .session-meta .step-count').innerHTML = `
+    <span class="material-symbols-outlined">layers</span>
+    4 步骤
+  `;
+}
+
+// ========== Start / Reset ==========
+async function startSimulation() {
+  if (isRunning) return;
+  isRunning = true;
+
+  // Disable start button
+  document.getElementById('btnStart').disabled = true;
+
+  // Hide welcome, show message list
+  document.getElementById('welcomePage').style.display = 'none';
+  const msgList = document.getElementById('messageList');
+  msgList.style.display = 'flex';
+  msgList.innerHTML = '';
+
+  // Close right panel
+  closeRightPanel();
+
+  // Set input text based on mode
+  const input = document.getElementById('chatInput');
+  if (currentMode === 'normal') {
+    input.value = '帮我搜索 Karpathy 最新观点';
+  } else {
+    input.value = '帮我全面分析这个代码库的架构';
+  }
+
+  // Brief pause, then clear input (simulate sending)
+  await delay(200);
+  input.value = '';
+
+  try {
+    if (currentMode === 'normal') {
+      await runNormalMode();
+    } else {
+      await runPlanMode();
+    }
+  } catch (e) {
+    // Simulation was interrupted (reset)
+  }
+
+  isRunning = false;
+  document.getElementById('btnStart').disabled = false;
+}
+
+function resetDemo() {
+  // Clear all timers
+  timers.forEach(t => { clearTimeout(t); clearInterval(t); });
+  timers = [];
+  isRunning = false;
+
+  // Reset UI
+  document.getElementById('welcomePage').style.display = '';
+  document.getElementById('messageList').style.display = 'none';
+  document.getElementById('messageList').innerHTML = '';
+  document.getElementById('chatInput').value = '';
+  document.getElementById('chatTitle').textContent = '新对话';
+  document.getElementById('btnStart').disabled = false;
+
+  // Reset session sidebar
+  document.querySelector('#session-0 .session-title').textContent = '新对话';
+  document.querySelector('#session-0 .session-meta .step-count').innerHTML = `
+    <span class="material-symbols-outlined">layers</span>
+    0 步骤
+  `;
+
+  // Close right panel
+  closeRightPanel();
+}
+</script>
+</body>
+</html>
