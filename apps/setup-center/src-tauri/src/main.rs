@@ -3197,7 +3197,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("OpenAkita")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| match event.id.as_ref() {
+        .on_menu_event(move |app: &tauri::AppHandle, event| match event.id.as_ref() {
             "quit" => {
                 // ── 退出前根据所有权标记决定是否停止后端 ──
 
@@ -3295,7 +3295,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
             _ => {}
         })
-        .on_tray_icon_event(move |tray, event| match event {
+        .on_tray_icon_event(move |tray: &tauri::tray::TrayIcon, event| match event {
             TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
