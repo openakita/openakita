@@ -4530,13 +4530,13 @@ export function App() {
                     <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(providerApplyUrl)}>获取 API Key</Button>
                   )}
                 </Label>
-                <Input value={apiKeyValue} onChange={(e) => setApiKeyValue(e.target.value)} placeholder={isLocalProvider(selectedProvider) ? t("llm.localKeyPlaceholder") : "sk-..."} type={(secretShown.__LLM_API_KEY && !IS_WEB) ? "text" : "password"} />
+                <Input value={apiKeyValue} onChange={(e) => setApiKeyValue(e.target.value)} placeholder={isLocalProvider(selectedProvider) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} type={(secretShown.__LLM_API_KEY && !IS_WEB) ? "text" : "password"} />
                 {isLocalProvider(selectedProvider) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
 
               {/* Model */}
               <div className="space-y-1.5">
-                <Label>{t("llm.selectModel")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchModels} disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{models.length > 0 && <span className="text-muted-foreground/50">（已拉取 {models.length} 个）</span>}</span></Label>
+                <Label>{t("llm.selectModel")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchModels} disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{models.length > 0 && <span className="text-muted-foreground/50">（已拉取 {models.length} 个）</span>}</span></Label>
                 <SearchSelect
                   value={selectedModelId}
                   onChange={(v) => setSelectedModelId(v)}
@@ -4713,7 +4713,7 @@ export function App() {
                   {(() => { const url = getProviderApplyUrl(editDraft.providerSlug); const ep = providers.find((p) => p.slug === editDraft.providerSlug); return url && !isLocalProvider(ep) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>获取 API Key</Button> : null; })()}
                 </Label>
                 <div className="relative">
-                  <Input value={envDraft[editDraft.apiKeyEnv || ""] || ""} onChange={(e) => { const k = editDraft.apiKeyEnv || ""; const v = e.target.value; setEnvDraft((m) => ({ ...m, [k]: v })); setEditDraft((d) => d ? { ...d, apiKeyValue: v } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} />
+                  <Input value={envDraft[editDraft.apiKeyEnv || ""] || ""} onChange={(e) => { const k = editDraft.apiKeyEnv || ""; const v = e.target.value; setEnvDraft((m) => ({ ...m, [k]: v })); setEditDraft((d) => d ? { ...d, apiKeyValue: v } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} />
                   {!IS_WEB && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1.5 top-1/2 -translate-y-1/2" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? "隐藏" : "显示"}>
                     {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                   </Button>}
@@ -4723,7 +4723,7 @@ export function App() {
 
               {/* Model */}
               <div className="space-y-1.5">
-                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchEditModels} disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(envDraft[editDraft.apiKeyEnv || ""] || "").trim()) || !(editDraft.baseUrl || "").trim() || !!busy}>拉取模型列表</Button>并选择{editModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {editModels.length} 个）</span>}</span></Label>
+                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchEditModels} disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(envDraft[editDraft.apiKeyEnv || ""] || "").trim()) || !(editDraft.baseUrl || "").trim() || !!busy}>拉取模型列表</Button>并选择{editModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {editModels.length} 个）</span>}</span></Label>
                 <SearchSelect
                   value={editDraft.modelId || ""}
                   onChange={(v) => setEditDraft({ ...editDraft, modelId: v })}
@@ -4901,7 +4901,7 @@ export function App() {
             <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
               {/* Provider */}
               <div className="space-y-1.5">
-                <Label>{t("llm.provider")}</Label>
+                <Label>{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(compilerProviderSlug) && <span className="text-[11px] font-normal text-muted-foreground/70">API 地址：{compilerBaseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setCompBaseUrlExpanded(v => !v)}>{compBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
                 <ProviderSearchSelect
                   value={compilerProviderSlug}
                   onChange={(slug) => {
@@ -4962,17 +4962,12 @@ export function App() {
                 <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
                 <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
               </div>
-              ) : (
-              <>
-                <div className="text-[11px] font-normal text-muted-foreground/70">API 地址：{compilerBaseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setCompBaseUrlExpanded(v => !v)}>{compBaseUrlExpanded ? "收起" : "配置"}</Button></div>
-                {compBaseUrlExpanded && (
-                <div className="space-y-1.5">
-                  <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                  <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-                </div>
-                )}
-              </>
-              )}
+              ) : compBaseUrlExpanded ? (
+              <div className="space-y-1.5">
+                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
+                <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
+              </div>
+              ) : null}
 
               {/* API Key Env */}
               <div className="space-y-1.5">
@@ -4986,13 +4981,13 @@ export function App() {
                   API Key {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}
                   {(() => { const url = getProviderApplyUrl(compilerProviderSlug); const cp = providers.find((p) => p.slug === compilerProviderSlug); return url && !isLocalProvider(cp) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>获取 API Key</Button> : null; })()}
                 </Label>
-                <Input value={compilerApiKeyValue} onChange={(e) => setCompilerApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} type="password" />
+                <Input value={compilerApiKeyValue} onChange={(e) => setCompilerApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} type="password" />
                 {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
 
               {/* Model */}
               <div className="space-y-1.5">
-                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchCompilerModels} disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{compilerModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {compilerModels.length} 个）</span>}</span></Label>
+                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchCompilerModels} disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{compilerModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {compilerModels.length} 个）</span>}</span></Label>
                 <SearchSelect value={compilerModel} onChange={(v) => setCompilerModel(v)} options={compilerModels.map((m) => m.id)} placeholder={compilerModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
               </div>
 
@@ -5071,7 +5066,7 @@ export function App() {
             <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
               {/* Provider */}
               <div className="space-y-1.5">
-                <Label>{t("llm.provider")}</Label>
+                <Label>{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(sttProviderSlug) && <span className="text-[11px] font-normal text-muted-foreground/70">API 地址：{sttBaseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setSttBaseUrlExpanded(v => !v)}>{sttBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
                 <ProviderSearchSelect
                   value={sttProviderSlug}
                   onChange={(slug) => {
@@ -5119,17 +5114,12 @@ export function App() {
                 <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
                 <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
               </div>
-              ) : (
-              <>
-                <div className="text-[11px] font-normal text-muted-foreground/70">API 地址：{sttBaseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setSttBaseUrlExpanded(v => !v)}>{sttBaseUrlExpanded ? "收起" : "配置"}</Button></div>
-                {sttBaseUrlExpanded && (
-                <div className="space-y-1.5">
-                  <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                  <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-                </div>
-                )}
-              </>
-              )}
+              ) : sttBaseUrlExpanded ? (
+              <div className="space-y-1.5">
+                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
+                <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
+              </div>
+              ) : null}
 
               {/* API Key Env */}
               <div className="space-y-1.5">
@@ -5143,13 +5133,13 @@ export function App() {
                   API Key {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}
                   {(() => { const url = getProviderApplyUrl(sttProviderSlug); const sp = providers.find((p) => p.slug === sttProviderSlug); return url && !isLocalProvider(sp) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>获取 API Key</Button> : null; })()}
                 </Label>
-                <Input value={sttApiKeyValue} onChange={(e) => setSttApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} type="password" />
+                <Input value={sttApiKeyValue} onChange={(e) => setSttApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} type="password" />
                 {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
 
               {/* Model */}
               <div className="space-y-1.5">
-                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchSttModels} disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{sttModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {sttModels.length} 个）</span>}</span></Label>
+                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchSttModels} disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{sttModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {sttModels.length} 个）</span>}</span></Label>
                 <SearchSelect value={sttModel} onChange={(v) => setSttModel(v)} options={sttModels.map((m) => m.id)} placeholder={sttModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
                 {(() => {
                   const rec = STT_RECOMMENDED_MODELS[sttProviderSlug];
