@@ -266,19 +266,29 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
             ? "repeat(auto-fill, minmax(70px, 1fr))"
             : `repeat(${2 + Object.keys(stats.by_type).length}, 1fr)`,
           gap: isMobile ? 6 : 10,
+          alignItems: "stretch",
         }}>
-          <div className="card" style={{ margin: 0, padding: isMobile ? "8px 6px" : "10px 12px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-            <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: "var(--text)" }}>{stats.total}</div>
-            <div style={{ fontSize: isMobile ? 10 : 11, color: "var(--muted)" }}>总记忆数</div>
-          </div>
-          <div className="card" style={{ margin: 0, padding: isMobile ? "8px 6px" : "10px 12px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-            <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: "var(--text)" }}>{stats.avg_score}</div>
-            <div style={{ fontSize: isMobile ? 10 : 11, color: "var(--muted)" }}>平均分数</div>
-          </div>
-          {Object.entries(stats.by_type).map(([t, c]) => (
-            <div key={t} className="card" style={{ margin: 0, padding: isMobile ? "8px 6px" : "10px 12px", textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: TYPE_COLORS[t] || "var(--text)" }}>{c}</div>
-              <div style={{ fontSize: isMobile ? 10 : 11, color: "var(--muted)" }}>{TYPE_LABELS[t] || t}</div>
+          {[
+            { value: stats.total, label: "总记忆数", color: "var(--text)" },
+            { value: stats.avg_score, label: "平均分数", color: "var(--text)" },
+            ...Object.entries(stats.by_type).map(([t, c]) => ({
+              value: c,
+              label: TYPE_LABELS[t] || t,
+              color: TYPE_COLORS[t] || "var(--text)",
+            })),
+          ].map((item, i) => (
+            <div key={i} className="card" style={{
+              margin: 0,
+              padding: isMobile ? "8px 6px" : "10px 12px",
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: isMobile ? 48 : 56,
+            }}>
+              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: item.color, lineHeight: 1.2 }}>{item.value}</div>
+              <div style={{ fontSize: isMobile ? 10 : 11, color: "var(--muted)", lineHeight: 1.2, marginTop: 2 }}>{item.label}</div>
             </div>
           ))}
         </div>
@@ -307,19 +317,18 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
           </SelectContent>
         </Select>
 
-        <Button variant="outline" size="sm" onClick={loadMemories} disabled={loading}>
+        <Button variant="outline" onClick={loadMemories} disabled={loading}>
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           {!isMobile && " 刷新"}
         </Button>
 
         {selected.size > 0 && (
-          <Button variant="destructive" size="sm" onClick={handleBatchDelete}>
+          <Button variant="destructive" onClick={handleBatchDelete}>
             <Trash2 size={14} /> 删除 {selected.size} 条
           </Button>
         )}
 
         <Button
-          size="sm"
           onClick={handleReviewConfirm}
           disabled={reviewing}
           className="bg-gradient-to-br from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white border-0"
