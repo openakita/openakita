@@ -32,10 +32,20 @@ import type {
 import {
   IconRefresh, IconCheck, IconCheckCircle, IconX, IconXCircle,
   IconChevronDown, IconChevronRight, IconChevronUp, IconGlobe,
-  IconEdit, IconTrash, IconEye, IconEyeOff, IconInfo, IconClipboard, IconPower,
+  IconEdit, IconTrash, IconEye, IconEyeOff, IconInfo, IconClipboard, IconPower, IconCircle,
   DotGreen, DotGray, DotYellow, DotRed,
   LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ,
 } from "./icons";
+import { ChevronDownIcon, XIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
 import { getThemePref, setThemePref, THEME_CHANGE_EVENT, type Theme } from "./theme";
@@ -562,7 +572,7 @@ export function App() {
   >([]);
   const [skillSummary, setSkillSummary] = useState<{ count: number; systemCount: number; externalCount: number } | null>(null);
   const [skillsDetail, setSkillsDetail] = useState<
-    { name: string; description: string; name_i18n?: Record<string, string> | null; description_i18n?: Record<string, string> | null; system: boolean; enabled?: boolean; tool_name?: string | null; category?: string | null; path?: string | null }[] | null
+    { skill_id: string; name: string; description: string; name_i18n?: Record<string, string> | null; description_i18n?: Record<string, string> | null; system: boolean; enabled?: boolean; tool_name?: string | null; category?: string | null; path?: string | null }[] | null
   >(null);
   const [skillsSelection, setSkillsSelection] = useState<Record<string, boolean>>({});
   const [skillsTouched, setSkillsTouched] = useState(false);
@@ -1080,7 +1090,6 @@ export function App() {
     }
     // Set sensible defaults for first-time setup
     const defaults: Record<string, string> = {
-      MCP_BROWSER_ENABLED: "true",
       DESKTOP_ENABLED: "true",
       MCP_ENABLED: "true",
     };
@@ -2698,7 +2707,7 @@ export function App() {
       endpoints.sort((a: any, b: any) => (Number(a?.priority) || 999) - (Number(b?.priority) || 999));
       await writeEndpointsJson(endpoints, settings);
       setNotice("端点已更新");
-      resetEndpointEditor();
+      setEditModalOpen(false);
       await loadSavedEndpoints();
     } catch (e) {
       setError(String(e));
@@ -2985,9 +2994,7 @@ export function App() {
           "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FORCE_IPV4",
           "TOOL_MAX_PARALLEL", "FORCE_TOOL_CALL_MAX_RETRIES",
           "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
-          "MCP_ENABLED", "MCP_TIMEOUT", "MCP_BROWSER_ENABLED",
-          "MCP_MYSQL_ENABLED", "MCP_MYSQL_HOST", "MCP_MYSQL_USER", "MCP_MYSQL_PASSWORD", "MCP_MYSQL_DATABASE",
-          "MCP_POSTGRES_ENABLED", "MCP_POSTGRES_URL",
+          "MCP_ENABLED", "MCP_TIMEOUT",
           "DESKTOP_ENABLED", "DESKTOP_DEFAULT_MONITOR", "DESKTOP_COMPRESSION_QUALITY",
           "DESKTOP_MAX_WIDTH", "DESKTOP_MAX_HEIGHT", "DESKTOP_CACHE_TTL",
           "DESKTOP_UIA_TIMEOUT", "DESKTOP_UIA_RETRY_INTERVAL", "DESKTOP_UIA_MAX_RETRIES",
@@ -3287,6 +3294,7 @@ export function App() {
               const systemCount = skills.filter((s) => !!s.system).length;
               setSkillSummary({ count: skills.length, systemCount, externalCount: skills.length - systemCount });
               setSkillsDetail(skills.map((s) => ({
+                skill_id: String(s?.skill_id || s?.name || ""),
                 name: String(s?.name || ""), description: String(s?.description || ""),
                 system: !!s?.system, enabled: typeof s?.enabled === "boolean" ? s.enabled : undefined,
                 tool_name: s?.tool_name ?? null, category: s?.category ?? null, path: s?.path ?? null,
@@ -3363,6 +3371,7 @@ export function App() {
         setSkillSummary({ count: skills.length, systemCount, externalCount });
         setSkillsDetail(
           skills.map((s) => ({
+            skill_id: String(s?.skill_id || s?.name || ""),
             name: String(s?.name || ""),
             description: String(s?.description || ""),
             system: !!s?.system,
@@ -3723,9 +3732,9 @@ export function App() {
     if (skillsTouched) return;
     const m: Record<string, boolean> = {};
     for (const s of skillsDetail) {
-      if (!s?.name) continue;
-      if (s.system) m[s.name] = true;
-      else m[s.name] = typeof s.enabled === "boolean" ? s.enabled : true;
+      if (!s?.skill_id) continue;
+      if (s.system) m[s.skill_id] = true;
+      else m[s.skill_id] = typeof s.enabled === "boolean" ? s.enabled : true;
     }
     setSkillsSelection(m);
   }, [skillsDetail, skillsTouched]);
@@ -3753,7 +3762,7 @@ export function App() {
       let skillsList: any[] = [];
       // ── 后端运行中 → HTTP API ──
       if (shouldUseHttpApi()) {
-        const res = await safeFetch(`${httpApiBase()}/api/skills`, { signal: AbortSignal.timeout(5000) });
+        const res = await safeFetch(`${httpApiBase()}/api/skills`, { signal: AbortSignal.timeout(15_000) });
         const data = await res.json();
         skillsList = Array.isArray(data?.skills) ? data.skills : [];
       }
@@ -3773,6 +3782,7 @@ export function App() {
       setSkillSummary({ count: skillsList.length, systemCount, externalCount });
       setSkillsDetail(
         skillsList.map((s: any) => ({
+          skill_id: String(s?.skill_id || s?.name || ""),
           name: String(s?.name || ""),
           description: String(s?.description || ""),
           system: !!s?.system,
@@ -3803,9 +3813,9 @@ export function App() {
     setBusy("保存 skills 启用状态...");
     try {
       const externalAllowlist = skillsDetail
-        .filter((s) => !s.system && !!s.name)
-        .filter((s) => !!skillsSelection[s.name])
-        .map((s) => s.name);
+        .filter((s) => !s.system && !!s.skill_id)
+        .filter((s) => !!skillsSelection[s.skill_id])
+        .map((s) => s.skill_id);
 
       const content =
         JSON.stringify(
@@ -3970,30 +3980,26 @@ export function App() {
             )}
           </div>
 
-          {/* Workspace */}
-          <div className="statusCard">
+          {/* Auto-update toggle — desktop only */}
+          {IS_TAURI && <div className="statusCard">
             <div className="statusCardHead">
-              <span className="statusCardLabel">{t("config.step.workspace")}</span>
+              <span className="statusCardLabel">{t("status.autoUpdate")}</span>
+              {autoUpdateEnabled ? <DotGreen /> : <DotGray />}
             </div>
-            <div className="statusCardValue">{currentWorkspaceId || "—"}</div>
-            <div className="statusCardSub" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{ws?.path || ""}</span>
-              {ws?.path && (
-                <button
-                  className="btnIconInline"
-                  title={t("status.openFolder")}
-                  onClick={async () => {
-                    const { openFileWithDefault } = await import("./platform");
-                    try { await openFileWithDefault(ws.path); } catch (e) { logger.error("App", "openFileWithDefault failed", { error: String(e) }); }
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                  </svg>
-                </button>
-              )}
+            <div className="statusCardValue">{autoUpdateEnabled ? t("status.on") : t("status.off")}</div>
+            <div className="statusCardSub">{t("status.autoUpdateHint")}</div>
+            <div className="statusCardActions">
+              <button className="btnSmall" onClick={async () => {
+                setBusy(t("common.loading")); setError(null);
+                try {
+                  const next = !autoUpdateEnabled;
+                  await invoke("set_auto_update", { enabled: next });
+                  setAutoUpdateEnabled(next);
+                  if (!next) { setNewRelease(null); setUpdateAvailable(null); setUpdateProgress({ status: "idle" }); }
+                } catch (e) { setError(String(e)); } finally { setBusy(null); }
+              }} disabled={autoUpdateEnabled === null || !!busy}>{autoUpdateEnabled ? t("status.off") : t("status.on")}</button>
             </div>
-          </div>
+          </div>}
 
           {/* Autostart (= desktop autostart + backend auto-launch) — desktop only */}
           {IS_TAURI && <div className="statusCard">
@@ -4011,27 +4017,30 @@ export function App() {
             </div>
           </div>}
 
-          {/* Auto-update toggle — desktop only */}
-          {IS_TAURI && <div className="statusCard">
+          {/* Workspace */}
+          <div className="statusCard" style={{ gridColumn: "1 / -1" }}>
             <div className="statusCardHead">
-              <span className="statusCardLabel">{t("status.autoUpdate")}</span>
-              {autoUpdateEnabled ? <DotGreen /> : <DotGray />}
+              <span className="statusCardLabel">{t("config.step.workspace")}</span>
             </div>
-            <div className="statusCardValue">{autoUpdateEnabled ? t("status.on") : t("status.off")}</div>
-            <div className="statusCardSub">{t("status.autoUpdateHint")}</div>
-            <div className="statusCardActions">
-              <button className="btnSmall" onClick={async () => {
-                setBusy(t("common.loading")); setError(null);
-                try {
-                  const next = !autoUpdateEnabled;
-                  await invoke("set_auto_update", { enabled: next });
-                  setAutoUpdateEnabled(next);
-                  // 关闭时清除已有的更新通知
-                  if (!next) { setNewRelease(null); setUpdateAvailable(null); setUpdateProgress({ status: "idle" }); }
-                } catch (e) { setError(String(e)); } finally { setBusy(null); }
-              }} disabled={autoUpdateEnabled === null || !!busy}>{autoUpdateEnabled ? t("status.off") : t("status.on")}</button>
+            <div className="statusCardValue">{currentWorkspaceId || "—"}</div>
+            <div className="statusCardSub" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{ws?.path || ""}</span>
+              {ws?.path && (
+                <button
+                  className="btnIconInline"
+                  title={t("status.openFolder")}
+                  onClick={async () => {
+                    const { openFileWithDefault } = await import("./platform");
+                    try { await openFileWithDefault(ws.path); } catch (e) { logger.error("App", "openFileWithDefault failed", { error: String(e) }); }
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </button>
+              )}
             </div>
-          </div>}
+          </div>
         </div>
 
         {/* LLM Endpoints compact table */}
@@ -4199,7 +4208,26 @@ export function App() {
   function openAddEpDialog() {
     resetEndpointEditor();
     setConnTestResult(null);
-    doLoadProviders();
+    setProviderSlug(providers[0]?.slug ?? "");
+    setApiType("openai");
+    setBaseUrl("");
+    setBaseUrlTouched(false);
+    setApiKeyEnv("");
+    setApiKeyEnvTouched(false);
+    setApiKeyValue("");
+    setModels([]);
+    setSelectedModelId("");
+    setEndpointName("");
+    setEndpointNameTouched(false);
+    setCapSelected([]);
+    setCapTouched(false);
+    setEndpointPriority(1);
+    setCodingPlanMode(false);
+    setAddEpMaxTokens(0);
+    setAddEpContextWindow(200000);
+    setAddEpTimeout(180);
+    setAddEpRpmLimit(0);
+    if (providers.length === 0) doLoadProviders();
     setAddEpDialogOpen(true);
   }
 
@@ -4213,177 +4241,185 @@ export function App() {
               <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.title")}</div>
               <div className="cardHint">{t("llm.subtitle")}</div>
             </div>
-            <button className="btnPrimary" style={{ whiteSpace: "nowrap" }} onClick={openAddEpDialog} disabled={!!busy}>
+            <Button size="sm" onClick={openAddEpDialog} disabled={!!busy}>
               + {t("llm.addEndpoint")}
-            </button>
+            </Button>
           </div>
 
           {savedEndpoints.length === 0 ? (
-            <div className="cardHint" style={{ textAlign: "center", padding: "24px 0" }}>{t("llm.noEndpoints")}</div>
+            <div className="text-sm text-muted-foreground text-center py-6">{t("llm.noEndpoints")}</div>
           ) : (
-            <div className="epTable">
-              <div className="epTableHeader">
-                <span>{t("status.endpoint")}</span>
-                <span>{t("status.model")}</span>
-                <span>Key</span>
-                <span>Priority</span>
-                <span></span>
-              </div>
-              {savedEndpoints.map((e) => (
-                <div key={e.name} className="epTableRow" style={e.enabled === false ? { opacity: 0.45 } : undefined}>
-                  <span className="epTableName">
-                    {e.name}
-                    {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span style={{ marginLeft: 6, color: "var(--brand)", fontSize: 10, fontWeight: 800 }}>{t("llm.primary")}</span>}
-                    {e.enabled === false && <span style={{ marginLeft: 6, color: "var(--muted)", fontSize: 10, fontWeight: 700 }}>{t("llm.disabled")}</span>}
-                  </span>
-                  <span className="epTableModel">{e.model}</span>
-                  <span>{(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}</span>
-                  <span style={{ fontSize: 12 }}>{e.priority}</span>
-                  <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                    <button className={`btnIcon${e.enabled === false ? "" : " btnIconActive"}`} onClick={() => doToggleEndpointEnabled(e.name)} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}><IconPower size={14} /></button>
-                    {savedEndpoints[0]?.name !== e.name && <button className="btnIcon" onClick={() => doSetPrimaryEndpoint(e.name)} disabled={!!busy} title={t("llm.setPrimary")}><IconChevronUp size={14} /></button>}
-                    <button className="btnIcon" onClick={() => doStartEditEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></button>
-                    <button className="btnIcon btnIconDanger" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></button>
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>{t("status.endpoint")}</TableHead>
+                  <TableHead>{t("status.model")}</TableHead>
+                  <TableHead className="w-[50px]">Key</TableHead>
+                  <TableHead className="w-[80px]">Priority</TableHead>
+                  <TableHead className="w-[140px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {savedEndpoints.map((e) => (
+                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                    <TableCell className="font-semibold">
+                      {e.name}
+                      {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span className="ml-1.5 text-[10px] font-extrabold text-primary">{t("llm.primary")}</span>}
+                      {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{e.model}</TableCell>
+                    <TableCell>{(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}</TableCell>
+                    <TableCell>{e.priority}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 justify-end">
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doSetPrimaryEndpoint(e.name)} disabled={!!busy} title={t("llm.setPrimary")}><IconChevronUp size={14} /></Button>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </div>
 
         {/* ── Compiler endpoints ── */}
         <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <div>
-              <div className="statusCardLabel">{t("llm.compiler")}</div>
-              <div className="cardHint" style={{ fontSize: 11 }}>{t("llm.compilerHint")}</div>
+              <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.compiler")}</div>
+              <div className="cardHint">{t("llm.compilerHint")}</div>
             </div>
-            <button className="btnSmall btnSmallPrimary" onClick={() => { doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyEnv(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={!!busy}>
+            <Button variant="outline" size="sm" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyEnv(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={!!busy}>
               + {t("llm.addEndpoint")}
-            </button>
+            </Button>
           </div>
           {savedCompilerEndpoints.length === 0 ? (
-            <div className="cardHint">{t("llm.noCompiler")}</div>
+            <div className="text-sm text-muted-foreground text-center py-6">{t("llm.noEndpoints")}</div>
           ) : (
-            <div style={{ display: "grid", gap: 6 }}>
-              {savedCompilerEndpoints.map((e) => (
-                <div key={e.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(0,0,0,0.04)", ...(e.enabled === false ? { opacity: 0.45 } : {}) }}>
-                  <div>
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>{e.name}</span>
-                    <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 8 }}>{e.model} · {e.provider}</span>
-                    {e.enabled === false && <span style={{ marginLeft: 6, color: "var(--muted)", fontSize: 10, fontWeight: 700 }}>{t("llm.disabled")}</span>}
-                  </div>
-                  <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                    <button className={`btnIcon${e.enabled === false ? "" : " btnIconActive"}`} onClick={() => doToggleEndpointEnabled(e.name, "compiler_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}><IconPower size={14} /></button>
-                    <button className="btnIcon btnIconDanger" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteCompilerEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></button>
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>{t("status.endpoint")}</TableHead>
+                  <TableHead>{t("status.model")}</TableHead>
+                  <TableHead className="w-[80px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {savedCompilerEndpoints.map((e) => (
+                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                    <TableCell className="font-semibold">
+                      {e.name}
+                      {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{e.model}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 justify-end">
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "compiler_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteCompilerEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </div>
 
         {/* ── STT endpoints ── */}
         <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <div>
-              <div className="statusCardLabel">{t("llm.stt")}</div>
-              <div className="cardHint" style={{ fontSize: 11 }}>{t("llm.sttHint")}</div>
+              <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.stt")}</div>
+              <div className="cardHint">{t("llm.sttHint")}</div>
             </div>
-            <button className="btnSmall btnSmallPrimary" onClick={() => { doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyEnv(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={!!busy}>
-              + {t("llm.addStt")}
-            </button>
+            <Button variant="outline" size="sm" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyEnv(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={!!busy}>
+              + {t("llm.addEndpoint")}
+            </Button>
           </div>
           {savedSttEndpoints.length === 0 ? (
-            <div className="cardHint">{t("llm.noStt")}</div>
+            <div className="text-sm text-muted-foreground text-center py-6">{t("llm.noEndpoints")}</div>
           ) : (
-            <div style={{ display: "grid", gap: 6 }}>
-              {savedSttEndpoints.map((e) => (
-                <div key={e.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(0,0,0,0.04)", ...(e.enabled === false ? { opacity: 0.45 } : {}) }}>
-                  <div>
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>{e.name}</span>
-                    <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 8 }}>{e.model} · {e.provider}</span>
-                    {e.enabled === false && <span style={{ marginLeft: 6, color: "var(--muted)", fontSize: 10, fontWeight: 700 }}>{t("llm.disabled")}</span>}
-                  </div>
-                  <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                    <button className={`btnIcon${e.enabled === false ? "" : " btnIconActive"}`} onClick={() => doToggleEndpointEnabled(e.name, "stt_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}><IconPower size={14} /></button>
-                    <button className="btnIcon btnIconDanger" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteSttEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></button>
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>{t("status.endpoint")}</TableHead>
+                  <TableHead>{t("status.model")}</TableHead>
+                  <TableHead className="w-[80px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {savedSttEndpoints.map((e) => (
+                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                    <TableCell className="font-semibold">
+                      {e.name}
+                      {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{e.model}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 justify-end">
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "stt_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteSttEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </div>
 
         {/* ── Add endpoint dialog ── */}
-        {addEpDialogOpen && (
-          <ModalOverlay onClose={() => setAddEpDialogOpen(false)}>
-            <div className="modalContent">
-              <div className="dialogHeader">
-                <div className="cardTitle">{isEditingEndpoint ? t("llm.editEndpoint") : t("llm.addEndpoint")}</div>
-                <button className="dialogCloseBtn" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); }}><IconX size={14} /></button>
-              </div>
+        <Dialog open={addEpDialogOpen} onOpenChange={(open) => { if (!open) setAddEpDialogOpen(false); }}>
+          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { resetEndpointEditor(); setConnTestResult(null); }}>
+            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
+              <DialogTitle>{isEditingEndpoint ? t("llm.editEndpoint") : t("llm.addEndpoint")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("llm.addEndpoint")}</DialogDescription>
+            </DialogHeader>
 
-              <div className="dialogBody">
+            <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
               {/* Provider */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.provider")}</div>
+              <div className="space-y-1.5">
+                <Label>{t("llm.provider")}</Label>
                 <ProviderSearchSelect
                   value={providerSlug}
                   onChange={(v) => setProviderSlug(v)}
                   options={providers.map((p) => ({ value: p.slug, label: p.name }))}
-                  extraOptions={[{ value: "__custom__", label: t("llm.customProvider") }]}
                   placeholder={providers.length === 0 ? t("common.loading") : undefined}
                   disabled={providers.length === 0}
                 />
-                {providerApplyUrl && <div className="help" style={{ marginTop: 6, paddingLeft: 2 }}>Key: <a href={providerApplyUrl} target="_blank" rel="noreferrer">{providerApplyUrl}</a></div>}
+                {providerApplyUrl && <p className="text-xs text-muted-foreground">Key: <a href={providerApplyUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">{providerApplyUrl}</a></p>}
               </div>
 
-              {/* Coding Plan toggle — only shown when provider supports it */}
+              {/* Coding Plan toggle */}
               {selectedProvider?.coding_plan_base_url && (
-                <div className="dialogSection">
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
-                    <input
-                      type="checkbox"
-                      checked={codingPlanMode}
-                      onChange={(e) => { setCodingPlanMode(e.target.checked); setBaseUrlTouched(false); }}
-                      style={{ width: 16, height: 16, accentColor: "var(--brand)" }}
-                    />
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{t("llm.codingPlan")}</span>
-                  </label>
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 24 }}>{t("llm.codingPlanHint")}</div>
-                </div>
+                <label htmlFor="coding-plan-add" className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 cursor-pointer select-none hover:bg-accent/50 transition-colors">
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium">{t("llm.codingPlan")}</div>
+                    <div className="text-xs text-muted-foreground">{t("llm.codingPlanHint")}</div>
+                  </div>
+                  <Switch id="coding-plan-add" checked={codingPlanMode} onCheckedChange={(v) => { setCodingPlanMode(v); setBaseUrlTouched(false); }} />
+                </label>
               )}
 
               {/* Base URL */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.baseUrl")}</div>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => { setBaseUrl(e.target.value); setBaseUrlTouched(true); }}
-                  placeholder={selectedProvider?.default_base_url || "https://api.example.com/v1"}
-                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}
-                />
-                <div className="help" style={{ marginTop: 4, paddingLeft: 2 }}>{t("llm.baseUrlHint")}</div>
+              <div className="space-y-1.5">
+                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
+                <Input value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setBaseUrlTouched(true); }} placeholder={selectedProvider?.default_base_url || "https://api.example.com/v1"} />
               </div>
 
               {/* API Key */}
-              <div className="dialogSection">
-                <div className="dialogLabel">API Key {isLocalProvider(selectedProvider) && <span style={{ color: "var(--muted)", fontSize: 11, fontWeight: 400 }}>({t("llm.localNoKey")})</span>}</div>
-                <input
-                  value={apiKeyValue}
-                  onChange={(e) => setApiKeyValue(e.target.value)}
-                  placeholder={isLocalProvider(selectedProvider) ? t("llm.localKeyPlaceholder") : "sk-..."}
-                  type={(secretShown.__LLM_API_KEY && !IS_WEB) ? "text" : "password"}
-                />
-                {isLocalProvider(selectedProvider) && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, color: "var(--brand)" }}>{t("llm.localHint")}</div>
-                )}
+              <div className="space-y-1.5">
+                <Label>API Key {isLocalProvider(selectedProvider) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}</Label>
+                <Input value={apiKeyValue} onChange={(e) => setApiKeyValue(e.target.value)} placeholder={isLocalProvider(selectedProvider) ? t("llm.localKeyPlaceholder") : "sk-..."} type={(secretShown.__LLM_API_KEY && !IS_WEB) ? "text" : "password"} />
+                {isLocalProvider(selectedProvider) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
 
-              {/* Model name — always visible; fetch is optional */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.selectModel")}</div>
+              {/* Model */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.selectModel")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchModels} disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{models.length > 0 && <span className="text-muted-foreground/50">（已拉取 {models.length} 个）</span>}</span></Label>
                 <SearchSelect
                   value={selectedModelId}
                   onChange={(v) => setSelectedModelId(v)}
@@ -4391,46 +4427,23 @@ export function App() {
                   placeholder={models.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")}
                   disabled={!!busy}
                 />
-                {models.length === 0 && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.7 }}>{t("llm.modelManualHint")}</span>
-                    {selectedProvider?.supports_model_list !== false && (
-                      <button onClick={doFetchModels} className="btnSmall" disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}
-                        style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                        {t("llm.fetchModels")}
-                      </button>
-                    )}
-                  </div>
-                )}
-                {models.length > 0 && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: models.length })}</span>
-                    <button onClick={doFetchModels} className="btnSmall" disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}
-                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.refetch")}
-                    </button>
-                  </div>
-                )}
                 {error && (
-                  <div style={{ marginTop: 6, padding: "6px 10px", background: "rgba(229,57,53,0.12)", border: "1px solid rgba(229,57,53,0.3)", borderRadius: 6, fontSize: 12, color: "#e53935", wordBreak: "break-all" }}>
+                  <div className="mt-1 px-2.5 py-1.5 rounded-md text-xs text-destructive bg-destructive/10 border border-destructive/30 break-all">
                     ⚠ {error}
                   </div>
                 )}
               </div>
 
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.endpointName")}</div>
-                <input
-                  value={endpointName}
-                  onChange={(e) => { setEndpointNameTouched(true); setEndpointName(e.target.value); }}
-                  placeholder="dashscope-qwen3-max"
-                />
+              {/* Endpoint Name */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.endpointName")}</Label>
+                <Input value={endpointName} onChange={(e) => { setEndpointNameTouched(true); setEndpointName(e.target.value); }} placeholder="dashscope-qwen3-max" />
               </div>
 
-              {/* Capabilities as chips */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.capabilities")}</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {/* Capabilities */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.capabilities")}</Label>
+                <div className="flex flex-wrap gap-2">
                   {[
                     { k: "text", name: t("llm.capText") },
                     { k: "thinking", name: t("llm.capThinking") },
@@ -4440,81 +4453,87 @@ export function App() {
                   ].map((c) => {
                     const on = capSelected.includes(c.k);
                     return (
-                      <span key={c.k} className={`capChip ${on ? "capChipActive" : ""}`}
+                      <button key={c.k} data-slot="cap-chip" type="button"
+                        className={cn(
+                          "inline-flex items-center justify-center h-8 px-3.5 rounded-md border text-sm font-medium cursor-pointer transition-colors",
+                          on
+                            ? "border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+                            : "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        )}
                         onClick={() => { setCapTouched(true); setCapSelected((prev) => { const set = new Set(prev); if (set.has(c.k)) set.delete(c.k); else set.add(c.k); const out = Array.from(set); return out.length ? out : ["text"]; }); }}
-                      >{on ? "\u2713 " : ""}{c.name}</span>
+                      >{c.name}</button>
                     );
                   })}
                 </div>
               </div>
 
               {/* Advanced (collapsed) */}
-              <details className="dialogDetails">
-                <summary>{t("llm.advanced")}</summary>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advApiType")}</div>
-                    <select value={apiType} onChange={(e) => setApiType(e.target.value as any)} style={{ width: 180, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
-                      <option value="openai">openai</option>
-                      <option value="anthropic">anthropic</option>
-                    </select>
+              <details className="group rounded-lg border border-border">
+                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
+                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+                  {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
+                </summary>
+                <div className="border-t border-border px-4 py-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>{t("llm.advApiType")}</Label>
+                      <Select value={apiType} onValueChange={(v) => setApiType(v as any)}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">openai</SelectItem>
+                          <SelectItem value="anthropic">anthropic</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{t("llm.advPriority")}</Label>
+                      <Input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} />
+                    </div>
                   </div>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advKeyEnv")}</div>
-                    <input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advKeyEnv")}</Label>
+                    <Input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} />
                   </div>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advPriority")}</div>
-                    <input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} style={{ width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
+                    <Input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} />
                   </div>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advMaxTokens")}</div>
-                    <input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advMaxTokensHint")}</div>
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advContextWindow")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advContextWindowHint")}</span></Label>
+                    <Input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 200000))} />
                   </div>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advContextWindow")}</div>
-                    <input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 200000))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advContextWindowHint")}</div>
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advTimeout")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advTimeoutHint")}</span></Label>
+                    <Input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} />
                   </div>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advTimeout")}</div>
-                    <input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advTimeoutHint")}</div>
-                  </div>
-                  <div>
-                    <div className="dialogLabel">{t("llm.advRpmLimit")}</div>
-                    <input type="number" min={0} value={addEpRpmLimit} onChange={(e) => setAddEpRpmLimit(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advRpmLimitHint")}</div>
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advRpmLimit")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advRpmLimitHint")}</span></Label>
+                    <Input type="number" min={0} value={addEpRpmLimit} onChange={(e) => setAddEpRpmLimit(Math.max(0, parseInt(e.target.value) || 0))} />
                   </div>
                 </div>
               </details>
-              </div>
+            </div>
 
-              {/* 连接测试结果（预留固定高度，避免把底部按钮“顶”动） */}
-              <div className="connTestSlot">
-                {connTestResult ? (
-                  <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
-                    {connTestResult.ok
-                      ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                      : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-                  </div>
-                ) : (
-                  <div className="connTestResult connTestPlaceholder" />
-                )}
+            {connTestResult && (
+              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
+                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
+              )}>
+                {connTestResult.ok
+                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
               </div>
+            )}
 
-              {/* Footer — fixed at bottom */}
-              <div className="dialogFooter">
-                <button className="btnSecondary endpointFooterBtn" onClick={() => { setAddEpDialogOpen(false); resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                  <button
-                    className="btnSecondary endpointFooterBtn"
+            <DialogFooter className="px-6 py-2.5 shrink-0 flex-col sm:flex-col gap-1.5">
+              <div className="flex items-center justify-between w-full">
+                <Button variant="ghost" onClick={() => setAddEpDialogOpen(false)}>{t("common.cancel")}</Button>
+                <div className="flex gap-2 items-center">
+                  <Button variant="secondary"
                     disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || connTesting}
                     onClick={() => doTestConnection({ testApiType: apiType, testBaseUrl: baseUrl, testApiKey: apiKeyValue.trim() || (isLocalProvider(selectedProvider) ? localProviderPlaceholderKey(selectedProvider) : ""), testProviderSlug: selectedProvider?.slug })}
                   >
                     {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </button>
+                  </Button>
                   {(() => {
                     const _isLocal = isLocalProvider(selectedProvider);
                     const missing: string[] = [];
@@ -4524,65 +4543,65 @@ export function App() {
                     if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
                     const btnDisabled = missing.length > 0 || !!busy;
                     return (
-                      <div className="endpointPrimaryWrap">
-                        <button className="btnPrimary endpointFooterBtn" onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
-                          {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
-                        </button>
-                        <span className="endpointPrimaryHint">
-                          {btnDisabled && !busy && missing.length > 0 ? (
-                            <>
-                            {t("common.missingFields") || "缺少"}: {missing.join(", ")}
-                            </>
-                          ) : null}
-                        </span>
-                      </div>
+                      <Button onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
+                        {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
+                      </Button>
                     );
                   })()}
                 </div>
               </div>
-            </div>
-          </ModalOverlay>
-        )}
+              {(() => {
+                const _isLocal = isLocalProvider(selectedProvider);
+                const missing: string[] = [];
+                if (!baseUrl.trim()) missing.push("Base URL");
+                if (!_isLocal && !apiKeyValue.trim()) missing.push("API Key");
+                if (!selectedModelId.trim()) missing.push(t("status.model"));
+                if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
+                const show = missing.length > 0 && !busy;
+                return (
+                  <div className={cn("text-[10px] text-muted-foreground text-right w-full", !show && "invisible")}>{t("common.missingFields") || "缺少"}: {missing.join(", ") || "—"}</div>
+                );
+              })()}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        {/* ── Edit endpoint modal (aligned with add dialog) ── */}
-        {editModalOpen && editDraft && (
-          <ModalOverlay onClose={() => resetEndpointEditor()}>
-            <div className="modalContent">
-              <div className="dialogHeader">
-                <div className="cardTitle">{t("llm.editEndpoint")}: {editDraft.name}</div>
-                <button className="dialogCloseBtn" onClick={() => resetEndpointEditor()}><IconX size={14} /></button>
-              </div>
-              <div className="dialogBody">
+        {/* ── Edit endpoint modal ── */}
+        <Dialog open={editModalOpen && !!editDraft} onOpenChange={(open) => { if (!open) setEditModalOpen(false); }}>
+          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { resetEndpointEditor(); setConnTestResult(null); }}>
+            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
+              <DialogTitle>{t("llm.editEndpoint")}: {editDraft?.name}</DialogTitle>
+              <DialogDescription className="sr-only">{t("llm.editEndpoint")}</DialogDescription>
+            </DialogHeader>
 
+            {editDraft && <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
               {/* Provider (read-only) */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.provider")}</div>
-                <input value={(() => { const p = providers.find((x) => x.slug === editDraft.providerSlug); return p ? p.name : (editDraft.providerSlug || "custom"); })()} disabled style={{ opacity: 0.7, cursor: "not-allowed" }} />
-                <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.editProviderHint") || "服务商在创建时确定，不可更改"}</div>
+              <div className="space-y-1.5">
+                <Label>{t("llm.provider")} <span className="text-[11px] font-normal text-muted-foreground/70">服务商在创建时确定，不可更改</span></Label>
+                <Input value={(() => { const p = providers.find((x) => x.slug === editDraft.providerSlug); return p ? p.name : (editDraft.providerSlug || "custom"); })()} disabled className="opacity-70" />
               </div>
 
               {/* Base URL */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.baseUrl")}</div>
-                <input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} />
-                <div className="help" style={{ marginTop: 4, paddingLeft: 2 }}>{t("llm.baseUrlHint")}</div>
+              <div className="space-y-1.5">
+                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
+                <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="请输入" />
               </div>
 
               {/* API Key */}
-              <div className="dialogSection">
-                <div className="dialogLabel">API Key {isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && <span style={{ color: "var(--muted)", fontSize: 11, fontWeight: 400 }}>({t("llm.localNoKey")})</span>}</div>
-                <div style={{ position: "relative" }}>
-                  <input value={envDraft[editDraft.apiKeyEnv || ""] || ""} onChange={(e) => { const k = editDraft.apiKeyEnv || ""; const v = e.target.value; setEnvDraft((m) => ({ ...m, [k]: v })); setEditDraft((d) => d ? { ...d, apiKeyValue: v } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} style={{ paddingRight: 44, width: "100%" }} placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} />
-                  {!IS_WEB && <button type="button" className="btnEye" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? "隐藏" : "显示"}>
-                    {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={16} /> : <IconEye size={16} />}
-                  </button>}
+              <div className="space-y-1.5">
+                <Label>API Key {isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}</Label>
+                <div className="relative">
+                  <Input value={envDraft[editDraft.apiKeyEnv || ""] || ""} onChange={(e) => { const k = editDraft.apiKeyEnv || ""; const v = e.target.value; setEnvDraft((m) => ({ ...m, [k]: v })); setEditDraft((d) => d ? { ...d, apiKeyValue: v } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} />
+                  {!IS_WEB && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1.5 top-1/2 -translate-y-1/2" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? "隐藏" : "显示"}>
+                    {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                  </Button>}
                 </div>
-                {isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && <div className="help" style={{ marginTop: 4, paddingLeft: 2, color: "var(--brand)" }}>{t("llm.localHint")}</div>}
+                {isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
 
               {/* Model */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("status.model")}</div>
+              <div className="space-y-1.5">
+                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchEditModels} disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(envDraft[editDraft.apiKeyEnv || ""] || "").trim()) || !(editDraft.baseUrl || "").trim() || !!busy}>拉取模型列表</Button>并选择{editModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {editModels.length} 个）</span>}</span></Label>
                 <SearchSelect
                   value={editDraft.modelId || ""}
                   onChange={(v) => setEditDraft({ ...editDraft, modelId: v })}
@@ -4590,24 +4609,17 @@ export function App() {
                   placeholder={editModels.length > 0 ? t("llm.searchModel") : (editDraft.modelId || t("llm.modelPlaceholder"))}
                   disabled={!!busy}
                 />
-                <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                  <button onClick={doFetchEditModels} className="btnSmall" disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(envDraft[editDraft.apiKeyEnv || ""] || "").trim()) || !(editDraft.baseUrl || "").trim() || !!busy}
-                    style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                    {t("llm.fetchModels")}
-                  </button>
-                  {editModels.length > 0 && <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: editModels.length })}</span>}
-                </div>
                 {error && (
-                  <div style={{ marginTop: 6, padding: "6px 10px", background: "rgba(229,57,53,0.12)", border: "1px solid rgba(229,57,53,0.3)", borderRadius: 6, fontSize: 12, color: "#e53935", wordBreak: "break-all" }}>
+                  <div className="mt-1 px-2.5 py-1.5 rounded-md text-xs text-destructive bg-destructive/10 border border-destructive/30 break-all">
                     ⚠ {error}
                   </div>
                 )}
               </div>
 
-              {/* Capabilities as chips */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.capabilities")}</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {/* Capabilities */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.capabilities")}</Label>
+                <div className="flex flex-wrap gap-2">
                   {[
                     { k: "text", name: t("llm.capText") },
                     { k: "thinking", name: t("llm.capThinking") },
@@ -4617,7 +4629,13 @@ export function App() {
                   ].map((c) => {
                     const on = (editDraft.caps || []).includes(c.k);
                     return (
-                      <span key={c.k} className={`capChip ${on ? "capChipActive" : ""}`}
+                      <button key={c.k} data-slot="cap-chip" type="button"
+                        className={cn(
+                          "inline-flex items-center justify-center h-8 px-3.5 rounded-md border text-sm font-medium cursor-pointer transition-colors",
+                          on
+                            ? "border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+                            : "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        )}
                         onClick={() => setEditDraft((d) => {
                           if (!d) return d;
                           const set = new Set(d.caps || []);
@@ -4625,158 +4643,154 @@ export function App() {
                           const out = Array.from(set);
                           return { ...d, caps: out.length ? out : ["text"] };
                         })}
-                      >{on ? "\u2713 " : ""}{c.name}</span>
+                      >{c.name}</button>
                     );
                   })}
                 </div>
               </div>
 
               {/* Advanced (collapsed) */}
-              <details style={{ margin: "8px 0 4px 0" }}>
-                <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--fg-secondary, #888)", userSelect: "none", padding: "4px 0" }}>
-                  ⚙ {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
+              <details className="group rounded-lg border border-border">
+                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
+                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+                  {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
                 </summary>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "8px 0 4px 0" }}>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advApiType")}</div>
-                    <select value={editDraft.apiType} onChange={(e) => setEditDraft({ ...editDraft, apiType: e.target.value as any })} style={{ width: 180, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }}>
-                      <option value="openai">openai</option>
-                      <option value="anthropic">anthropic</option>
-                    </select>
+                <div className="border-t border-border px-4 py-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>{t("llm.advApiType")}</Label>
+                      <Select value={editDraft.apiType} onValueChange={(v) => setEditDraft({ ...editDraft, apiType: v as any })}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">openai</SelectItem>
+                          <SelectItem value="anthropic">anthropic</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{t("llm.advPriority")}</Label>
+                      <Input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} />
+                    </div>
                   </div>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advKeyEnv")}</div>
-                    <input value={editDraft.apiKeyEnv} onChange={(e) => setEditDraft({ ...editDraft, apiKeyEnv: e.target.value })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advKeyEnv")}</Label>
+                    <Input value={editDraft.apiKeyEnv} onChange={(e) => setEditDraft({ ...editDraft, apiKeyEnv: e.target.value })} />
                   </div>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advPriority")}</div>
-                    <input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} style={{ width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
+                    <Input type="number" min={0} value={editDraft.maxTokens} onChange={(e) => setEditDraft({ ...editDraft, maxTokens: Math.max(0, parseInt(e.target.value) || 0) })} />
                   </div>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advMaxTokens")}</div>
-                    <input type="number" min={0} value={editDraft.maxTokens} onChange={(e) => setEditDraft({ ...editDraft, maxTokens: Math.max(0, parseInt(e.target.value) || 0) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advMaxTokensHint")}</div>
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advContextWindow")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advContextWindowHint")}</span></Label>
+                    <Input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 200000) })} />
                   </div>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advContextWindow")}</div>
-                    <input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 200000) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advContextWindowHint")}</div>
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advTimeout")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advTimeoutHint")}</span></Label>
+                    <Input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} />
                   </div>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advTimeout")}</div>
-                    <input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advTimeoutHint")}</div>
-                  </div>
-                  <div className="dialogSection" style={{ margin: 0 }}>
-                    <div className="dialogLabel" style={{ fontSize: 12 }}>{t("llm.advRpmLimit")}</div>
-                    <input type="number" min={0} value={editDraft.rpmLimit} onChange={(e) => setEditDraft({ ...editDraft, rpmLimit: Math.max(0, parseInt(e.target.value) || 0) })} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", fontSize: 13 }} />
-                    <div className="help" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.advRpmLimitHint")}</div>
+                  <div className="space-y-1.5">
+                    <Label>{t("llm.advRpmLimit")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advRpmLimitHint")}</span></Label>
+                    <Input type="number" min={0} value={editDraft.rpmLimit} onChange={(e) => setEditDraft({ ...editDraft, rpmLimit: Math.max(0, parseInt(e.target.value) || 0) })} />
                   </div>
                 </div>
               </details>
-              </div>
 
               {/* 阶梯定价配置 */}
-              <div style={{ marginTop: 12 }}>
-              <details>
-                <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8 }}>
-                  定价配置（可选，用于费用估算）
+              <details className="group rounded-lg border border-border">
+                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
+                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+                  定价配置 <span className="text-[11px] font-normal text-muted-foreground/70">（可选，用于费用估算）</span>
                 </summary>
-                <div style={{ padding: "8px 0" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
-                    阶梯定价：按每次请求的 input_tokens 匹配档位，价格单位为每百万 token（CNY）
-                  </div>
+                <div className="border-t border-border px-4 py-3 space-y-2.5">
+                  {(editDraft.pricingTiers || []).length > 0 && (
+                    <div className="grid grid-cols-[1fr_1fr_1fr_28px] gap-1.5 text-[11px] text-muted-foreground">
+                      <span>最大输入 tokens</span>
+                      <span>输入价格/M</span>
+                      <span>输出价格/M</span>
+                      <span />
+                    </div>
+                  )}
                   {(editDraft.pricingTiers || []).map((tier, idx) => (
-                    <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 32px", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                      <div>
-                        {idx === 0 && <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>最大输入 tokens</div>}
-                        <input type="number" min={0} placeholder="128000" value={tier.max_input || ""} onChange={(e) => {
-                          const tiers = [...(editDraft.pricingTiers || [])];
-                          tiers[idx] = { ...tiers[idx], max_input: parseInt(e.target.value) || 0 };
-                          setEditDraft({ ...editDraft, pricingTiers: tiers });
-                        }} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", fontSize: 12 }} />
-                      </div>
-                      <div>
-                        {idx === 0 && <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>输入价格/M</div>}
-                        <input type="number" min={0} step={0.01} placeholder="1.2" value={tier.input_price || ""} onChange={(e) => {
-                          const tiers = [...(editDraft.pricingTiers || [])];
-                          tiers[idx] = { ...tiers[idx], input_price: parseFloat(e.target.value) || 0 };
-                          setEditDraft({ ...editDraft, pricingTiers: tiers });
-                        }} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", fontSize: 12 }} />
-                      </div>
-                      <div>
-                        {idx === 0 && <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 2 }}>输出价格/M</div>}
-                        <input type="number" min={0} step={0.01} placeholder="7.2" value={tier.output_price || ""} onChange={(e) => {
-                          const tiers = [...(editDraft.pricingTiers || [])];
-                          tiers[idx] = { ...tiers[idx], output_price: parseFloat(e.target.value) || 0 };
-                          setEditDraft({ ...editDraft, pricingTiers: tiers });
-                        }} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid var(--line)", fontSize: 12 }} />
-                      </div>
-                      <button onClick={() => {
+                    <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_28px] gap-1.5 items-center">
+                      <Input type="number" min={0} placeholder="128000" value={tier.max_input || ""} onChange={(e) => {
+                        const tiers = [...(editDraft.pricingTiers || [])];
+                        tiers[idx] = { ...tiers[idx], max_input: parseInt(e.target.value) || 0 };
+                        setEditDraft({ ...editDraft, pricingTiers: tiers });
+                      }} className="h-8 text-xs" />
+                      <Input type="number" min={0} step={0.01} placeholder="1.2" value={tier.input_price || ""} onChange={(e) => {
+                        const tiers = [...(editDraft.pricingTiers || [])];
+                        tiers[idx] = { ...tiers[idx], input_price: parseFloat(e.target.value) || 0 };
+                        setEditDraft({ ...editDraft, pricingTiers: tiers });
+                      }} className="h-8 text-xs" />
+                      <Input type="number" min={0} step={0.01} placeholder="7.2" value={tier.output_price || ""} onChange={(e) => {
+                        const tiers = [...(editDraft.pricingTiers || [])];
+                        tiers[idx] = { ...tiers[idx], output_price: parseFloat(e.target.value) || 0 };
+                        setEditDraft({ ...editDraft, pricingTiers: tiers });
+                      }} className="h-8 text-xs" />
+                      <Button data-slot="pricing-btn" variant="ghost" size="icon-xs" className="text-muted-foreground/50 hover:text-destructive" onClick={() => {
                         const tiers = (editDraft.pricingTiers || []).filter((_, i) => i !== idx);
                         setEditDraft({ ...editDraft, pricingTiers: tiers });
-                      }} style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid var(--line)", background: "var(--bg)", cursor: "pointer", fontSize: 12, color: "var(--text-secondary)", marginTop: idx === 0 ? 16 : 0 }}>✕</button>
+                      }}><XIcon className="size-3.5" /></Button>
                     </div>
                   ))}
-                  <button onClick={() => {
+                  <Button data-slot="pricing-btn" variant="outline" size="sm" className="w-full border-dashed text-muted-foreground text-xs" onClick={() => {
                     const tiers = [...(editDraft.pricingTiers || []), { max_input: 0, input_price: 0, output_price: 0 }];
                     setEditDraft({ ...editDraft, pricingTiers: tiers });
-                  }} style={{ padding: "4px 12px", borderRadius: 6, border: "1px dashed var(--line)", background: "var(--bg)", cursor: "pointer", fontSize: 11, color: "var(--text-secondary)" }}>
+                  }}>
                     + 添加档位
-                  </button>
+                  </Button>
                 </div>
               </details>
-              </div>
+            </div>}
 
-              {/* 连接测试结果 */}
-              {connTestResult && (
-                <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
-                  {connTestResult.ok
-                    ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                    : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-                </div>
-              )}
-
-              <div className="dialogFooter">
-                <button className="btnSmall" style={{ padding: "8px 18px" }} onClick={() => { resetEndpointEditor(); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button
-                    className="btnSmall"
-                    style={{ padding: "8px 18px" }}
-                    disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(envDraft[editDraft.apiKeyEnv || ""] || "").trim()) || !(editDraft.baseUrl || "").trim() || connTesting}
-                    onClick={() => { const _ep = providers.find((p) => p.slug === editDraft.providerSlug); doTestConnection({
-                      testApiType: editDraft.apiType || "openai",
-                      testBaseUrl: editDraft.baseUrl || "",
-                      testApiKey: (envDraft[editDraft.apiKeyEnv || ""] || "").trim() || (isLocalProvider(_ep) ? localProviderPlaceholderKey(_ep) : ""),
-                      testProviderSlug: editDraft.providerSlug,
-                    }); }}
-                  >
-                    {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </button>
-                  <button className="btnPrimary" style={{ padding: "8px 18px" }} onClick={async () => { await doSaveEditedEndpoint(); setConnTestResult(null); }} disabled={!!busy}>{t("common.save")}</button>
-                </div>
+            {connTestResult && (
+              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
+                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
+              )}>
+                {connTestResult.ok
+                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
               </div>
-            </div>
-          </ModalOverlay>
-        )}
+            )}
+
+            <DialogFooter className="px-6 py-2.5 shrink-0 flex-row justify-between sm:justify-between">
+              <Button variant="ghost" onClick={() => setEditModalOpen(false)}>{t("common.cancel")}</Button>
+              <div className="flex gap-2 items-center">
+                <Button variant="secondary"
+                  disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft?.providerSlug)) && !(envDraft[editDraft?.apiKeyEnv || ""] || "").trim()) || !(editDraft?.baseUrl || "").trim() || connTesting}
+                  onClick={() => { const _ep = providers.find((p) => p.slug === editDraft?.providerSlug); doTestConnection({
+                    testApiType: editDraft?.apiType || "openai",
+                    testBaseUrl: editDraft?.baseUrl || "",
+                    testApiKey: (envDraft[editDraft?.apiKeyEnv || ""] || "").trim() || (isLocalProvider(_ep) ? localProviderPlaceholderKey(_ep) : ""),
+                    testProviderSlug: editDraft?.providerSlug,
+                  }); }}
+                >
+                  {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
+                </Button>
+                <Button onClick={async () => { await doSaveEditedEndpoint(); }} disabled={!!busy}>{t("common.save")}</Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* ── Add compiler dialog ── */}
-        {addCompDialogOpen && (
-          <ModalOverlay onClose={() => setAddCompDialogOpen(false)}>
-            <div className="modalContent">
-              <div className="dialogHeader">
-                <div className="cardTitle">{t("llm.addCompiler")}</div>
-                <button className="dialogCloseBtn" onClick={() => setAddCompDialogOpen(false)}><IconX size={14} /></button>
-              </div>
-              <div className="dialogBody">
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.provider")}</div>
+        <Dialog open={addCompDialogOpen} onOpenChange={(open) => { if (!open) setAddCompDialogOpen(false); }}>
+          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { setConnTestResult(null); }}>
+            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
+              <DialogTitle>{t("llm.addCompiler")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("llm.addCompiler")}</DialogDescription>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
+              {/* Provider */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.provider")}</Label>
                 <ProviderSearchSelect
                   value={compilerProviderSlug}
                   onChange={(slug) => {
                     setCompilerProviderSlug(slug);
                     setCompilerCodingPlan(false);
-                    if (slug === "__custom__") {
+                    if (slug === "custom") {
                       setCompilerApiType("openai");
                       setCompilerBaseUrl("");
                       setCompilerApiKeyEnv("CUSTOM_COMPILER_API_KEY");
@@ -4799,95 +4813,78 @@ export function App() {
                     }
                   }}
                   options={providers.map((p) => ({ value: p.slug, label: p.name }))}
-                  extraOptions={[{ value: "__custom__", label: t("llm.customProvider") }]}
                 />
               </div>
-              {/* Coding Plan toggle for compiler endpoint */}
+
+              {/* Coding Plan toggle */}
               {(() => { const cp = providers.find((x) => x.slug === compilerProviderSlug); return cp?.coding_plan_base_url ? (
-                <div className="dialogSection">
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
-                    <input
-                      type="checkbox"
-                      checked={compilerCodingPlan}
-                      onChange={(e) => {
-                        const on = e.target.checked;
-                        setCompilerCodingPlan(on);
-                        if (cp) {
-                          if (on && cp.coding_plan_base_url) {
-                            setCompilerBaseUrl(cp.coding_plan_base_url);
-                            setCompilerApiType("anthropic");
-                          } else {
-                            setCompilerBaseUrl(cp.default_base_url || "");
-                            setCompilerApiType((cp.api_type as "openai" | "anthropic") || "openai");
-                          }
-                        }
-                      }}
-                      style={{ width: 16, height: 16, accentColor: "var(--brand)" }}
-                    />
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{t("llm.codingPlan")}</span>
-                  </label>
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 24 }}>{t("llm.codingPlanHint")}</div>
-                </div>
+                <label htmlFor="coding-plan-comp" className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 cursor-pointer select-none hover:bg-accent/50 transition-colors">
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium">{t("llm.codingPlan")}</div>
+                    <div className="text-xs text-muted-foreground">{t("llm.codingPlanHint")}</div>
+                  </div>
+                  <Switch id="coding-plan-comp" checked={compilerCodingPlan} onCheckedChange={(v) => {
+                    setCompilerCodingPlan(v);
+                    if (cp) {
+                      if (v && cp.coding_plan_base_url) {
+                        setCompilerBaseUrl(cp.coding_plan_base_url);
+                        setCompilerApiType("anthropic");
+                      } else {
+                        setCompilerBaseUrl(cp.default_base_url || "");
+                        setCompilerApiType((cp.api_type as "openai" | "anthropic") || "openai");
+                      }
+                    }
+                  }} />
+                </label>
               ) : null; })()}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.baseUrl")}</div>
-                <input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-                <div className="cardHint" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.baseUrlHint")}</div>
+
+              {/* Base URL */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
+                <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.apiKeyEnv")}</div>
-                <input value={compilerApiKeyEnv} onChange={(e) => setCompilerApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
+
+              {/* API Key Env */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.apiKeyEnv")}</Label>
+                <Input value={compilerApiKeyEnv} onChange={(e) => setCompilerApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">API Key {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <span style={{ color: "var(--muted)", fontSize: 11, fontWeight: 400 }}>({t("llm.localNoKey")})</span>}</div>
-                <input value={compilerApiKeyValue} onChange={(e) => setCompilerApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} type="password" />
-                {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, color: "var(--brand)" }}>{t("llm.localHint")}</div>
-                )}
+
+              {/* API Key */}
+              <div className="space-y-1.5">
+                <Label>API Key {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}</Label>
+                <Input value={compilerApiKeyValue} onChange={(e) => setCompilerApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} type="password" />
+                {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
-              {/* Model name — always visible; fetch is optional */}
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("status.model")}</div>
+
+              {/* Model */}
+              <div className="space-y-1.5">
+                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchCompilerModels} disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{compilerModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {compilerModels.length} 个）</span>}</span></Label>
                 <SearchSelect value={compilerModel} onChange={(v) => setCompilerModel(v)} options={compilerModels.map((m) => m.id)} placeholder={compilerModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
-                {compilerModels.length === 0 && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.7 }}>{t("llm.modelManualHint")}</span>
-                    <button onClick={doFetchCompilerModels} className="btnSmall" disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || !!busy}
-                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.fetchModels")}
-                    </button>
-                  </div>
-                )}
-                {compilerModels.length > 0 && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.6 }}>{t("llm.modelFetched", { count: compilerModels.length })}</span>
-                    <button onClick={doFetchCompilerModels} className="btnSmall" disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || !!busy}
-                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.refetch")}
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.endpointName")} <span style={{ color: "var(--muted)", fontSize: 11 }}>({t("common.optional")})</span></div>
-                <input value={compilerEndpointName} onChange={(e) => setCompilerEndpointName(e.target.value)} placeholder={`compiler-${compilerProviderSlug || "custom"}-${compilerModel || "model"}`} />
-              </div>
               </div>
 
-              {/* 连接测试结果 */}
-              {connTestResult && (
-                <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
-                  {connTestResult.ok
-                    ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                    : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-                </div>
-              )}
+              {/* Endpoint Name */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.endpointName")} <span className="text-[11px] font-normal text-muted-foreground/70">({t("common.optional")})</span></Label>
+                <Input value={compilerEndpointName} onChange={(e) => setCompilerEndpointName(e.target.value)} placeholder={`compiler-${compilerProviderSlug || "custom"}-${compilerModel || "model"}`} />
+              </div>
+            </div>
 
-              <div className="dialogFooter">
-                <button className="btnSecondary endpointFooterBtn" onClick={() => { setAddCompDialogOpen(false); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                  <button
-                    className="btnSecondary endpointFooterBtn"
+            {connTestResult && (
+              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
+                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
+              )}>
+                {connTestResult.ok
+                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
+              </div>
+            )}
+
+            <DialogFooter className="px-6 py-2.5 shrink-0 flex-col sm:flex-col gap-1.5">
+              <div className="flex items-center justify-between w-full">
+                <Button variant="ghost" onClick={() => setAddCompDialogOpen(false)}>{t("common.cancel")}</Button>
+                <div className="flex gap-2 items-center">
+                  <Button variant="secondary"
                     disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || connTesting}
                     onClick={() => { const _cp = providers.find((p) => p.slug === compilerProviderSlug); doTestConnection({
                       testApiType: compilerApiType,
@@ -4897,7 +4894,7 @@ export function App() {
                     }); }}
                   >
                     {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </button>
+                  </Button>
                   {(() => {
                     const _isCompLocal = isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug));
                     const cMissing: string[] = [];
@@ -4907,40 +4904,46 @@ export function App() {
                     if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
                     const cBtnDisabled = cMissing.length > 0 || !!busy;
                     return (
-                      <div className="endpointPrimaryWrap">
-                        <button className="btnPrimary endpointFooterBtn" onClick={async () => { const ok = await doSaveCompilerEndpoint(); if (ok) { setAddCompDialogOpen(false); setConnTestResult(null); } }} disabled={cBtnDisabled}>
-                          {t("llm.addEndpoint")}
-                        </button>
-                        <span className="endpointPrimaryHint">
-                          {cBtnDisabled && !busy && cMissing.length > 0 ? (
-                            <>{t("common.missingFields") || "缺少"}: {cMissing.join(", ")}</>
-                          ) : null}
-                        </span>
-                      </div>
+                      <Button onClick={async () => { const ok = await doSaveCompilerEndpoint(); if (ok) { setAddCompDialogOpen(false); setConnTestResult(null); } }} disabled={cBtnDisabled}>
+                        {t("llm.addEndpoint")}
+                      </Button>
                     );
                   })()}
                 </div>
               </div>
-            </div>
-          </ModalOverlay>
-        )}
+              {(() => {
+                const _isCompLocal = isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug));
+                const cMissing: string[] = [];
+                if (!compilerModel.trim()) cMissing.push(t("status.model"));
+                if (!_isCompLocal && !compilerApiKeyEnv.trim()) cMissing.push("Key Env Name");
+                if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
+                if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
+                const cShow = cMissing.length > 0 && !busy;
+                return (
+                  <div className={cn("text-[10px] text-muted-foreground text-right w-full", !cShow && "invisible")}>{t("common.missingFields") || "缺少"}: {cMissing.join(", ") || "—"}</div>
+                );
+              })()}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        {/* ── Add STT dialog (aligned with compiler dialog) ── */}
-        {addSttDialogOpen && (
-          <ModalOverlay onClose={() => setAddSttDialogOpen(false)}>
-            <div className="modalContent">
-              <div className="dialogHeader">
-                <div className="cardTitle">{t("llm.addStt")}</div>
-                <button className="dialogCloseBtn" onClick={() => { setAddSttDialogOpen(false); setConnTestResult(null); }}><IconX size={14} /></button>
-              </div>
-              <div className="dialogBody">
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.provider")}</div>
+        {/* ── Add STT dialog ── */}
+        <Dialog open={addSttDialogOpen} onOpenChange={(open) => { if (!open) setAddSttDialogOpen(false); }}>
+          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { setConnTestResult(null); }}>
+            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
+              <DialogTitle>{t("llm.addStt")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("llm.addStt")}</DialogDescription>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
+              {/* Provider */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.provider")}</Label>
                 <ProviderSearchSelect
                   value={sttProviderSlug}
                   onChange={(slug) => {
                     setSttProviderSlug(slug);
-                    if (slug === "__custom__") {
+                    if (slug === "custom") {
                       setSttApiType("openai");
                       setSttBaseUrl("");
                       setSttApiKeyEnv("CUSTOM_STT_API_KEY");
@@ -4973,80 +4976,70 @@ export function App() {
                     }
                   }}
                   options={providers.map((p) => ({ value: p.slug, label: p.name }))}
-                  extraOptions={[{ value: "__custom__", label: t("llm.customProvider") }]}
                 />
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.baseUrl")}</div>
-                <input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-                <div className="cardHint" style={{ fontSize: 11, marginTop: 2 }}>{t("llm.baseUrlHint")}</div>
+
+              {/* Base URL */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
+                <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.apiKeyEnv")}</div>
-                <input value={sttApiKeyEnv} onChange={(e) => setSttApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
+
+              {/* API Key Env */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.apiKeyEnv")}</Label>
+                <Input value={sttApiKeyEnv} onChange={(e) => setSttApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">API Key {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <span style={{ color: "var(--muted)", fontSize: 11, fontWeight: 400 }}>({t("llm.localNoKey")})</span>}</div>
-                <input value={sttApiKeyValue} onChange={(e) => setSttApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} type="password" />
-                {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, color: "var(--brand)" }}>{t("llm.localHint")}</div>
-                )}
+
+              {/* API Key */}
+              <div className="space-y-1.5">
+                <Label>API Key {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}</Label>
+                <Input value={sttApiKeyValue} onChange={(e) => setSttApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) ? t("llm.localKeyPlaceholder") : "sk-..."} type="password" />
+                {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("status.model")}</div>
+
+              {/* Model */}
+              <div className="space-y-1.5">
+                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button variant="link" size="xs" data-slot="label-link" className="h-auto p-0 text-[11px] text-primary hover:text-primary/80" onClick={doFetchSttModels} disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{sttModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {sttModels.length} 个）</span>}</span></Label>
                 <SearchSelect value={sttModel} onChange={(v) => setSttModel(v)} options={sttModels.map((m) => m.id)} placeholder={sttModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
-                {sttModels.length === 0 && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.7 }}>{t("llm.modelManualHint")}</span>
-                    <button onClick={doFetchSttModels} className="btnSmall" disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}
-                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.fetchModels")}
-                    </button>
-                  </div>
-                )}
-                {sttModels.length > 0 && (
-                  <div className="help" style={{ marginTop: 4, paddingLeft: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ opacity: 0.6 }}>{STT_RECOMMENDED_MODELS[sttProviderSlug] ? "" : t("llm.modelFetched", { count: sttModels.length })}</span>
-                    <button onClick={doFetchSttModels} className="btnSmall" disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}
-                      style={{ fontSize: 11, padding: "2px 10px", borderRadius: 6 }}>
-                      {t("llm.fetchModels")}
-                    </button>
-                  </div>
-                )}
                 {(() => {
                   const rec = STT_RECOMMENDED_MODELS[sttProviderSlug];
                   if (!rec?.length) return null;
                   return (
-                    <div className="help" style={{ marginTop: 4, paddingLeft: 2, fontSize: 11, opacity: 0.7, lineHeight: 1.6 }}>
+                    <div className="mt-1 text-xs text-muted-foreground/70 leading-relaxed">
                       {rec.map((m) => (
-                        <span key={m.id} style={{ marginRight: 12 }}>
-                          <code style={{ background: "rgba(0,0,0,0.05)", padding: "1px 5px", borderRadius: 4, cursor: "pointer" }} onClick={() => setSttModel(m.id)}>{m.id}</code>
-                          {m.note && <span style={{ marginLeft: 3, color: "var(--brand)" }}>{m.note}</span>}
+                        <span key={m.id} className="mr-3">
+                          <code className="bg-muted/50 px-1.5 py-0.5 rounded cursor-pointer hover:bg-muted transition-colors" onClick={() => setSttModel(m.id)}>{m.id}</code>
+                          {m.note && <span className="ml-1 text-primary">{m.note}</span>}
                         </span>
                       ))}
                     </div>
                   );
                 })()}
               </div>
-              <div className="dialogSection">
-                <div className="dialogLabel">{t("llm.endpointName")} <span style={{ color: "var(--muted)", fontSize: 11 }}>({t("common.optional")})</span></div>
-                <input value={sttEndpointName} onChange={(e) => setSttEndpointName(e.target.value)} placeholder={`stt-${sttProviderSlug || "custom"}-${sttModel || "model"}`} />
-              </div>
-              </div>
 
-              {connTestResult && (
-                <div className={`connTestResult ${connTestResult.ok ? "connTestOk" : "connTestFail"}`}>
-                  {connTestResult.ok
-                    ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                    : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-                </div>
-              )}
+              {/* Endpoint Name */}
+              <div className="space-y-1.5">
+                <Label>{t("llm.endpointName")} <span className="text-[11px] font-normal text-muted-foreground/70">({t("common.optional")})</span></Label>
+                <Input value={sttEndpointName} onChange={(e) => setSttEndpointName(e.target.value)} placeholder={`stt-${sttProviderSlug || "custom"}-${sttModel || "model"}`} />
+              </div>
+            </div>
 
-              <div className="dialogFooter">
-                <button className="btnSecondary endpointFooterBtn" onClick={() => { setAddSttDialogOpen(false); setConnTestResult(null); }}>{t("common.cancel")}</button>
-                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                  <button
-                    className="btnSecondary endpointFooterBtn"
+            {connTestResult && (
+              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
+                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
+              )}>
+                {connTestResult.ok
+                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
+                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
+              </div>
+            )}
+
+            <DialogFooter className="px-6 py-2.5 shrink-0 flex-col sm:flex-col gap-1.5">
+              <div className="flex items-center justify-between w-full">
+                <Button variant="ghost" onClick={() => setAddSttDialogOpen(false)}>{t("common.cancel")}</Button>
+                <div className="flex gap-2 items-center">
+                  <Button variant="secondary"
                     disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || connTesting}
                     onClick={() => { const _sp = providers.find((p) => p.slug === sttProviderSlug); doTestConnection({
                       testApiType: sttApiType,
@@ -5056,7 +5049,7 @@ export function App() {
                     }); }}
                   >
                     {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </button>
+                  </Button>
                   {(() => {
                     const _isSttLocal = isLocalProvider(providers.find((p) => p.slug === sttProviderSlug));
                     const sMissing: string[] = [];
@@ -5065,23 +5058,27 @@ export function App() {
                     if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
                     const sBtnDisabled = sMissing.length > 0 || !!busy;
                     return (
-                      <div className="endpointPrimaryWrap">
-                        <button className="btnPrimary endpointFooterBtn" onClick={async () => { const ok = await doSaveSttEndpoint(); if (ok) { setAddSttDialogOpen(false); setConnTestResult(null); } }} disabled={sBtnDisabled}>
-                          {t("llm.addStt")}
-                        </button>
-                        <span className="endpointPrimaryHint">
-                          {sBtnDisabled && !busy && sMissing.length > 0 ? (
-                            <>{t("common.missingFields") || "缺少"}: {sMissing.join(", ")}</>
-                          ) : null}
-                        </span>
-                      </div>
+                      <Button onClick={async () => { const ok = await doSaveSttEndpoint(); if (ok) { setAddSttDialogOpen(false); setConnTestResult(null); } }} disabled={sBtnDisabled}>
+                        {t("llm.addStt")}
+                      </Button>
                     );
                   })()}
                 </div>
               </div>
-            </div>
-          </ModalOverlay>
-        )}
+              {(() => {
+                const _isSttLocal = isLocalProvider(providers.find((p) => p.slug === sttProviderSlug));
+                const sMissing: string[] = [];
+                if (!sttModel.trim()) sMissing.push(t("status.model"));
+                if (!_isSttLocal && !sttApiKeyValue.trim()) sMissing.push("API Key");
+                if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
+                const sShow = sMissing.length > 0 && !busy;
+                return (
+                  <div className={cn("text-[10px] text-muted-foreground text-right w-full", !sShow && "invisible")}>{t("common.missingFields") || "缺少"}: {sMissing.join(", ") || "—"}</div>
+                );
+              })()}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </>
     );
   }
@@ -5089,9 +5086,8 @@ export function App() {
   // FieldText/FieldBool/FieldSelect/FieldCombo/TelegramPairingCodeHint -> ./components/EnvFields.tsx
   // Wrapper closures that pass envDraft/onEnvChange automatically to extracted field components
   const _envBase = { envDraft, onEnvChange: setEnvDraft, busy };
-  const _secretCtx = { secretShown, onToggleSecret: (k: string) => setSecretShown((m: Record<string, boolean>) => ({ ...m, [k]: !m[k] })) };
   const FT = (p: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password" }) =>
-    <FieldText key={p.k} {...p} {..._envBase} {..._secretCtx} />;
+    <FieldText key={p.k} {...p} {..._envBase} />;
   const FB = (p: { k: string; label: string; help?: string; defaultValue?: boolean }) =>
     <FieldBool key={p.k} {...p} {..._envBase} />;
   const FS = (p: { k: string; label: string; options: { value: string; label: string }[]; help?: string }) =>
@@ -5112,8 +5108,7 @@ export function App() {
   }
 
   const _configViewProps = {
-    envDraft, setEnvDraft, busy, secretShown,
-    onToggleSecret: (k: string) => setSecretShown((m: Record<string, boolean>) => ({ ...m, [k]: !m[k] })),
+    envDraft, setEnvDraft, busy,
     currentWorkspaceId, setNotice,
   };
 
@@ -5130,9 +5125,7 @@ export function App() {
     const keysTools = [
       "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FORCE_IPV4",
       "TOOL_MAX_PARALLEL", "FORCE_TOOL_CALL_MAX_RETRIES", "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
-      "MCP_ENABLED", "MCP_TIMEOUT", "MCP_BROWSER_ENABLED",
-      "MCP_MYSQL_ENABLED", "MCP_MYSQL_HOST", "MCP_MYSQL_USER", "MCP_MYSQL_PASSWORD", "MCP_MYSQL_DATABASE",
-      "MCP_POSTGRES_ENABLED", "MCP_POSTGRES_URL",
+      "MCP_ENABLED", "MCP_TIMEOUT",
       "DESKTOP_ENABLED", "DESKTOP_DEFAULT_MONITOR", "DESKTOP_COMPRESSION_QUALITY",
       "DESKTOP_MAX_WIDTH", "DESKTOP_MAX_HEIGHT", "DESKTOP_CACHE_TTL",
       "DESKTOP_UIA_TIMEOUT", "DESKTOP_UIA_RETRY_INTERVAL", "DESKTOP_UIA_MAX_RETRIES",
@@ -5150,46 +5143,42 @@ export function App() {
     return (
       <>
         <div className="card">
-          <div className="cardTitle">{t("config.toolsTitle")}</div>
-          <div className="cardHint">{t("config.toolsHint")}</div>
-          <div className="divider" />
+          <h3 className="text-base font-bold tracking-tight">{t("config.toolsTitle")}</h3>
+          <p className="text-sm text-muted-foreground mt-1 mb-3">{t("config.toolsHint")}</p>
 
           {/* ── MCP (open by default, browser enabled) ── */}
-          <details className="configDetails" open>
-            <summary>{t("config.toolsMCP")}</summary>
-            <div className="configDetailsBody">
-              {FB({ k: "MCP_ENABLED", label: t("config.toolsMCPEnable"), help: t("config.toolsMCPEnableHelp") })}
+          <details className="group rounded-lg border border-border" open>
+            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
+              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180 text-muted-foreground" />
+              {t("config.toolsMCP")}
+            </summary>
+            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
               <div className="grid2">
-                {FB({ k: "MCP_BROWSER_ENABLED", label: "Browser MCP", help: t("config.toolsMCPBrowserHelp") })}
+                {FB({ k: "MCP_ENABLED", label: t("config.toolsMCPEnable"), help: t("config.toolsMCPEnableHelp") })}
                 {FT({ k: "MCP_TIMEOUT", label: "Timeout (s)", placeholder: "60" })}
               </div>
-              <div className="divider" />
-              {FB({ k: "MCP_MYSQL_ENABLED", label: "MySQL" })}
-              <div className="grid2">
-                {FT({ k: "MCP_MYSQL_HOST", label: "Host", placeholder: "localhost" })}
-                {FT({ k: "MCP_MYSQL_USER", label: "User", placeholder: "root" })}
-                {FT({ k: "MCP_MYSQL_PASSWORD", label: "Password", type: "password" })}
-                {FT({ k: "MCP_MYSQL_DATABASE", label: "Database", placeholder: "mydb" })}
-              </div>
-              <div className="divider" />
-              {FB({ k: "MCP_POSTGRES_ENABLED", label: "PostgreSQL" })}
-              {FT({ k: "MCP_POSTGRES_URL", label: "URL", placeholder: "postgresql://user:pass@localhost/db" })}
             </div>
           </details>
 
           {/* ── Desktop Automation (open by default, enabled) ── */}
-          <details className="configDetails" open>
-            <summary>{t("config.toolsDesktop")}</summary>
-            <div className="configDetailsBody">
+          <details className="group/desktop rounded-lg border border-border mt-2" open>
+            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
+              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/desktop:rotate-180 text-muted-foreground" />
+              {t("config.toolsDesktop")}
+            </summary>
+            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
               {FB({ k: "DESKTOP_ENABLED", label: t("config.toolsDesktopEnable"), help: t("config.toolsDesktopHelp") })}
               <div className="grid3">
                 {FT({ k: "DESKTOP_DEFAULT_MONITOR", label: t("config.toolsMonitor"), placeholder: "0" })}
                 {FT({ k: "DESKTOP_MAX_WIDTH", label: t("config.toolsMaxW"), placeholder: "1920" })}
                 {FT({ k: "DESKTOP_MAX_HEIGHT", label: t("config.toolsMaxH"), placeholder: "1080" })}
               </div>
-              <details className="configDetails">
-                <summary>{t("config.toolsDesktopAdvanced")}</summary>
-                <div className="configDetailsBody">
+              <details className="group/deskadv rounded-lg border border-border">
+                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors text-muted-foreground">
+                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/deskadv:rotate-180" />
+                  {t("config.toolsDesktopAdvanced")}
+                </summary>
+                <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
                   <div className="grid3">
                     {FT({ k: "DESKTOP_COMPRESSION_QUALITY", label: t("config.toolsCompression"), placeholder: "85" })}
                     {FT({ k: "DESKTOP_CACHE_TTL", label: "Cache TTL", placeholder: "1.0" })}
@@ -5211,9 +5200,12 @@ export function App() {
           </details>
 
           {/* ── Model Downloads & Voice Recognition (prominent, open by default) ── */}
-          <details className="configDetails" open>
-            <summary>{t("config.toolsDownloadVoice")}</summary>
-            <div className="configDetailsBody">
+          <details className="group/dl rounded-lg border border-border mt-2" open>
+            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
+              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/dl:rotate-180 text-muted-foreground" />
+              {t("config.toolsDownloadVoice")}
+            </summary>
+            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
               <div className="grid2">
                 {FS({ k: "MODEL_DOWNLOAD_SOURCE", label: t("config.agentDownloadSource"), options: [
                   { value: "auto", label: "Auto (自动选择最快源)" },
@@ -5241,9 +5233,12 @@ export function App() {
           </details>
 
           {/* ── Network & Proxy ── */}
-          <details className="configDetails">
-            <summary>{t("config.toolsNetwork")}</summary>
-            <div className="configDetailsBody">
+          <details className="group/net rounded-lg border border-border mt-2">
+            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
+              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/net:rotate-180 text-muted-foreground" />
+              {t("config.toolsNetwork")}
+            </summary>
+            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
               <div className="grid3">
                 {FT({ k: "HTTP_PROXY", label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890" })}
                 {FT({ k: "HTTPS_PROXY", label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890" })}
@@ -5257,93 +5252,46 @@ export function App() {
           </details>
 
           {/* ── Other ── */}
-          <details className="configDetails">
-            <summary>{t("config.toolsOther")}</summary>
-            <div className="configDetailsBody">
+          <details className="group/other rounded-lg border border-border mt-2">
+            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
+              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/other:rotate-180 text-muted-foreground" />
+              {t("config.toolsOther")}
+            </summary>
+            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
               <div className="grid2">
                 {FT({ k: "FORCE_TOOL_CALL_MAX_RETRIES", label: t("config.toolsForceRetry"), placeholder: "1" })}
               </div>
             </div>
           </details>
 
-          <div className="divider" />
-
-          {/* ── Skills (collapsed, at bottom) ── */}
-          <details className="configDetails">
-            <summary>{t("config.toolsSkills")} {skillsDetail ? `(${systemSkills.length + externalSkills.length})` : ""}</summary>
-            <div className="configDetailsBody">
-              <div className="row" style={{ justifyContent: "flex-end", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                <button className="btnSmall" onClick={() => {
-                  if (!skillsDetail) return; setSkillsTouched(true);
-                  const m: Record<string, boolean> = {};
-                  for (const s of skillsDetail) m[s.name] = true;
-                  setSkillsSelection(m);
-                }} disabled={!skillsDetail || !!busy}>{t("config.toolsEnableAll")}</button>
-                <button className="btnSmall" onClick={() => {
-                  if (!skillsDetail) return; setSkillsTouched(true);
-                  const m: Record<string, boolean> = {};
-                  for (const s of skillsDetail) m[s.name] = !!s.system;
-                  setSkillsSelection(m);
-                }} disabled={!skillsDetail || !!busy}>{t("config.toolsSystemOnly")}</button>
-                <button className="btnSmall" onClick={doRefreshSkills} disabled={!currentWorkspaceId || !!busy}>{t("config.toolsRefresh")}</button>
-                <button className="btnSmall btnSmallPrimary" onClick={doSaveSkillsSelection}
-                  disabled={!currentWorkspaceId || !skillsDetail || !!busy}>{t("config.toolsSaveSkills")}</button>
+          {/* ── Skills toggle ── */}
+          <div className="flex items-center justify-between rounded-lg border border-border mt-3 px-4 py-2.5">
+            <span className="text-sm font-medium">{t("config.toolsSkills")} {skillSummary ? `(${skillSummary.count})` : ""}</span>
+            <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <span>{disabledViews.includes("skills") ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
+              <div
+                onClick={() => toggleViewDisabled("skills")}
+                className="relative shrink-0 transition-colors duration-200 rounded-full"
+                style={{
+                  width: 40, height: 22,
+                  background: disabledViews.includes("skills") ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
+                }}
+              >
+                <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
+                  width: 18, height: 18,
+                  left: disabledViews.includes("skills") ? 2 : 20,
+                }} />
               </div>
-
-              {!skillsDetail ? (
-                <div className="cardHint">{t("config.toolsNoSkills")}</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {systemSkills.length > 0 && (
-                    <div className="help">{t("config.toolsSystemLabel", { count: systemSkills.length })}</div>
-                  )}
-                  {systemSkills.map((s) => {
-                    const lang = i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh";
-                    const dName = s.name_i18n?.[lang] || s.name;
-                    const dDesc = s.description_i18n?.[lang] || s.description;
-                    return (
-                      <div key={s.name} className="row" style={{ justifyContent: "space-between", alignItems: "center", padding: "2px 0" }}>
-                        <div style={{ minWidth: 0 }}><b>{dName}</b>{dName !== s.name && <span style={{ opacity: 0.4, marginLeft: 4, fontSize: 11, fontFamily: "monospace" }}>{s.name}</span>} <span className="pill" style={{ fontSize: 11 }}>{t("skills.system")}</span>
-                          <span className="help" style={{ marginLeft: 8 }}>{dDesc}</span></div>
-                      </div>
-                    );
-                  })}
-                  {externalSkills.length > 0 && (
-                    <>
-                      <div className="divider" />
-                      <div className="help">{t("config.toolsExternalLabel", { count: externalSkills.length })}</div>
-                    </>
-                  )}
-                  {externalSkills.map((s) => {
-                    const on = !!skillsSelection[s.name];
-                    const lang = i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh";
-                    const dName = s.name_i18n?.[lang] || s.name;
-                    const dDesc = s.description_i18n?.[lang] || s.description;
-                    return (
-                      <div key={s.name} className="row" style={{ justifyContent: "space-between", alignItems: "center", padding: "2px 0" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}><b>{dName}</b>{dName !== s.name && <span style={{ opacity: 0.4, marginLeft: 4, fontSize: 11, fontFamily: "monospace" }}>{s.name}</span>}
-                          <span className="help" style={{ marginLeft: 8 }}>{dDesc}</span></div>
-                        <label className="pill" style={{ cursor: "pointer", userSelect: "none", flexShrink: 0 }}>
-                          <input style={{ width: 14, height: 14 }} type="checkbox" checked={on}
-                            onChange={(e) => { setSkillsTouched(true); setSkillsSelection((m) => ({ ...m, [s.name]: e.target.checked })); }} />
-                          {t("config.enable")}
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </details>
+            </label>
+          </div>
 
         </div>
 
         {/* ── CLI 命令行工具管理 (desktop only) ── */}
         {IS_TAURI && (
         <div className="card" style={{ marginTop: 16 }}>
-          <div className="cardTitle">CLI 命令行工具</div>
-          <div className="cardHint">管理终端命令注册，注册后可在 CMD / PowerShell / 终端中直接使用 oa 或 openakita 命令。</div>
-          <div className="divider" />
+          <h3 className="text-base font-bold tracking-tight">CLI 命令行工具</h3>
+          <p className="text-sm text-muted-foreground mt-1 mb-3">管理终端命令注册，注册后可在 CMD / PowerShell / 终端中直接使用 oa 或 openakita 命令。</p>
           <CliManager />
         </div>
         )}
@@ -6163,14 +6111,6 @@ export function App() {
       // MCP (docs/mcp-integration.md)
       "MCP_ENABLED",
       "MCP_TIMEOUT",
-      "MCP_BROWSER_ENABLED",
-      "MCP_MYSQL_ENABLED",
-      "MCP_MYSQL_HOST",
-      "MCP_MYSQL_USER",
-      "MCP_MYSQL_PASSWORD",
-      "MCP_MYSQL_DATABASE",
-      "MCP_POSTGRES_ENABLED",
-      "MCP_POSTGRES_URL",
       // Desktop automation
       "DESKTOP_ENABLED",
       "DESKTOP_DEFAULT_MONITOR",
@@ -6454,22 +6394,10 @@ export function App() {
                 <div className="label" style={{ marginBottom: 8 }}>
                   MCP
                 </div>
-                {FB({ k: "MCP_ENABLED", label: "启用 MCP", help: "连接外部 MCP 服务/工具" })}
-                <div className="grid2" style={{ marginTop: 10 }}>
-                  {FB({ k: "MCP_BROWSER_ENABLED", label: "Browser MCP", help: "Playwright 浏览器自动化" })}
+                <div className="grid2">
+                  {FB({ k: "MCP_ENABLED", label: "启用 MCP", help: "连接外部 MCP 服务/工具" })}
                   {FT({ k: "MCP_TIMEOUT", label: "MCP_TIMEOUT", placeholder: "60" })}
                 </div>
-                <div className="divider" />
-                {FB({ k: "MCP_MYSQL_ENABLED", label: "MySQL MCP" })}
-                <div className="grid2" style={{ marginTop: 10 }}>
-                  {FT({ k: "MCP_MYSQL_HOST", label: "MCP_MYSQL_HOST", placeholder: "localhost" })}
-                  {FT({ k: "MCP_MYSQL_USER", label: "MCP_MYSQL_USER", placeholder: "root" })}
-                  {FT({ k: "MCP_MYSQL_PASSWORD", label: "MCP_MYSQL_PASSWORD", type: "password" })}
-                  {FT({ k: "MCP_MYSQL_DATABASE", label: "MCP_MYSQL_DATABASE", placeholder: "mydb" })}
-                </div>
-                <div className="divider" />
-                {FB({ k: "MCP_POSTGRES_ENABLED", label: "Postgres MCP" })}
-                {FT({ k: "MCP_POSTGRES_URL", label: "MCP_POSTGRES_URL", placeholder: "postgresql://user:pass@localhost/db" })}
               </div>
 
               <div className="card" style={{ marginTop: 0 }}>
@@ -8504,17 +8432,17 @@ export function App() {
           return saveConfig ? (
             <div className="footer" style={{ gridRow: 4, justifyContent: "flex-end" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button className="btnPrimary"
+                <Button variant="secondary"
                   onClick={() => renderIntegrationsSave(saveConfig.keys, saveConfig.savedMsg)}
                   disabled={!currentWorkspaceId || !!busy}>
                   {t("config.saveEnv")}
-                </button>
-                <button className="btnApplyRestart"
+                </Button>
+                <Button
                   onClick={() => applyAndRestart(saveConfig.keys)}
                   disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
                   title={t("config.applyRestartHint")}>
                   {t("config.applyRestart")}
-                </button>
+                </Button>
               </div>
             </div>
           ) : null;

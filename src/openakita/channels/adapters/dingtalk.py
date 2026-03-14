@@ -13,10 +13,12 @@
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,6 +86,8 @@ class DingTalkAdapter(ChannelAdapter):
 
     API_BASE = "https://oapi.dingtalk.com"
     API_NEW = "https://api.dingtalk.com/v1.0"
+    CARD_SEND_URL = "https://api.dingtalk.com/v1.0/im/v1.0/robot/interactiveCards/send"
+    CARD_UPDATE_URL = "https://api.dingtalk.com/v1.0/im/robots/interactiveCards"
 
     def __init__(
         self,
@@ -134,6 +138,9 @@ class DingTalkAdapter(ChannelAdapter):
         self._session_webhooks: dict[str, str] = {}
         self._conversation_users: dict[str, str] = {}  # conversationId -> senderId
         self._conversation_types: dict[str, str] = {}  # conversationId -> "1"(单聊)/"2"(群聊)
+
+        # 互动卡片 typing 状态: chat_id -> cardBizId
+        self._thinking_cards: dict[str, str] = {}
 
     async def start(self) -> None:
         """启动钉钉适配器 (Stream 模式)"""
@@ -487,6 +494,88 @@ class DingTalkAdapter(ChannelAdapter):
         )
         return False
 
+    # ==================== 互动卡片 (Typing / Thinking Card) ====================
+
+    async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
+        """发送"思考中..."占位卡片（首次调用时发送，后续调用跳过）。
+
+        Gateway 的 _keep_typing 每 4 秒调用一次，仅第一次生成卡片。
+        """
+        if chat_id in self._thinking_cards:
+            return
+        card_biz_id = f"thinking_{uuid.uuid4().hex[:16]}"
+        self._thinking_cards[chat_id] = card_biz_id
+        try:
+            await self._send_interactive_card(chat_id, card_biz_id, "💭 **正在思考中...**")
+        except Exception as e:
+            self._thinking_cards.pop(chat_id, None)
+            logger.debug(f"DingTalk: send_typing card failed: {e}")
+
+    async def clear_typing(self, chat_id: str, thread_id: str | None = None) -> None:
+        """清理残留的 thinking card（更新为"处理完成"）。
+
+        正常路径下 send_message 已经消费了卡片，此方法不会做任何事。
+        仅在异常路径（Agent + _send_error 双重失败、或 typing 重建后未被消费）时触发。
+        """
+        card_biz_id = self._thinking_cards.pop(chat_id, None)
+        if not card_biz_id:
+            return
+        try:
+            await self._update_interactive_card(card_biz_id, "✅ 处理完成")
+        except Exception:
+            pass
+
+    async def _send_interactive_card(
+        self, chat_id: str, card_biz_id: str, content: str
+    ) -> None:
+        """发送互动卡片（普通版 StandardCard）"""
+        await self._refresh_token()
+        card_data = json.dumps({
+            "config": {"autoLayout": True, "enableForward": False},
+            "header": {"title": {"type": "text", "text": ""}},
+            "contents": [{"type": "markdown", "text": content, "id": "content_main"}],
+        })
+        body: dict = {
+            "cardTemplateId": "StandardCard",
+            "cardBizId": card_biz_id,
+            "robotCode": self.config.app_key,
+            "cardData": card_data,
+            "pullStrategy": False,
+        }
+        conv_type = self._conversation_types.get(chat_id, "1")
+        if conv_type == "2":
+            body["openConversationId"] = chat_id
+        else:
+            staff_id = self._conversation_users.get(chat_id)
+            if not staff_id or staff_id.startswith("$:LWCP"):
+                raise ValueError("No valid staffId for single chat card")
+            body["singleChatReceiver"] = json.dumps({"userId": staff_id})
+
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+        resp = await self._http_client.post(self.CARD_SEND_URL, headers=headers, json=body)
+        result = resp.json()
+        if "processQueryKey" not in result:
+            raise RuntimeError(f"Card send failed: {result}")
+        logger.debug(f"DingTalk: thinking card sent, bizId={card_biz_id}")
+
+    async def _update_interactive_card(self, card_biz_id: str, content: str) -> None:
+        """更新互动卡片内容（全量替换 cardData）"""
+        await self._refresh_token()
+        card_data = json.dumps({
+            "config": {"autoLayout": True, "enableForward": True},
+            "header": {"title": {"type": "text", "text": ""}},
+            "contents": [{"type": "markdown", "text": content, "id": "content_main"}],
+        })
+        body = {"cardBizId": card_biz_id, "cardData": card_data}
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+        resp = await self._http_client.put(self.CARD_UPDATE_URL, headers=headers, json=body)
+        result = resp.json()
+        if "processQueryKey" not in result:
+            raise RuntimeError(f"Card update failed: {result}")
+        logger.debug(f"DingTalk: card updated, bizId={card_biz_id}")
+
+    # ==================== 消息发送 ====================
+
     async def send_message(self, message: OutgoingMessage) -> str:
         """
         发送消息 - 智能路由
@@ -502,6 +591,20 @@ class DingTalkAdapter(ChannelAdapter):
         核心约束: 钉钉 Webhook 只支持 text/markdown/actionCard/feedCard，
         不支持 image/file/voice 原生类型。所有图片必须通过 markdown 嵌入。
         """
+        # ---- 思考卡片处理：尝试更新占位卡片为最终回复 ----
+        card_biz_id = self._thinking_cards.pop(message.chat_id, None)
+        if card_biz_id:
+            text = message.content.text or ""
+            if text and not message.content.has_media:
+                try:
+                    await self._update_interactive_card(card_biz_id, text)
+                    return f"card_{card_biz_id}"
+                except Exception as e:
+                    logger.warning(f"DingTalk: update thinking card failed, fallback: {e}")
+            else:
+                with contextlib.suppress(Exception):
+                    await self._update_interactive_card(card_biz_id, "✅ 处理完成")
+
         # 获取 webhook
         session_webhook = message.metadata.get("session_webhook", "")
         if not session_webhook:

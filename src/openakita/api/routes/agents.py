@@ -163,9 +163,9 @@ async def create_bot(body: BotCreateRequest, request: Request):
     runtime_state.save()
     logger.info(f"[Agents API] Created bot: {body.id}")
 
-    # 热注册：如果 gateway 正在运行且 bot 已启用，立即创建并注册 adapter
-    if body.enabled:
-        await _hot_register_bot(request, bot)
+    if bot.get("enabled", True):
+        from openakita.main import apply_im_bot
+        await apply_im_bot(bot)
 
     return {"status": "ok", "bot": bot}
 
@@ -202,8 +202,11 @@ async def update_bot(bot_id: str, body: BotUpdateRequest, request: Request):
     runtime_state.save()
     logger.info(f"[Agents API] Updated bot: {bot_id}")
 
-    # 热更新：停掉旧 adapter 并重新注册（凭据或绑定可能变化）
-    await _hot_update_bot(request, bot)
+    from openakita.main import apply_im_bot, remove_im_bot
+    if bot.get("enabled", True):
+        await apply_im_bot(bot)
+    else:
+        await remove_im_bot(bot)
 
     return {"status": "ok", "bot": bot}
 
@@ -214,7 +217,7 @@ async def delete_bot(bot_id: str, request: Request):
     from openakita.config import runtime_state, settings
 
     bots = list(settings.im_bots)
-    target = next((b for b in bots if isinstance(b, dict) and b.get("id") == bot_id), None)
+    deleted = [b for b in bots if isinstance(b, dict) and b.get("id") == bot_id]
     new_bots = [b for b in bots if isinstance(b, dict) and b.get("id") != bot_id]
     if len(new_bots) == len(bots):
         raise HTTPException(status_code=404, detail=f"bot '{bot_id}' not found")
@@ -223,9 +226,9 @@ async def delete_bot(bot_id: str, request: Request):
     runtime_state.save()
     logger.info(f"[Agents API] Deleted bot: {bot_id}")
 
-    # 热注销：停止并移除运行中的 adapter
-    if target:
-        await _hot_unregister_bot(request, target)
+    if deleted:
+        from openakita.main import remove_im_bot
+        await remove_im_bot(deleted[0])
 
     return {"status": "ok"}
 
@@ -247,11 +250,11 @@ async def toggle_bot(bot_id: str, body: BotToggleRequest, request: Request):
     runtime_state.save()
     logger.info(f"[Agents API] Toggled bot {bot_id}: enabled={body.enabled}")
 
-    # 热切换：enable 时注册，disable 时注销
+    from openakita.main import apply_im_bot, remove_im_bot
     if body.enabled:
-        await _hot_register_bot(request, bot)
+        await apply_im_bot(bot)
     else:
-        await _hot_unregister_bot(request, bot)
+        await remove_im_bot(bot)
 
     return {"status": "ok", "bot": bot}
 

@@ -56,6 +56,14 @@ const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "1y", label: "1年" },
 ];
 
+function utcToLocal(utcStr: string): string {
+  if (!utcStr || utcStr.length <= 10) return utcStr;
+  const d = new Date(utcStr.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return utcStr;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -207,7 +215,7 @@ export function TokenStatsView({
               const inH = (r.total_input / maxTl) * 90;
               return (
                 <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", height: "100%" }}
-                  title={`${r.time_bucket}\nInput: ${fmtNum(r.total_input)}\nOutput: ${fmtNum(r.total_output)}\nTotal: ${fmtNum(r.total_tokens)}`}
+                  title={`${utcToLocal(r.time_bucket)}\nInput: ${fmtNum(r.total_input)}\nOutput: ${fmtNum(r.total_output)}\nTotal: ${fmtNum(r.total_tokens)}`}
                 >
                   <div style={{ width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
                     <div style={{ height: Math.max(h - inH, 1), background: "#10b981", borderRadius: "2px 2px 0 0", minWidth: 3 }} />
@@ -218,8 +226,8 @@ export function TokenStatsView({
             })}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginTop: 2, padding: "0 4px" }}>
-            <span>{timeline[0]?.time_bucket || ""}</span>
-            <span>{timeline[timeline.length - 1]?.time_bucket || ""}</span>
+            <span>{utcToLocal(timeline[0]?.time_bucket || "")}</span>
+            <span>{utcToLocal(timeline[timeline.length - 1]?.time_bucket || "")}</span>
           </div>
           <div style={{ display: "flex", gap: 12, fontSize: 10, marginTop: 4, color: "var(--text-secondary)" }}>
             <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#3b82f6", marginRight: 3 }} />Input</span>
@@ -306,7 +314,7 @@ export function TokenStatsView({
                     <td style={{ padding: "5px 8px", textAlign: "right" }}>{s.request_count}</td>
                     <td style={{ padding: "5px 8px", textAlign: "right", color: "#f59e0b", fontSize: 10 }}>{fmtCost(s.total_cost)}</td>
                     <td style={{ padding: "5px 8px", fontSize: 10 }}>{s.endpoints}</td>
-                    <td style={{ padding: "5px 8px", fontSize: 10, color: "var(--text-secondary)" }}>{s.last_call?.replace("T", " ").slice(0, 16)}</td>
+                    <td style={{ padding: "5px 8px", fontSize: 10, color: "var(--text-secondary)" }}>{utcToLocal(s.last_call || "")}</td>
                   </tr>
                 ))}
               </tbody>

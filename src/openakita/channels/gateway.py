@@ -1605,6 +1605,27 @@ class MessageGateway:
         if self._running:
             await adapter.start()
 
+    async def unregister_adapter(self, name: str) -> bool:
+        """
+        注销并停止指定适配器。
+
+        Args:
+            name: 适配器的 channel_name
+
+        Returns:
+            True 表示成功注销，False 表示未找到该适配器
+        """
+        adapter = self._adapters.pop(name, None)
+        if adapter is None:
+            logger.warning(f"Adapter {name} not found, cannot unregister")
+            return False
+        try:
+            await adapter.stop()
+        except Exception as e:
+            logger.error(f"Error stopping adapter {name} during unregister: {e}")
+        logger.info(f"Unregistered adapter: {name}")
+        return True
+
     def get_adapter(self, channel: str) -> ChannelAdapter | None:
         """获取适配器"""
         return self._adapters.get(channel)

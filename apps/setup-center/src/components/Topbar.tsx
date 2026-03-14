@@ -7,6 +7,7 @@ import {
   IconX, IconLink, IconPower, IconRefresh,
   IconLaptop, IconMoon, IconSun, IconGlobe, IconClipboard,
 } from "../icons";
+import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "../platform";
 import { copyToClipboard } from "../utils/clipboard";
 
@@ -245,64 +246,37 @@ export function Topbar({
       <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
         {isWeb ? (
           onLogout && (
-            <button
-              className="topbarConnectBtn"
-              onClick={onLogout}
-              title={t("topbar.logout")}
-            >
+            <Button variant="destructive" size="xs" onClick={onLogout} title={t("topbar.logout")}>
               <IconX size={13} />
               <span>{t("topbar.logout")}</span>
-            </button>
+            </Button>
           )
         ) : serviceRunning ? (
-          <button
-            className="topbarConnectBtn"
-            onClick={onDisconnect}
-            disabled={!!busy}
-            title={t("topbar.disconnect")}
-          >
+          <Button variant="secondary" size="xs" onClick={onDisconnect} disabled={!!busy} title={t("topbar.disconnect")}>
             <IconX size={13} />
             <span>{t("topbar.disconnect")}</span>
-          </button>
+          </Button>
         ) : (
           <>
-            <button
-              className="topbarConnectBtn"
-              onClick={onConnect}
-              disabled={!!busy}
-              title={t("topbar.connect")}
-            >
+            <Button variant="outline" size="xs" onClick={onConnect} disabled={!!busy} title={t("topbar.connect")}>
               <IconLink size={13} />
               <span>{t("topbar.connect")}</span>
-            </button>
-            <button
-              className="topbarConnectBtn"
-              onClick={onStart}
-              disabled={!!busy}
-              title={t("topbar.start")}
-            >
+            </Button>
+            <Button variant="outline" size="xs" onClick={onStart} disabled={!!busy} title={t("topbar.start")}>
               <IconPower size={13} />
               <span>{t("topbar.start")}</span>
-            </button>
+            </Button>
           </>
         )}
-        <button className="topbarRefreshBtn" onClick={onRefreshAll} disabled={!!busy} title={t("topbar.refresh")}>
+        <Button variant="ghost" size="icon-xs" onClick={onRefreshAll} disabled={!!busy} title={t("topbar.refresh")}>
           <IconRefresh size={14} />
-        </button>
-        <button
-          className="topbarRefreshBtn"
-          onClick={toggleTheme}
-          title={themePrefState === "system" ? "主题: 随系统" : themePrefState === "dark" ? "主题: 暗色" : "主题: 亮色"}
-        >
+        </Button>
+        <Button variant="ghost" size="icon-xs" onClick={toggleTheme} title={themePrefState === "system" ? "主题: 随系统" : themePrefState === "dark" ? "主题: 暗色" : "主题: 亮色"}>
           {themePrefState === "system" ? <IconLaptop size={14} /> : themePrefState === "dark" ? <IconMoon size={14} /> : <IconSun size={14} />}
-        </button>
-        <button
-          className="topbarRefreshBtn"
-          onClick={() => { i18n.changeLanguage(i18n.language?.startsWith("zh") ? "en" : "zh"); }}
-          title="中/EN"
-        >
+        </Button>
+        <Button variant="ghost" size="icon-xs" onClick={() => { i18n.changeLanguage(i18n.language?.startsWith("zh") ? "en" : "zh"); }} title="中/EN">
           <IconGlobe size={14} />
-        </button>
+        </Button>
       </div>
     </div>
   );

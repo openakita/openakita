@@ -1,15 +1,13 @@
 ---
 name: publish-agent
-description: Publish a local Agent to the OpenAkita Platform Agent Store. Use when user wants to share, distribute, or publish an Agent to the community hub.
-system: true
-handler: agent_hub
-tool-name: publish_agent
-category: Platform
+description: Publish a local Agent to the OpenAkita Platform Agent Store. Package and prepare a local Agent for publishing to the community hub.
+version: 1.0.0
+author: OpenAkita
 ---
 
-# Publish Agent
+# publish-agent
 
-将本地 Agent 发布到 OpenAkita 平台 Agent 商店。
+Publish a local Agent to the OpenAkita Platform Agent Store.
 
 ## Tools
 

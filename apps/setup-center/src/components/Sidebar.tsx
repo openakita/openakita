@@ -233,26 +233,23 @@ export function Sidebar({
           <div>{isWeb ? "Web" : "Desktop"} v{desktopVersion}{import.meta.env.VITE_PREVIEW_BUILD === "true" && <span style={{ marginLeft: 6, color: "#e8a735", fontWeight: 600, opacity: 1 }}>预览版</span>}</div>
           {backendVersion && <div>Backend v{backendVersion}</div>}
           {!backendVersion && serviceRunning && <div>Backend: -</div>}
-          <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <a
               href="https://openakita.ai"
-              style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1 }}
+              style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1, display: "inline-flex", alignItems: "center", gap: 3 }}
               onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
               onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
             >
-              <IconGlobe size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />
+              <IconGlobe size={11} />
               openakita.ai
             </a>
             {serviceRunning && (
               <span
                 onClick={onBugReport}
                 title={t("feedback.trigger")}
-                style={{ cursor: "pointer", opacity: 1, color: "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 3 }}
-                onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
-                onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
+                style={{ cursor: "pointer", opacity: 1, color: "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center" }}
               >
-                <IconBug size={11} />
-                {t("feedback.trigger")}
+                <IconBug size={12} />
               </span>
             )}
             <a

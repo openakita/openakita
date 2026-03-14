@@ -550,7 +550,7 @@ async def hub_install_skill(request: Request, skill_id: str):
         raise HTTPException(status_code=400, detail="该 Skill 没有安装地址")
 
     try:
-        skill_dir = await client.install_skill(install_url)
+        skill_dir = await client.install_skill(install_url, skill_id=skill_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"安装失败: {e}")
     finally:

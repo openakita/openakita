@@ -58,14 +58,7 @@ SKILL_DIRECTORIES = [
     # 用户工作区（运行时根据当前工作区动态解析）
     "__user_workspace__",
     # 项目级别（开发模式下仍可扫描）
-    ".cursor/skills",
-    ".claude/skills",
-    ".codex/skills",
     "skills",
-    # 用户级别 (全局，兼容其他产品的技能)
-    "~/.cursor/skills",
-    "~/.claude/skills",
-    "~/.codex/skills",
 ]
 
 # 系统技能目录（优先加载）
@@ -284,11 +277,14 @@ class SkillLoader:
                 for error in errors:
                     logger.warning(f"Skill validation warning: {error}")
 
-            # 注册到 registry
-            self.registry.register(skill)
-            self._loaded_skills[skill.metadata.name] = skill
+            # 用目录名作为 skill_id（天然唯一，不依赖加载顺序）
+            sid = skill_dir.name
 
-            logger.info(f"Loaded skill: {skill.metadata.name}")
+            # 注册到 registry
+            self.registry.register(skill, skill_id=sid)
+            self._loaded_skills[sid] = skill
+
+            logger.info(f"Loaded skill: {sid} (name={skill.metadata.name})")
             return skill
 
         except Exception as e:
@@ -311,11 +307,21 @@ class SkillLoader:
             if "description" in fields:
                 metadata.description_i18n[lang] = str(fields["description"])
 
-    def get_skill(self, name: str) -> ParsedSkill | None:
-        """获取已加载的技能"""
-        return self._loaded_skills.get(name)
+    def _resolve_skill(self, key: str) -> ParsedSkill | None:
+        """按 skill_id 查找，未命中时回退到 name 匹配。"""
+        skill = self._loaded_skills.get(key)
+        if skill is not None:
+            return skill
+        for s in self._loaded_skills.values():
+            if s.metadata.name == key:
+                return s
+        return None
 
-    def get_skill_body(self, name: str) -> str | None:
+    def get_skill(self, key: str) -> ParsedSkill | None:
+        """获取已加载的技能（接受 skill_id 或 name）"""
+        return self._resolve_skill(key)
+
+    def get_skill_body(self, key: str) -> str | None:
         """
         获取技能的完整指令 (body)
 
@@ -324,7 +330,7 @@ class SkillLoader:
         - 第二级: 完整指令 (body) - 激活时加载
         - 第三级: 资源文件 - 按需加载
         """
-        skill = self._loaded_skills.get(name)
+        skill = self._resolve_skill(key)
         if skill:
             return skill.body
         return None
@@ -344,8 +350,8 @@ class SkillLoader:
             return None
 
         all_external = {
-            name
-            for name, skill in self._loaded_skills.items()
+            sid
+            for sid, skill in self._loaded_skills.items()
             if not getattr(skill.metadata, "system", False)
         }
         return all_external - DEFAULT_DISABLED_SKILLS

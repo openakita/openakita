@@ -2132,10 +2132,24 @@ export function ChatView({
   }, [activeConvId, hydrateConversationMessages, multiAgentEnabled]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
+  const lastScrollTimeRef = useRef(0); // throttle scroll during streaming to reduce flicker when thinking is long
   const isInitialScrollRef = useRef(true); // first scroll should be instant, not smooth
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // abortRef/readerRef removed — now per-session in StreamContext
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Track scroll position to avoid auto-scrolling when user is reading earlier messages
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   const setInputValue = useCallback((val: string) => {
     inputTextRef.current = val;
@@ -2409,21 +2423,29 @@ export function ChatView({
   useEffect(() => {
     if (!messagesEndRef.current) return;
     if (!visible) {
-      // 不可见时标记待滚动，等变为可见后再执行
       needsScrollOnVisible.current = true;
       return;
     }
     if (isInitialScrollRef.current) {
-      // Initial load / conversation switch: instant scroll
       requestAnimationFrame(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
       });
       isInitialScrollRef.current = false;
-    } else {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    } else if (isNearBottomRef.current) {
+      // During streaming: throttle scroll to ~8Hz to reduce flicker when thinking content is long.
+      // Non-streaming: scroll every time with smooth behavior.
+      const now = Date.now();
+      const scrollThrottleMs = 120;
+      const shouldScroll = !isCurrentConvStreaming || (now - lastScrollTimeRef.current >= scrollThrottleMs);
+      if (shouldScroll) {
+        lastScrollTimeRef.current = now;
+        messagesEndRef.current.scrollIntoView({
+          behavior: isCurrentConvStreaming ? "auto" : "smooth",
+        });
+      }
     }
     needsScrollOnVisible.current = false;
-  }, [messages, visible]);
+  }, [messages, visible, isCurrentConvStreaming]);
 
   // 从隐藏变为可见时，补一次即时滚动到底部
   useEffect(() => {
@@ -2927,6 +2949,8 @@ export function ChatView({
       pollingTimer: null,
     };
     streamContexts.current.set(thisConvId, sctx);
+    // User just sent a message — always scroll to bottom
+    isNearBottomRef.current = true;
     // Functional updater chains with any pending setMessages (e.g. handleAskAnswer's answered flag)
     if (thisConvId === activeConvIdRef.current) {
       setMessages((prev) => {
@@ -2940,11 +2964,22 @@ export function ChatView({
     setStreamingTick(t => t + 1);
 
     // ── Per-session helpers: write to StreamContext, sync to screen only if active ──
+    // rAF throttle: StreamContext always gets the latest data immediately,
+    // but React state (setMessages) is flushed at most once per animation frame.
+    // This reduces O(N) reconciliation from ~30-60/s to ≤60fps, critical for long histories.
+    let screenFlushRaf = 0;
+    const flushToScreen = () => {
+      screenFlushRaf = 0;
+      const c = streamContexts.current.get(thisConvId);
+      if (c && activeConvIdRef.current === thisConvId) setMessages(c.messages);
+    };
     const updateMessages = (updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
       const c = streamContexts.current.get(thisConvId);
       if (!c) return;
       c.messages = updater(c.messages);
-      if (activeConvIdRef.current === thisConvId) setMessages(c.messages);
+      if (activeConvIdRef.current === thisConvId && !screenFlushRaf) {
+        screenFlushRaf = requestAnimationFrame(flushToScreen);
+      }
     };
     const updateSubAgents = (
       agentsUpdater?: (prev: SubAgentEntry[]) => SubAgentEntry[],
@@ -3015,8 +3050,6 @@ export function ChatView({
                   : m
               ));
               if (thisConvId) updateConvStatus(thisConvId, "idle");
-              streamContexts.current.delete(thisConvId);
-              setStreamingTick(t2 => t2 + 1);
               return;
             }
           } catch { /* fall through to generic error */ }
@@ -3026,8 +3059,6 @@ export function ChatView({
           m.id === assistantMsg.id ? { ...m, content: `错误：${response.status} ${errText}`, streaming: false } : m
         ));
         if (thisConvId) updateConvStatus(thisConvId, "error");
-        streamContexts.current.delete(thisConvId);
-        setStreamingTick(t2 => t2 + 1);
         return;
       }
 
@@ -3605,6 +3636,7 @@ export function ChatView({
       }
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      if (screenFlushRaf) { cancelAnimationFrame(screenFlushRaf); screenFlushRaf = 0; }
       const ctx = streamContexts.current.get(thisConvId);
       if (ctx) {
         ctx.isStreaming = false;
@@ -4340,7 +4372,7 @@ export function ChatView({
         </div>
 
         {/* 消息列表 */}
-        <div style={{ flex: 1, overflow: "auto", padding: "16px 20px", minHeight: 0 }}>
+        <div ref={scrollContainerRef} style={{ flex: 1, overflow: "auto", padding: "16px 20px", minHeight: 0 }}>
           {messages.length === 0 && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.4 }}>
               <div style={{ marginBottom: 12 }}><IconMessageCircle size={48} /></div>
@@ -4453,6 +4485,7 @@ export function ChatView({
                         </span>
                         <div className="queuedItemActions">
                           <button
+                            data-slot="queued"
                             className="queuedItemBtn queuedItemSendBtn"
                             onClick={() => handleSendQueuedNow(qm.id)}
                             title={t("chat.sendNow")}
@@ -4460,6 +4493,7 @@ export function ChatView({
                             <IconSend size={12} />
                           </button>
                           <button
+                            data-slot="queued"
                             className="queuedItemBtn"
                             onClick={() => handleEditQueued(qm.id)}
                             title={t("chat.editMessage")}
@@ -4675,16 +4709,16 @@ export function ChatView({
             {/* Bottom toolbar */}
             <div className="chatInputToolbar">
               <div className="chatInputToolbarLeft">
-                <button onClick={() => fileInputRef.current?.click()} className="chatInputIconBtn" title={t("chat.attach")}>
+                <button data-slot="toolbar" onClick={() => fileInputRef.current?.click()} className="chatInputIconBtn" title={t("chat.attach")}>
                   <IconPaperclip size={16} />
                 </button>
                 <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*,.pdf,.txt,.md,.py,.js,.ts,.json,.csv" style={{ display: "none" }} onChange={handleFileSelect} />
 
-                <button onClick={toggleRecording} className={`chatInputIconBtn ${isRecording ? "chatInputIconBtnDanger" : ""}`} title={isRecording ? t("chat.stopRecording") : t("chat.voice")}>
+                <button data-slot="toolbar" onClick={toggleRecording} className={`chatInputIconBtn ${isRecording ? "chatInputIconBtnDanger" : ""}`} title={isRecording ? t("chat.stopRecording") : t("chat.voice")}>
                   {isRecording ? <IconStopCircle size={16} /> : <IconMic size={16} />}
                 </button>
 
-                <button onClick={() => setPlanMode((v) => !v)} className={`chatInputIconBtn ${planMode ? "chatInputIconBtnActive" : ""}`} title={t("chat.planMode")}>
+                <button data-slot="toolbar" onClick={() => setPlanMode((v) => !v)} className={`chatInputIconBtn ${planMode ? "chatInputIconBtnActive" : ""}`} title={t("chat.planMode")}>
                   <IconPlan size={16} />
                   <span style={{ fontSize: 11, marginLeft: 2 }}>Plan</span>
                 </button>
@@ -4692,6 +4726,7 @@ export function ChatView({
                 {/* 深度思考按钮 + 下拉菜单 */}
                 <div ref={thinkingMenuRef} style={{ position: "relative", display: "inline-flex" }}>
                   <button
+                    data-slot="toolbar"
                     onClick={() => {
                       if (thinkingMode === "auto") {
                         setThinkingMode("on");
@@ -4777,6 +4812,7 @@ export function ChatView({
                 {isCurrentConvStreaming || orgCommandPending ? (
                   hasInputText && !orgCommandPending ? (
                     <button
+                      data-slot="queue"
                       onClick={handleQueueMessage}
                       className="chatInputSendBtn"
                       title={t("chat.queueHint")}
@@ -4785,6 +4821,7 @@ export function ChatView({
                     </button>
                   ) : (
                     <button
+                      data-slot="stop"
                       onClick={orgCommandPending ? undefined : handleCancelTask}
                       className={`chatInputSendBtn ${orgCommandPending ? "" : "chatInputStopBtn"}`}
                       title={orgCommandPending ? "组织处理中..." : t("chat.stopGeneration")}
@@ -4796,6 +4833,7 @@ export function ChatView({
                   )
                 ) : (
                   <button
+                    data-slot="send"
                     onClick={() => sendMessage()}
                     className="chatInputSendBtn"
                     disabled={!hasInputText && pendingAttachments.length === 0}
@@ -4822,18 +4860,20 @@ export function ChatView({
               <div className="convSearchBox" style={{ flex: 1 }}>
                 <IconSearch size={13} style={{ opacity: 0.4, flexShrink: 0 }} />
                 <input
+                  data-slot="search"
                   className="convSearchInput"
                   placeholder={t("chat.searchConversations") || "搜索会话..."}
                   value={convSearchQuery}
                   onChange={(e) => setConvSearchQuery(e.target.value)}
                 />
                 {convSearchQuery && (
-                  <button className="convSearchClear" onClick={() => setConvSearchQuery("")}>
+                  <button data-slot="clear" className="convSearchClear" onClick={() => setConvSearchQuery("")}>
                     <IconX size={11} />
                   </button>
                 )}
               </div>
               <button
+                data-slot="pin"
                 className="convPinBtn"
                 onClick={() => {
                   const next = !sidebarPinned;
@@ -4846,7 +4886,7 @@ export function ChatView({
                 <IconPin size={14} />
               </button>
             </div>
-            <button className="convNewBtn" onClick={newConversation}>
+            <button data-slot="new-chat" className="convNewBtn" onClick={newConversation}>
               {t("chat.newConversation")}
             </button>
           </div>

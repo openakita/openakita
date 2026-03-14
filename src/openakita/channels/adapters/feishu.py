@@ -571,8 +571,8 @@ class FeishuAdapter(ChannelAdapter):
         with self._events_lock:
             return self._important_events.pop(chat_id, [])
 
-    async def add_reaction(self, message_id: str, emoji_type: str = "OK") -> None:
-        """给消息添加表情回复，用作「已读」回执替代"""
+    async def add_reaction(self, message_id: str, emoji_type: str = "Get") -> None:
+        """给消息添加表情回复，用作「已读」回执替代。默认用 [了解] 表示正在处理。"""
         if not self._client:
             return
         try:

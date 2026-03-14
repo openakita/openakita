@@ -11,8 +11,6 @@ type IMConfigViewProps = {
   setEnvDraft: (updater: (prev: EnvMap) => EnvMap) => void;
   setNotice: (v: string | null) => void;
   busy: string | null;
-  secretShown: Record<string, boolean>;
-  onToggleSecret: (k: string) => void;
   currentWorkspaceId: string | null;
   apiBaseUrl?: string;
   onNavigateToBotConfig?: (presetType: string) => void;
@@ -21,13 +19,12 @@ type IMConfigViewProps = {
 };
 
 export function IMConfigView(props: IMConfigViewProps) {
-  const { envDraft, setEnvDraft, setNotice, busy, secretShown, onToggleSecret, currentWorkspaceId } = props;
+  const { envDraft, setEnvDraft, setNotice, busy, currentWorkspaceId } = props;
   const { t } = useTranslation();
 
   const _envBase = { envDraft, onEnvChange: setEnvDraft, busy };
-  const _secretCtx = { secretShown, onToggleSecret };
   const FT = (p: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password" }) =>
-    <FieldText key={p.k} {...p} {..._envBase} {..._secretCtx} />;
+    <FieldText key={p.k} {...p} {..._envBase} />;
   const FB = (p: { k: string; label: string; help?: string; defaultValue?: boolean }) =>
     <FieldBool key={p.k} {...p} {..._envBase} />;
 

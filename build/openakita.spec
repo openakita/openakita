@@ -649,6 +649,12 @@ try:
 except Exception as _pw_err:
     print(f"[spec] WARNING: Failed to detect Playwright browsers: {_pw_err}")
 
+# Built-in MCP server configs (chrome-browser, desktop-control, web-search, etc.)
+mcps_dir = PROJECT_ROOT / "mcps"
+if mcps_dir.exists():
+    datas.append((str(mcps_dir), "openakita/builtin_mcps"))
+    print(f"[spec] Bundling built-in MCP configs: {mcps_dir}")
+
 # Built-in system skills (64 core skills: tool wrappers, memory, planning, etc.)
 skills_dir = PROJECT_ROOT / "skills" / "system"
 if skills_dir.exists():

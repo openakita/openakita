@@ -592,15 +592,17 @@ a:hover {
   line-height: 1.35;
 }
 
-input,
-select,
+input:not([data-slot]),
+select:not([data-slot]),
 textarea {
   width: 100%;
-  border-radius: 12px;
+  height: 36px;
+  border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--panel2);
   color: var(--text);
-  padding: 10px 10px;
+  padding: 4px 12px;
+  font-size: 14px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
@@ -611,12 +613,13 @@ select option {
 }
 
 textarea {
+  height: auto;
   min-height: 90px;
   resize: vertical;
 }
 
-input:focus,
-select:focus,
+input:not([data-slot]):focus,
+select:not([data-slot]):focus,
 textarea:focus {
   border-color: var(--brand);
   box-shadow: 0 0 0 1px var(--bg-app), 0 0 8px var(--brand);
@@ -638,7 +641,7 @@ textarea:focus {
 
 /* (legacy btnSmall override removed; see status section) */
 
-button {
+button:not([data-slot]) {
   border: 0;
   cursor: pointer;
   border-radius: 14px;
@@ -651,12 +654,12 @@ button {
   transition: background 0.15s, border-color 0.15s;
 }
 
-button:not(.btnPrimary):not(.btnDanger):not(.btnApplyRestart):hover {
+button:not([data-slot]):not(.btnPrimary):not(.btnDanger):not(.btnApplyRestart):hover {
   background: var(--bg-app);
   border-color: var(--muted2);
 }
 
-button:disabled {
+button:not([data-slot]):disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -1107,7 +1110,7 @@ button:disabled {
 }
 .epTableHeader {
   display: grid;
-  grid-template-columns: 1.4fr 1.6fr 44px 64px 90px;
+  grid-template-columns: 1.4fr 1.6fr 44px 64px 1fr;
   gap: 12px;
   padding: 10px 16px;
   background: var(--bg1);
@@ -1120,7 +1123,7 @@ button:disabled {
 }
 .epTableRow {
   display: grid;
-  grid-template-columns: 1.4fr 1.6fr 44px 64px 90px;
+  grid-template-columns: 1.4fr 1.6fr 44px 64px 1fr;
   gap: 12px;
   padding: 10px 16px;
   align-items: center;

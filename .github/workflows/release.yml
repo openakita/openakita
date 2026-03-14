@@ -307,14 +307,24 @@ jobs:
       - name: Preflight Rust dependency check
         working-directory: apps/setup-center/src-tauri
         shell: bash
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           set -euo pipefail
-          cargo fetch --locked
-          if [ -n "${{ matrix.rust_target }}" ]; then
-            cargo check --target "${{ matrix.rust_target }}"
-          else
-            cargo check
-          fi
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "=== Preflight attempt $ATTEMPT/$MAX_ATTEMPTS ==="
+            if cargo fetch --locked && ( [ -n "${{ matrix.rust_target }}" ] && cargo check --target "${{ matrix.rust_target }}" || cargo check ); then
+              echo "Preflight succeeded"
+              exit 0
+            fi
+            echo "Preflight failed (attempt $ATTEMPT)"
+            ATTEMPT=$((ATTEMPT + 1))
+            [ $ATTEMPT -le $MAX_ATTEMPTS ] && { echo "Retrying in 30s..."; sleep 30; }
+          done
+          echo "All preflight attempts failed"
+          exit 1
 
       - name: Clean Rust release intermediates for current target
         shell: bash

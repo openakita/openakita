@@ -166,9 +166,18 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
     url = base_url.rstrip("/") + "/models"
     # 本地服务（Ollama/LM Studio 等）不需要真实 API Key，使用 placeholder
     effective_key = api_key.strip() or "local"
-    async with httpx.AsyncClient(timeout=30) as client:
+    auth_header = f"Bearer {effective_key}"
+
+    async def _ensure_auth(request: httpx.Request):
+        request.headers.setdefault("Authorization", auth_header)
+
+    async with httpx.AsyncClient(
+        timeout=30,
+        follow_redirects=True,
+        event_hooks={"request": [_ensure_auth]},
+    ) as client:
         try:
-            resp = await client.get(url, headers={"Authorization": f"Bearer {effective_key}"})
+            resp = await client.get(url, headers={"Authorization": auth_header})
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError:
@@ -1122,6 +1131,46 @@ def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None
             shutil.rmtree(str(tmp_extract), ignore_errors=True)
 
 
+def _is_valid_skill_dir(d: Path) -> bool:
+    """目录存在且包含 SKILL.md（排除残留空目录）。"""
+    return d.is_dir() and (d / "SKILL.md").exists()
+
+
+def _read_skill_source(d: Path) -> str:
+    """读取技能目录的安装来源标记。"""
+    try:
+        return (d / ".openakita-source").read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _cleanup_broken_skill_dir(d: Path) -> None:
+    """清理残留的无效技能目录（无 SKILL.md）。清理失败则抛出异常。"""
+    import shutil
+    shutil.rmtree(d)
+
+
+def _ensure_target_available(target: Path, url: str) -> None:
+    """确保安装目标目录可用：不存在、或是残留目录则清理。
+
+    - 目录不存在 → 直接返回
+    - 目录存在但无 SKILL.md（残留） → 清理后返回
+    - 目录存在且有 SKILL.md + 相同来源 → raise "该技能已安装"
+    - 目录存在且有 SKILL.md + 不同来源 → raise "技能目录名称冲突"
+    """
+    if not target.exists():
+        return
+    if not _is_valid_skill_dir(target):
+        try:
+            _cleanup_broken_skill_dir(target)
+        except Exception:
+            raise ValueError(f"无法清理残留目录，请手动删除: {target}")
+        return
+    if _read_skill_source(target) == url:
+        raise ValueError(f"该技能已安装: {target}")
+    raise ValueError(f"技能目录名称冲突: {target}")
+
+
 def install_skill(workspace_dir: str, url: str) -> None:
     """安装技能（从 Git URL、GitHub 简写或本地目录）"""
     skills_dir = _resolve_skills_dir(workspace_dir)
@@ -1136,8 +1185,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
         skill_name = parts[-1] if len(parts) > 2 else repo
         target = skills_dir / skill_name
 
-        if target.exists():
-            raise ValueError(f"技能目录已存在: {target}")
+        _ensure_target_available(target, url)
 
         if _has_git():
             git_url = f"https://github.com/{owner}/{repo}.git"
@@ -1148,8 +1196,8 @@ def install_skill(workspace_dir: str, url: str) -> None:
     elif url.startswith("http://") or url.startswith("https://"):
         skill_name = url.rstrip("/").split("/")[-1].replace(".git", "")
         target = skills_dir / skill_name
-        if target.exists():
-            raise ValueError(f"技能目录已存在: {target}")
+
+        _ensure_target_available(target, url)
 
         gh = _parse_github_url(url)
         ge = _parse_gitee_url(url)
@@ -1182,7 +1230,12 @@ def install_skill(workspace_dir: str, url: str) -> None:
         target = skills_dir / skill_name
 
         if target.exists():
-            raise ValueError(f"技能目录已存在: {target}")
+            if _is_valid_skill_dir(target) and _read_skill_source(target) != url:
+                # 不同来源的同名技能，用 owner 前缀消歧
+                skill_name = _sanitize_skill_dir_name(f"{owner}-{requested_skill}")
+                target = skills_dir / skill_name
+            # 无论原始目录还是消歧目录，统一检查
+        _ensure_target_available(target, url)
 
         # Strategy 1: Try platform cache first
         platform_skill_id = f"{owner}-{repo}-{skill_name}".lower().replace("/", "-")
@@ -1247,8 +1300,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
             raise ValueError(f"源路径不存在: {url}")
         import shutil
         target = skills_dir / src.name
-        if target.exists():
-            raise ValueError(f"技能目录已存在: {target}")
+        _ensure_target_available(target, url)
         shutil.copytree(str(src), str(target))
 
     # Record install origin for marketplace matching (Issue #15)

@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, IS_WEB, IS_TAURI } from "../platform";
-import { IconInfo, IconEye, IconEyeOff } from "../icons";
+import { IconInfo } from "../icons";
 import type { EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 type EnvFieldProps = {
   envDraft: EnvMap;
@@ -11,44 +16,45 @@ type EnvFieldProps = {
   busy?: string | null;
 };
 
+function FieldLabel({ label, help, envKey, htmlFor }: {
+  label: string; help?: string; envKey?: string; htmlFor?: string;
+}) {
+  const hasTooltip = !!(help || envKey);
+  return (
+    <Label htmlFor={htmlFor} className="text-sm font-medium">
+      {label}
+      {hasTooltip && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="ml-1 text-muted-foreground/50 cursor-help align-middle inline-flex">
+              <IconInfo size={13} />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs">
+            {help && <p>{help}</p>}
+            {envKey && <p className="font-mono text-[11px] opacity-70">{envKey}</p>}
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </Label>
+  );
+}
+
 export function FieldText({
   k, label, placeholder, help, type,
-  envDraft, onEnvChange, busy,
-  secretShown, onToggleSecret,
+  envDraft, onEnvChange,
 }: EnvFieldProps & {
   k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password";
-  secretShown: Record<string, boolean>;
-  onToggleSecret: (key: string) => void;
 }) {
-  const { t } = useTranslation();
-  const isSecret = (type || "text") === "password";
-  const shown = !!secretShown[k];
   return (
-    <div className="field">
-      <div className="labelRow">
-        <div className="label">
-          {label}
-          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-        </div>
-        {k ? <div className="help">{k}</div> : null}
-      </div>
-      <div style={{ position: "relative" }}>
-        <input
-          value={envGet(envDraft, k)}
-          onChange={(e) => onEnvChange((m) => envSet(m, k, e.target.value))}
-          placeholder={placeholder}
-          type={isSecret ? ((shown && !IS_WEB) ? "text" : "password") : "text"}
-          style={isSecret ? { paddingRight: 44 } : undefined}
-        />
-        {isSecret && !IS_WEB && (
-          <button type="button" className="btnEye"
-            onClick={() => onToggleSecret(k)}
-            disabled={!!busy}
-            title={shown ? t("skills.hide") : t("skills.show")}>
-            {shown ? <IconEyeOff size={16} /> : <IconEye size={16} />}
-          </button>
-        )}
-      </div>
+    <div className="space-y-1.5">
+      <FieldLabel label={label} help={help} envKey={k} />
+      <Input
+        value={envGet(envDraft, k)}
+        onChange={(e) => onEnvChange((m) => envSet(m, k, e.target.value))}
+        placeholder={placeholder}
+        type={type || "text"}
+      />
     </div>
   );
 }
@@ -59,21 +65,28 @@ export function FieldBool({
 }: EnvFieldProps & {
   k: string; label: string; help?: string; defaultValue?: boolean;
 }) {
-  const { t } = useTranslation();
   const v = envGet(envDraft, k, defaultValue ? "true" : "false").toLowerCase() === "true";
+  const fieldId = `field-bool-${k}`;
   return (
-    <div className="field">
-      <div className="labelRow">
-        <div className="label">
-          {label}
-          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-        </div>
-        <div className="help">{k}</div>
-      </div>
-      <label className="pill" style={{ cursor: "pointer" }}>
-        <input style={{ width: 16, height: 16 }} type="checkbox" checked={v}
-          onChange={(e) => onEnvChange((m) => envSet(m, k, String(e.target.checked)))} />
-        {t("skills.enabled")}
+    <div className="space-y-1.5">
+      <FieldLabel label={label} help={help} envKey={k} htmlFor={fieldId} />
+      <label
+        htmlFor={fieldId}
+        className={cn(
+          "inline-flex items-center gap-2.5 h-9 px-3 rounded-md border cursor-pointer select-none transition-colors",
+          v ? "border-primary/30 bg-primary/5" : "border-input bg-transparent"
+        )}
+      >
+        <Switch
+          id={fieldId}
+          checked={v}
+          onCheckedChange={(checked) =>
+            onEnvChange((m) => envSet(m, k, String(!!checked)))
+          }
+        />
+        <span className={cn("text-sm w-8", v ? "text-foreground" : "text-muted-foreground")}>
+          {v ? "ON" : "OFF"}
+        </span>
       </label>
     </div>
   );
@@ -86,15 +99,11 @@ export function FieldSelect({
   k: string; label: string; options: { value: string; label: string }[]; help?: string;
 }) {
   return (
-    <div className="field">
-      <div className="labelRow">
-        <div className="label">
-          {label}
-          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-        </div>
-        {k ? <div className="help">{k}</div> : null}
-      </div>
+    <div className="space-y-1.5">
+      <FieldLabel label={label} help={help} envKey={k} />
       <select
+        data-slot="select"
+        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 transition-[color,box-shadow]"
         value={envGet(envDraft, k)}
         onChange={(e) => onEnvChange((m) => envSet(m, k, e.target.value))}
       >
@@ -116,17 +125,12 @@ export function FieldCombo({
   const currentVal = envGet(envDraft, k);
   const isPreset = options.some((o) => o.value === currentVal);
   return (
-    <div className="field">
-      <div className="labelRow">
-        <div className="label">
-          {label}
-          {help && <span className="fieldTip" title={help}><IconInfo size={13} /></span>}
-        </div>
-        {k ? <div className="help">{k}</div> : null}
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
+    <div className="space-y-1.5">
+      <FieldLabel label={label} help={help} envKey={k} />
+      <div className="flex gap-1.5">
         <select
-          style={{ flex: "0 0 auto", minWidth: 140 }}
+          data-slot="select"
+          className="h-9 shrink-0 min-w-[140px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 transition-[color,box-shadow]"
           value={isPreset ? currentVal : "__custom__"}
           onChange={(e) => {
             if (e.target.value !== "__custom__") {
@@ -140,8 +144,8 @@ export function FieldCombo({
           <option value="__custom__">{t("common.custom") || "自定义..."}</option>
         </select>
         {(!isPreset || currentVal === "") && (
-          <input
-            style={{ flex: 1 }}
+          <Input
+            className="flex-1"
             value={currentVal}
             onChange={(e) => onEnvChange((m) => envSet(m, k, e.target.value))}
             placeholder={placeholder || t("common.custom") || "自定义输入..."}
@@ -176,25 +180,18 @@ export function TelegramPairingCodeHint({ currentWorkspaceId }: { currentWorkspa
   useEffect(() => { loadCode(); }, [loadCode]);
 
   return (
-    <div style={{
-      fontSize: 12, color: "var(--text3, #666)", margin: "4px 0 0 0", lineHeight: 1.7,
-      display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
-    }}>
+    <div className="flex items-center gap-1.5 flex-wrap text-xs text-muted-foreground mt-1 leading-7">
       <span>🔑 {t("config.imCurrentPairingCode")}：</span>
       {loading ? (
-        <span style={{ opacity: 0.5 }}>...</span>
+        <span className="opacity-50">...</span>
       ) : currentCode ? (
-        <code style={{
-          background: "var(--bg2, #f5f5f5)", padding: "2px 8px", borderRadius: 4,
-          fontSize: 13, fontWeight: 600, letterSpacing: 2, userSelect: "all",
-        }}>{currentCode}</code>
+        <code className="bg-muted px-2 py-0.5 rounded text-[13px] font-semibold tracking-widest select-all">{currentCode}</code>
       ) : (
-        <span style={{ opacity: 0.5 }}>{t("config.imPairingCodeNotGenerated")}</span>
+        <span className="opacity-50">{t("config.imPairingCodeNotGenerated")}</span>
       )}
       <button
         type="button"
-        className="btnSmall"
-        style={{ fontSize: 11, padding: "1px 8px" }}
+        className="text-[11px] px-2 py-0.5 rounded-md border border-input hover:bg-accent/50 transition-colors"
         onClick={loadCode}
         disabled={loading}
       >↻ {t("common.refresh")}</button>

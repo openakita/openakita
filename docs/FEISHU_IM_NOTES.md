@@ -139,7 +139,7 @@
 | 13 | 多 Bot 只有一个能收消息 | `lark_oapi.ws.client` 模块级 `loop` 变量被多实例覆盖，运行时 `create_task` 投递到错误的事件循环 | 用 `importlib.util` 为每个 WS 线程创建独立模块副本，各实例 `loop` 完全隔离（移除旧的 `_ws_startup_lock` 方案） | feishu.py |
 | 14 | `feishu_enabled` 与 `im_bots` 重复注册 | 同一 app_id 创建两个 adapter，WebSocket 连接互踢 | 启动时检查 im_bots 是否已有相同 app_id，重复则跳过 | main.py |
 | 15 | 消息去重缺失 | WebSocket 重连可能重复投递消息 | `OrderedDict` LRU 去重，容量 500，WebSocket 和 Webhook 路径均覆盖 | feishu.py |
-| 16 | 收到消息无已读回执 | 飞书不支持机器人标记已读 | `add_reaction` 添加 DONE 表情回复作为回执替代 | feishu.py |
+| 16 | 收到消息无已读回执 | 飞书不支持机器人标记已读 | `add_reaction` 添加 [了解] (emoji_type=Get) 表情回复作为回执替代 | feishu.py |
 | 17 | `_parse_post_content` 解析失败 | 未处理 i18n 层级 (`post→zh_cn→content`)，缺少 img/media/emotion 标签 | 提取语言层 + 补充标签解析 | feishu.py |
 | 18 | `@_user_N` 占位符泄露 | mentions 占位符未替换为实际名称 | `_convert_message` 中遍历 mentions 替换 | feishu.py |
 | 19 | `asyncio.get_event_loop()` 弃用警告 | Python 3.12+ 弃用，async 上下文应用 `get_running_loop()` | 全部 12 处替换 | feishu.py |
@@ -176,7 +176,7 @@
     → _handle_message_async()      # run_coroutine_threadsafe 切到主 loop
       → 消息去重（OrderedDict LRU） # message_id 已见过则跳过
       → create_time 陈旧消息防护    # 超过 120s 的重投递丢弃
-      → add_reaction(DONE)         # fire-and-forget 已读回执
+      → add_reaction(Get)          # fire-and-forget 已读回执（[了解] 表示正在处理）
       → 记录 _last_user_msg[chat_id] = msg_id  # 供 send_typing 回复定位
       → _convert_message()         # 提取消息内容、is_mentioned、thread_id
       → _emit_message()            # 触发 gateway 回调

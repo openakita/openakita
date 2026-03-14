@@ -17,8 +17,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import "./i18n";
+import "./globals.css";
 import "./styles.css";
 import { App } from "./App";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { initTheme } from "./theme";
 import { logger } from "./platform/logger";
 import { copyToClipboard } from "./utils/clipboard";
@@ -338,7 +340,9 @@ if ("serviceWorker" in navigator && __BUILD_TARGET__ === "web") {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
-      <App />
+      <TooltipProvider>
+        <App />
+      </TooltipProvider>
     </GlobalErrorBoundary>
   </React.StrictMode>,
 );

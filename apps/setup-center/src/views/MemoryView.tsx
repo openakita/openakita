@@ -130,7 +130,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
     loadStats();
   }, [loadMemories, loadStats]);
 
-  const handleDelete = async (id: string) => {
+  const doDelete = async (id: string) => {
     try {
       await safeFetch(`${API_BASE}/api/memories/${id}`, { method: "DELETE" });
       setMemories(prev => prev.filter(m => m.id !== id));
@@ -139,6 +139,15 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
     } catch (e: any) {
       setError(e.message);
     }
+  };
+
+  const handleDelete = (id: string) => {
+    const mem = memories.find(m => m.id === id);
+    const preview = mem ? (mem.content.length > 40 ? mem.content.slice(0, 40) + "..." : mem.content) : "";
+    setConfirmDialog({
+      message: `确定删除这条记忆？\n\n"${preview}"`,
+      onConfirm: () => doDelete(id),
+    });
   };
 
   const doBatchDelete = useCallback(async (ids: string[]) => {

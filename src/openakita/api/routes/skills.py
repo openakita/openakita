@@ -29,6 +29,17 @@ router = APIRouter()
 SKILLS_SH_API = "https://skills.sh/api/search"
 
 
+_skills_cache: dict | None = None
+"""Module-level cache for GET /api/skills response.
+Populated on first request, invalidated by install/uninstall/reload/edit."""
+
+
+def _invalidate_skills_cache() -> None:
+    """Clear the cached skill list so the next GET /api/skills re-scans disk."""
+    global _skills_cache
+    _skills_cache = None
+
+
 def _read_external_allowlist() -> tuple[Path, set[str] | None]:
     """Read external_allowlist from data/skills.json.
 
@@ -156,21 +167,26 @@ async def list_skills(request: Request):
 
     Returns ALL discovered skills (including disabled ones) with correct
     ``enabled`` status derived from ``data/skills.json`` allowlist.
+
+    Uses a module-level cache to avoid re-scanning disk on every request.
+    The cache is invalidated by install/uninstall/reload/edit operations.
     """
-    from pathlib import Path
+    global _skills_cache
+    if _skills_cache is not None:
+        return _skills_cache
 
     base_path, external_allowlist = _read_external_allowlist()
 
-    # Load all skills via a fresh SkillLoader (not pruned by allowlist)
+    # load_all() does synchronous file I/O — run in a thread to avoid blocking
+    # the event loop.
     try:
         from openakita.skills.loader import SkillLoader
 
         loader = SkillLoader()
-        loader.load_all(base_path=base_path)
+        await asyncio.to_thread(loader.load_all, base_path=base_path)
         all_skills = loader.registry.list_all()
         effective_allowlist = loader.compute_effective_allowlist(external_allowlist)
     except Exception:
-        # Fallback to agent's registry (only enabled skills)
         from openakita.core.agent import Agent
 
         agent = getattr(request.app.state, "agent", None)
@@ -193,19 +209,11 @@ async def list_skills(request: Request):
             config = getattr(parsed.metadata, "config", None) or None
 
         is_system = bool(skill.system)
-        is_enabled = is_system or effective_allowlist is None or skill.name in effective_allowlist
-
-        # Read install origin (.openakita-source) for marketplace matching
-        source_url = None
-        if skill.skill_path:
-            try:
-                origin_file = Path(skill.skill_path).parent / ".openakita-source"
-                if origin_file.exists():
-                    source_url = origin_file.read_text(encoding="utf-8").strip()
-            except Exception:
-                pass
+        sid = getattr(skill, "skill_id", skill.name)
+        is_enabled = is_system or effective_allowlist is None or sid in effective_allowlist
 
         skills.append({
+            "skill_id": sid,
             "name": skill.name,
             "description": skill.description,
             "name_i18n": skill.name_i18n or None,
@@ -216,23 +224,25 @@ async def list_skills(request: Request):
             "tool_name": skill.tool_name,
             "config": config,
             "path": skill.skill_path,
-            "source_url": source_url,
+            "source_url": getattr(skill, "source_url", None),
         })
 
     def _sort_key(s: dict) -> tuple:
         enabled = s.get("enabled", False)
         system = s.get("system", False)
         if enabled and not system:
-            tier = 0  # 启用的外部技能
+            tier = 0
         elif enabled and system:
-            tier = 1  # 启用的系统技能
+            tier = 1
         else:
-            tier = 2  # 禁用的技能
+            tier = 2
         return (tier, s.get("name", ""))
 
     skills.sort(key=_sort_key)
 
-    return {"skills": skills}
+    result = {"skills": skills}
+    _skills_cache = result
+    return result
 
 
 @router.post("/api/skills/config")
@@ -286,6 +296,43 @@ async def install_skill(request: Request):
         logger.error("Skill install failed: %s", e, exc_info=True)
         return {"error": str(e)}
 
+    # 验证安装的技能是否能被 SkillLoader 正确解析
+    install_warning = None
+    try:
+        from openakita.setup_center.bridge import _resolve_skills_dir
+
+        skills_dir = _resolve_skills_dir(workspace_dir)
+        # 找到刚安装的技能目录（最新修改的含 SKILL.md 的子目录）
+        candidates = sorted(
+            (d for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()),
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            from openakita.skills.parser import SkillParser
+
+            parser = SkillParser()
+            try:
+                parser.parse_directory(candidates[0])
+            except Exception as parse_err:
+                import shutil
+
+                skill_dir_name = candidates[0].name
+                logger.error(
+                    "Installed skill %s has invalid SKILL.md, removing: %s",
+                    skill_dir_name, parse_err,
+                )
+                shutil.rmtree(str(candidates[0]), ignore_errors=True)
+                return {
+                    "error": (
+                        f"技能文件已下载，但 SKILL.md 格式无效，无法加载：{parse_err}。"
+                        "该技能可能不兼容 OpenAkita 格式，已自动清理。"
+                    )
+                }
+    except Exception as ve:
+        install_warning = str(ve)
+        logger.warning("Post-install validation skipped: %s", ve)
+
     # 安装成功后：重新加载技能到 agent 运行时，并应用 allowlist
     try:
         agent = getattr(request.app.state, "agent", None)
@@ -305,8 +352,59 @@ async def install_skill(request: Request):
     except Exception as e:
         logger.warning(f"Post-install reload failed (skill was installed): {e}")
 
+    _invalidate_skills_cache()
     _notify_skills_changed("install")
-    return {"status": "ok", "url": url}
+    result: dict = {"status": "ok", "url": url}
+    if install_warning:
+        result["warning"] = install_warning
+    return result
+
+
+@router.post("/api/skills/uninstall")
+async def uninstall_skill(request: Request):
+    """卸载技能。
+
+    POST body: { "skill_id": "skill-directory-name" }
+    卸载后自动重新加载技能并刷新 allowlist。
+    """
+    from openakita.core.agent import Agent
+
+    body = await request.json()
+    skill_id = (body.get("skill_id") or "").strip()
+    if not skill_id:
+        return {"error": "skill_id is required"}
+
+    try:
+        from openakita.config import settings
+        workspace_dir = str(settings.project_root)
+    except Exception:
+        workspace_dir = str(__import__("pathlib").Path.cwd())
+
+    try:
+        from openakita.setup_center.bridge import uninstall_skill as _uninstall_skill
+        await asyncio.to_thread(_uninstall_skill, workspace_dir, skill_id)
+    except Exception as e:
+        logger.error("Skill uninstall failed: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+    try:
+        agent = getattr(request.app.state, "agent", None)
+        actual_agent = agent
+        if not isinstance(agent, Agent):
+            actual_agent = getattr(agent, "_local_agent", None)
+        if actual_agent is not None:
+            loader = getattr(actual_agent, "skill_loader", None)
+            if loader:
+                loader.unload_skill(skill_id)
+                base_path, _ = _read_external_allowlist()
+                loader.load_all(base_path)
+            _apply_allowlist_and_rebuild_catalog(request)
+    except Exception as e:
+        logger.warning(f"Post-uninstall reload failed: {e}")
+
+    _invalidate_skills_cache()
+    _notify_skills_changed("uninstall")
+    return {"status": "ok", "skill_id": skill_id}
 
 
 @router.post("/api/skills/reload")
@@ -336,6 +434,7 @@ async def reload_skills(request: Request):
         return {"error": "Skill loader/registry not available"}
 
     try:
+        _invalidate_skills_cache()
         if skill_name:
             reloaded = loader.reload_skill(skill_name)
             if reloaded:
@@ -473,6 +572,7 @@ async def update_skill_content(skill_name: str, request: Request):
         except Exception as e:
             logger.warning(f"Skill reload after edit failed: {e}")
 
+    _invalidate_skills_cache()
     return {
         "status": "ok",
         "reloaded": reloaded,

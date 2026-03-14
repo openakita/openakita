@@ -14,6 +14,7 @@
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
+      "@/*": ["./src/*"],
       "@shared/providers.json": ["../../src/openakita/llm/registries/providers.json"]
     }
   },

@@ -42,6 +42,23 @@ from .proxy_utils import build_httpx_timeout, get_httpx_transport, get_proxy_con
 logger = logging.getLogger(__name__)
 
 
+class _BearerAuth(httpx.Auth):
+    """Bearer token auth that persists across cross-origin redirects.
+
+    httpx strips the Authorization header on cross-origin redirects for security.
+    Some OpenAI-compatible gateways (e.g., GitCode api-ai) internally redirect to
+    a different host, causing the token to be lost and a 401 response.
+    Using httpx's auth mechanism re-attaches credentials after every redirect.
+    """
+
+    def __init__(self, token: str):
+        self.token = token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self.token}"
+        yield request
+
+
 class OpenAIProvider(LLMProvider):
     """OpenAI 兼容 API Provider"""
 
@@ -110,9 +127,22 @@ class OpenAIProvider(LLMProvider):
                         f"from {current_read}s to 300s (local inference is slower)"
                     )
 
+            # httpx strips Authorization on cross-origin redirects for security.
+            # Some OpenAI-compatible gateways (e.g., GitCode api-ai) internally redirect
+            # to a different host. Event hooks fire on EVERY request including redirects,
+            # so we use one to re-attach the credential that _build_redirect_request strips.
+            api_key_for_hook = (self.api_key or "").strip()
+            if not api_key_for_hook and is_local:
+                api_key_for_hook = "local"
+
+            async def _ensure_auth_on_redirect(request: httpx.Request):
+                if api_key_for_hook and "Authorization" not in request.headers:
+                    request.headers["Authorization"] = f"Bearer {api_key_for_hook}"
+
             client_kwargs = {
                 "timeout": build_httpx_timeout(timeout_value, default=60.0),
                 "follow_redirects": True,
+                "event_hooks": {"request": [_ensure_auth_on_redirect]},
             }
 
             if proxy and not is_local:
@@ -192,6 +222,7 @@ class OpenAIProvider(LLMProvider):
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers=self._build_headers(),
+                auth=self._get_auth(),
                 json=body,
                 **({"timeout": req_timeout} if req_timeout else {}),
             )
@@ -271,12 +302,24 @@ class OpenAIProvider(LLMProvider):
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._build_headers(),
+                auth=self._get_auth(),
                 json=body,
                 **({"timeout": req_timeout} if req_timeout else {}),
             ) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
-                    raise LLMError(f"API error ({response.status_code}): {error_body.decode()}")
+                    error_text = error_body.decode(errors="replace")
+                    if response.status_code == 401:
+                        raise AuthenticationError(
+                            f"Authentication failed: {error_text}"
+                        )
+                    if response.status_code == 429:
+                        raise RateLimitError(
+                            f"Rate limit exceeded: {error_text}"
+                        )
+                    raise LLMError(
+                        f"API error ({response.status_code}): {error_text}"
+                    )
 
                 has_content = False
                 first_line_raw = None
@@ -340,12 +383,10 @@ class OpenAIProvider(LLMProvider):
             "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
         ))
 
-    def _build_headers(self) -> dict:
-        """构建请求头"""
-        # 避免 Authorization: Bearer <empty> 导致 httpx 报 Illegal header value
+    def _get_auth(self) -> _BearerAuth:
+        """获取认证信息（通过 httpx Auth 机制，确保重定向时不丢失凭据）"""
         api_key = (self.api_key or "").strip()
         if not api_key:
-            # 本地服务（Ollama/LM Studio 等）不需要真实 API Key
             if self._is_local_endpoint():
                 api_key = "local"
             else:
@@ -356,13 +397,14 @@ class OpenAIProvider(LLMProvider):
                     f"Missing API key for endpoint '{self.name}'{hint}. "
                     "Set the environment variable or configure api_key/api_key_env."
                 )
+        return _BearerAuth(api_key)
 
-        headers = {
+    def _build_headers(self) -> dict:
+        """构建请求头（Authorization 由 _get_auth 处理，此处不包含）"""
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
         }
 
-        # OpenRouter 需要额外的头
         if "openrouter" in self.base_url.lower():
             headers["HTTP-Referer"] = "https://github.com/openakita"
             headers["X-Title"] = "OpenAkita"

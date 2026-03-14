@@ -97,7 +97,7 @@ class SkillStoreClient:
 
     @staticmethod
     def _write_origin(skill_dir: Path, install_url: str) -> None:
-        """Write .openakita-origin.json to track skill provenance."""
+        """Write provenance files to track skill source."""
         try:
             origin = {
                 "source": install_url,
@@ -106,7 +106,9 @@ class SkillStoreClient:
             }
             skill_md = skill_dir / "SKILL.md"
             if skill_md.exists():
-                import yaml, re
+                import re
+
+                import yaml
                 m = re.match(r"^---\s*\n(.*?)\n---", skill_md.read_text("utf-8"), re.DOTALL)
                 if m:
                     fm = yaml.safe_load(m.group(1)) or {}
@@ -115,6 +117,8 @@ class SkillStoreClient:
             (skill_dir / ".openakita-origin.json").write_text(
                 json.dumps(origin, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            # Also write .openakita-source for compatibility with bridge/frontend matching
+            (skill_dir / ".openakita-source").write_text(install_url, encoding="utf-8")
         except Exception as e:
             logger.debug(f"Failed to write origin tracking: {e}")
 
@@ -160,6 +164,10 @@ class SkillStoreClient:
                 logger.debug(f"Platform cache download failed for {skill_id}: {e}")
                 if skill_dir.exists():
                     shutil.rmtree(skill_dir, ignore_errors=True)
+
+        # Ensure clean state: platform cache may have left a partial skill_dir
+        if skill_dir.exists():
+            shutil.rmtree(skill_dir, ignore_errors=True)
 
         # Strategy 2: git clone fallback
         try:
@@ -207,25 +215,74 @@ class SkillStoreClient:
 
     @staticmethod
     async def _install_via_git(repo_url: str, skill_name: str, skill_dir: Path) -> bool:
-        """Clone from git (original strategy)."""
+        """Clone from git, handling mono-repo structures.
+
+        Many skill repos (e.g., inference-shell/skills) contain multiple skills
+        in subdirectories. After cloning, we search for the skill_name subdirectory
+        that contains SKILL.md, and only copy that to the target.
+        """
+        import tempfile
+
         git_exe = shutil.which("git")
         if git_exe is None:
             raise FileNotFoundError("git not found in PATH")
 
-        result = subprocess.run(
-            [git_exe, "clone", "--depth=1", repo_url, str(skill_dir)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"git clone failed: {result.stderr}")
+        extra_kwargs: dict = {}
+        if sys.platform == "win32":
+            extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-        git_dir = skill_dir / ".git"
-        if git_dir.exists():
-            shutil.rmtree(git_dir)
+        tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_skill_"))
+        tmp_dir = tmp_parent / "repo"
+        try:
+            result = subprocess.run(
+                [git_exe, "clone", "--depth=1", repo_url, str(tmp_dir)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                **extra_kwargs,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"git clone failed: {result.stderr}")
 
-        return True
+            skill_md_at_root = tmp_dir / "SKILL.md"
+            if skill_md_at_root.exists():
+                shutil.copytree(str(tmp_dir), str(skill_dir))
+                git_dir = skill_dir / ".git"
+                if git_dir.exists():
+                    shutil.rmtree(git_dir)
+                return True
+
+            candidates = [
+                skill_name,
+                f"skills/{skill_name}",
+                f"tools/{skill_name}",
+                f"packages/{skill_name}",
+            ]
+            seen: set[str] = set()
+            for rel in candidates:
+                rel_norm = rel.replace("\\", "/").strip("/")
+                if not rel_norm or rel_norm in seen:
+                    continue
+                seen.add(rel_norm)
+                candidate = tmp_dir / rel_norm
+                if candidate.is_dir() and (candidate / "SKILL.md").exists():
+                    shutil.copytree(str(candidate), str(skill_dir))
+                    return True
+
+            # Fallback: recursive search for SKILL.md with matching directory name
+            for skill_md in tmp_dir.rglob("SKILL.md"):
+                if skill_md.parent.name == skill_name:
+                    shutil.copytree(str(skill_md.parent), str(skill_dir))
+                    return True
+
+            # Last resort: copy entire repo (backward-compatible)
+            shutil.copytree(str(tmp_dir), str(skill_dir))
+            git_dir = skill_dir / ".git"
+            if git_dir.exists():
+                shutil.rmtree(git_dir)
+            return True
+        finally:
+            shutil.rmtree(str(tmp_parent), ignore_errors=True)
 
     async def rate(self, skill_id: str, score: int, comment: str = "", token: str = "") -> dict[str, Any]:
         client = await self._get_client()

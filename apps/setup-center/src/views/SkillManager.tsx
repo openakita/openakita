@@ -6,7 +6,7 @@ import { invoke, IS_TAURI } from "../platform";
 import { useTranslation } from "react-i18next";
 import type { SkillInfo, SkillConfigField, MarketplaceSkill, EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
-import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconConfig, IconFolderOpen, IconEdit } from "../icons";
+import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconConfig, IconFolderOpen, IconEdit, IconTrash } from "../icons";
 import { safeFetch } from "../providers";
 import { ModalOverlay } from "../components/ModalOverlay";
 
@@ -20,6 +20,34 @@ function getSkillDisplayName(skill: SkillInfo, lang: string): string {
 function getSkillDisplayDesc(skill: SkillInfo, lang: string): string {
   const key = lang.startsWith("zh") ? "zh" : lang;
   return skill.description_i18n?.[key] || skill.description;
+}
+
+// ─── 错误消息友好化 ───
+
+type ErrorContext = "load" | "save" | "install" | "uninstall" | "reload" | "general";
+
+function friendlyError(e: unknown, t: (key: string) => string, context: ErrorContext = "general"): string {
+  const raw = e instanceof Error ? e.message : String(e);
+
+  if (/AbortError|signal timed out|timeout/i.test(raw)) {
+    return t("skills.errorTimeout");
+  }
+  if (/Failed to fetch|NetworkError|ECONNREFUSED|net::|ERR_CONNECTION|Load failed/i.test(raw)) {
+    return t("skills.errorNetwork");
+  }
+  if (/\b50[0-9]\b|Internal Server Error/i.test(raw)) {
+    return t("skills.errorServer");
+  }
+
+  const contextMap: Record<ErrorContext, string> = {
+    load: "skills.errorLoadFailed",
+    save: "skills.errorSaveFailed",
+    install: "skills.errorInstallFailed",
+    uninstall: "skills.errorUninstallFailed",
+    reload: "skills.errorReloadFailed",
+    general: "skills.errorUnknown",
+  };
+  return t(contextMap[context]);
 }
 
 // ─── 配置表单自动生成 ───
@@ -141,6 +169,8 @@ function SkillCard({
   onToggleExpand,
   onToggleEnabled,
   onViewDetail,
+  onUninstall,
+  uninstalling,
   envDraft,
   onEnvChange,
   onSaveConfig,
@@ -151,6 +181,8 @@ function SkillCard({
   onToggleExpand: () => void;
   onToggleEnabled: () => void;
   onViewDetail: () => void;
+  onUninstall?: () => void;
+  uninstalling?: boolean;
   envDraft: EnvMap;
   onEnvChange: (fn: (prev: EnvMap) => EnvMap) => void;
   onSaveConfig: () => void;
@@ -180,11 +212,18 @@ function SkillCard({
           {skill.system ? <IconGear size={18} /> : <IconZap size={18} />}
         </div>
         <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={onViewDetail}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 14 }}>{displayName}</span>
             {displayName !== skill.name && (
               <span style={{ fontSize: 11, opacity: 0.4, fontFamily: "monospace" }}>{skill.name}</span>
             )}
+            {!skill.system && skill.sourceUrl && (() => {
+              const src = skill.sourceUrl!;
+              const ownerRepo = src.includes("@") ? src.split("@")[0] : src.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+              return ownerRepo ? (
+                <span style={{ fontSize: 11, opacity: 0.45, fontFamily: "monospace" }}>{ownerRepo}</span>
+              ) : null;
+            })()}
             <span className="pill" style={{ fontSize: 11, borderColor: statusColor + "33" }}>
               <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: 3, background: statusColor, marginRight: 4 }} />
               {statusText}
@@ -195,13 +234,23 @@ function SkillCard({
             {displayDesc}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
           <button
             onClick={onViewDetail}
             style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid var(--line)", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
           >
             {t("skills.viewDetail")}
           </button>
+          {!skill.system && onUninstall && (
+            <button
+              onClick={onUninstall}
+              disabled={uninstalling}
+              title={t("skills.uninstall")}
+              style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(239,68,68,0.25)", background: "transparent", cursor: uninstalling ? "not-allowed" : "pointer", fontSize: 12, color: "#ef4444", opacity: uninstalling ? 0.5 : 1 }}
+            >
+              {uninstalling ? t("skills.uninstalling") : <IconTrash size={13} />}
+            </button>
+          )}
           <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <input
               type="checkbox"
@@ -256,6 +305,8 @@ function SkillDetailModal({
   onCancelEdit,
   onEditChange,
   onSave,
+  onUninstall,
+  uninstalling,
 }: {
   skill: SkillInfo;
   content: string;
@@ -271,6 +322,8 @@ function SkillDetailModal({
   onCancelEdit: () => void;
   onEditChange: (v: string) => void;
   onSave: () => void;
+  onUninstall?: () => void;
+  uninstalling?: boolean;
 }) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -318,6 +371,11 @@ function SkillDetailModal({
           <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12, opacity: 0.6, flexWrap: "wrap" }}>
             <span><b>{t("skills.skillType")}:</b> {isSystem ? t("skills.system") : t("skills.external")}</span>
             {skill.category && <span><b>{t("skills.skillCategory")}:</b> {skill.category}</span>}
+            {!isSystem && skill.sourceUrl && (
+              <span style={{ fontFamily: "monospace", fontSize: 11, opacity: 0.8 }}>
+                <b>{t("skills.source")}:</b> {skill.sourceUrl}
+              </span>
+            )}
             {skill.path && (
               <span style={{ fontFamily: "monospace", fontSize: 11, opacity: 0.8, wordBreak: "break-all" }}>
                 <b>{t("skills.filePath")}:</b> {skill.path}
@@ -392,6 +450,15 @@ function SkillDetailModal({
           )}
           {!isSystem && serviceRunning && (
             <>
+              {onUninstall && !isEditing && (
+                <button
+                  onClick={onUninstall}
+                  disabled={uninstalling || savingContent}
+                  style={{ padding: "6px 16px", borderRadius: 8, border: "1px solid rgba(239,68,68,0.3)", background: "transparent", cursor: uninstalling ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700, color: "#ef4444", display: "inline-flex", alignItems: "center", gap: 4, opacity: uninstalling ? 0.5 : 1 }}
+                >
+                  <IconTrash size={12} /> {uninstalling ? t("skills.uninstalling") : t("skills.uninstall")}
+                </button>
+              )}
               <div style={{ flex: 1 }} />
               {isEditing ? (
                 <>
@@ -519,12 +586,14 @@ export function SkillManager({
   const [marketplace, setMarketplace] = useState<MarketplaceSkill[]>([]);
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketSearch, setMarketSearch] = useState("");
-  const [installing, setInstalling] = useState<string | null>(null);
+  const [installingSet, setInstallingSet] = useState<Set<string>>(new Set());
   const [manualUrl, setManualUrl] = useState("");
   const [manualInstalling, setManualInstalling] = useState(false);
   const [enabledDraft, setEnabledDraft] = useState<Record<string, boolean>>({});
   const [enabledDirty, setEnabledDirty] = useState(false);
   const [savingEnabled, setSavingEnabled] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [installedSearch, setInstalledSearch] = useState("");
   const [aiOrganizing, setAiOrganizing] = useState(false);
   const [localImporting, setLocalImporting] = useState(false);
@@ -535,6 +604,8 @@ export function SkillManager({
   const [detailEditing, setDetailEditing] = useState(false);
   const [detailEditContent, setDetailEditContent] = useState("");
   const [detailSaving, setDetailSaving] = useState(false);
+  const [uninstallingSet, setUninstallingSet] = useState<Set<string>>(new Set());
+  const [uninstallConfirm, setUninstallConfirm] = useState<SkillInfo | null>(null);
   const marketRequestId = useRef(0);
   const detailRequestNameRef = useRef<string | null>(null);
   const { t } = useTranslation();
@@ -551,7 +622,7 @@ export function SkillManager({
       // 优先从运行中的服务 HTTP API 获取（远程模式或本地服务运行时）
       if (serviceRunning && apiBaseUrl != null) {
         try {
-          const res = await safeFetch(`${apiBaseUrl}/api/skills`, { signal: AbortSignal.timeout(5000) });
+          const res = await safeFetch(`${apiBaseUrl}/api/skills`, { signal: AbortSignal.timeout(15_000) });
           data = await res.json();
         } catch (e) {
           httpError = String(e);
@@ -566,7 +637,7 @@ export function SkillManager({
         } catch {
           // Tauri 也失败了——如果 HTTP 也失败了，显示错误
           if (httpError) {
-            setError(`技能列表获取失败 (HTTP: ${httpError})`);
+            setError(friendlyError(httpError, t, "load"));
             return false;
           }
         }
@@ -578,6 +649,7 @@ export function SkillManager({
       }
 
       const list: SkillInfo[] = (data.skills || []).map((s: Record<string, unknown>) => ({
+        skillId: (s.skill_id as string) || (s.name as string),
         name: s.name as string,
         description: s.description as string || "",
         name_i18n: (s.name_i18n as Record<string, string> | null) || null,
@@ -594,12 +666,12 @@ export function SkillManager({
       setSkills(list);
       // 同步 enabledDraft 到后端最新状态
       const draft: Record<string, boolean> = {};
-      for (const s of list) draft[s.name] = s.enabled !== false;
+      for (const s of list) draft[s.skillId] = s.enabled !== false;
       setEnabledDraft(draft);
       setEnabledDirty(false);
       return true;
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e, t, "load"));
       return false;
     } finally {
       setLoading(false);
@@ -623,7 +695,7 @@ export function SkillManager({
   const skillsWithConfig = useMemo(() =>
     skills.map((s) => ({
       ...s,
-      enabled: enabledDraft[s.name] ?? (s.enabled !== false),
+      enabled: enabledDraft[s.skillId] ?? (s.enabled !== false),
       configComplete: checkConfigComplete(s.config, envDraft),
     })),
     [skills, envDraft, enabledDraft],
@@ -670,7 +742,7 @@ export function SkillManager({
       // 刷新
       await loadSkills();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e, t, "save"));
     } finally {
       setSaving(false);
     }
@@ -678,8 +750,8 @@ export function SkillManager({
 
   // ── 切换启用/禁用（仅更新本地 draft，不自动保存） ──
   const handleToggleEnabled = useCallback((skill: SkillInfo) => {
-    const cur = enabledDraft[skill.name] ?? (skill.enabled !== false);
-    setEnabledDraft((prev) => ({ ...prev, [skill.name]: !cur }));
+    const cur = enabledDraft[skill.skillId] ?? (skill.enabled !== false);
+    setEnabledDraft((prev) => ({ ...prev, [skill.skillId]: !cur }));
     setEnabledDirty(true);
   }, [enabledDraft]);
 
@@ -689,8 +761,8 @@ export function SkillManager({
     setError(null);
     try {
       const externalAllowlist = skills
-        .filter((s) => !s.system && (enabledDraft[s.name] ?? (s.enabled !== false)))
-        .map((s) => s.name);
+        .filter((s) => !s.system && (enabledDraft[s.skillId] ?? (s.enabled !== false)))
+        .map((s) => s.skillId);
 
       const content = {
         version: 1,
@@ -729,7 +801,7 @@ export function SkillManager({
       // 刷新技能列表确认后端状态
       await loadSkills();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e, t, "save"));
     } finally {
       setSavingEnabled(false);
     }
@@ -782,7 +854,7 @@ export function SkillManager({
       // 完成后刷新技能列表
       await loadSkills();
     } catch (e) {
-      setError(String(e));
+      setError(friendlyError(e, t));
     } finally {
       setAiOrganizing(false);
     }
@@ -841,11 +913,11 @@ export function SkillManager({
       onNotice?.(t("skills.importLocalSuccess"));
     } catch (e) {
       const msg = String(e);
-      if (msg.includes("已存在") || msg.toLowerCase().includes("already exist")) {
+      if (msg.includes("该技能已安装") || msg.toLowerCase().includes("already installed")) {
         await loadSkills();
         onNotice?.(t("skills.alreadyInstalled"));
       } else {
-        setError(msg);
+        setError(friendlyError(e, t, "install"));
       }
     } finally {
       setLocalImporting(false);
@@ -854,7 +926,7 @@ export function SkillManager({
 
   // ── 打开技能详情弹窗 ──
   const handleViewDetail = useCallback(async (skill: SkillInfo) => {
-    const requestName = skill.name;
+    const requestName = skill.skillId;
     detailRequestNameRef.current = requestName;
     setDetailSkill(skill);
     setDetailEditing(false);
@@ -871,7 +943,7 @@ export function SkillManager({
     }
 
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skills/content/${encodeURIComponent(skill.name)}`, {
+      const res = await safeFetch(`${apiBaseUrl}/api/skills/content/${encodeURIComponent(skill.skillId)}`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (detailRequestNameRef.current !== requestName) return;
@@ -905,7 +977,7 @@ export function SkillManager({
     setDetailSaving(true);
     setDetailContentError(null);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skills/content/${encodeURIComponent(detailSkill.name)}`, {
+      const res = await safeFetch(`${apiBaseUrl}/api/skills/content/${encodeURIComponent(detailSkill.skillId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: detailEditContent }),
@@ -928,6 +1000,55 @@ export function SkillManager({
     }
   }, [detailSkill, detailEditContent, serviceRunning, apiBaseUrl, loadSkills, onNotice, t]);
 
+  // ── 卸载技能（第一步：弹出确认） ──
+  const requestUninstall = useCallback((skill: SkillInfo) => {
+    if (skill.system) return;
+    setUninstallConfirm(skill);
+  }, []);
+
+  // ── 卸载技能（第二步：确认后执行） ──
+  const executeUninstall = useCallback(async (skill: SkillInfo) => {
+    const displayName = skill.name_i18n?.zh || skill.name_i18n?.en || skill.name;
+    const key = skill.skillId;
+    setUninstallingSet(prev => new Set(prev).add(key));
+    setError(null);
+    try {
+      if (serviceRunning && apiBaseUrl != null) {
+        const res = await safeFetch(`${apiBaseUrl}/api/skills/uninstall`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skill_id: key }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+      } else if (IS_TAURI && currentWorkspaceId) {
+        await invoke<string>("openakita_uninstall_skill", {
+          venvDir,
+          workspaceId: currentWorkspaceId,
+          skillName: key,
+        });
+      } else {
+        throw new Error(t("skills.envNotReady") || "环境未就绪");
+      }
+
+      if (detailSkill?.skillId === key) setDetailSkill(null);
+      setMarketplace(prev => prev.map(s => {
+        const sid = s.skillId || s.name;
+        if (sid === key || s.url === skill.sourceUrl) return { ...s, installed: false };
+        return s;
+      }));
+      onNotice?.(t("skills.uninstallSuccess", { name: displayName }));
+      await loadSkills();
+    } catch (e) {
+      const msg = friendlyError(e, t, "uninstall");
+      setError(msg);
+      onNotice?.(msg);
+    } finally {
+      setUninstallingSet(prev => { const next = new Set(prev); next.delete(key); return next; });
+    }
+  }, [serviceRunning, apiBaseUrl, venvDir, currentWorkspaceId, detailSkill, loadSkills, onNotice, t]);
+
   // ── 搜索 skills.sh 市场技能 ──
   const parseMarketplaceResponse = useCallback((data: Record<string, unknown>) => {
     const items: MarketplaceSkill[] = ((data.skills || []) as Record<string, unknown>[]).map((s) => {
@@ -944,12 +1065,13 @@ export function SkillManager({
         installs: typeof s.installs === "number" ? s.installs : undefined,
         tags: [],
         installed: skills.some((local) => {
-          const nameMatch = local.name === skillId;
+          // 有来源追踪的技能，要求来源精确匹配（避免同名不同仓库误判）
+          if (local.sourceUrl) return local.sourceUrl === installUrl;
+          // 无来源信息的旧技能，回退到名称/目录匹配
+          if (local.name === skillId) return true;
           const pathParts = local.path ? local.path.replace(/\\/g, "/").split("/") : [];
           const dirName = pathParts.length >= 2 ? pathParts[pathParts.length - 2] : "";
-          const dirMatch = dirName === skillId;
-          const sourceMatch = local.sourceUrl ? local.sourceUrl === installUrl : false;
-          return nameMatch || dirMatch || sourceMatch;
+          return dirName === skillId;
         }),
       };
     });
@@ -1013,7 +1135,7 @@ export function SkillManager({
     } catch (e) {
       if (reqId !== marketRequestId.current) return;
       // 失败时不清空已有数据，只在没有任何数据时显示错误
-      setError(`${t("skills.marketplace")}: ${String(e)}`);
+      setError(`${t("skills.marketplace")}: ${friendlyError(e, t)}`);
     } finally {
       if (reqId === marketRequestId.current) {
         setMarketLoading(false);
@@ -1035,10 +1157,11 @@ export function SkillManager({
   // ── 安装技能 ──
   const handleInstall = useCallback(async (skill: MarketplaceSkill) => {
     if (dataMode !== "remote" && !serviceRunning && (!venvDir || !currentWorkspaceId)) {
-      setError("环境未就绪：请先完成 Python 环境和工作区配置");
+      setError(t("skills.envNotReady"));
       return;
     }
-    setInstalling(skill.name);
+    const uniqueKey = skill.url || skill.id || skill.name;
+    setInstallingSet(prev => new Set(prev).add(uniqueKey));
     setError(null);
     try {
       let installed = false;
@@ -1054,7 +1177,6 @@ export function SkillManager({
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         installed = true;
-        // 安装成功后通知后端热重载技能
         try {
           await safeFetch(`${apiBaseUrl}/api/skills/reload`, {
             method: "POST",
@@ -1081,19 +1203,25 @@ export function SkillManager({
       setTab("installed");
       setExpandedSkill(skill.skillId || skill.name);
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("已存在") || msg.toLowerCase().includes("already exist")) {
-        setMarketplace((prev) => prev.map((s) =>
-          s.url === skill.url ? { ...s, installed: true } : s
-        ));
-        await loadSkills();
-        onNotice?.(t("skills.alreadyInstalled"));
-        setTab("installed");
+      const raw = String(e);
+      if (raw.includes("该技能已安装") || raw.toLowerCase().includes("already installed")) {
+        const refreshed = await loadSkills();
+        if (refreshed) {
+          setMarketplace((prev) => prev.map((s) =>
+            s.url === skill.url ? { ...s, installed: true } : s
+          ));
+          onNotice?.(t("skills.alreadyInstalled"));
+          setTab("installed");
+        } else {
+          setError(friendlyError(e, t, "install"));
+        }
       } else {
-        setError(msg);
+        const friendly = friendlyError(e, t, "install");
+        setError(friendly);
+        onNotice?.(friendly);
       }
     } finally {
-      setInstalling(null);
+      setInstallingSet(prev => { const next = new Set(prev); next.delete(uniqueKey); return next; });
     }
   }, [loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, onNotice, t]);
 
@@ -1102,7 +1230,7 @@ export function SkillManager({
     const url = manualUrl.trim();
     if (!url) return;
     if (dataMode !== "remote" && !serviceRunning && (!venvDir || !currentWorkspaceId)) {
-      setError(t("skills.envNotReady") || "环境未就绪：请先完成 Python 环境和工作区配置");
+      setError(t("skills.envNotReady"));
       return;
     }
     setManualInstalling(true);
@@ -1142,14 +1270,16 @@ export function SkillManager({
       await loadSkills();
       setTab("installed");
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("已存在") || msg.toLowerCase().includes("already exist")) {
+      const raw = String(e);
+      if (raw.includes("该技能已安装") || raw.toLowerCase().includes("already installed")) {
         setManualUrl("");
         await loadSkills();
         onNotice?.(t("skills.alreadyInstalled"));
         setTab("installed");
       } else {
-        setError(msg);
+        const friendly = friendlyError(e, t, "install");
+        setError(friendly);
+        onNotice?.(friendly);
       }
     } finally {
       setManualInstalling(false);
@@ -1177,9 +1307,11 @@ export function SkillManager({
         <div style={{ flex: 1 }} />
         <button
           onClick={async () => {
+            if (refreshing || loading) return;
+            setRefreshing(true);
             setError(null);
-            if (serviceRunning) {
-              try {
+            try {
+              if (serviceRunning) {
                 const res = await safeFetch(`${apiBaseUrl}/api/skills/reload`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -1187,17 +1319,21 @@ export function SkillManager({
                   signal: AbortSignal.timeout(15_000),
                 });
                 const data = await res.json();
-                if (data.error) { setError(typeof data.error === "string" ? data.error : JSON.stringify(data.error)); return; }
-              } catch (e) { setError(String(e)); return; }
+                if (data.error) { setError(friendlyError(data.error, t, "reload")); return; }
+              }
+              const ok = await loadSkills();
+              if (ok) onNotice?.(t("skills.refreshed"));
+            } catch (e) {
+              setError(friendlyError(e, t, "reload"));
+            } finally {
+              setRefreshing(false);
             }
-            const ok = await loadSkills();
-            if (ok) onNotice?.(t("skills.refreshed"));
           }}
-          disabled={loading}
-          style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}
+          disabled={refreshing || loading}
+          style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid var(--line)", cursor: refreshing || loading ? "not-allowed" : "pointer", opacity: refreshing || loading ? 0.6 : 1 }}
           title={t("skills.reloadHint")}
         >
-          {loading ? t("common.loading") : t("topbar.refresh")}
+          {refreshing || loading ? t("common.loading") : t("topbar.refresh")}
         </button>
       </div>
 
@@ -1205,114 +1341,129 @@ export function SkillManager({
 
       {/* 已安装技能 */}
       {tab === "installed" && (
-        <div style={{ display: "grid", gap: 10 }}>
-          {/* 搜索 + AI 整理 */}
-          {skillsWithConfig.length > 0 && (
-            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-              <div style={{ flex: 1, position: "relative" }}>
-                <IconSearch size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} />
-                <input
-                  value={installedSearch}
-                  onChange={(e) => setInstalledSearch(e.target.value)}
-                  placeholder={t("skills.filterPlaceholder")}
-                  style={{ width: "100%", fontSize: 13, paddingLeft: 32 }}
-                />
+        <>
+          <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+            {/* 搜索 + AI 整理 */}
+            {skillsWithConfig.length > 0 && (
+              <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                <div style={{ flex: 1, position: "relative" }}>
+                  <IconSearch size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} />
+                  <input
+                    value={installedSearch}
+                    onChange={(e) => setInstalledSearch(e.target.value)}
+                    placeholder={t("skills.filterPlaceholder")}
+                    style={{ width: "100%", fontSize: 13, paddingLeft: 32 }}
+                  />
+                </div>
+                {dataMode !== "remote" && (
+                  <button
+                    onClick={handleImportLocal}
+                    disabled={localImporting}
+                    style={{ fontSize: 12, padding: "0 14px", borderRadius: 10, border: "1px solid var(--line)", cursor: "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4 }}
+                    title={t("skills.importLocalTitle")}
+                  >
+                    <IconFolderOpen size={13} />
+                    {localImporting ? t("skills.importLocalImporting") : t("skills.importLocal")}
+                  </button>
+                )}
+                {serviceRunning && (
+                  <button
+                    onClick={handleAiOrganize}
+                    disabled={aiOrganizing}
+                    style={{ fontSize: 12, padding: "0 14px", borderRadius: 10, border: "1px solid var(--line)", cursor: "pointer", whiteSpace: "nowrap" }}
+                    title={t("skills.aiOrganizeHint")}
+                  >
+                    {aiOrganizing ? t("common.loading") : t("skills.aiOrganize")}
+                  </button>
+                )}
               </div>
-              {dataMode !== "remote" && (
-                <button
-                  onClick={handleImportLocal}
-                  disabled={localImporting}
-                  style={{ fontSize: 12, padding: "0 14px", borderRadius: 10, border: "1px solid var(--line)", cursor: "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4 }}
-                  title={t("skills.importLocalTitle")}
-                >
-                  <IconFolderOpen size={13} />
-                  {localImporting ? t("skills.importLocalImporting") : t("skills.importLocal")}
-                </button>
-              )}
-              {serviceRunning && (
-                <button
-                  onClick={handleAiOrganize}
-                  disabled={aiOrganizing}
-                  style={{ fontSize: 12, padding: "0 14px", borderRadius: 10, border: "1px solid var(--line)", cursor: "pointer", whiteSpace: "nowrap" }}
-                  title={t("skills.aiOrganizeHint")}
-                >
-                  {aiOrganizing ? t("common.loading") : t("skills.aiOrganize")}
-                </button>
-              )}
-            </div>
-          )}
+            )}
 
-          {loading && skillsWithConfig.length === 0 && <div className="cardHint">{t("skills.loading")}</div>}
-          {!loading && skillsWithConfig.length === 0 && (
-            <div className="card" style={{ textAlign: "center", padding: "30px 20px" }}>
-              <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><IconZap size={36} /></div>
-              <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("skills.noSkills")}</div>
-              <div className="help">{t("skills.noSkillsHint")}</div>
-              {dataMode !== "remote" && (
-                <button
-                  onClick={handleImportLocal}
-                  disabled={localImporting}
-                  style={{ marginTop: 12, fontSize: 12, padding: "6px 16px", borderRadius: 10, border: "1px solid var(--line)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
-                >
-                  <IconFolderOpen size={13} />
-                  {localImporting ? t("skills.importLocalImporting") : t("skills.importLocal")}
-                </button>
-              )}
-            </div>
-          )}
-          {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (
-            <div className="cardHint" style={{ textAlign: "center", padding: 16 }}>
-              {t("skills.noResults")}
-            </div>
-          )}
-          {filteredSkills.map((skill) => (
-            <SkillCard
-              key={skill.name}
-              skill={skill}
-              expanded={expandedSkill === skill.name}
-              onToggleExpand={() => setExpandedSkill(expandedSkill === skill.name ? null : skill.name)}
-              onToggleEnabled={() => handleToggleEnabled(skill)}
-              onViewDetail={() => handleViewDetail(skill)}
-              envDraft={envDraft}
-              onEnvChange={onEnvChange}
-              onSaveConfig={() => handleSaveConfig(skill)}
-              saving={saving}
-            />
-          ))}
+            {loading && skillsWithConfig.length === 0 && <div className="cardHint">{t("skills.loading")}</div>}
+            {!loading && skillsWithConfig.length === 0 && (
+              <div className="card" style={{ textAlign: "center", padding: "30px 20px" }}>
+                <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><IconZap size={36} /></div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("skills.noSkills")}</div>
+                <div className="help">{t("skills.noSkillsHint")}</div>
+                {dataMode !== "remote" && (
+                  <button
+                    onClick={handleImportLocal}
+                    disabled={localImporting}
+                    style={{ marginTop: 12, fontSize: 12, padding: "6px 16px", borderRadius: 10, border: "1px solid var(--line)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                  >
+                    <IconFolderOpen size={13} />
+                    {localImporting ? t("skills.importLocalImporting") : t("skills.importLocal")}
+                  </button>
+                )}
+              </div>
+            )}
+            {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (
+              <div className="cardHint" style={{ textAlign: "center", padding: 16 }}>
+                {t("skills.noResults")}
+              </div>
+            )}
+            {filteredSkills.map((skill) => (
+              <SkillCard
+                key={skill.skillId}
+                skill={skill}
+                expanded={expandedSkill === skill.skillId}
+                onToggleExpand={() => setExpandedSkill(expandedSkill === skill.skillId ? null : skill.skillId)}
+                onToggleEnabled={() => handleToggleEnabled(skill)}
+                onViewDetail={() => handleViewDetail(skill)}
+                onUninstall={!skill.system ? () => requestUninstall(skill) : undefined}
+                uninstalling={uninstallingSet.has(skill.skillId)}
+                envDraft={envDraft}
+                onEnvChange={onEnvChange}
+                onSaveConfig={() => handleSaveConfig(skill)}
+                saving={saving}
+              />
+            ))}
+          </div>
 
-          {/* 保存启用/禁用状态 */}
-          {enabledDirty && (
-            <div style={{
-              position: "sticky",
-              bottom: 0,
-              padding: "12px 0",
-              background: "var(--bg)",
-              borderTop: "1px solid var(--line)",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              zIndex: 10,
-            }}>
-              <span style={{ fontSize: 12, opacity: 0.6, flex: 1 }}>
-                {t("skills.unsavedChanges")}
-              </span>
-              <button
-                onClick={() => { loadSkills(); }}
-                disabled={savingEnabled}
-                style={{ fontSize: 12, padding: "6px 16px", borderRadius: 8, border: "1px solid var(--line)", cursor: "pointer" }}
-              >
-                {t("skills.discardChanges")}
-              </button>
-              <button
-                className="btnPrimary"
-                onClick={handleSaveEnabledState}
-                disabled={savingEnabled}
-                style={{ fontSize: 13, padding: "6px 20px" }}
-              >
-                {savingEnabled ? t("skills.saving") : t("skills.saveEnabledState")}
-              </button>
-            </div>
-          )}
+        </>
+      )}
+
+      {/* 保存启用/禁用状态 — fixed 定位浮动栏，不依赖父容器布局 */}
+      {enabledDirty && (
+        <div style={{
+          position: "fixed",
+          bottom: 24,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "min(560px, 90vw)",
+          padding: "12px 20px",
+          background: "var(--panel)",
+          border: "1px solid var(--line)",
+          borderRadius: 14,
+          boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          zIndex: 1000,
+          boxSizing: "border-box",
+        }}>
+          <span style={{ fontSize: 13, opacity: 0.7, flex: 1, minWidth: 0 }}>
+            {t("skills.unsavedChanges")}
+          </span>
+          <button
+            onClick={async () => {
+              if (discarding || savingEnabled) return;
+              setDiscarding(true);
+              try { await loadSkills(); } finally { setDiscarding(false); }
+            }}
+            disabled={savingEnabled || discarding}
+            style={{ fontSize: 12, padding: "6px 16px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg)", cursor: savingEnabled || discarding ? "not-allowed" : "pointer", opacity: savingEnabled || discarding ? 0.6 : 1, whiteSpace: "nowrap", flexShrink: 0 }}
+          >
+            {discarding ? t("common.loading") : t("skills.discardChanges")}
+          </button>
+          <button
+            className="btnPrimary"
+            onClick={handleSaveEnabledState}
+            disabled={savingEnabled || discarding}
+            style={{ fontSize: 13, padding: "6px 20px", whiteSpace: "nowrap", flexShrink: 0, cursor: savingEnabled || discarding ? "not-allowed" : "pointer", opacity: savingEnabled || discarding ? 0.6 : 1 }}
+          >
+            {savingEnabled ? t("skills.saving") : t("skills.saveEnabledState")}
+          </button>
         </div>
       )}
 
@@ -1373,14 +1524,17 @@ export function SkillManager({
           </div>
           <div style={{ display: "grid", gap: 10 }}>
             {marketLoading && <div className="cardHint">{t("common.loading")}</div>}
-            {!marketLoading && marketplace.map((skill) => (
-              <MarketplaceSkillCard
-                key={skill.id || skill.name}
-                skill={skill}
-                onInstall={() => handleInstall(skill)}
-                installing={installing === skill.name}
-              />
-            ))}
+            {!marketLoading && marketplace.map((skill) => {
+              const uk = skill.url || skill.id || skill.name;
+              return (
+                <MarketplaceSkillCard
+                  key={uk}
+                  skill={skill}
+                  onInstall={() => handleInstall(skill)}
+                  installing={installingSet.has(uk)}
+                />
+              );
+            })}
             {!marketLoading && marketplace.length === 0 && (
               <div className="cardHint" style={{ textAlign: "center", padding: 20 }}>
                 {marketSearch ? t("skills.noResults") : t("skills.noSkills")}
@@ -1413,7 +1567,44 @@ export function SkillManager({
           onCancelEdit={() => { setDetailEditing(false); setDetailEditContent(""); }}
           onEditChange={setDetailEditContent}
           onSave={handleSaveContent}
+          onUninstall={!detailSkill.system ? () => requestUninstall(detailSkill) : undefined}
+          uninstalling={uninstallingSet.has(detailSkill.skillId)}
         />
+      )}
+
+      {/* 卸载确认弹窗 */}
+      {uninstallConfirm && (
+        <ModalOverlay onClose={() => setUninstallConfirm(null)}>
+          <div className="modalContent" style={{ maxWidth: 400, padding: "24px 28px", textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🗑️</div>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>
+              {t("skills.uninstall")}
+            </div>
+            <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 20, lineHeight: 1.6 }}>
+              {t("skills.confirmUninstall", {
+                name: uninstallConfirm.name_i18n?.zh || uninstallConfirm.name_i18n?.en || uninstallConfirm.name,
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button
+                onClick={() => setUninstallConfirm(null)}
+                style={{ padding: "8px 24px", borderRadius: 8, border: "1px solid var(--line)", background: "transparent", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={() => {
+                  const skill = uninstallConfirm;
+                  setUninstallConfirm(null);
+                  executeUninstall(skill);
+                }}
+                style={{ padding: "8px 24px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              >
+                {t("skills.uninstall")}
+              </button>
+            </div>
+          </div>
+        </ModalOverlay>
       )}
     </>
   );

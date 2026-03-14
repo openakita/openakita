@@ -34,7 +34,8 @@ class SkillEntry:
     - category: 工具分类
     """
 
-    name: str
+    skill_id: str  # 唯一标识（= 目录名），用作注册 key、allowlist key、tool name key
+    name: str  # SKILL.md 声明的显示名（可重复），仅用于展示和搜索
     description: str
     version: str | None = None
     license: str | None = None
@@ -56,6 +57,9 @@ class SkillEntry:
 
     # 技能路径 (用于延迟加载)
     skill_path: str | None = None
+
+    # 技能来源 URL（来自 .openakita-source 文件，用于区分同名技能）
+    source_url: str | None = None
 
     # 国际化（由 agents/openai.yaml i18n 字段注入，兼容旧的 .openakita-i18n.json）
     name_i18n: dict[str, str] = field(default_factory=dict)
@@ -79,10 +83,29 @@ class SkillEntry:
         return self.description_i18n.get(lang, self.description)
 
     @classmethod
-    def from_parsed_skill(cls, skill: "ParsedSkill") -> "SkillEntry":
-        """从 ParsedSkill 创建条目"""
+    def from_parsed_skill(
+        cls, skill: "ParsedSkill", skill_id: str | None = None,
+    ) -> "SkillEntry":
+        """从 ParsedSkill 创建条目
+
+        Args:
+            skill: 解析后的技能对象
+            skill_id: 唯一标识（通常为目录名）。未提供时回退到 metadata.name。
+        """
         meta = skill.metadata
+
+        source_url: str | None = None
+        if skill.path:
+            from pathlib import Path
+
+            source_file = Path(skill.path).parent / ".openakita-source"
+            try:
+                source_url = source_file.read_text(encoding="utf-8").strip() or None
+            except Exception:
+                pass
+
         return cls(
+            skill_id=skill_id or meta.name,
             name=meta.name,
             description=meta.description,
             version=meta.version,
@@ -99,6 +122,7 @@ class SkillEntry:
             required_bins=list(meta.required_bins),
             required_env=list(meta.required_env),
             skill_path=str(skill.path),
+            source_url=source_url,
             name_i18n=dict(meta.name_i18n),
             description_i18n=dict(meta.description_i18n),
             _parsed_skill=skill,
@@ -125,8 +149,8 @@ class SkillEntry:
                 "input_schema": self._get_input_schema(),
             }
         else:
-            # 外部技能：使用 skill_ 前缀，清理命名空间中的非法字符
-            safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.name)
+            # 外部技能：使用 skill_ 前缀，基于 skill_id 生成唯一工具名
+            safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.skill_id)
             return {
                 "name": f"skill_{safe}",
                 "description": f"[Skill] {self.description}",
@@ -168,61 +192,85 @@ class SkillRegistry:
     - 注册/注销
     - 搜索/查找
     - 渐进式加载
+
+    内部以 skill_id（目录名）做唯一 key，对外查找方法同时接受
+    skill_id 和 name（向后兼容：先匹配 skill_id，未命中则回退到 name）。
     """
 
     def __init__(self):
-        self._skills: dict[str, SkillEntry] = {}
+        self._skills: dict[str, SkillEntry] = {}  # key = skill_id
 
-    def register(self, skill: "ParsedSkill") -> None:
+    def _resolve(self, key: str) -> SkillEntry | None:
+        """按 skill_id 查找，未命中时回退到 name 匹配（向后兼容）。"""
+        entry = self._skills.get(key)
+        if entry is not None:
+            return entry
+        for e in self._skills.values():
+            if e.name == key:
+                return e
+        return None
+
+    def _resolve_id(self, key: str) -> str | None:
+        """将 key 解析为实际的 skill_id。"""
+        if key in self._skills:
+            return key
+        for sid, e in self._skills.items():
+            if e.name == key:
+                return sid
+        return None
+
+    def register(self, skill: "ParsedSkill", skill_id: str | None = None) -> None:
         """
         注册技能
 
         Args:
             skill: 解析后的技能对象
+            skill_id: 唯一标识（通常为目录名）。未提供时回退到 metadata.name。
         """
-        entry = SkillEntry.from_parsed_skill(skill)
+        entry = SkillEntry.from_parsed_skill(skill, skill_id=skill_id)
 
-        if entry.name in self._skills:
-            logger.warning(f"Skill '{entry.name}' already registered, overwriting")
+        if entry.skill_id in self._skills:
+            logger.warning(f"Skill '{entry.skill_id}' already registered, overwriting")
 
-        self._skills[entry.name] = entry
-        logger.info(f"Registered skill: {entry.name}")
+        self._skills[entry.skill_id] = entry
+        logger.info(f"Registered skill: {entry.skill_id} (name={entry.name})")
 
-    def unregister(self, name: str) -> bool:
+    def unregister(self, key: str) -> bool:
         """
         注销技能
 
         Args:
-            name: 技能名称
+            key: skill_id 或 name（向后兼容）
 
         Returns:
             是否成功
         """
-        if name in self._skills:
-            del self._skills[name]
-            logger.info(f"Unregistered skill: {name}")
+        sid = self._resolve_id(key)
+        if sid is not None:
+            del self._skills[sid]
+            logger.info(f"Unregistered skill: {sid}")
             return True
         return False
 
-    def get(self, name: str) -> SkillEntry | None:
+    def get(self, key: str) -> SkillEntry | None:
         """
         获取技能
 
         Args:
-            name: 技能名称
+            key: skill_id 或 name（向后兼容）
 
         Returns:
             SkillEntry 或 None
         """
-        return self._skills.get(name)
+        return self._resolve(key)
 
-    def has(self, name: str) -> bool:
-        """检查技能是否存在"""
-        return name in self._skills
+    def has(self, key: str) -> bool:
+        """检查技能是否存在（接受 skill_id 或 name）"""
+        return self._resolve(key) is not None
 
-    def set_disabled(self, name: str, disabled: bool = True) -> bool:
-        """设置技能的 disabled 标记。Returns True if skill exists."""
-        skill = self._skills.get(name)
+    def set_disabled(self, key: str, disabled: bool = True) -> bool:
+        """设置技能的 disabled 标记。接受 skill_id 或 name。"""
+        skill = self._resolve(key)
         if skill is not None:
             skill.disabled = disabled
             return True
@@ -250,6 +298,7 @@ class SkillRegistry:
         """
         return [
             {
+                "skill_id": skill.skill_id,
                 "name": skill.name,
                 "description": skill.description,
                 "auto_invoke": not skill.disable_model_invocation,
@@ -267,7 +316,7 @@ class SkillRegistry:
         搜索技能
 
         Args:
-            query: 搜索词 (匹配名称或描述)
+            query: 搜索词 (匹配 skill_id、名称或描述)
             include_disabled: 是否包含禁用自动调用的技能
 
         Returns:
@@ -280,7 +329,11 @@ class SkillRegistry:
             if not include_disabled and (skill.disabled or skill.disable_model_invocation):
                 continue
 
-            if query_lower in skill.name.lower() or query_lower in skill.description.lower():
+            if (
+                query_lower in skill.skill_id.lower()
+                or query_lower in skill.name.lower()
+                or query_lower in skill.description.lower()
+            ):
                 results.append(skill)
 
         return results
@@ -372,8 +425,8 @@ class SkillRegistry:
         """外部技能数量"""
         return len(self.list_external_skills())
 
-    def __contains__(self, name: str) -> bool:
-        return self.has(name)
+    def __contains__(self, key: str) -> bool:
+        return self.has(key)
 
     def __len__(self) -> int:
         return self.count
@@ -390,11 +443,11 @@ class SkillRegistry:
 default_registry = SkillRegistry()
 
 
-def register_skill(skill: "ParsedSkill") -> None:
+def register_skill(skill: "ParsedSkill", skill_id: str | None = None) -> None:
     """注册技能到默认注册中心"""
-    default_registry.register(skill)
+    default_registry.register(skill, skill_id=skill_id)
 
 
-def get_skill(name: str) -> SkillEntry | None:
-    """从默认注册中心获取技能"""
-    return default_registry.get(name)
+def get_skill(key: str) -> SkillEntry | None:
+    """从默认注册中心获取技能（接受 skill_id 或 name）"""
+    return default_registry.get(key)

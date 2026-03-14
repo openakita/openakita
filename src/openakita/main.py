@@ -245,6 +245,13 @@ def _ensure_channel_deps() -> None:
     if settings.qqbot_enabled:
         enabled_channels.append("qqbot")
 
+    # 补充从 im_bots 中提取已启用的通道类型，确保依赖检测覆盖 UI 创建的 Bot
+    for bot_cfg in (settings.im_bots or []):
+        if bot_cfg.get("enabled", True):
+            channel_type = bot_cfg.get("type", "")
+            if channel_type and channel_type not in enabled_channels:
+                enabled_channels.append(channel_type)
+
     if not enabled_channels:
         return
 
@@ -546,6 +553,63 @@ def _create_bot_adapter(bot_type: str, creds: dict, *, channel_name: str, bot_id
         return None
 
 
+def get_message_gateway():
+    """返回当前运行的 MessageGateway 实例，如未启动则返回 None。"""
+    return _message_gateway
+
+
+def _bot_channel_name(bot_cfg: dict) -> str:
+    """根据 bot 配置计算 channel_name，与 start_im_channels 中的命名规则保持一致。"""
+    bot_type = bot_cfg.get("type", "")
+    bot_id = bot_cfg.get("id", "")
+    return f"{bot_type}:{bot_id}" if bot_id else bot_type
+
+
+async def apply_im_bot(bot_cfg: dict) -> bool:
+    """动态注册或更新单个 Bot 适配器到正在运行的网关中（热重载）。
+
+    如果网关未运行（服务未启动），则不做任何操作，返回 False。
+    服务重启后仍会从 runtime_state.json 正常加载，不影响持久化。
+    """
+    if _message_gateway is None or not _message_gateway._running:
+        return False
+    bot_type = bot_cfg.get("type", "")
+    bot_id = bot_cfg.get("id", "")
+    agent_id = bot_cfg.get("agent_profile_id", "default")
+    creds = bot_cfg.get("credentials", {})
+    channel_name = _bot_channel_name(bot_cfg)
+    try:
+        adapter = _create_bot_adapter(
+            bot_type, creds,
+            channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_id,
+        )
+        if adapter:
+            await _message_gateway.register_adapter(adapter)
+            logger.info(f"[HotReload] Applied bot adapter: {channel_name}")
+            return True
+    except Exception as e:
+        logger.error(f"[HotReload] Failed to apply bot {channel_name}: {e}")
+    return False
+
+
+async def remove_im_bot(bot_cfg: dict) -> bool:
+    """动态从正在运行的网关中注销并停止单个 Bot 适配器（热重载）。
+
+    如果网关未运行，则不做任何操作，返回 False。
+    """
+    if _message_gateway is None:
+        return False
+    channel_name = _bot_channel_name(bot_cfg)
+    try:
+        result = await _message_gateway.unregister_adapter(channel_name)
+        if result:
+            logger.info(f"[HotReload] Removed bot adapter: {channel_name}")
+        return result
+    except Exception as e:
+        logger.error(f"[HotReload] Failed to remove bot {channel_name}: {e}")
+        return False
+
+
 async def ensure_session_manager():
     """
     确保 SessionManager 已初始化。
@@ -597,6 +661,7 @@ async def start_im_channels(agent_or_master):
         or settings.dingtalk_enabled
         or settings.onebot_enabled
         or settings.qqbot_enabled
+        or any(b.get("enabled", True) for b in (settings.im_bots or []))
     )
 
     if not any_enabled:

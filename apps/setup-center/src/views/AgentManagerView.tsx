@@ -21,6 +21,7 @@ type AgentProfile = {
 };
 
 type SkillItem = {
+  skillId: string;
   name: string;
   enabled: boolean;
   name_i18n?: Record<string, string> | null;
@@ -226,7 +227,14 @@ export function AgentManagerView({
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/skills`);
       const data = await res.json();
-      setAvailableSkills(data.skills || []);
+      setAvailableSkills(
+        (data.skills || []).map((s: any) => ({
+          skillId: s.skill_id || s.name,
+          name: s.name,
+          enabled: s.enabled !== false,
+          name_i18n: s.name_i18n || null,
+        })),
+      );
     } catch {
       /* skills endpoint may not be available */
     }
@@ -1161,10 +1169,10 @@ export function AgentManagerView({
                 borderRadius: 8, padding: 4, marginBottom: 12,
               }}>
                 {availableSkills.map((skill) => {
-                  const checked = editingProfile.skills.includes(skill.name);
+                  const checked = editingProfile.skills.includes(skill.skillId);
                   return (
                     <label
-                      key={skill.name}
+                      key={skill.skillId}
                       style={{
                         display: "flex", alignItems: "center", gap: 8,
                         padding: "6px 10px", borderRadius: 6, cursor: "pointer",
@@ -1178,7 +1186,7 @@ export function AgentManagerView({
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleSkill(skill.name)}
+                        onChange={() => toggleSkill(skill.skillId)}
                         style={{ accentColor: "var(--primary, #3b82f6)", flexShrink: 0, width: 16, height: 16 }}
                       />
                       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

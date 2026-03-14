@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { FieldText, FieldBool, FieldSelect } from "../components/EnvFields";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Input } from "@/components/ui/input";
 import type { EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
 
@@ -7,18 +9,15 @@ type AgentSystemViewProps = {
   envDraft: EnvMap;
   setEnvDraft: (updater: (prev: EnvMap) => EnvMap) => void;
   busy: string | null;
-  secretShown: Record<string, boolean>;
-  onToggleSecret: (k: string) => void;
 };
 
 export function AgentSystemView(props: AgentSystemViewProps) {
-  const { envDraft, setEnvDraft, busy, secretShown, onToggleSecret } = props;
+  const { envDraft, setEnvDraft, busy } = props;
   const { t } = useTranslation();
 
   const _envBase = { envDraft, onEnvChange: setEnvDraft, busy };
-  const _secretCtx = { secretShown, onToggleSecret };
   const FT = (p: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password" }) =>
-    <FieldText key={p.k} {...p} {..._envBase} {..._secretCtx} />;
+    <FieldText key={p.k} {...p} {..._envBase} />;
   const FB = (p: { k: string; label: string; help?: string; defaultValue?: boolean }) =>
     <FieldBool key={p.k} {...p} {..._envBase} />;
   const FS = (p: { k: string; label: string; options: { value: string; label: string }[]; help?: string }) =>
@@ -44,25 +43,39 @@ export function AgentSystemView(props: AgentSystemViewProps) {
         <div className="divider" />
 
         {/* Persona Selection */}
-        <div style={{ marginBottom: 12 }}>
-          <div className="label">{t("config.agentPersona")}</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+        <div className="mb-3">
+          <div className="text-sm font-medium mb-2">{t("config.agentPersona")}</div>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            spacing={2}
+            value={curPersona}
+            onValueChange={(val) => {
+              if (val) setEnvDraft((m) => envSet(m, "PERSONA_NAME", val));
+            }}
+            className="flex-wrap"
+          >
             {personas.map((p) => (
-              <button key={p.id}
-                className={curPersona === p.id ? "capChipActive" : "capChip"}
-                onClick={() => setEnvDraft((m) => envSet(m, "PERSONA_NAME", p.id))}>
+              <ToggleGroupItem
+                key={p.id}
+                value={p.id}
+                className="text-sm min-w-[5.5rem] data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+              >
                 {t(p.desc)}
-              </button>
+              </ToggleGroupItem>
             ))}
-          </div>
-          {curPersona === "custom" || !personas.find((p) => p.id === curPersona) ? (
-            <input style={{ marginTop: 8, maxWidth: 300 }} type="text" placeholder={t("config.agentCustomId")}
+          </ToggleGroup>
+          {(curPersona === "custom" || !personas.find((p) => p.id === curPersona)) && (
+            <Input
+              className="mt-2 max-w-[300px]"
+              placeholder={t("config.agentCustomId")}
               value={envGet(envDraft, "PERSONA_CUSTOM_ID", "")}
               onChange={(e) => {
                 setEnvDraft((m) => envSet(m, "PERSONA_CUSTOM_ID", e.target.value));
                 setEnvDraft((m) => envSet(m, "PERSONA_NAME", e.target.value || "custom"));
-              }} />
-          ) : null}
+              }}
+            />
+          )}
         </div>
 
         {/* Core Parameters */}

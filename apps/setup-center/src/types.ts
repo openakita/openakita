@@ -325,6 +325,7 @@ export type SkillConfigField = {
 };
 
 export type SkillInfo = {
+  skillId: string;
   name: string;
   description: string;
   name_i18n?: Record<string, string> | null;

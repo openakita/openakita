@@ -1,6 +1,6 @@
 [
   {
-    "name": "自定义服务商 (Custom)",
+    "name": "自定义服务商",
     "slug": "custom",
     "api_type": "openai",
     "default_base_url": "",

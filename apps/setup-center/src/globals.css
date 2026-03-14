@@ -1,0 +1,105 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * shadcn/ui theme — new variables only.
+ * Existing variables (--primary, --border, --danger, --bg-app, --text, etc.)
+ * live in styles.css and are referenced via var() in @theme below.
+ */
+
+:root {
+  --accent: var(--brand, #0ea5e9);
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: rgba(17, 24, 39, 0.95);
+  --ui-accent: #f1f5f9;
+  --ui-accent-fg: rgba(17, 24, 39, 0.95);
+  --destructive-foreground: #ffffff;
+  --popover: #ffffff;
+  --popover-foreground: rgba(17, 24, 39, 0.95);
+  --card-foreground: rgba(17, 24, 39, 0.95);
+  --input: rgba(17, 24, 39, 0.12);
+  --ring: #0ea5e9;
+  --chart-1: #0ea5e9;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #8b5cf6;
+  --chart-5: #ec4899;
+}
+
+[data-theme="dark"] {
+  --accent: var(--brand, #38bdf8);
+  --primary-foreground: #ffffff;
+  --secondary: rgba(255, 255, 255, 0.08);
+  --secondary-foreground: rgba(255, 255, 255, 0.92);
+  --ui-accent: rgba(255, 255, 255, 0.10);
+  --ui-accent-fg: rgba(255, 255, 255, 0.92);
+  --destructive-foreground: #ffffff;
+  --popover: rgba(39, 39, 42, 0.95);
+  --popover-foreground: rgba(255, 255, 255, 0.92);
+  --card-foreground: rgba(255, 255, 255, 0.92);
+  --input: rgba(255, 255, 255, 0.15);
+  --ring: #38bdf8;
+  --chart-1: #38bdf8;
+  --chart-2: #34d399;
+  --chart-3: #fbbf24;
+  --chart-4: #a78bfa;
+  --chart-5: #f472b6;
+}
+
+/*
+ * Tailwind v4 changed the default border-color from gray-200 to currentColor.
+ * Restore the expected behavior so border-b etc. use the theme border color.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border, currentColor);
+  }
+}
+
+@keyframes dialog-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes dialog-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@theme {
+  --color-background: var(--bg-app);
+  --color-foreground: var(--text);
+  --color-card: var(--card-bg);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--bg-subtle);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent: var(--ui-accent);
+  --color-accent-foreground: var(--ui-accent-fg);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
