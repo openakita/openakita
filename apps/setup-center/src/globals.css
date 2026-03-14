@@ -10,7 +10,7 @@
  */
 
 :root {
-  --accent: var(--brand, #0ea5e9);
+  --accent: var(--brand, #2563eb);
   --primary-foreground: #ffffff;
   --secondary: #f1f5f9;
   --secondary-foreground: rgba(17, 24, 39, 0.95);
@@ -21,8 +21,8 @@
   --popover-foreground: rgba(17, 24, 39, 0.95);
   --card-foreground: rgba(17, 24, 39, 0.95);
   --input: rgba(17, 24, 39, 0.12);
-  --ring: #0ea5e9;
-  --chart-1: #0ea5e9;
+  --ring: #2563eb;
+  --chart-1: #2563eb;
   --chart-2: #10b981;
   --chart-3: #f59e0b;
   --chart-4: #8b5cf6;
@@ -30,7 +30,7 @@
 }
 
 [data-theme="dark"] {
-  --accent: var(--brand, #38bdf8);
+  --accent: var(--brand, #60a5fa);
   --primary-foreground: #ffffff;
   --secondary: rgba(255, 255, 255, 0.08);
   --secondary-foreground: rgba(255, 255, 255, 0.92);
@@ -41,8 +41,8 @@
   --popover-foreground: rgba(255, 255, 255, 0.92);
   --card-foreground: rgba(255, 255, 255, 0.92);
   --input: rgba(255, 255, 255, 0.15);
-  --ring: #38bdf8;
-  --chart-1: #38bdf8;
+  --ring: #60a5fa;
+  --chart-1: #60a5fa;
   --chart-2: #34d399;
   --chart-3: #fbbf24;
   --chart-4: #a78bfa;

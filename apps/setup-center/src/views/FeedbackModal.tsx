@@ -512,7 +512,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 4,
                     marginTop: 8, padding: "6px 14px", borderRadius: 6,
-                    background: downloading ? "var(--muted, #9ca3af)" : "var(--brand, #0ea5e9)",
+                    background: downloading ? "var(--muted, #9ca3af)" : "var(--brand, #2563eb)",
                     color: "#fff", border: "none", cursor: downloading ? "wait" : "pointer",
                     fontSize: 13, fontWeight: 500,
                   }}

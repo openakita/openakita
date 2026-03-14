@@ -123,12 +123,12 @@ export function Topbar({
                   key={w.id}
                   style={{
                     padding: "7px 14px", cursor: "pointer", fontSize: 13,
-                    background: w.isCurrent ? "rgba(14,165,233,0.08)" : "transparent",
+                    background: w.isCurrent ? "rgba(37,99,235,0.08)" : "transparent",
                     fontWeight: w.isCurrent ? 700 : 400,
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(14,165,233,0.12)"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = w.isCurrent ? "rgba(14,165,233,0.08)" : "transparent"; }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(37,99,235,0.12)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = w.isCurrent ? "rgba(37,99,235,0.08)" : "transparent"; }}
                   onClick={async () => {
                     if (w.isCurrent) { setWsDropdownOpen(false); return; }
                     setWsDropdownOpen(false);
@@ -143,7 +143,7 @@ export function Topbar({
               {!wsQuickCreateOpen ? (
                 <div
                   style={{ padding: "7px 14px", cursor: "pointer", fontSize: 12, color: "var(--brand)", fontWeight: 600 }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(14,165,233,0.08)"; }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "rgba(37,99,235,0.08)"; }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                   onClick={() => { setWsQuickCreateOpen(true); setWsQuickName(""); }}
                 >

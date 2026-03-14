@@ -36,7 +36,7 @@ body {
   font-family: "Noto Sans SC", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei",
     sans-serif;
   background: radial-gradient(1200px 560px at 0% 0%, rgba(124, 58, 237, 0.08), transparent 60%),
-    radial-gradient(1000px 520px at 100% 0%, rgba(14, 165, 233, 0.08), transparent 55%), var(--boot-grad);
+    radial-gradient(1000px 520px at 100% 0%, rgba(37, 99, 235, 0.08), transparent 55%), var(--boot-grad);
   background-color: var(--boot-bg);
   color: var(--boot-text);
 }
@@ -85,7 +85,7 @@ body {
   display: block;
   height: 100%;
   width: 40%;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.95), rgba(124, 58, 237, 0.95));
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.95), rgba(124, 58, 237, 0.95));
   transform: translateX(-70%);
   animation: bootMove 1.1s ease-in-out infinite;
 }

@@ -615,9 +615,9 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                     onClick={() => setForm(f => ({ ...f, weekday: i }))}
                     style={{
                       padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer",
-                      border: form.weekday === i ? "1.5px solid var(--brand, #0ea5e9)" : "1px solid var(--line, #d1d5db)",
+                      border: form.weekday === i ? "1.5px solid var(--brand, #2563eb)" : "1px solid var(--line, #d1d5db)",
                       background: form.weekday === i ? "var(--brand-bg, #e0f2fe)" : "var(--panel, #fff)",
-                      color: form.weekday === i ? "var(--brand, #0ea5e9)" : "var(--text)",
+                      color: form.weekday === i ? "var(--brand, #2563eb)" : "var(--text)",
                       fontWeight: form.weekday === i ? 600 : 400,
                     }}
                   >
@@ -673,10 +673,10 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
     padding: "6px 16px",
     fontSize: 13,
     fontWeight: activeTab === tab ? 600 : 400,
-    color: activeTab === tab ? "var(--brand, #0ea5e9)" : "var(--muted, #6b7280)",
+    color: activeTab === tab ? "var(--brand, #2563eb)" : "var(--muted, #6b7280)",
     background: "none",
     border: "none",
-    borderBottom: `2px solid ${activeTab === tab ? "var(--brand, #0ea5e9)" : "transparent"}`,
+    borderBottom: `2px solid ${activeTab === tab ? "var(--brand, #2563eb)" : "transparent"}`,
     cursor: "pointer",
     whiteSpace: "nowrap",
     transition: "color 0.15s, border-color 0.15s",
@@ -752,7 +752,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
 
       {/* Form dialog */}
       {showForm && (
-        <div className="card" style={{ marginBottom: 16, border: "1px solid var(--brand, #0ea5e9)", position: "relative" }}>
+        <div className="card" style={{ marginBottom: 16, border: "1px solid var(--brand, #2563eb)", position: "relative" }}>
           <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 600 }}>
             {editingId ? t("scheduler.editTask") : t("scheduler.addTask")}
           </h3>

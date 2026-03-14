@@ -221,7 +221,7 @@ function SkillCard({
   return (
     <div className="card" style={{ marginTop: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: skill.system ? "rgba(14,165,233,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: skill.system ? "rgba(37,99,235,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
           {skill.system ? <IconGear size={18} /> : <IconZap size={18} />}
         </div>
         <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={onViewDetail}>
@@ -370,7 +370,7 @@ function SkillDetailModal({
         {/* Header */}
         <div style={{ padding: "18px 24px 14px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: isSystem ? "rgba(14,165,233,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: isSystem ? "rgba(37,99,235,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", flexShrink: 0 }}>
               {isSystem ? <IconGear size={16} /> : <IconZap size={16} />}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -543,7 +543,7 @@ function MarketplaceSkillCard({
           {skill.tags && skill.tags.length > 0 && (
             <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
               {skill.tags.map((tag) => (
-                <span key={tag} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(14,165,233,0.08)", color: "var(--brand)" }}>
+                <span key={tag} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(37,99,235,0.08)", color: "var(--brand)" }}>
                   {tag}
                 </span>
               ))}

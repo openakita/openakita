@@ -11,23 +11,23 @@
   --muted2: rgba(17, 24, 39, 0.40);
   --danger: #ef4444;
   --ok: #10b981;
-  --brand: #0ea5e9;
-  --brand2: #0284c7;
+  --brand: #2563eb;
+  --brand2: #1d4ed8;
   --shadow: 0 8px 32px rgba(17, 24, 39, 0.08);
-  --glow-shadow: 0 4px 24px rgba(14, 165, 233, 0.15);
+  --glow-shadow: 0 4px 24px rgba(37, 99, 235, 0.15);
   --glass-blur: blur(16px);
   --radius: 12px;
   --radius-sm: 8px;
   --fg: var(--text);
   --matrix-dot: rgba(17, 24, 39, 0.06);
   --matrix-bg: var(--bg-app);
-  --nav-hover: rgba(14, 165, 233, 0.06);
-  --nav-active: rgba(14, 165, 233, 0.1);
-  --nav-active-border: rgba(14, 165, 233, 0.18);
+  --nav-hover: rgba(37, 99, 235, 0.06);
+  --nav-active: rgba(37, 99, 235, 0.1);
+  --nav-active-border: rgba(37, 99, 235, 0.18);
   --bg: #f4f5f7;
   --border: rgba(17, 24, 39, 0.12);
   --warning: #f59e0b;
-  --primary: #0ea5e9;
+  --primary: #2563eb;
   --success: #10b981;
   --error: #ef4444;
   --text-secondary: rgba(17, 24, 39, 0.55);
@@ -55,23 +55,23 @@
   --muted2: rgba(255, 255, 255, 0.35);
   --danger: #ef4444;
   --ok: #10b981;
-  --brand: #38bdf8;
-  --brand2: #7dd3fc;
+  --brand: #60a5fa;
+  --brand2: #93c5fd;
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --glow-shadow: 0 4px 24px rgba(56, 189, 248, 0.2);
+  --glow-shadow: 0 4px 24px rgba(96, 165, 250, 0.2);
   --glass-blur: blur(16px);
   --radius: 12px;
   --radius-sm: 8px;
   --fg: var(--text);
   --matrix-dot: rgba(255, 255, 255, 0.06);
   --matrix-bg: var(--bg-app);
-  --nav-hover: rgba(56, 189, 248, 0.1);
-  --nav-active: rgba(56, 189, 248, 0.15);
-  --nav-active-border: rgba(56, 189, 248, 0.3);
+  --nav-hover: rgba(96, 165, 250, 0.1);
+  --nav-active: rgba(96, 165, 250, 0.15);
+  --nav-active-border: rgba(96, 165, 250, 0.3);
   --bg: #09090b;
   --border: rgba(255, 255, 255, 0.14);
   --warning: #fbbf24;
-  --primary: #38bdf8;
+  --primary: #60a5fa;
   --success: #34d399;
   --error: #f87171;
   --card-bg: #27272a;
@@ -259,13 +259,13 @@ a:hover {
 }
 
 .configHeader:hover {
-  background: rgba(14, 165, 233, 0.04);
+  background: rgba(37, 99, 235, 0.04);
 }
 
 .configProgress {
   font-size: 11px;
   color: var(--muted2);
-  background: rgba(14, 165, 233, 0.08);
+  background: rgba(37, 99, 235, 0.08);
   padding: 1px 6px;
   border-radius: 8px;
 }
@@ -320,13 +320,13 @@ a:hover {
   place-items: center;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.96);
-  background: linear-gradient(135deg, rgba(14, 165, 233, 1), rgba(124, 58, 237, 1));
+  background: linear-gradient(135deg, rgba(37, 99, 235, 1), rgba(124, 58, 237, 1));
   box-shadow: 0 4px 8px rgba(17, 24, 39, 0.1);
   flex: 0 0 auto;
 }
 
 .stepDotDone {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 1), rgba(14, 165, 233, 1));
+  background: linear-gradient(135deg, rgba(16, 185, 129, 1), rgba(37, 99, 235, 1));
 }
 
 .stepMeta {
@@ -381,7 +381,7 @@ a:hover {
   font-weight: 700;
   color: var(--text);
   padding: 2px 8px;
-  background: rgba(14, 165, 233, 0.06);
+  background: rgba(37, 99, 235, 0.06);
   border-radius: 6px;
 }
 
@@ -397,7 +397,7 @@ a:hover {
   border-radius: 6px;
   padding: 2px 8px;
   font-size: 11px;
-  color: var(--brand, #0ea5e9);
+  color: var(--brand, #2563eb);
   cursor: pointer;
   max-width: 120px;
   overflow: hidden;
@@ -421,7 +421,7 @@ a:hover {
 }
 
 .topbarRefreshBtn:hover {
-  background: rgba(14, 165, 233, 0.06) !important;
+  background: rgba(37, 99, 235, 0.06) !important;
 }
 
 .topbarConnectBtn {
@@ -440,7 +440,7 @@ a:hover {
   white-space: nowrap;
 }
 .topbarConnectBtn:hover {
-  background: rgba(14,165,233,0.06) !important;
+  background: rgba(37,99,235,0.06) !important;
 }
 .topbarConnectBtn:disabled {
   opacity: 0.5;
@@ -1552,7 +1552,7 @@ button:not([data-slot]):disabled {
 }
 
 .chatTopBarBtn:hover {
-  background: rgba(14, 165, 233, 0.06) !important;
+  background: rgba(37, 99, 235, 0.06) !important;
   color: var(--text);
 }
 
@@ -1620,7 +1620,7 @@ button:not([data-slot]):disabled {
 
 .floatingPlanProgressBar {
   height: 3px;
-  background: rgba(14, 165, 233, 0.1);
+  background: rgba(37, 99, 235, 0.1);
   overflow: hidden;
 }
 
@@ -1712,8 +1712,8 @@ button:not([data-slot]):disabled {
 }
 
 .chatInputBox:focus-within {
-  border-color: rgba(14, 165, 233, 0.35);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.08);
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 .chatInputBoxPlan {
@@ -1792,7 +1792,7 @@ button:not([data-slot]):disabled {
 }
 .chatModelMenuItem:hover { background: var(--panel); }
 .chatModelMenuItemActive {
-  background: rgba(14, 165, 233, 0.2);
+  background: rgba(37, 99, 235, 0.2);
   color: var(--brand);
   font-weight: 600;
 }
@@ -1847,7 +1847,7 @@ button:not([data-slot]):disabled {
 }
 
 .chatInputIconBtn:hover {
-  background: rgba(14, 165, 233, 0.08) !important;
+  background: rgba(37, 99, 235, 0.08) !important;
   color: var(--text) !important;
 }
 
@@ -2015,7 +2015,7 @@ button:not([data-slot]):disabled {
 }
 
 .queuedItemSendBtn:hover {
-  color: var(--brand, #0ea5e9) !important;
+  color: var(--brand, #2563eb) !important;
 }
 
 .queuedItemDeleteBtn:hover {
@@ -2093,7 +2093,7 @@ button:not([data-slot]):disabled {
 }
 
 .imRefreshBtn:hover {
-  background: rgba(14, 165, 233, 0.08) !important;
+  background: rgba(37, 99, 235, 0.08) !important;
   color: var(--text);
 }
 
@@ -2218,8 +2218,8 @@ button:not([data-slot]):disabled {
 }
 
 .imMsgUser .imMsgContent {
-  background: rgba(14, 165, 233, 0.04);
-  border-color: rgba(14, 165, 233, 0.12);
+  background: rgba(37, 99, 235, 0.04);
+  border-color: rgba(37, 99, 235, 0.12);
 }
 
 .imMediaCard {
@@ -2759,7 +2759,7 @@ button:not([data-slot]):disabled {
   gap: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--brand, #0ea5e9);
+  color: var(--brand, #2563eb);
   padding: 2px 0;
   animation: chainFadeIn 0.18s ease;
 }
@@ -2810,7 +2810,7 @@ button:not([data-slot]):disabled {
 
 .chainToolResultToggle {
   font-size: 11px;
-  color: var(--brand, #0ea5e9);
+  color: var(--brand, #2563eb);
   cursor: pointer;
   opacity: 0.7;
   display: inline-flex;
@@ -2847,7 +2847,7 @@ button:not([data-slot]):disabled {
 .chainNarrCursor {
   width: 6px;
   height: 14px;
-  background: var(--brand, #0ea5e9);
+  background: var(--brand, #2563eb);
   opacity: 0.5;
   border-radius: 1px;
   animation: chainBlink 0.8s step-end infinite;
@@ -2999,7 +2999,7 @@ button:not([data-slot]):disabled {
 }
 
 .chatThinkingMenuItem:hover {
-  background: rgba(14, 165, 233, 0.12);
+  background: rgba(37, 99, 235, 0.12);
 }
 
 .chatThinkingMenuItemActive {
@@ -3107,7 +3107,7 @@ button:not([data-slot]):disabled {
   transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
 }
-.convPinBtn:hover { background: rgba(14, 165, 233, 0.08); }
+.convPinBtn:hover { background: rgba(37, 99, 235, 0.08); }
 
 .convNewBtn {
   width: 100%;
@@ -3124,7 +3124,7 @@ button:not([data-slot]):disabled {
   transition: background 0.12s, border-color 0.12s;
 }
 .convNewBtn:hover {
-  background: rgba(14, 165, 233, 0.06);
+  background: rgba(37, 99, 235, 0.06);
   border-color: var(--brand);
 }
 
@@ -3165,10 +3165,10 @@ button:not([data-slot]):disabled {
   position: relative;
 }
 .convItem:hover {
-  background: rgba(14, 165, 233, 0.05);
+  background: rgba(37, 99, 235, 0.05);
 }
 .convItemActive {
-  background: rgba(14, 165, 233, 0.09) !important;
+  background: rgba(37, 99, 235, 0.09) !important;
 }
 
 .convItemIcon {
@@ -3185,7 +3185,7 @@ button:not([data-slot]):disabled {
   margin-top: 1px;
 }
 .convItemActive .convItemIcon {
-  border-color: rgba(14, 165, 233, 0.3);
+  border-color: rgba(37, 99, 235, 0.3);
 }
 
 .convItemBody {
@@ -3336,13 +3336,13 @@ button:not([data-slot]):disabled {
 .agentOrbitNode:hover {
   transform: scale(1.2);
   border-color: var(--brand);
-  box-shadow: 0 0 12px rgba(14, 165, 233, 0.35);
+  box-shadow: 0 0 12px rgba(37, 99, 235, 0.35);
   z-index: 2;
 }
 
 .agentOrbitActive {
   border-color: var(--brand);
-  box-shadow: 0 0 8px rgba(14, 165, 233, 0.25);
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.25);
 }
 
 .agentOrbitRunning {
@@ -3406,8 +3406,8 @@ button:not([data-slot]):disabled {
 }
 
 @keyframes orbitGlow {
-  0%, 100% { box-shadow: 0 0 4px rgba(14, 165, 233, 0.2); }
-  50% { box-shadow: 0 0 14px rgba(14, 165, 233, 0.5); }
+  0%, 100% { box-shadow: 0 0 4px rgba(37, 99, 235, 0.2); }
+  50% { box-shadow: 0 0 14px rgba(37, 99, 235, 0.5); }
 }
 
 @keyframes orbitPulseRing {

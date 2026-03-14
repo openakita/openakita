@@ -148,7 +148,7 @@ export function LoginView({
             marginBottom: 16,
             transition: "border-color 0.15s",
           }}
-          onFocus={(e) => { e.target.style.borderColor = "var(--primary, #0ea5e9)"; }}
+          onFocus={(e) => { e.target.style.borderColor = "var(--primary, #2563eb)"; }}
           onBlur={(e) => { e.target.style.borderColor = "var(--line, #e2e8f0)"; }}
         />
 
@@ -159,7 +159,7 @@ export function LoginView({
             width: "100%",
             background: loading
               ? "var(--text3, #94a3b8)"
-              : "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)",
+              : "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
             color: "#fff",
             border: "none",
             borderRadius: 10,
@@ -167,7 +167,7 @@ export function LoginView({
             fontSize: 15,
             fontWeight: 600,
             cursor: loading ? "wait" : "pointer",
-            boxShadow: "0 2px 8px rgba(14,165,233,0.3)",
+            boxShadow: "0 2px 8px rgba(37,99,235,0.3)",
             transition: "transform 0.1s, opacity 0.15s",
             opacity: loading || !password.trim() ? 0.7 : 1,
           }}
@@ -195,8 +195,8 @@ export function LoginView({
               transition: "border-color 0.15s, color 0.15s",
             }}
             onMouseEnter={(e) => {
-              (e.target as HTMLButtonElement).style.borderColor = "var(--primary, #0ea5e9)";
-              (e.target as HTMLButtonElement).style.color = "var(--primary, #0ea5e9)";
+              (e.target as HTMLButtonElement).style.borderColor = "var(--primary, #2563eb)";
+              (e.target as HTMLButtonElement).style.color = "var(--primary, #2563eb)";
             }}
             onMouseLeave={(e) => {
               (e.target as HTMLButtonElement).style.borderColor = "var(--line, #e2e8f0)";
@@ -250,7 +250,7 @@ export function LoginView({
           rel="noopener noreferrer"
           style={{
             fontSize: 12,
-            color: "var(--brand, #0ea5e9)",
+            color: "var(--brand, #2563eb)",
             textDecoration: "none",
             opacity: 0.8,
           }}

@@ -121,9 +121,9 @@ export function ServerManagerView({
     marginBottom: 12, transition: "border-color 0.15s",
   };
   const btnPrimary: React.CSSProperties = {
-    width: "100%", background: "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)",
+    width: "100%", background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
     color: "#fff", border: "none", borderRadius: 10, padding: "10px 0", fontSize: 15,
-    fontWeight: 600, cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.3)",
+    fontWeight: 600, cursor: "pointer", boxShadow: "0 2px 8px rgba(37,99,235,0.3)",
     transition: "transform 0.1s, opacity 0.15s",
   };
   const btnSecondary: React.CSSProperties = {
@@ -234,8 +234,8 @@ export function ServerManagerView({
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "10px 12px", borderRadius: 10,
-                  border: `1.5px solid ${isActive ? "var(--brand, #0ea5e9)" : "var(--line, #e2e8f0)"}`,
-                  background: isActive ? "rgba(14, 165, 233, 0.06)" : "var(--bg, #f8fafc)",
+                  border: `1.5px solid ${isActive ? "var(--brand, #2563eb)" : "var(--line, #e2e8f0)"}`,
+                  background: isActive ? "rgba(37, 99, 235, 0.06)" : "var(--bg, #f8fafc)",
                   cursor: "pointer", transition: "border-color 0.15s",
                 }}
                 onClick={() => !isActive && handleSwitch(s)}

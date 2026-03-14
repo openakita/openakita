@@ -137,10 +137,10 @@ class GlobalErrorBoundary extends React.Component<
               <button
                 onClick={() => location.reload()}
                 style={{
-                  background: "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)",
+                  background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
                   color: "#fff", border: "none", borderRadius: 10, padding: "10px 24px",
                   fontSize: 15, fontWeight: 600, cursor: "pointer",
-                  boxShadow: "0 2px 8px rgba(14,165,233,0.3)", transition: "transform 0.1s",
+                  boxShadow: "0 2px 8px rgba(37,99,235,0.3)", transition: "transform 0.1s",
                 }}
                 onMouseDown={(e) => { (e.target as HTMLButtonElement).style.transform = "scale(0.97)"; }}
                 onMouseUp={(e) => { (e.target as HTMLButtonElement).style.transform = ""; }}
@@ -285,7 +285,7 @@ setTimeout(() => hideBoot(true), 8000);
         userSelect: "none",
       } as CSSStyleDeclaration);
       if (!item.disabled) {
-        row.addEventListener("mouseenter", () => { row.style.background = "rgba(14,165,233,0.08)"; });
+        row.addEventListener("mouseenter", () => { row.style.background = "rgba(37,99,235,0.08)"; });
         row.addEventListener("mouseleave", () => { row.style.background = ""; });
         row.addEventListener("click", () => { item.action(); removeMenu(); });
       }

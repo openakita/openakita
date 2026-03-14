@@ -3854,8 +3854,8 @@ export function App() {
         {IS_TAURI && serviceStatus === null && !!busy && effectiveWsId && (
           <div style={{
             marginBottom: 16, padding: "16px 20px", borderRadius: 10,
-            background: "rgba(14, 165, 233, 0.15)",
-            border: "1px solid rgba(14, 165, 233, 0.4)",
+            background: "rgba(37, 99, 235, 0.15)",
+            border: "1px solid rgba(37, 99, 235, 0.4)",
             display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
           }}>
             <div className="spinner" style={{ width: 22, height: 22, flexShrink: 0, color: "var(--brand)" }} />
@@ -5631,10 +5631,10 @@ export function App() {
                 <div className="cardHint">{t("adv.pyNoDiag")}</div>
               )}
               {repairStage && (
-                <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(14,165,233,0.1)", borderRadius: 8, fontSize: 12 }}>
+                <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(37,99,235,0.1)", borderRadius: 8, fontSize: 12 }}>
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>{repairStage}</div>
                   <div style={{ width: "100%", height: 6, background: "var(--line)", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ width: `${repairPercent}%`, height: "100%", background: "var(--brand, #0ea5e9)", borderRadius: 3, transition: "width 0.3s" }} />
+                    <div style={{ width: `${repairPercent}%`, height: "100%", background: "var(--brand, #2563eb)", borderRadius: 3, transition: "width 0.3s" }} />
                   </div>
                   {repairDetail && <div style={{ marginTop: 4, color: "var(--muted)" }}>{repairDetail}</div>}
                 </div>
@@ -7366,9 +7366,9 @@ export function App() {
                     fontSize: 13, lineHeight: 1.9, color: "#e5e7eb", overflowX: "auto",
                   }}>
                     {obCliOa && <>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> serve <span style={{ color: "#94a3b8", marginLeft: 24 }}># 启动后端服务</span></div>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> status <span style={{ color: "#94a3b8", marginLeft: 16 }}># 查看运行状态</span></div>
-                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#7dd3fc" }}>oa</span> run <span style={{ color: "#94a3b8", marginLeft: 36 }}># 单次对话</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#93c5fd" }}>oa</span> serve <span style={{ color: "#94a3b8", marginLeft: 24 }}># 启动后端服务</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#93c5fd" }}>oa</span> status <span style={{ color: "#94a3b8", marginLeft: 16 }}># 查看运行状态</span></div>
+                      <div><span style={{ color: "#94a3b8" }}>$</span> <span style={{ color: "#93c5fd" }}>oa</span> run <span style={{ color: "#94a3b8", marginLeft: 36 }}># 单次对话</span></div>
                     </>}
                     {obCliOa && obCliOpenakita && <div style={{ height: 4 }} />}
                     {obCliOpenakita && <>
@@ -7941,7 +7941,7 @@ export function App() {
       {previewMode && (
         <div style={{
           position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
-          background: "linear-gradient(135deg, #0ea5e9, #6366f1)",
+          background: "linear-gradient(135deg, #2563eb, #6366f1)",
           color: "#fff", textAlign: "center",
           padding: "6px 16px",
           paddingTop: IS_CAPACITOR ? "max(6px, env(safe-area-inset-top))" : "6px",
@@ -8172,7 +8172,7 @@ export function App() {
                 <>
                   <div style={{ marginBottom: 16 }}>
                     <svg width="40" height="40" viewBox="0 0 40 40" style={{ animation: "spin 1s linear infinite" }}>
-                      <circle cx="20" cy="20" r="16" fill="none" stroke="#0ea5e9" strokeWidth="3" strokeDasharray="80" strokeDashoffset="20" strokeLinecap="round" />
+                      <circle cx="20" cy="20" r="16" fill="none" stroke="#2563eb" strokeWidth="3" strokeDasharray="80" strokeDashoffset="20" strokeLinecap="round" />
                     </svg>
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 600, color: "#0e7490" }}>
