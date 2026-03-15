@@ -21,6 +21,20 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# anyio 连接断开相关异常（MCP SDK 底层依赖 anyio）
+_CONNECTION_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, EOFError, OSError)
+try:
+    import anyio
+    _CONNECTION_ERRORS = (
+        anyio.ClosedResourceError,
+        anyio.BrokenResourceError,
+        anyio.EndOfStream,
+        ConnectionError,
+        EOFError,
+    )
+except ImportError:
+    pass
+
 # 尝试导入官方 MCP SDK
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -102,6 +116,7 @@ class MCPCallResult:
     success: bool
     data: Any = None
     error: str | None = None
+    reconnected: bool = False
 
 
 @dataclass
@@ -594,6 +609,56 @@ class MCPClient:
                     cm_key, server_name, exc_info=True,
                 )
 
+    @staticmethod
+    def _is_connection_error(exc: BaseException) -> bool:
+        """判断异常是否表示底层连接已断开（服务端关闭 / 管道断裂等）"""
+        if isinstance(exc, _CONNECTION_ERRORS):
+            return True
+        name = type(exc).__name__
+        if name in ("ClosedResourceError", "BrokenResourceError", "EndOfStream"):
+            return True
+        return False
+
+    async def _reconnect(self, server_name: str) -> bool:
+        """清理死连接并重新建立连接，成功返回 True"""
+        logger.info("Attempting to reconnect MCP server: %s", server_name)
+
+        old_conn = self._connections.pop(server_name, None)
+        if old_conn:
+            if old_conn.get("transport") == "stdio":
+                await self._terminate_stdio_subprocess(old_conn.get("_stdio_cm"))
+            task = asyncio.create_task(
+                self._isolated_cm_cleanup(server_name, old_conn),
+                name=f"mcp-reconnect-cleanup-{server_name}",
+            )
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except BaseException:
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await task
+
+        if server_name not in self._servers:
+            return False
+
+        # 先清理旧的工具/资源/提示词注册，让 _discover_capabilities 从干净状态写入。
+        # 如果重连失败，这些条目本来也不可用（连接已死）。
+        prefix = f"{server_name}:"
+        self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
+        self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
+        self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
+
+        result = await self.connect(server_name)
+        if result.success:
+            logger.info(
+                "Reconnected to MCP server: %s (%d tools)",
+                server_name, result.tool_count,
+            )
+        else:
+            logger.warning("Reconnect failed for %s: %s", server_name, result.error)
+        return result.success
+
     async def call_tool(
         self,
         server_name: str,
@@ -630,35 +695,54 @@ class MCPClient:
                 error=f"Tool not found: {tool_name}",
             )
 
-        try:
-            conn = self._connections[server_name]
-            client = conn.get("client") if isinstance(conn, dict) else conn
-            if client is None:
-                return MCPCallResult(success=False, error=f"Invalid connection for server: {server_name}")
+        did_reconnect = False
+        for attempt in range(2):
+            try:
+                conn = self._connections.get(server_name)
+                if conn is None:
+                    return MCPCallResult(
+                        success=False, error=f"Not connected to server: {server_name}",
+                    )
+                client = conn.get("client") if isinstance(conn, dict) else conn
+                if client is None:
+                    return MCPCallResult(
+                        success=False, error=f"Invalid connection for server: {server_name}",
+                    )
 
-            result = await asyncio.wait_for(
-                client.call_tool(tool_name, arguments),
-                timeout=self._CALL_TIMEOUT,
-            )
+                result = await asyncio.wait_for(
+                    client.call_tool(tool_name, arguments),
+                    timeout=self._CALL_TIMEOUT,
+                )
 
-            content = []
-            for item in result.content:
-                if hasattr(item, "text"):
-                    content.append(item.text)
-                elif hasattr(item, "data"):
-                    content.append(item.data)
+                content = []
+                for item in result.content:
+                    if hasattr(item, "text"):
+                        content.append(item.text)
+                    elif hasattr(item, "data"):
+                        content.append(item.data)
 
-            return MCPCallResult(
-                success=True,
-                data=content[0] if len(content) == 1 else content,
-            )
+                return MCPCallResult(
+                    success=True,
+                    data=content[0] if len(content) == 1 else content,
+                    reconnected=did_reconnect,
+                )
 
-        except BaseException as e:
-            logger.error(f"MCP tool call failed ({server_name}:{tool_name}): {type(e).__name__}: {e}")
-            return MCPCallResult(
-                success=False,
-                error=f"{type(e).__name__}: {e}",
-            )
+            except BaseException as e:
+                if attempt == 0 and self._is_connection_error(e):
+                    logger.warning(
+                        "MCP connection lost for %s:%s (%s), reconnecting…",
+                        server_name, tool_name, type(e).__name__,
+                    )
+                    if await self._reconnect(server_name):
+                        did_reconnect = True
+                        continue
+                logger.error(
+                    "MCP tool call failed (%s:%s): %s: %s",
+                    server_name, tool_name, type(e).__name__, e,
+                )
+                return MCPCallResult(success=False, error=f"{type(e).__name__}: {e}")
+
+        return MCPCallResult(success=False, error="Unexpected: retry loop exhausted")
 
     async def read_resource(
         self,
@@ -681,30 +765,49 @@ class MCPClient:
         if server_name not in self._connections:
             return MCPCallResult(success=False, error=f"Not connected: {server_name}")
 
-        try:
-            conn = self._connections[server_name]
-            client = conn.get("client") if isinstance(conn, dict) else conn
-            if client is None:
-                return MCPCallResult(success=False, error=f"Invalid connection for server: {server_name}")
-            result = await asyncio.wait_for(
-                client.read_resource(uri), timeout=self._CALL_TIMEOUT,
-            )
+        for attempt in range(2):
+            try:
+                conn = self._connections.get(server_name)
+                if conn is None:
+                    return MCPCallResult(
+                        success=False, error=f"Not connected: {server_name}",
+                    )
+                client = conn.get("client") if isinstance(conn, dict) else conn
+                if client is None:
+                    return MCPCallResult(
+                        success=False, error=f"Invalid connection for server: {server_name}",
+                    )
+                result = await asyncio.wait_for(
+                    client.read_resource(uri), timeout=self._CALL_TIMEOUT,
+                )
 
-            content = []
-            for item in result.contents:
-                if hasattr(item, "text"):
-                    content.append(item.text)
-                elif hasattr(item, "blob"):
-                    content.append(item.blob)
+                content = []
+                for item in result.contents:
+                    if hasattr(item, "text"):
+                        content.append(item.text)
+                    elif hasattr(item, "blob"):
+                        content.append(item.blob)
 
-            return MCPCallResult(
-                success=True,
-                data=content[0] if len(content) == 1 else content,
-            )
+                return MCPCallResult(
+                    success=True,
+                    data=content[0] if len(content) == 1 else content,
+                )
 
-        except BaseException as e:
-            logger.error(f"MCP read_resource failed ({server_name}:{uri}): {type(e).__name__}: {e}")
-            return MCPCallResult(success=False, error=f"{type(e).__name__}: {e}")
+            except BaseException as e:
+                if attempt == 0 and self._is_connection_error(e):
+                    logger.warning(
+                        "MCP connection lost for %s (read_resource %s), reconnecting…",
+                        server_name, uri,
+                    )
+                    if await self._reconnect(server_name):
+                        continue
+                logger.error(
+                    "MCP read_resource failed (%s:%s): %s: %s",
+                    server_name, uri, type(e).__name__, e,
+                )
+                return MCPCallResult(success=False, error=f"{type(e).__name__}: {e}")
+
+        return MCPCallResult(success=False, error="Unexpected: retry loop exhausted")
 
     async def get_prompt(
         self,
@@ -729,32 +832,51 @@ class MCPClient:
         if server_name not in self._connections:
             return MCPCallResult(success=False, error=f"Not connected: {server_name}")
 
-        try:
-            conn = self._connections[server_name]
-            client = conn.get("client") if isinstance(conn, dict) else conn
-            if client is None:
-                return MCPCallResult(success=False, error=f"Invalid connection for server: {server_name}")
-            result = await asyncio.wait_for(
-                client.get_prompt(prompt_name, arguments or {}),
-                timeout=self._CALL_TIMEOUT,
-            )
-
-            messages = []
-            for msg in result.messages:
-                messages.append(
-                    {
-                        "role": msg.role,
-                        "content": msg.content.text
-                        if hasattr(msg.content, "text")
-                        else str(msg.content),
-                    }
+        for attempt in range(2):
+            try:
+                conn = self._connections.get(server_name)
+                if conn is None:
+                    return MCPCallResult(
+                        success=False, error=f"Not connected: {server_name}",
+                    )
+                client = conn.get("client") if isinstance(conn, dict) else conn
+                if client is None:
+                    return MCPCallResult(
+                        success=False, error=f"Invalid connection for server: {server_name}",
+                    )
+                result = await asyncio.wait_for(
+                    client.get_prompt(prompt_name, arguments or {}),
+                    timeout=self._CALL_TIMEOUT,
                 )
 
-            return MCPCallResult(success=True, data=messages)
+                messages = []
+                for msg in result.messages:
+                    messages.append(
+                        {
+                            "role": msg.role,
+                            "content": msg.content.text
+                            if hasattr(msg.content, "text")
+                            else str(msg.content),
+                        }
+                    )
 
-        except BaseException as e:
-            logger.error(f"MCP get_prompt failed ({server_name}:{prompt_name}): {type(e).__name__}: {e}")
-            return MCPCallResult(success=False, error=f"{type(e).__name__}: {e}")
+                return MCPCallResult(success=True, data=messages)
+
+            except BaseException as e:
+                if attempt == 0 and self._is_connection_error(e):
+                    logger.warning(
+                        "MCP connection lost for %s (get_prompt %s), reconnecting…",
+                        server_name, prompt_name,
+                    )
+                    if await self._reconnect(server_name):
+                        continue
+                logger.error(
+                    "MCP get_prompt failed (%s:%s): %s: %s",
+                    server_name, prompt_name, type(e).__name__, e,
+                )
+                return MCPCallResult(success=False, error=f"{type(e).__name__}: {e}")
+
+        return MCPCallResult(success=False, error="Unexpected: retry loop exhausted")
 
     def list_servers(self) -> list[str]:
         """列出所有配置的服务器"""

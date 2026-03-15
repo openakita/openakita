@@ -83,6 +83,9 @@ class MCPHandler:
 
         result = await self.agent.mcp_client.call_tool(server, mcp_tool_name, arguments)
 
+        if result.reconnected:
+            self._sync_catalog_after_reconnect(server)
+
         if result.success:
             return f"✅ MCP 工具调用成功:\n{result.data}"
         else:
@@ -132,6 +135,19 @@ class MCPHandler:
             return f"# MCP 服务器 {server} 使用说明\n\n{instructions}"
         else:
             return f"❌ 未找到服务器 {server} 的使用说明，或服务器不存在"
+
+    def _sync_catalog_after_reconnect(self, server: str) -> None:
+        """隐式重连后同步 catalog 和系统提示"""
+        tools = self.agent.mcp_client.list_tools(server)
+        if tools:
+            tool_dicts = [
+                {"name": t.name, "description": t.description,
+                 "input_schema": t.input_schema}
+                for t in tools
+            ]
+            self.agent.mcp_catalog.sync_tools_from_client(server, tool_dicts, force=True)
+        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
+        logger.info("MCP catalog refreshed after auto-reconnect for %s", server)
 
     # ==================== 连接管理工具 ====================
 
