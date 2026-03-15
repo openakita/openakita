@@ -12,6 +12,10 @@ from .catalog import (
     SkillCatalog,
     generate_skill_catalog,
 )
+from .events import (
+    notify_skills_changed,
+    register_on_change,
+)
 from .loader import (
     SKILL_DIRECTORIES,
     SkillLoader,
@@ -50,4 +54,7 @@ __all__ = [
     # Catalog
     "SkillCatalog",
     "generate_skill_catalog",
+    # Events
+    "register_on_change",
+    "notify_skills_changed",
 ]

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...core.tool_executor import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
+from ...skills.events import notify_skills_changed
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -309,6 +310,7 @@ class SkillsHandler:
             result = await self.agent.skill_manager.install_skill(source, name, subdir, extra_files)
         else:
             result = await self.agent._install_skill(source, name, subdir, extra_files)
+        notify_skills_changed("install")
         return result
 
     def _load_skill(self, params: dict) -> str:
@@ -344,6 +346,7 @@ class SkillsHandler:
                 self.agent._skill_catalog_text = self.agent.skill_catalog.generate_catalog()
                 self.agent._update_skill_tools()
                 self.agent.notify_pools_skills_changed()
+                notify_skills_changed("load")
 
                 logger.info(f"Skill loaded: {skill_name}")
 
@@ -380,6 +383,7 @@ class SkillsHandler:
                 self.agent._skill_catalog_text = self.agent.skill_catalog.generate_catalog()
                 self.agent._update_skill_tools()
                 self.agent.notify_pools_skills_changed()
+                notify_skills_changed("reload")
 
                 logger.info(f"Skill reloaded: {skill_name}")
 
@@ -497,6 +501,8 @@ class SkillsHandler:
             self.agent.notify_pools_skills_changed()
         except Exception as e:
             logger.warning(f"Post-manage reload failed: {e}")
+
+        notify_skills_changed("enable")
 
         output = f"✅ 技能状态已更新（{len(applied)} 项变更）\n\n"
         if reason:

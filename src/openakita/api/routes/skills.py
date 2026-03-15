@@ -612,3 +612,17 @@ async def search_marketplace(q: str = "agent"):
     except Exception as e:
         logger.warning("skills.sh API error: %s", e)
         return {"skills": [], "count": 0, "error": str(e)}
+
+
+# Register API-layer side effects (cache invalidation + WS broadcast) so that
+# skill changes made by the *tools* layer also propagate to the frontend.
+def _on_skills_changed_api(action: str) -> None:
+    _invalidate_skills_cache()
+    _notify_skills_changed(action)
+
+
+try:
+    from openakita.skills.events import register_on_change
+    register_on_change(_on_skills_changed_api)
+except Exception:
+    pass
