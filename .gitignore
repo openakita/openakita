@@ -226,3 +226,5 @@ botpy.log*
 OPENAKITA_RESEARCH_REPORT.md
 openakita-release.keystore
 ppt_build/
+.superpowers
+devops/.pids

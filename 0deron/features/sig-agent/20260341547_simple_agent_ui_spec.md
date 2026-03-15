@@ -324,67 +324,360 @@ Plan Checklist 行为规则：
 
 ---
 
-## 5. 步骤过滤规则（后端负责）
+## 5. 步骤卡片过滤与聚合规则（后端负责）
 
-### 5.1 过滤原则
+### 5.1 设计原则
 
-前端展示的步骤卡片并非 Agent 执行的所有工具调用，后端负责过滤，只下发**用户可理解的语义步骤**。
+步骤卡片的目标是向用户展示 **有业务语义的执行进展**，而非 Agent 内部的技术调用细节。后端负责过滤和聚合，前端只需渲染收到的 `step_card` 消息。
 
-### 5.2 展示 vs 隐藏
+核心原则：
 
-| 类型          | 是否展示 | 示例                                      |
-|--------------|---------|-------------------------------------------|
-| 用户意图动作   | ✓ 展示  | 搜索 XXX、生成报告、分析数据、翻译文本       |
-| 系统级工具     | ✗ 隐藏  | read_file（读内部配置）、write_file（写临时文件） |
-| 技术运维操作   | ✗ 隐藏  | prompt 组装、上下文管理、记忆读写            |
-| 框架调度       | ✗ 隐藏  | skill 路由、工具选择、能力匹配              |
+| 原则 | 说明 |
+|------|------|
+| 用户视角 | 只展示用户能理解且关心的操作 |
+| 语义聚合 | 多次底层调用聚合为一个有意义的步骤 |
+| 模式感知 | 普通模式和计划模式有不同的聚合策略 |
+| 体验优先 | 卡片标题需要语义化，体现用户意图而非工具名 |
 
-### 5.3 聚合规则
+### 5.2 调用类型分类
 
-连续多次相似的 Agent Loop 动作可以被合并为一个语义步骤卡片：
+Agent Loop 执行过程中的调用分为三类：
+
+| 类型 | 说明 | 识别标志 |
+|------|------|----------|
+| 系统工具 (Tool) | 内置工具调用（89+ 工具） | tool_name 在工具注册表中 |
+| 技能 (Skill) | 加载并执行 Skill（复合操作） | 调用 `load_skill` / `run_skill_script` |
+| MCP 工具 (MCP) | 调用外部 MCP Server 工具 | 调用 `call_mcp_tool` |
+
+### 5.3 普通模式（Normal Mode）过滤规则
+
+#### 5.3.1 系统工具：白名单机制
+
+只有在白名单中的工具调用才会生成步骤卡片，其余一律隐藏不下发：
+
+**白名单工具**（有实际业务意义）：
+
+| 工具名 | 业务语义 | 步骤卡片标题示例 |
+|--------|---------|----------------|
+| `web_search` | 网络搜索 | 搜索 "Karpathy 2026" |
+| `news_search` | 新闻搜索 | 搜索新闻 "AI Agent 进展" |
+| `browser_task` | 浏览网页 | 浏览网页获取内容 |
+| `generate_image` | 生成图片 | 生成插图 |
+| `deliver_artifacts` | 发送文件/结果 | 发送报告文件 |
+| `delegate_to_agent` | 委派子代理 | 委派专家代理处理 |
+| `delegate_parallel` | 并行委派 | 并行调研多个方向 |
+
+> 白名单可配置，后续可按需增减。白名单工具的卡片标题使用语义化描述（结合调用参数生成），而非原始工具名。
+
+**隐藏工具**（用户不关心的系统级操作）：
+
+| 工具类别 | 具体工具 | 隐藏原因 |
+|---------|---------|---------|
+| 文件操作 | `read_file`, `write_file`, `list_directory` | 内部实现细节 |
+| 系统命令 | `run_shell` | 技术执行细节 |
+| 技能管理 | `list_skills`, `get_skill_info`, `load_skill`, `reload_skill`, `manage_skill_enabled`, `install_skill`, `run_skill_script`, `get_skill_reference` | 框架调度 |
+| MCP 管理 | `list_mcp_servers`, `get_mcp_instructions`, `add_mcp_server`, `remove_mcp_server`, `connect_mcp_server`, `disconnect_mcp_server`, `reload_mcp_servers` | 连接管理 |
+| 记忆系统 | `add_memory`, `search_memory`, `get_memory_stats`, `consolidate_memories`, `list_recent_tasks`, `trace_memory`, `search_conversation_traces` | 内部记忆机制 |
+| 系统自省 | `get_tool_info`, `get_workspace_map`, `get_session_logs`, `enable_thinking`, `set_task_timeout`, `system_config` | 框架调度 |
+| 计划管理 | `create_plan`, `update_plan_step`, `get_plan_status`, `complete_plan` | 内部机制 |
+| 用户交互 | `ask_user` | 通过消息流直接展示，无需卡片 |
+| 角色管理 | `switch_persona`, `update_persona_trait`, `toggle_proactive`, `get_persona_profile` | 内部配置 |
+| IM 通道 | `get_voice_file`, `get_image_file`, `get_chat_history`, `get_chat_info`, `get_user_info`, `get_chat_members`, `get_recent_messages` | 通道管理 |
+| 用户画像 | `get_user_profile`, `update_user_profile`, `skip_profile_question` | 内部管理 |
+| 定时任务 | `schedule_task`, `list_scheduled_tasks`, `cancel_scheduled_task`, `update_scheduled_task`, `trigger_scheduled_task` | 调度管理 |
+| 桌面自动化 | `desktop_screenshot`, `desktop_find_element`, `desktop_click`, `desktop_type`, `desktop_hotkey`, `desktop_scroll`, `desktop_window`, `desktop_wait`, `desktop_inspect` | 自动化细节 |
+| 其他 | `send_sticker`, `view_image`, `browser_open`, `browser_navigate`, `browser_get_content`, `browser_screenshot`, `browser_close` | 浏览器内部操作 |
+
+> **例外**：如果用户消息中明确提到了某个隐藏工具的操作（如"帮我读取 config.yaml 文件"、"运行 npm install"），该工具调用可**提升为可见步骤**。检测方式：对用户最近消息进行关键词匹配（读取、写入、运行、执行等）。
+
+#### 5.3.2 技能（Skill）：LLM 生成标题 + 吸收所有子调用
+
+当 Agent 确认调用某个 Skill 时（`load_skill` 或 `run_skill_script` 被触发），启动 Skill 聚合：
+
+**步骤 1 — 生成步骤卡片标题（LLM 调用）**：
+
+使用 LLM 基于以下上下文生成一个对用户友好的步骤标题：
+
+| 输入 | 说明 |
+|------|------|
+| 用户最近 N 条消息（默认 5 条） | 提供用户意图上下文 |
+| Skill meta 信息 | name, description, category, tags |
+| 当前触发参数 | load_skill / run_skill_script 的参数 |
+
+标题生成 Prompt 模板：
 
 ```
-  后端实际执行:                     前端展示:
-  ┌──────────────────┐
-  │ search("karpathy │
-  │   2026 blog")    │
-  ├──────────────────┤             ┌──────────────────────────┐
-  │ search("karpathy │ ──合并──→  │ ● 搜索 Karpathy 最新观点  →│
-  │   2026 talk")    │             └──────────────────────────┘
-  ├──────────────────┤
-  │ search("karpathy │
-  │   AI agent")     │
-  └──────────────────┘
+根据以下信息，生成一个简短、对用户友好的步骤标题：
+
+用户最近消息：
+{recent_messages}
+
+正在执行的技能：
+- 名称：{skill_name}
+- 描述：{skill_description}
+- 分类：{skill_category}
+
+要求：
+- 使用动词开头（如"搜索"、"分析"、"生成"、"整理"）
+- 体现用户意图，而非技术操作名称
+- 简洁明了，不超过 15 个字
+- 使用用户的语言（中文/英文跟随用户消息）
 ```
 
-聚合条件：
+**步骤 2 — 吸收所有子调用**：
 
-| 条件                 | 说明                                      |
-|---------------------|-------------------------------------------|
-| 连续同类工具          | 连续调用同一工具（如多次 search）              |
-| 语义相近              | 多次调用服务于同一用户意图                     |
-| 时间窗口              | 连续调用间隔 < 阈值（如 5s）                  |
+Skill 执行过程中的 **所有** 工具调用（包括白名单工具如 `web_search`）都被吸收到该 Skill 的步骤卡片中，不再单独生成步骤卡片。
 
-聚合后的卡片标题由后端生成，使用语义化描述而非工具名。
+**一个 Skill 调用 = 一张步骤卡片**，无论内部调用多少工具。
 
-### 5.4 过滤流程
+```
+Skill 执行流程与卡片生成:
+
+  load_skill("web_researcher")       ←─── 触发点：LLM 生成标题，创建卡片
+        │
+        ├── web_search("query1")      ←─── 吸收（即使是白名单工具）
+        ├── read_file("result.json")  ←─── 吸收
+        ├── web_search("query2")      ←─── 吸收
+        ├── write_file("report.md")   ←─── 吸收
+        │
+        └── Skill 执行结束
+
+  最终步骤卡片:
+  ┌──────────────────────────────────────────────────┐
+  │  ●  研究 Karpathy 最新 AI 观点               →   │  ← LLM 生成的标题
+  └──────────────────────────────────────────────────┘
+```
+
+**Skill 执行边界检测**：
+
+| 边界 | 检测方式 |
+|------|---------|
+| 开始 | `load_skill` 或 `run_skill_script` 被调用 |
+| 结束 | 下一个 ReAct 迭代中，Agent 不再引用该 Skill 的上下文指令；或者 Agent 显式切换到其他 Skill / 回到自由推理 |
+
+#### 5.3.3 MCP 工具：LLM 生成标题 + 吸收连续调用
+
+当 Agent 调用 `call_mcp_tool` 时，启动 MCP 聚合：
+
+**步骤 1 — 生成步骤卡片标题（LLM 调用）**：
+
+| 输入 | 说明 |
+|------|------|
+| 用户最近 N 条消息（默认 5 条） | 提供用户意图上下文 |
+| MCP Server meta 信息 | server name, description |
+| MCP Tool meta 信息 | tool name, description, input_schema |
+| 调用参数 | call_mcp_tool 的具体参数 |
+
+标题生成 Prompt 模板：
+
+```
+根据以下信息，生成一个简短、对用户友好的步骤标题：
+
+用户最近消息：
+{recent_messages}
+
+正在调用的外部服务：
+- 服务名：{mcp_server_name}
+- 服务描述：{mcp_server_description}
+- 工具名：{mcp_tool_name}
+- 工具描述：{mcp_tool_description}
+
+要求：
+- 使用动词开头
+- 体现用户意图，而非 API 名称
+- 简洁明了，不超过 15 个字
+- 使用用户的语言
+```
+
+**步骤 2 — 吸收连续同 Server 调用**：
+
+对同一 MCP Server 的连续 `call_mcp_tool` 调用，全部吸收到第一次调用创建的步骤卡片中。
+
+```
+MCP 执行流程与卡片生成:
+
+  call_mcp_tool(server="github", tool="search_repos")       ←─── 触发点
+        │
+        ├── call_mcp_tool(server="github", tool="get_repo")  ←─── 吸收（同 Server）
+        ├── call_mcp_tool(server="github", tool="list_issues")←─── 吸收（同 Server）
+        │
+  步骤卡片:
+  ┌──────────────────────────────────────────────────┐
+  │  ●  查询 GitHub 仓库信息                      →   │  ← LLM 生成的标题
+  └──────────────────────────────────────────────────┘
+
+  --- 中断：调用了其他工具或不同 MCP Server ---
+
+  call_mcp_tool(server="arxiv", tool="search_papers")        ←─── 新的触发点
+        │
+  步骤卡片:                                                     ← 新的卡片
+  ┌──────────────────────────────────────────────────┐
+  │  ●  搜索 arXiv 论文                           →   │
+  └──────────────────────────────────────────────────┘
+```
+
+**MCP 聚合边界检测**：
+
+| 边界 | 检测方式 |
+|------|---------|
+| 开始 | 首次 `call_mcp_tool` 调用某 MCP Server |
+| 结束 | 下一个操作不是对同一 MCP Server 的 `call_mcp_tool`（切换到其他工具、其他 Server、或 Skill） |
+
+#### 5.3.4 嵌套场景与优先级
+
+当存在嵌套调用时（如 Skill 内部调用了 MCP），按以下优先级处理：
+
+```
+优先级（高 → 低）：  Skill  >  MCP  >  白名单工具
+```
+
+| 嵌套场景 | 处理方式 |
+|---------|---------|
+| Skill 内调用白名单工具 | 吸收到 Skill 卡片 |
+| Skill 内调用 MCP 工具 | 吸收到 Skill 卡片（Skill 优先级更高） |
+| MCP 连续调用中穿插白名单工具 | 白名单工具独立生成卡片（MCP 聚合中断） |
+
+#### 5.3.5 普通模式完整过滤流程
 
 ```
   Agent 执行工具调用
         │
         ▼
-  ┌─────────────┐     是
-  │ 系统级/框架级？├──────→  丢弃，不下发
-  └──────┬──────┘
+  ┌──────────────────────┐
+  │ 当前处于 Skill 执行   │── 是 ──→  吸收到当前 Skill 步骤卡片，不生成新卡片
+  │ 上下文中？            │
+  └──────┬───────────────┘
          │ 否
          ▼
-  ┌──────────────┐    是
-  │ 与前一步同类？ ├──────→  聚合到前一步骤卡片
-  └──────┬───────┘
+  ┌──────────────────────┐
+  │ 当前处于同一 MCP      │── 是 ──→  吸收到当前 MCP 步骤卡片，不生成新卡片
+  │ Server 连续调用中？   │
+  └──────┬───────────────┘
          │ 否
          ▼
-  生成新的 step_card 消息下发前端
+  ┌──────────────────────┐
+  │ 是 Skill 触发调用？   │── 是 ──→  LLM 生成标题 → 创建 Skill 步骤卡片
+  │ (load_skill 等)      │          → 进入 Skill 吸收上下文
+  └──────┬───────────────┘
+         │ 否
+         ▼
+  ┌──────────────────────┐
+  │ 是 MCP 工具调用？     │── 是 ──→  LLM 生成标题 → 创建 MCP 步骤卡片
+  │ (call_mcp_tool)      │          → 进入 MCP 吸收上下文
+  └──────┬───────────────┘
+         │ 否
+         ▼
+  ┌──────────────────────┐
+  │ 工具在白名单中？      │── 是 ──→  生成步骤卡片（标题 = 语义化描述）
+  └──────┬───────────────┘
+         │ 否
+         ▼
+    丢弃，不生成步骤卡片
 ```
+
+### 5.4 计划模式（Plan Mode）过滤规则
+
+计划模式下，步骤卡片与 Plan Checklist 的步骤一一对应。所有过滤和聚合逻辑被大幅简化。
+
+#### 5.4.1 核心规则
+
+| 规则 | 说明 |
+|------|------|
+| 全部吸收 | 计划步骤执行过程中调用的 **所有** 工具、Skill、MCP 都被吸收到该计划步骤的卡片中 |
+| 标题同步 | 步骤卡片标题 = Plan Checklist 中对应步骤的 `title`（由 Agent 在 `create_plan` 时已定义） |
+| 一步一卡 | 每个计划步骤对应且仅对应一张步骤卡片，不会生成额外卡片 |
+| 无需 LLM | 标题直接复用 Plan 步骤标题，无需额外 LLM 调用 |
+
+#### 5.4.2 吸收示例
+
+```
+Plan Step 1: "搜索 Karpathy 最新观点" 执行中:
+
+  ├── web_search("karpathy 2026 blog")       ←── 吸收
+  ├── web_search("karpathy AI agent talk")   ←── 吸收
+  ├── load_skill("content_analyzer")         ←── 吸收（Skill 也被吸收）
+  │     ├── read_file("result.json")         ←── 吸收
+  │     └── write_file("summary.md")         ←── 吸收
+  ├── call_mcp_tool(server="arxiv", ...)     ←── 吸收（MCP 也被吸收）
+  │
+  步骤卡片:
+  ┌──────────────────────────────────────────────────┐
+  │  ●  搜索 Karpathy 最新观点                   →   │  ← 标题来自 Plan 步骤
+  └──────────────────────────────────────────────────┘
+
+Plan Step 2: "整理要点并归类" 执行中:
+
+  ├── read_file("search_results.md")         ←── 吸收
+  ├── write_file("categorized.md")           ←── 吸收
+  │
+  步骤卡片:
+  ┌──────────────────────────────────────────────────┐
+  │  ●  整理要点并归类                            →   │  ← 标题来自 Plan 步骤
+  └──────────────────────────────────────────────────┘
+```
+
+#### 5.4.3 计划模式过滤流程
+
+```
+  Agent 在 Plan Step N 内执行工具调用
+        │
+        ▼
+  全部吸收到 Plan Step N 的步骤卡片中
+  （无论是工具、Skill 还是 MCP）
+        │
+        ▼
+  Agent 调用 update_plan_step(step_N, status="completed")
+        │
+        ▼
+  步骤卡片状态更新为 completed
+  Plan Checklist 对应项打勾 ☐ → ☑
+        │
+        ▼
+  Agent 开始执行 Plan Step N+1
+```
+
+### 5.5 两种模式对比
+
+| 维度 | 普通模式 | 计划模式 |
+|------|---------|---------|
+| 卡片来源 | 白名单工具 / Skill / MCP 分别触发 | Plan 步骤定义 |
+| 标题生成 | 白名单工具用语义描述；Skill/MCP 用 LLM 生成 | 直接使用 Plan 步骤标题，无需 LLM |
+| 吸收范围 | Skill/MCP 各自吸收内部调用 | 计划步骤内 **所有** 调用都被吸收 |
+| 卡片数量 | 动态，取决于执行过程 | 固定，等于计划步骤数 |
+| 优先级 | Skill > MCP > 白名单工具 | Plan 步骤优先级最高，覆盖一切 |
+
+### 5.6 特殊场景处理
+
+#### 5.6.1 用户明确提及的隐藏工具
+
+当用户消息中明确提到了某个隐藏工具的操作时，该工具的隐藏规则被覆盖：
+
+| 用户消息 | 触发工具 | 处理方式 |
+|---------|---------|---------|
+| "帮我读取 config.yaml" | `read_file` | 提升为可见步骤卡片 |
+| "运行 npm install" | `run_shell` | 提升为可见步骤卡片 |
+| "写一个 README.md 文件" | `write_file` | 提升为可见步骤卡片 |
+
+> 检测方式：对用户最近消息进行关键词/意图匹配。仅在 **普通模式** 下生效；计划模式下仍被计划步骤吸收。
+
+#### 5.6.2 LLM 标题生成的容错
+
+| 异常场景 | 降级策略 |
+|---------|---------|
+| LLM 调用超时 | 使用 Skill/MCP 的 `name` + `description` 前 15 字截断作为标题 |
+| LLM 返回空/无效 | 同上，使用 meta 信息降级 |
+| Skill/MCP 无 meta 信息 | 使用工具名作为标题（如 "调用 github 服务"） |
+
+#### 5.6.3 并发工具调用
+
+当 Agent 并行执行多个工具调用时（`TOOL_MAX_PARALLEL > 1`）：
+
+| 场景 | 处理方式 |
+|------|---------|
+| 并行的多个白名单工具 | 各自独立生成步骤卡片 |
+| 并行的多个 MCP 调用（同 Server） | 聚合为一张卡片 |
+| 并行的多个 MCP 调用（不同 Server） | 各自独立生成卡片 |
+| Skill 内部的并行工具调用 | 全部吸收到 Skill 卡片 |
 
 ---
 
@@ -431,11 +724,18 @@ step_card:
 {
   "type": "step_card",
   "step_id": "step_001",
-  "title": "搜索 Karpathy 2026 最新观点",
-  "status": "completed",           // running | completed | failed
+  "title": "搜索 Karpathy 2026 最新观点",     // 语义化标题（Skill/MCP 为 LLM 生成，Plan 为步骤标题）
+  "status": "completed",                      // running | completed | failed
+  "source_type": "skill",                     // tool | skill | mcp | plan_step
   "duration": 3.2,
+  "plan_step_index": null,                    // 计划模式下对应的步骤序号（1-based），普通模式为 null
   "input": { "query": "Karpathy 2026", "max_results": 5 },
-  "output": "搜索结果: 1. Karpathy 在..."
+  "output": "搜索结果: 1. Karpathy 在...",
+  "absorbed_calls": [                         // 被吸收的底层调用列表（用于右侧面板详情展示）
+    {"tool": "web_search", "args": {"query": "karpathy 2026 blog"}, "duration": 1.1},
+    {"tool": "web_search", "args": {"query": "karpathy AI agent"}, "duration": 1.5},
+    {"tool": "read_file", "args": {"path": "result.json"}, "duration": 0.2}
+  ]
 }
 
 ai_text:

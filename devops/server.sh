@@ -15,7 +15,11 @@ BACKEND_PID_FILE="$PID_DIR/backend.pid"
 FRONTEND_PID_FILE="$PID_DIR/frontend.pid"
 
 BACKEND_PORT="${API_PORT:-18900}"
-FRONTEND_PORT=5180
+FRONTEND_PORT=5174
+
+LOG_DIR="$PID_DIR"
+BACKEND_LOG="$LOG_DIR/backend.log"
+FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 # ---------- 颜色 ----------
 RED='\033[0;31m'
@@ -71,7 +75,7 @@ start_backend() {
     log_info "启动后端服务 (port: $BACKEND_PORT) ..."
     cd "$PROJECT_ROOT"
 
-    openakita serve &
+    openakita serve > "$BACKEND_LOG" 2>&1 &
     local pid=$!
     echo "$pid" > "$BACKEND_PID_FILE"
 
@@ -124,7 +128,7 @@ start_frontend() {
     log_info "启动前端服务 (port: $FRONTEND_PORT) ..."
     cd "$FRONTEND_DIR"
 
-    npm run dev &
+    npx vite --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &
     local pid=$!
     echo "$pid" > "$FRONTEND_PID_FILE"
 
