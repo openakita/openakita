@@ -1257,11 +1257,17 @@ class LLMClient:
             available = list(self._providers.keys())
             return False, f"端点 '{endpoint_name}' 不存在。可用端点: {', '.join(available)}"
 
-        # 检查端点是否健康
+        # switch_model 是显式的意图声明（用户选模型 / 系统 failover），
+        # 不应被冷静期阻断。如果端点确实有问题，实际请求时 _try_endpoints
+        # 会 mark_unhealthy 并触发 failover，那里才是正确的健康感知层。
         provider = self._providers[endpoint_name]
         if not provider.is_healthy:
-            cooldown = provider.cooldown_remaining
-            return False, f"端点 '{endpoint_name}' 当前不可用（冷静期剩余 {cooldown:.0f} 秒）"
+            logger.info(
+                f"[LLM] endpoint={endpoint_name} cooldown reset for switch_model "
+                f"(was category={provider.error_category}, "
+                f"remaining={provider.cooldown_remaining}s, reason={reason!r})"
+            )
+            provider.reset_cooldown()
 
         # 创建覆盖配置
         expires_at = datetime.now() + timedelta(hours=hours)
