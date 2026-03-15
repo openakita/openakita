@@ -123,18 +123,19 @@ class AnthropicProvider(LLMProvider):
                     request.headers["Authorization"] = f"Bearer {api_key_for_hook}"
                     request.headers["x-api-key"] = api_key_for_hook
 
+            # trust_env=False: 代理由 get_proxy_config() 显式管理（含可达性验证）。
+            # 避免 macOS/Windows 残留系统代理（Clash/V2Ray 等）导致请求被路由到
+            # 不存在的代理端口而失败。
             client_kwargs = {
                 "timeout": build_httpx_timeout(self.config.timeout, default=60.0),
                 "follow_redirects": True,
+                "trust_env": False,
                 "event_hooks": {"request": [_ensure_auth_on_redirect]},
             }
 
             if proxy and not is_local:
                 client_kwargs["proxy"] = proxy
                 logger.debug(f"[Anthropic] Using proxy: {proxy}")
-
-            if is_local:
-                client_kwargs["trust_env"] = False
 
             if transport:
                 client_kwargs["transport"] = transport

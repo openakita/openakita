@@ -6,6 +6,8 @@
 
 import logging
 import os
+import socket
+import time
 
 import httpx
 
@@ -15,6 +17,10 @@ logger = logging.getLogger(__name__)
 _ipv4_logged = False
 _proxy_logged = False
 _transport_cache: httpx.AsyncHTTPTransport | None = None
+
+# 代理可达性缓存：(proxy_url, reachable, timestamp)
+_proxy_reachable_cache: tuple[str, bool, float] | None = None
+_PROXY_CHECK_TTL = 30.0  # 缓存 30 秒
 
 
 def _is_truthy_env(name: str) -> bool:
@@ -114,8 +120,80 @@ def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.T
     )
 
 
+def _check_proxy_reachable(proxy_url: str, timeout: float = 2.0) -> bool:
+    """检测代理是否可达（TCP 连接测试）
+
+    Args:
+        proxy_url: 代理地址，如 socks5://127.0.0.1:7897 或 http://proxy:8080
+        timeout: 连接超时（秒）
+
+    Returns:
+        True 表示可达，False 表示不可达
+    """
+    global _proxy_reachable_cache
+
+    # 缓存命中
+    if _proxy_reachable_cache:
+        cached_url, cached_result, cached_time = _proxy_reachable_cache
+        if cached_url == proxy_url and (time.monotonic() - cached_time) < _PROXY_CHECK_TTL:
+            return cached_result
+
+    try:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(proxy_url)
+        host = parts.hostname or "127.0.0.1"
+        port = parts.port or (1080 if "socks" in (parts.scheme or "") else 8080)
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect((host, port))
+            _proxy_reachable_cache = (proxy_url, True, time.monotonic())
+            return True
+        except (OSError, TimeoutError):
+            _proxy_reachable_cache = (proxy_url, False, time.monotonic())
+            return False
+        finally:
+            sock.close()
+    except Exception:
+        _proxy_reachable_cache = (proxy_url, False, time.monotonic())
+        return False
+
+
+def _detect_proxy_source() -> tuple[str, str] | None:
+    """检测代理配置来源（不做可达性检查）
+
+    Returns:
+        (proxy_url, source_description) 或 None
+    """
+    for env_var in [
+        "ALL_PROXY", "all_proxy",
+        "HTTPS_PROXY", "https_proxy",
+        "HTTP_PROXY", "http_proxy",
+    ]:
+        proxy = (os.environ.get(env_var) or "").strip()
+        if proxy:
+            return proxy, f"env {env_var}"
+
+    try:
+        from ...config import settings
+
+        for key, val in [
+            ("all_proxy", settings.all_proxy),
+            ("https_proxy", settings.https_proxy),
+            ("http_proxy", settings.http_proxy),
+        ]:
+            if val and (v := (val or "").strip()):
+                return v, f"config {key}"
+    except Exception:
+        pass
+
+    return None
+
+
 def get_proxy_config() -> str | None:
-    """获取代理配置
+    """获取代理配置（带可达性验证）
 
     优先级（从高到低）:
     1. ALL_PROXY 环境变量
@@ -124,6 +202,8 @@ def get_proxy_config() -> str | None:
     4. 配置文件中的 all_proxy
     5. 配置文件中的 https_proxy
     6. 配置文件中的 http_proxy
+
+    当代理不可达时自动降级为直连，避免 Clash/V2Ray 等残留配置导致所有请求失败。
 
     Returns:
         代理地址或 None
@@ -136,56 +216,27 @@ def get_proxy_config() -> str | None:
             _proxy_logged = True
         return None
 
-    # 先检查环境变量
-    for env_var in [
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ]:
-        proxy = os.environ.get(env_var)
-        if proxy:
-            if not _proxy_logged:
-                logger.info(
-                    f"[Proxy] LLM proxy enabled from env {env_var}: {_redact_proxy_url(proxy)}"
-                )
-                _proxy_logged = True
-            return proxy
+    detected = _detect_proxy_source()
+    if not detected:
+        return None
 
-    # 再检查配置文件
-    try:
-        from ...config import settings
+    proxy, source = detected
 
-        if settings.all_proxy:
-            if not _proxy_logged:
-                logger.info(
-                    f"[Proxy] LLM proxy enabled from config all_proxy: "
-                    f"{_redact_proxy_url(settings.all_proxy)}"
-                )
-                _proxy_logged = True
-            return settings.all_proxy
-        if settings.https_proxy:
-            if not _proxy_logged:
-                logger.info(
-                    f"[Proxy] LLM proxy enabled from config https_proxy: "
-                    f"{_redact_proxy_url(settings.https_proxy)}"
-                )
-                _proxy_logged = True
-            return settings.https_proxy
-        if settings.http_proxy:
-            if not _proxy_logged:
-                logger.info(
-                    f"[Proxy] LLM proxy enabled from config http_proxy: "
-                    f"{_redact_proxy_url(settings.http_proxy)}"
-                )
-                _proxy_logged = True
-            return settings.http_proxy
-    except Exception as e:
-        logger.debug(f"[Proxy] Failed to load config: {e}")
+    if not _check_proxy_reachable(proxy):
+        logger.warning(
+            f"[Proxy] Detected proxy from {source}: {_redact_proxy_url(proxy)}, "
+            f"but it is UNREACHABLE (connection refused). Falling back to direct connection. "
+            f"If you are not using a proxy, clear the proxy setting or set DISABLE_PROXY=1. "
+            f"If you need the proxy, please start your proxy software."
+        )
+        return None
 
-    return None
+    if not _proxy_logged:
+        logger.info(
+            f"[Proxy] LLM proxy enabled from {source}: {_redact_proxy_url(proxy)}"
+        )
+        _proxy_logged = True
+    return proxy
 
 
 def is_ipv4_only() -> bool:
@@ -242,3 +293,48 @@ def get_httpx_proxy_mounts() -> dict | None:
             "https://": proxy,
         }
     return None
+
+
+def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) -> dict:
+    """获取 httpx.AsyncClient 通用 kwargs
+
+    统一处理代理、trust_env、超时等配置，供 bridge.py 等非 Provider 代码使用。
+    始终设置 trust_env=False，避免 macOS/Windows 残留系统代理导致请求失败。
+
+    Args:
+        timeout: 请求超时（秒）
+        is_local: 是否为本地端点（本地端点不使用代理）
+    """
+    kwargs: dict = {
+        "timeout": timeout,
+        "trust_env": False,
+    }
+
+    if not is_local:
+        proxy = get_proxy_config()
+        if proxy:
+            kwargs["proxy"] = proxy
+
+    return kwargs
+
+
+def format_proxy_hint() -> str:
+    """生成代理诊断提示（用于错误信息）
+
+    当用户已通过 DISABLE_PROXY=1 禁用代理时，不返回提示，避免误导。
+    """
+    if is_proxy_disabled():
+        return ""
+
+    detected = _detect_proxy_source()
+    if not detected:
+        return ""
+
+    proxy, source = detected
+    reachable = _check_proxy_reachable(proxy)
+    status = "可达" if reachable else "不可达"
+    return (
+        f"\n[代理诊断] 检测到代理 {_redact_proxy_url(proxy)} (来源: {source}), "
+        f"状态: {status}。"
+        f"{'如果您未使用代理，请清除对应环境变量或设置 DISABLE_PROXY=1' if not reachable else ''}"
+    )

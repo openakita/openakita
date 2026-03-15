@@ -492,6 +492,14 @@ async def list_models_api(body: ListModelsRequest):
             friendly = "SSL 证书文件缺失，请重新安装或更新应用"
         elif "connect" in raw or "connection refused" in raw or "no route" in raw or "unreachable" in raw:
             friendly = "无法连接到服务商，请检查 API 地址和网络连接"
+            try:
+                from openakita.llm.providers.proxy_utils import format_proxy_hint
+
+                hint = format_proxy_hint()
+                if hint:
+                    friendly += hint
+            except Exception:
+                pass
         elif "401" in raw or "unauthorized" in raw or "invalid api key" in raw or "authentication" in raw:
             friendly = "API Key 无效或已过期，请检查后重试"
         elif "403" in raw or "forbidden" in raw or "permission" in raw:

@@ -590,9 +590,13 @@ async def search_marketplace(q: str = "agent"):
     )
 
     try:
-        client_kwargs: dict = {"timeout": 15, "follow_redirects": True}
+        client_kwargs: dict = {
+            "timeout": 15,
+            "follow_redirects": True,
+            "trust_env": False,
+        }
 
-        # 复用项目的代理和 IPv4 设置
+        # 复用项目的代理和 IPv4 设置（get_proxy_config 含可达性验证）
         proxy = get_proxy_config()
         if proxy:
             client_kwargs["proxy"] = proxy

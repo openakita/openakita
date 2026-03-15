@@ -171,11 +171,14 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
     async def _ensure_auth(request: httpx.Request):
         request.headers.setdefault("Authorization", auth_header)
 
-    async with httpx.AsyncClient(
-        timeout=30,
-        follow_redirects=True,
-        event_hooks={"request": [_ensure_auth]},
-    ) as client:
+    from openakita.llm.providers.proxy_utils import get_httpx_client_kwargs
+
+    _is_local = any(h in base_url.lower() for h in ("localhost", "127.0.0.1", "[::1]"))
+    client_kw = get_httpx_client_kwargs(timeout=30, is_local=_is_local)
+    client_kw["follow_redirects"] = True
+    client_kw["event_hooks"] = {"request": [_ensure_auth]}
+
+    async with httpx.AsyncClient(**client_kw) as client:
         try:
             resp = await client.get(url, headers={"Authorization": auth_header})
             resp.raise_for_status()
@@ -311,7 +314,12 @@ async def _list_models_anthropic(api_key: str, base_url: str, provider_slug: str
     b = base_url.rstrip("/")
     url = b + "/models" if b.endswith("/v1") else b + "/v1/models"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    from openakita.llm.providers.proxy_utils import get_httpx_client_kwargs
+
+    _is_local = any(h in base_url.lower() for h in ("localhost", "127.0.0.1", "[::1]"))
+    client_kw = get_httpx_client_kwargs(timeout=30, is_local=_is_local)
+
+    async with httpx.AsyncClient(**client_kw) as client:
         try:
             resp = await client.get(
                 url,
@@ -518,7 +526,10 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
 
         # 实际连通性测试
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            from openakita.llm.providers.proxy_utils import get_httpx_client_kwargs
+
+            ch_client_kw = get_httpx_client_kwargs(timeout=15)
+            async with httpx.AsyncClient(**ch_client_kw) as client:
                 if ch["id"] == "telegram":
                     token = env["TELEGRAM_BOT_TOKEN"]
                     resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")

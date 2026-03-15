@@ -96,11 +96,22 @@ async def _check_endpoint_readonly(name: str, provider) -> HealthResult:
         )
     except Exception as e:
         latency = round((time.time() - t0) * 1000)
+        error_msg = str(e)
+        raw = error_msg.lower()
+        if "connect" in raw or "connection refused" in raw or "unreachable" in raw:
+            try:
+                from openakita.llm.providers.proxy_utils import format_proxy_hint
+
+                hint = format_proxy_hint()
+                if hint:
+                    error_msg += hint
+            except Exception:
+                pass
         return HealthResult(
             name=name,
             status="unhealthy",
             latency_ms=latency,
-            error=str(e)[:500],
+            error=error_msg[:800],
             consecutive_failures=getattr(provider, "consecutive_cooldowns", 0),
             cooldown_remaining=getattr(provider, "cooldown_remaining", 0),
             is_extended_cooldown=getattr(provider, "is_extended_cooldown", False),

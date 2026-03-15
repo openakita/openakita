@@ -139,22 +139,19 @@ class OpenAIProvider(LLMProvider):
                 if api_key_for_hook and "Authorization" not in request.headers:
                     request.headers["Authorization"] = f"Bearer {api_key_for_hook}"
 
+            # trust_env=False: 代理由 get_proxy_config() 显式管理（含可达性验证）。
+            # 避免 macOS/Windows 残留系统代理（Clash/V2Ray 等）导致请求被路由到
+            # 不存在的代理端口而失败。
             client_kwargs = {
                 "timeout": build_httpx_timeout(timeout_value, default=60.0),
                 "follow_redirects": True,
+                "trust_env": False,
                 "event_hooks": {"request": [_ensure_auth_on_redirect]},
             }
 
             if proxy and not is_local:
                 client_kwargs["proxy"] = proxy
                 logger.debug(f"[OpenAI] Using proxy: {proxy}")
-
-            if is_local:
-                # Windows 注册表中可能残留代理设置（Clash / V2Ray 等工具修改
-                # IE 代理后关闭，不一定清除注册表）。httpx 默认 trust_env=True
-                # 会通过 getproxies() 读取这些设置，导致 localhost 请求被路由到
-                # 不存在的代理端口而失败。本地端点必须禁用此行为。
-                client_kwargs["trust_env"] = False
 
             if transport:
                 client_kwargs["transport"] = transport
