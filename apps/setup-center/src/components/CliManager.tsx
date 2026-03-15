@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../platform";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, Terminal, Trash2 } from "lucide-react";
 
 export function CliManager() {
   const [cliStatus, setCliStatus] = useState<{
@@ -67,56 +72,64 @@ export function CliManager() {
   const hasRegistered = cliStatus && cliStatus.registeredCommands.length > 0;
 
   return (
-    <div style={{ padding: "0 0 8px" }}>
+    <div className="space-y-4">
       {cliStatus && hasRegistered && (
-        <div style={{ background: "rgba(34,197,94,0.08)", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>已注册命令</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13 }}>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/30 dark:bg-emerald-950/20 px-4 py-3 space-y-1.5">
+          <p className="text-[13px] font-semibold">已注册命令</p>
+          <div className="flex items-center gap-2 flex-wrap">
             {cliStatus.registeredCommands.map(cmd => (
-              <code key={cmd} style={{ padding: "2px 8px", background: "rgba(0,0,0,0.08)", borderRadius: 4, fontSize: 12 }}>{cmd}</code>
+              <Badge key={cmd} variant="secondary" className="font-mono text-xs">{cmd}</Badge>
             ))}
             {cliStatus.inPath ? (
-              <span style={{ color: "#22c55e", fontSize: 12 }}>(已在 PATH 中)</span>
+              <span className="text-xs text-emerald-600 dark:text-emerald-400">已在 PATH 中</span>
             ) : (
-              <span style={{ color: "#f59e0b", fontSize: 12 }}>(未在 PATH 中)</span>
+              <span className="text-xs text-amber-600 dark:text-amber-400">未在 PATH 中</span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>目录: {cliStatus.binDir}</div>
+          <p className="text-[11px] text-muted-foreground">目录: {cliStatus.binDir}</p>
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-          <input type="checkbox" checked={cliRegOpenakita} onChange={() => setCliRegOpenakita(!cliRegOpenakita)} style={{ width: 16, height: 16, flexShrink: 0 }} />
-          <span><strong>openakita</strong> — 完整命令</span>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-          <input type="checkbox" checked={cliRegOa} onChange={() => setCliRegOa(!cliRegOa)} style={{ width: 16, height: 16, flexShrink: 0 }} />
-          <span><strong>oa</strong> — 简短别名</span>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-          <input type="checkbox" checked={cliRegPath} onChange={() => setCliRegPath(!cliRegPath)} style={{ width: 16, height: 16, flexShrink: 0 }} />
-          <span>添加到系统 PATH</span>
-        </label>
+      <div className="flex items-center gap-6 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Checkbox id="cli-openakita" checked={cliRegOpenakita} onCheckedChange={() => setCliRegOpenakita(!cliRegOpenakita)} />
+          <Label htmlFor="cli-openakita" className="text-[13px] cursor-pointer font-normal">
+            <strong className="font-semibold">openakita</strong> — 完整命令
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="cli-oa" checked={cliRegOa} onCheckedChange={() => setCliRegOa(!cliRegOa)} />
+          <Label htmlFor="cli-oa" className="text-[13px] cursor-pointer font-normal">
+            <strong className="font-semibold">oa</strong> — 简短别名
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="cli-path" checked={cliRegPath} onCheckedChange={() => setCliRegPath(!cliRegPath)} />
+          <Label htmlFor="cli-path" className="text-[13px] cursor-pointer font-normal">添加到系统 PATH</Label>
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btnPrimary" onClick={doRegister} disabled={cliLoading} style={{ fontSize: 13 }}>
-          {cliLoading ? "处理中..." : hasRegistered ? "更新注册" : "注册"}
-        </button>
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={doRegister} disabled={cliLoading}>
+          {cliLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Terminal className="size-3.5" />}
+          {hasRegistered ? "更新注册" : "注册"}
+        </Button>
         {hasRegistered && (
-          <button onClick={doUnregister} disabled={cliLoading} style={{ fontSize: 13 }}>
+          <Button variant="outline" size="sm" onClick={doUnregister} disabled={cliLoading}>
+            <Trash2 className="size-3.5" />
             注销全部
-          </button>
+          </Button>
         )}
       </div>
 
       {cliMsg && (
-        <div style={{
-          marginTop: 8, padding: "6px 10px", borderRadius: 6, fontSize: 12,
-          background: cliMsg.startsWith("✓") ? "rgba(34,197,94,0.1)" : cliMsg.startsWith("✗") ? "rgba(239,68,68,0.1)" : "rgba(245,158,11,0.1)",
-          color: cliMsg.startsWith("✓") ? "#22c55e" : cliMsg.startsWith("✗") ? "#ef4444" : "#f59e0b",
-        }}>
+        <div className={`rounded-md px-3 py-2 text-xs ${
+          cliMsg.startsWith("✓")
+            ? "bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-500/30"
+            : cliMsg.startsWith("✗")
+              ? "bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-500/30"
+              : "bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-500/30"
+        }`}>
           {cliMsg}
         </div>
       )}
