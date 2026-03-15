@@ -381,7 +381,10 @@ async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -
                 continue
             eq = line.find("=")
             if eq > 0:
-                os.environ.setdefault(line[:eq].strip(), line[eq + 1:])
+                val = line[eq + 1:].strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                os.environ.setdefault(line[:eq].strip(), val)
 
     client = LLMClient(config_path=config_path)
 

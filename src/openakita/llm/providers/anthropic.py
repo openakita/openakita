@@ -61,6 +61,21 @@ class AnthropicProvider(LLMProvider):
             "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
         ))
 
+    def _get_validated_api_key(self) -> str:
+        """获取并验证 API Key，空 key 时提前抛出有意义的错误而非让 API 返回模糊 401。"""
+        api_key = (self.api_key or "").strip()
+        if not api_key:
+            if self._is_local_endpoint():
+                return "local"
+            hint = ""
+            if self.config.api_key_env:
+                hint = f" (env var {self.config.api_key_env} is not set)"
+            raise AuthenticationError(
+                f"Missing API key for endpoint '{self.name}'{hint}. "
+                "Set the environment variable or configure api_key/api_key_env."
+            )
+        return api_key
+
     async def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端
 
@@ -96,9 +111,22 @@ class AnthropicProvider(LLMProvider):
 
             is_local = self._is_local_endpoint()
 
+            # httpx strips Authorization on cross-origin redirects for security.
+            # Some Anthropic-compatible gateways (MiniMax, Volcengine Coding Plan, etc.)
+            # may redirect across hosts. Re-attach credentials via event hook.
+            api_key_for_hook = (self.api_key or "").strip()
+            if not api_key_for_hook and is_local:
+                api_key_for_hook = "local"
+
+            async def _ensure_auth_on_redirect(request: httpx.Request):
+                if api_key_for_hook and "Authorization" not in request.headers:
+                    request.headers["Authorization"] = f"Bearer {api_key_for_hook}"
+                    request.headers["x-api-key"] = api_key_for_hook
+
             client_kwargs = {
                 "timeout": build_httpx_timeout(self.config.timeout, default=60.0),
                 "follow_redirects": True,
+                "event_hooks": {"request": [_ensure_auth_on_redirect]},
             }
 
             if proxy and not is_local:
@@ -118,6 +146,7 @@ class AnthropicProvider(LLMProvider):
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
         """发送聊天请求"""
+        self._get_validated_api_key()
         await self.acquire_rate_limit()
         client = await self._get_client()
 
@@ -154,6 +183,7 @@ class AnthropicProvider(LLMProvider):
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
         """流式聊天请求"""
+        self._get_validated_api_key()
         await self.acquire_rate_limit()
         client = await self._get_client()
 
@@ -169,7 +199,18 @@ class AnthropicProvider(LLMProvider):
             ) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
-                    raise LLMError(f"API error ({response.status_code}): {error_body.decode()}")
+                    error_text = error_body.decode(errors="replace")
+                    if response.status_code == 401:
+                        raise AuthenticationError(
+                            f"Authentication failed: {error_text}"
+                        )
+                    if response.status_code == 429:
+                        raise RateLimitError(
+                            f"Rate limit exceeded: {error_text}"
+                        )
+                    raise LLMError(
+                        f"API error ({response.status_code}): {error_text}"
+                    )
 
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
@@ -196,11 +237,12 @@ class AnthropicProvider(LLMProvider):
 
     def _build_headers(self) -> dict:
         """构建请求头"""
+        key = (self.api_key or "").strip()
         return {
             "Content-Type": "application/json",
-            "x-api-key": self.api_key,
+            "x-api-key": key,
             # 部分 Anthropic 兼容网关仅识别 Bearer，保留 x-api-key 以兼容官方 Anthropic。
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {key}",
             "anthropic-version": self.ANTHROPIC_VERSION,
         }
 

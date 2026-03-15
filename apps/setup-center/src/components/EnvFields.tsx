@@ -7,6 +7,7 @@ import { envGet, envSet } from "../utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -98,19 +99,24 @@ export function FieldSelect({
 }: EnvFieldProps & {
   k: string; label: string; options: { value: string; label: string }[]; help?: string;
 }) {
+  const raw = envGet(envDraft, k);
+  const value = options.some((o) => o.value === raw) ? raw : (options[0]?.value ?? "");
   return (
     <div className="space-y-1.5">
       <FieldLabel label={label} help={help} envKey={k} />
-      <select
-        data-slot="select"
-        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 transition-[color,box-shadow]"
-        value={envGet(envDraft, k)}
-        onChange={(e) => onEnvChange((m) => envSet(m, k, e.target.value))}
+      <Select
+        value={value}
+        onValueChange={(v) => onEnvChange((m) => envSet(m, k, v))}
       >
-        {options.map((opt) => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
+        <SelectTrigger className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -128,21 +134,24 @@ export function FieldCombo({
     <div className="space-y-1.5">
       <FieldLabel label={label} help={help} envKey={k} />
       <div className="flex gap-1.5">
-        <select
-          data-slot="select"
-          className="h-9 shrink-0 min-w-[140px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 transition-[color,box-shadow]"
+        <Select
           value={isPreset ? currentVal : "__custom__"}
-          onChange={(e) => {
-            if (e.target.value !== "__custom__") {
-              onEnvChange((m) => envSet(m, k, e.target.value));
+          onValueChange={(v) => {
+            if (v !== "__custom__") {
+              onEnvChange((m) => envSet(m, k, v));
             }
           }}
         >
-          {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-          <option value="__custom__">{t("common.custom") || "自定义..."}</option>
-        </select>
+          <SelectTrigger className="shrink-0 min-w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+            ))}
+            <SelectItem value="__custom__">{t("common.custom") || "自定义..."}</SelectItem>
+          </SelectContent>
+        </Select>
         {(!isPreset || currentVal === "") && (
           <Input
             className="flex-1"

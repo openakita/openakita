@@ -222,7 +222,6 @@ class OpenAIProvider(LLMProvider):
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers=self._build_headers(),
-                auth=self._get_auth(),
                 json=body,
                 **({"timeout": req_timeout} if req_timeout else {}),
             )
@@ -302,7 +301,6 @@ class OpenAIProvider(LLMProvider):
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._build_headers(),
-                auth=self._get_auth(),
                 json=body,
                 **({"timeout": req_timeout} if req_timeout else {}),
             ) as response:
@@ -400,9 +398,23 @@ class OpenAIProvider(LLMProvider):
         return _BearerAuth(api_key)
 
     def _build_headers(self) -> dict:
-        """构建请求头（Authorization 由 _get_auth 处理，此处不包含）"""
+        """构建请求头（含 Authorization，不依赖 httpx auth 机制）"""
+        api_key = (self.api_key or "").strip()
+        if not api_key:
+            if self._is_local_endpoint():
+                api_key = "local"
+            else:
+                hint = ""
+                if self.config.api_key_env:
+                    hint = f" (env var {self.config.api_key_env} is not set)"
+                raise AuthenticationError(
+                    f"Missing API key for endpoint '{self.name}'{hint}. "
+                    "Set the environment variable or configure api_key/api_key_env."
+                )
+
         headers: dict[str, str] = {
             "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
         }
 
         if "openrouter" in self.base_url.lower():

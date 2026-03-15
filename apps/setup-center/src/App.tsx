@@ -5641,7 +5641,7 @@ export function App() {
               {FT({ k: "LOG_BACKUP_COUNT", label: t("config.agentLogBackup"), placeholder: "30" })}
               {FT({ k: "LOG_RETENTION_DAYS", label: t("config.agentLogRetention"), placeholder: "30" })}
             </div>
-            <div className="grid2">
+            <div className="grid3">
               {FB({ k: "LOG_TO_CONSOLE", label: t("config.agentLogConsole") })}
               {FB({ k: "LOG_TO_FILE", label: t("config.agentLogFile") })}
             </div>
