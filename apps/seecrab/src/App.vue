@@ -1,18 +1,18 @@
 <template>
   <div class="app-layout">
-    <div class="sidebar" style="width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border);">
-      <div style="padding: 16px; text-align: center; color: var(--text-muted);">SeeCrab Sidebar</div>
-    </div>
-    <div class="chat-area" style="flex: 1; display: flex; align-items: center; justify-content: center;">
-      <div style="text-align: center;">
-        <h1 style="font-size: 36px; margin-bottom: 8px;">🦀 SeeCrab</h1>
-        <p style="color: var(--text-secondary);">OpenAkita Agent 实时可视化</p>
-      </div>
-    </div>
+    <LeftSidebar class="sidebar" />
+    <ChatArea class="main" />
+    <RightPanel v-if="uiStore.rightPanelOpen" class="detail" />
   </div>
 </template>
 
 <script setup lang="ts">
+import { useUIStore } from '@/stores/ui'
+import LeftSidebar from '@/components/layout/LeftSidebar.vue'
+import ChatArea from '@/components/layout/ChatArea.vue'
+import RightPanel from '@/components/layout/RightPanel.vue'
+
+const uiStore = useUIStore()
 </script>
 
 <style scoped>
@@ -20,5 +20,17 @@
   display: flex;
   height: 100vh;
   overflow: hidden;
+}
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+}
+.detail {
+  width: 400px;
+  flex-shrink: 0;
 }
 </style>
