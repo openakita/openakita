@@ -930,6 +930,8 @@ def _looks_like_github_shorthand(url: str) -> bool:
 
     排除本地路径（包含反斜杠、以 . 或 / 开头、包含盘符如 C:）。
     """
+    if " " in url:
+        return False
     if url.startswith((".", "/", "~")) or "\\" in url:
         return False
     if len(url) > 1 and url[1] == ":":
@@ -1189,8 +1191,18 @@ def _ensure_target_available(target: Path, url: str) -> None:
     raise ValueError(f"技能目录名称冲突: {target}")
 
 
+_CMD_PREFIXES = re.compile(
+    r"^(?:npx\s+skills?\s+(?:add|install)|openakita\s+(?:install[- ]skill|skill\s+install))\s+",
+    re.IGNORECASE,
+)
+
+
 def install_skill(workspace_dir: str, url: str) -> None:
     """安装技能（从 Git URL、GitHub 简写或本地目录）"""
+    url = _CMD_PREFIXES.sub("", url.strip()).strip()
+    if not url:
+        raise ValueError("请输入有效的技能地址，如 owner/repo 或 Git URL")
+
     skills_dir = _resolve_skills_dir(workspace_dir)
     skills_dir.mkdir(parents=True, exist_ok=True)
 
