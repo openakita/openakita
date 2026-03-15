@@ -106,6 +106,19 @@ def _find_web_dist() -> Path | None:
     return None
 
 
+def _find_seecrab_dist() -> Path | None:
+    """Locate SeeCrab frontend dist directory."""
+    # Inside the installed package
+    pkg_path = Path(__file__).parent / "seecrab"
+    if pkg_path.is_dir() and (pkg_path / "index.html").exists():
+        return pkg_path
+    # Development: relative to project root
+    dev_path = Path(__file__).parent.parent.parent.parent / "apps" / "seecrab" / "dist"
+    if dev_path.is_dir() and (dev_path / "index.html").exists():
+        return dev_path
+    return None
+
+
 def _mount_web_frontend(app: FastAPI) -> None:
     """Mount the web frontend static files if available.
 
@@ -305,6 +318,16 @@ def create_app(
 
     # ── Serve web frontend static files ──
     _mount_web_frontend(app)
+
+    # ── Serve SeeCrab frontend static files ──
+    _seecrab_dist = _find_seecrab_dist()
+    if _seecrab_dist:
+        from fastapi.staticfiles import StaticFiles as _SeeCrabStatic
+        app.mount(
+            "/seecrab",
+            _SeeCrabStatic(directory=str(_seecrab_dist), html=True),
+            name="seecrab",
+        )
 
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):

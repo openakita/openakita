@@ -28,7 +28,7 @@ const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 
 async function onNewChat() {
-  const id = await sessionStore.createSession()
+  await sessionStore.createSession()
   chatStore.messages = []
 }
 </script>
