@@ -4,7 +4,7 @@
       <div class="logo-mark">
         <span class="material-symbols-rounded logo-icon">smart_toy</span>
       </div>
-      <h1 class="title">openCrab</h1>
+      <h1 class="title">OpenCrab</h1>
       <p class="subtitle">
         自进化 AI Agent — 永不放弃的 Ralph Wiggum 模式<br>
         支持自主学习、记忆管理、多 LLM 端点
@@ -44,11 +44,18 @@ const shortcuts = [
   position: relative;
 }
 
+/* On wide screens, offset content to center relative to viewport (not just ChatArea) */
+@media (min-width: 1400px) {
+  .welcome {
+    padding-right: var(--sidebar-width);
+  }
+}
+
 .welcome-inner {
   text-align: center;
   animation: fadeIn 0.6s var(--ease-out) both;
   width: 100%;
-  max-width: 720px;
+  max-width: var(--chat-max-width);
   padding: 0 24px;
 }
 

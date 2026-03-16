@@ -9,8 +9,24 @@ export const useSessionStore = defineStore('session', () => {
   const activeSessionId = ref<string | null>(null)
 
   async function loadSessions() {
-    const { sessions: list } = await httpClient.listSessions()
-    sessions.value = list
+    try {
+      const { sessions: list } = await httpClient.listSessions()
+      sessions.value = list.map((s: any) => ({
+        id: s.id,
+        title: s.title || '',
+        lastMessage: s.last_message || '',
+        updatedAt: s.updated_at || Date.now(),
+        messageCount: s.message_count || 0,
+      }))
+      // Sort by most recent first (defensive — backend also sorts)
+      sessions.value.sort((a, b) => b.updatedAt - a.updatedAt)
+      // Auto-select the most recent session if none active
+      if (!activeSessionId.value && sessions.value.length > 0) {
+        activeSessionId.value = sessions.value[0].id
+      }
+    } catch (e) {
+      console.warn('[Session] Failed to load sessions:', e)
+    }
   }
 
   async function createSession() {
@@ -24,6 +40,18 @@ export const useSessionStore = defineStore('session', () => {
     })
     activeSessionId.value = session_id
     return session_id
+  }
+
+  async function deleteSession(id: string) {
+    try {
+      await httpClient.deleteSession(id)
+    } catch {
+      // Session may already be gone on backend, still remove locally
+    }
+    sessions.value = sessions.value.filter(s => s.id !== id)
+    if (activeSessionId.value === id) {
+      activeSessionId.value = sessions.value.length > 0 ? sessions.value[0].id : null
+    }
   }
 
   function selectSession(id: string) {
@@ -55,7 +83,7 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     sessions, activeSessionId,
-    loadSessions, createSession, selectSession,
+    loadSessions, createSession, deleteSession, selectSession,
     updateSessionTitle, incrementStepCount, updateLastMessage,
   }
 })

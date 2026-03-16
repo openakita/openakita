@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════
-   openCrab Design System — Deep Ocean Terminal
+   OpenCrab Design System — Deep Ocean Terminal
    ═══════════════════════════════════════════════ */
 
 :root {
@@ -10,7 +10,7 @@
   --bg-surface: #171d2a;
   --bg-elevated: #1e2536;
   --bg-hover: #252d40;
-  --bg-glow: rgba(56, 189, 204, 0.04);
+  --bg-glow: rgba(15, 34, 36, 0.04);
 
   /* ── Typography ── */
   --text-bright: #e8edf5;
@@ -43,8 +43,8 @@
   --border-accent: rgba(56, 189, 204, 0.2);
 
   /* ── Dimensions ── */
-  --sidebar-width: 260px;
-  --right-panel-width: 400px;
+  --sidebar-width: 280px;
+  --right-panel-width: 420px;
   --chat-max-width: 820px;
   --radius-sm: 6px;
   --radius-md: 10px;

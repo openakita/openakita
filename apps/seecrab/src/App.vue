@@ -10,17 +10,31 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { useUIStore } from '@/stores/ui'
+import { useSessionStore } from '@/stores/session'
+import { useChatStore } from '@/stores/chat'
 import LeftSidebar from '@/components/layout/LeftSidebar.vue'
 import ChatArea from '@/components/layout/ChatArea.vue'
 import RightPanel from '@/components/layout/RightPanel.vue'
 
 const uiStore = useUIStore()
+const sessionStore = useSessionStore()
+const chatStore = useChatStore()
+
+onMounted(async () => {
+  await sessionStore.loadSessions()
+  // Load messages for auto-selected session
+  if (sessionStore.activeSessionId) {
+    await chatStore.loadSessionMessages(sessionStore.activeSessionId)
+  }
+})
 </script>
 
 <style scoped>
 .app-layout {
   display: flex;
+  width: 100%;
   height: 100vh;
   overflow: hidden;
   position: relative;
@@ -38,7 +52,7 @@ const uiStore = useUIStore()
 }
 
 .sidebar {
-  width: 280px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
   position: relative;
   z-index: 10;
@@ -52,7 +66,7 @@ const uiStore = useUIStore()
 
 /* Right panel as a proper third column */
 .detail {
-  width: 420px;
+  width: var(--right-panel-width);
   flex-shrink: 0;
   position: relative;
   z-index: 2;

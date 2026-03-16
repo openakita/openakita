@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useSessionStore } from './session'
+import { httpClient } from '@/api/http-client'
 import type { Message, ReplyState, StepCard, PlanStep, SSEEvent } from '@/types'
 
 export const useChatStore = defineStore('chat', () => {
@@ -13,7 +14,7 @@ export const useChatStore = defineStore('chat', () => {
     currentReply.value = {
       replyId,
       agentId: 'main',
-      agentName: 'openCrab',
+      agentName: 'OpenCrab',
       thinking: '',
       thinkingDone: false,
       planChecklist: null,
@@ -161,6 +162,54 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function _parseTimestamp(ts: any): number {
+    if (!ts) return Date.now()
+    if (typeof ts === 'number') return ts
+    const parsed = new Date(ts).getTime()
+    return isNaN(parsed) ? Date.now() : parsed
+  }
+
+  function _mapHistoryMessages(rawMessages: any[]): Message[] {
+    return rawMessages.map((m: any, i: number) => {
+      const ts = _parseTimestamp(m.timestamp)
+      const msg: Message = {
+        id: `${m.role}_${ts}_${i}`,
+        role: m.role,
+        content: m.content || '',
+        timestamp: ts,
+      }
+      if (m.role === 'assistant' && m.content) {
+        msg.reply = {
+          replyId: msg.id,
+          agentId: 'main',
+          agentName: 'OpenCrab',
+          thinking: '',
+          thinkingDone: true,
+          planChecklist: null,
+          stepCards: [],
+          summaryText: m.content,
+          timer: {
+            ttft: { state: 'idle', value: null },
+            total: { state: 'idle', value: null },
+          },
+          askUser: null,
+          artifacts: [],
+          isDone: true,
+        }
+      }
+      return msg
+    })
+  }
+
+  async function loadSessionMessages(sessionId: string) {
+    try {
+      const data = await httpClient.getSession(sessionId)
+      messages.value = _mapHistoryMessages(data.messages || [])
+    } catch {
+      messages.value = []
+    }
+  }
+
   function addUserMessage(content: string) {
     // On first user message, set session title from message content
     const sessionStore = useSessionStore()
@@ -181,5 +230,5 @@ export const useChatStore = defineStore('chat', () => {
     startNewReply(`reply_${Date.now()}`)
   }
 
-  return { messages, currentReply, isStreaming, dispatchEvent, addUserMessage, startNewReply }
+  return { messages, currentReply, isStreaming, dispatchEvent, addUserMessage, startNewReply, loadSessionMessages }
 })

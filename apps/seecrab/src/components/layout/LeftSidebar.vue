@@ -3,7 +3,7 @@
   <aside class="left-sidebar">
     <div class="sidebar-brand">
       <span class="material-symbols-rounded brand-icon">smart_toy</span>
-      <span class="brand-name">openCrab</span>
+      <span class="brand-name">OpenCrab</span>
     </div>
 
     <div class="sidebar-actions">
@@ -22,7 +22,7 @@
         class="session-item"
         :class="{ active: s.id === sessionStore.activeSessionId }"
         :style="{ animationDelay: `${i * 30}ms` }"
-        @click="sessionStore.selectSession(s.id)"
+        @click="onSelectSession(s.id)"
       >
         <span class="material-symbols-rounded session-icon">{{ sessionIcon(s) }}</span>
         <div class="session-info">
@@ -34,6 +34,13 @@
             <span>{{ formatTime(s.updatedAt) }}</span>
           </div>
         </div>
+        <button
+          class="delete-btn"
+          title="删除会话"
+          @click.stop="onDeleteSession(s.id)"
+        >
+          <span class="material-symbols-rounded">close</span>
+        </button>
       </div>
     </div>
   </aside>
@@ -42,14 +49,43 @@
 <script setup lang="ts">
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'
+import { sseClient } from '@/api/sse-client'
 import type { Session } from '@/types'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 
 async function onNewChat() {
+  sseClient.abort() // Cancel any in-progress stream
   await sessionStore.createSession()
   chatStore.messages = []
+  chatStore.currentReply = null
+  chatStore.isStreaming = false
+}
+
+async function onSelectSession(id: string) {
+  if (id === sessionStore.activeSessionId) return
+  sseClient.abort() // Cancel any in-progress stream
+  chatStore.currentReply = null
+  chatStore.isStreaming = false
+  sessionStore.selectSession(id)
+  await chatStore.loadSessionMessages(id)
+}
+
+async function onDeleteSession(id: string) {
+  const wasActive = id === sessionStore.activeSessionId
+  if (wasActive) {
+    sseClient.abort()
+    chatStore.currentReply = null
+    chatStore.isStreaming = false
+  }
+  await sessionStore.deleteSession(id)
+  if (wasActive) {
+    chatStore.messages = []
+    if (sessionStore.activeSessionId) {
+      await chatStore.loadSessionMessages(sessionStore.activeSessionId)
+    }
+  }
 }
 
 function sessionIcon(s: Session): string {
@@ -155,6 +191,7 @@ function formatTime(ts: number): string {
   margin-bottom: 2px;
   transition: all 0.15s var(--ease-out);
   animation: fadeIn 0.3s var(--ease-out) both;
+  position: relative;
 }
 .session-item:hover {
   background: var(--bg-hover);
@@ -200,5 +237,33 @@ function formatTime(ts: number): string {
 }
 .meta-dot {
   color: var(--text-ghost);
+}
+
+/* ── Delete Button ── */
+.delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-ghost);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.15s var(--ease-out);
+}
+.delete-btn .material-symbols-rounded {
+  font-size: 16px;
+}
+.session-item:hover .delete-btn {
+  opacity: 1;
+}
+.delete-btn:hover {
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.1);
 }
 </style>

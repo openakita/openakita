@@ -40,10 +40,23 @@ async function send() {
   const msg = inputText.value.trim()
   if (!msg || isStreaming.value) return
   inputText.value = ''
+
+  // Auto-create session if none active (graceful — send even if creation fails)
+  if (!sessionStore.activeSessionId) {
+    try {
+      await sessionStore.createSession()
+    } catch (e) {
+      console.warn('[ChatInput] Failed to create session, sending without session:', e)
+    }
+  }
+
   chatStore.addUserMessage(msg)
   isStreaming.value = true
-  await sseClient.sendMessage(msg, sessionStore.activeSessionId ?? undefined)
-  isStreaming.value = false
+  try {
+    await sseClient.sendMessage(msg, sessionStore.activeSessionId ?? undefined)
+  } finally {
+    isStreaming.value = false
+  }
 }
 
 defineExpose({ prefill: (text: string) => { inputText.value = text } })
