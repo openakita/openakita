@@ -15,6 +15,11 @@ export const httpClient = {
   createSession: () => request<{ session_id: string }>('/sessions', { method: 'POST' }),
   deleteSession: (id: string) => request<{ status: string }>(`/sessions/${id}`, { method: 'DELETE' }),
   getSession: (id: string) => request<{ session_id: string; title: string; messages: any[] }>(`/sessions/${id}`),
+  updateSession: (id: string, data: { title?: string }) =>
+    request<{ status: string }>(`/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   submitAnswer: (conversationId: string, answer: string) =>
     request('/answer', {
       method: 'POST',

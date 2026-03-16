@@ -63,6 +63,10 @@ export const useSessionStore = defineStore('session', () => {
     if (session) {
       session.title = title
     }
+    // Persist to backend (fire-and-forget, local update is source of truth for UI)
+    httpClient.updateSession(id, { title }).catch(e => {
+      console.warn('[Session] Failed to persist title:', e)
+    })
   }
 
   function incrementStepCount(id: string) {
