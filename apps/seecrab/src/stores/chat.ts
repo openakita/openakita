@@ -20,6 +20,7 @@ export const useChatStore = defineStore('chat', () => {
       planChecklist: null,
       stepCards: [],
       summaryText: '',
+      agentSummaries: {},
       timer: {
         ttft: { state: 'idle', value: null },
         total: { state: 'idle', value: null },
@@ -63,7 +64,12 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       case 'ai_text':
-        reply.summaryText += (event as any).content ?? ''
+        if (reply.agentId !== 'main') {
+          const aid = reply.agentId
+          reply.agentSummaries[aid] = (reply.agentSummaries[aid] ?? '') + ((event as any).content ?? '')
+        } else {
+          reply.summaryText += (event as any).content ?? ''
+        }
         break
 
       case 'timer_update':
@@ -149,7 +155,7 @@ export const useChatStore = defineStore('chat', () => {
       cardType: card.card_type,
       duration: card.duration ?? null,
       planStepIndex: card.plan_step_index ?? null,
-      agentId: card.agent_id ?? 'main',
+      agentId: card.agent_id || 'main',
       input: card.input ?? null,
       output: card.output ?? null,
       absorbedCalls: card.absorbed_calls ?? [],
@@ -198,6 +204,7 @@ export const useChatStore = defineStore('chat', () => {
           planChecklist: rs?.plan_checklist ?? null,
           stepCards: (rs?.step_cards ?? []).map(_mapStepCard),
           summaryText: m.content,
+          agentSummaries: rs?.agent_summaries ?? {},
           timer: {
             ttft: { state: 'done' as const, value: rs?.timer?.ttft ?? null },
             total: { state: 'done' as const, value: rs?.timer?.total ?? null },

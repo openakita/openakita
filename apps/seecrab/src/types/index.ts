@@ -28,6 +28,7 @@ export interface ReplyState {
   planChecklist: PlanStep[] | null
   stepCards: StepCard[]
   summaryText: string
+  agentSummaries: Record<string, string>
   timer: TimerState
   askUser: AskUserState | null
   isDone: boolean
