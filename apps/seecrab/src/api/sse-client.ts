@@ -62,6 +62,22 @@ export class SSEClient {
     }
   }
 
+  async cancelTask(conversationId: string): Promise<void> {
+    try {
+      await fetch('/api/chat/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          reason: '用户点击停止按钮',
+        }),
+      })
+    } catch (e) {
+      console.warn('[SSE] Cancel API failed:', e)
+    }
+    this.abort()
+  }
+
   abort(): void {
     this.abortController?.abort()
     this.abortController = null

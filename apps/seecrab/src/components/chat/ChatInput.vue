@@ -6,13 +6,18 @@
         v-model="inputText"
         placeholder="输入消息..."
         rows="1"
-        @keydown.enter.exact.prevent="send"
+        @keydown.enter.exact="handleEnter"
         @input="autoResize"
         @focus="isFocused = true"
         @blur="isFocused = false"
       />
-      <button class="send-btn" :disabled="!inputText.trim() || isStreaming" @click="send">
-        <span class="material-symbols-rounded">send</span>
+      <button
+        class="send-btn"
+        :class="{ 'stop-btn': isStreaming }"
+        :disabled="!isStreaming && !inputText.trim()"
+        @click="isStreaming ? cancel() : send()"
+      >
+        <span class="material-symbols-rounded">{{ isStreaming ? 'stop' : 'send' }}</span>
       </button>
     </div>
   </div>
@@ -34,6 +39,12 @@ const isFocused = ref(false)
 function autoResize() {
   const el = inputRef.value
   if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' }
+}
+
+function handleEnter(e: KeyboardEvent) {
+  if (e.isComposing) return
+  e.preventDefault()
+  send()
 }
 
 async function send() {
@@ -59,6 +70,17 @@ async function send() {
   } finally {
     isStreaming.value = false
   }
+}
+
+async function cancel() {
+  const convId = sessionStore.activeSessionId
+  if (convId) {
+    await sseClient.cancelTask(convId)
+  } else {
+    sseClient.abort()
+  }
+  chatStore.cancelCurrentReply()
+  isStreaming.value = false
 }
 
 defineExpose({ prefill: (text: string) => { inputText.value = text } })
@@ -125,5 +147,15 @@ textarea::placeholder { color: var(--text-muted); }
   background: var(--bg-surface);
   color: var(--text-ghost);
   cursor: not-allowed;
+}
+.stop-btn {
+  background: #e74c3c !important;
+  color: #fff !important;
+  cursor: pointer !important;
+}
+.stop-btn:hover {
+  background: #c0392b !important;
+  transform: scale(1.08);
+  box-shadow: 0 0 16px rgba(231, 76, 60, 0.4);
 }
 </style>

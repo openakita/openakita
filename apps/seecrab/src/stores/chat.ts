@@ -241,5 +241,23 @@ export const useChatStore = defineStore('chat', () => {
     startNewReply(`reply_${Date.now()}`)
   }
 
-  return { messages, currentReply, isStreaming, dispatchEvent, addUserMessage, startNewReply, loadSessionMessages }
+  function cancelCurrentReply() {
+    if (!currentReply.value) {
+      isStreaming.value = false
+      return
+    }
+    const reply = currentReply.value
+    reply.isDone = true
+    isStreaming.value = false
+    messages.value.push({
+      id: reply.replyId,
+      role: 'assistant',
+      content: reply.summaryText || '',
+      timestamp: Date.now(),
+      reply: { ...reply },
+    })
+    currentReply.value = null
+  }
+
+  return { messages, currentReply, isStreaming, dispatchEvent, addUserMessage, startNewReply, loadSessionMessages, cancelCurrentReply }
 })
