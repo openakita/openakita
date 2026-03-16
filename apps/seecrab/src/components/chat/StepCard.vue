@@ -59,6 +59,14 @@ const cardTypeIcon = computed(() => {
 }
 .step-card.is-sub-agent {
   margin-left: 24px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--accent) 15%, var(--border-subtle));
+}
+.step-card.is-sub-agent.completed {
+  border-left-color: var(--accent);
+}
+.step-card.is-sub-agent.running {
+  border-left-color: var(--accent);
 }
 
 .status-icon { font-size: 15px; }

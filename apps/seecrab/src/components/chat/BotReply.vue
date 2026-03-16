@@ -3,7 +3,7 @@
     <ReplyHeader :reply="reply" />
     <ThinkingBlock v-if="reply.thinking" :content="reply.thinking" :done="reply.thinkingDone" />
     <PlanChecklist v-if="reply.planChecklist" :steps="reply.planChecklist" />
-    <StepCardList v-if="reply.stepCards.length" :cards="reply.stepCards" />
+    <StepCardList v-if="reply.stepCards.length" :cards="reply.stepCards" :agent-summaries="reply.agentSummaries" />
     <SummaryOutput v-if="reply.summaryText" :content="reply.summaryText" />
     <AskUserBlock v-if="reply.askUser" :ask="reply.askUser" />
   </div>
