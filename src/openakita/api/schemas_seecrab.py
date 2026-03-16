@@ -21,6 +21,12 @@ class SeeCrabChatRequest(BaseModel):
     client_id: str | None = Field(None, description="Client tab ID for busy-lock")
 
 
+class SeeCrabSessionUpdateRequest(BaseModel):
+    """Update session metadata (title, etc.)."""
+
+    title: str | None = Field(None, description="New session title")
+
+
 class SeeCrabAnswerRequest(BaseModel):
     """Answer to an ask_user event."""
 

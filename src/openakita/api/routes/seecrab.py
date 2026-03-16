@@ -12,7 +12,11 @@ from datetime import datetime
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..schemas_seecrab import SeeCrabAnswerRequest, SeeCrabChatRequest
+from ..schemas_seecrab import (
+    SeeCrabAnswerRequest,
+    SeeCrabChatRequest,
+    SeeCrabSessionUpdateRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +306,28 @@ async def create_session(request: Request):
         )
         sm.mark_dirty()
     return JSONResponse({"session_id": session_id})
+
+
+@router.patch("/sessions/{session_id}")
+async def update_session(
+    session_id: str, body: SeeCrabSessionUpdateRequest, request: Request,
+):
+    """Update session metadata (title, etc.)."""
+    sm = getattr(request.app.state, "session_manager", None)
+    if sm is None:
+        return JSONResponse({"error": "Session manager not available"}, status_code=503)
+    session = sm.get_session(
+        channel="seecrab",
+        chat_id=session_id,
+        user_id="seecrab_user",
+        create_if_missing=False,
+    )
+    if session is None:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    if body.title is not None:
+        session.set_metadata("title", body.title)
+    sm.mark_dirty()
+    return JSONResponse({"status": "ok"})
 
 
 @router.delete("/sessions/{session_id}")
