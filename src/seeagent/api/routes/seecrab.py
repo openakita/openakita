@@ -309,12 +309,15 @@ async def get_session(session_id: str, request: Request):
         messages = []
         if hasattr(session, "context") and hasattr(session.context, "messages"):
             for m in session.context.messages:
-                messages.append({
+                msg_dict = {
                     "role": m.get("role", ""),
                     "content": m.get("content", ""),
                     "timestamp": m.get("timestamp", 0),
                     "metadata": m.get("metadata", {}),
-                })
+                }
+                if m.get("reply_state"):
+                    msg_dict["reply_state"] = m["reply_state"]
+                messages.append(msg_dict)
         return JSONResponse({
             "session_id": session_id,
             "title": session.metadata.get("title", session_id),
