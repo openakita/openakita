@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/seecrab")
 
+def _upsert_step_card(cards: list[dict], event: dict) -> None:
+    """Upsert a step_card event into the cards list by step_id."""
+    step_id = event.get("step_id")
+    card = {k: v for k, v in event.items() if k != "type"}
+    for i, c in enumerate(cards):
+        if c.get("step_id") == step_id:
+            cards[i] = card
+            return
+    cards.append(card)
+
+
 # ── Busy-lock (per-conversation, same pattern as chat.py) ──
 
 _busy_locks: dict[str, tuple[str, float]] = {}  # conv_id → (client_id, timestamp)
@@ -174,18 +185,40 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                     session_manager.mark_dirty()
 
             full_reply = ""
+            reply_state = {
+                "thinking": "",
+                "step_cards": [],
+                "plan_checklist": None,
+                "timer": {"ttft": None, "total": None},
+            }
+
             async for event in adapter.transform(raw_stream, reply_id=reply_id):
                 if disconnect_event.is_set():
                     break
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
-                if event.get("type") == "ai_text":
-                    full_reply += event.get("content", "")
 
-            # Save assistant reply to session
+                # Collect reply_state for persistence
+                etype = event.get("type")
+                if etype == "ai_text":
+                    full_reply += event.get("content", "")
+                elif etype == "thinking":
+                    reply_state["thinking"] += event.get("content", "")
+                elif etype == "step_card":
+                    _upsert_step_card(reply_state["step_cards"], event)
+                elif etype == "plan_checklist":
+                    reply_state["plan_checklist"] = event.get("steps")
+                elif etype == "timer_update":
+                    phase = event.get("phase")
+                    if phase in reply_state["timer"] and event.get("state") == "done":
+                        reply_state["timer"][phase] = event.get("value")
+
+            # Save assistant reply with reply_state to session
             if session and full_reply:
                 try:
-                    session.add_message("assistant", full_reply)
+                    session.add_message(
+                        "assistant", full_reply, reply_state=reply_state
+                    )
                     if session_manager:
                         session_manager.mark_dirty()
                 except Exception:
