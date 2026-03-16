@@ -1934,5 +1934,38 @@ def serve(
     _stop_heartbeat()
 
 
+@app.command(name="run-mcp-module", hidden=True)
+def run_mcp_module(
+    module_path: str = typer.Argument(..., help="Python module path for MCP server"),
+):
+    """启动内置 MCP 服务器模块（打包模式内部命令）
+
+    PyInstaller 打包环境中，python -m 无法访问冻结模块。
+    此命令通过冻结主程序 import 并运行 FastMCP 实例，作为 stdio 子进程替代方案。
+    """
+    if not module_path.startswith("openakita."):
+        print(f"Error: only openakita.* modules allowed, got: {module_path}", file=sys.stderr)
+        raise typer.Exit(1)
+
+    try:
+        mod = importlib.import_module(module_path)
+    except ImportError as e:
+        print(f"Error: cannot import {module_path}: {e}", file=sys.stderr)
+        raise typer.Exit(1) from None
+
+    mcp_instance = getattr(mod, "mcp", None)
+    if mcp_instance is None:
+        print(f"Error: {module_path} has no 'mcp' attribute", file=sys.stderr)
+        raise typer.Exit(1)
+
+    # MCP stdio 协议独占 stdout/stdin，移除所有控制台日志 handler 防止协议污染
+    _root = logging.getLogger()
+    for h in _root.handlers[:]:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            _root.removeHandler(h)
+
+    mcp_instance.run()
+
+
 if __name__ == "__main__":
     app()

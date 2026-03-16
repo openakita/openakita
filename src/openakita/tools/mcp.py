@@ -15,6 +15,7 @@ import contextlib
 import json
 import logging
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -226,8 +227,9 @@ class MCPClient:
         config = self._servers[server_name]
 
         # stdio 模式预检查命令是否存在
+        # 打包模式下 python -m openakita.* 会在 _connect_stdio 中被适配为冻结主程序，跳过预检
         if config.transport == "stdio" and config.command:
-            if not self._resolve_command(config):
+            if not self._adapt_bundled_module_command(config) and not self._resolve_command(config):
                 msg = (
                     f"启动命令 '{config.command}' 未找到。"
                     f"请确认已安装并在 PATH 中可访问。"
@@ -276,6 +278,31 @@ class MCPClient:
 
         return None
 
+    @staticmethod
+    def _adapt_bundled_module_command(
+        config: MCPServerConfig,
+    ) -> tuple[str, list[str]] | None:
+        """打包模式下，将 ``python -m openakita.*`` 适配为冻结主程序子命令。
+
+        PyInstaller 冻结的 python.exe 是裸解释器，无法 import 冻结在主程序中的模块。
+        此方法将命令替换为 ``sys.executable run-mcp-module <module>``，
+        让冻结主程序自身作为 MCP 服务器的宿主进程。
+
+        Returns:
+            (command, args) 如果需要适配；否则 None。
+        """
+        from ..runtime_env import IS_FROZEN
+
+        if not (
+            IS_FROZEN
+            and config.command in ("python", "python3")
+            and len(config.args) >= 2
+            and config.args[0] == "-m"
+            and config.args[1].startswith("openakita.")
+        ):
+            return None
+        return (sys.executable, ["run-mcp-module", config.args[1], *config.args[2:]])
+
     _CONNECT_TIMEOUT: int = 30
     _CALL_TIMEOUT: int = 60
 
@@ -290,18 +317,27 @@ class MCPClient:
 
     async def _connect_stdio(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
         """通过 stdio 连接到 MCP 服务器"""
-        # 连接前二次解析：如果 args 中有相对路径且 cwd 已知，尝试解析
-        args = list(config.args)
-        if config.cwd:
-            cwd_path = Path(config.cwd)
-            for i, arg in enumerate(args):
-                if not arg.startswith("-") and not Path(arg).is_absolute():
-                    candidate = cwd_path / arg
-                    if candidate.is_file():
-                        args[i] = str(candidate.resolve())
+        adapted = self._adapt_bundled_module_command(config)
+        if adapted:
+            command, args = adapted
+            logger.info(
+                "Bundled mode: adapted MCP command for %s: %s %s",
+                server_name, command, " ".join(args),
+            )
+        else:
+            command = config.command
+            args = list(config.args)
+            # 连接前二次解析：如果 args 中有相对路径且 cwd 已知，尝试解析
+            if config.cwd:
+                cwd_path = Path(config.cwd)
+                for i, arg in enumerate(args):
+                    if not arg.startswith("-") and not Path(arg).is_absolute():
+                        candidate = cwd_path / arg
+                        if candidate.is_file():
+                            args[i] = str(candidate.resolve())
 
         server_params = StdioServerParameters(
-            command=config.command,
+            command=command,
             args=args,
             env=config.env or None,
             cwd=config.cwd or None,
@@ -336,13 +372,13 @@ class MCPClient:
             logger.info(f"Connected to MCP server via stdio: {server_name} ({tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
         except asyncio.TimeoutError:
-            msg = f"连接超时（{self._CONNECT_TIMEOUT}s）。命令: {config.command} {' '.join(config.args)}"
+            msg = f"连接超时（{self._CONNECT_TIMEOUT}s）。命令: {command} {' '.join(args)}"
             logger.error(f"Timeout connecting to {server_name} via stdio")
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
         except FileNotFoundError:
-            msg = f"启动命令未找到: '{config.command}'。请确认已安装。"
-            logger.error(f"Command not found for {server_name}: {config.command}")
+            msg = f"启动命令未找到: '{command}'。请确认已安装。"
+            logger.error(f"Command not found for {server_name}: {command}")
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
         except BaseException as e:
