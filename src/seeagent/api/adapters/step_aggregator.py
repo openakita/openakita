@@ -36,6 +36,8 @@ class StepAggregator:
         self._plan_step_card: PendingCard | None = None
         # Independent (whitelist/user_mention) card tracking: tool_id → (step_id, title)
         self._independent_cards: dict[str, tuple[str, str]] = {}
+        # Delegation title tasks for cleanup
+        self._delegation_title_tasks: list[asyncio.Task] = []
 
     async def on_tool_call_start(
         self, tool_name: str, args: dict, tool_id: str,
@@ -223,6 +225,15 @@ class StepAggregator:
             events += self._complete_pending()
         elif self.state == AggregatorState.PLAN_ABSORB and self._plan_step_card:
             events += self._complete_plan_step("completed")
+        # Cancel any pending delegation title tasks
+        for task in self._delegation_title_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    asyncio.ensure_future(self._suppress_cancel(task))
+                except RuntimeError:
+                    pass
+        self._delegation_title_tasks.clear()
         return events
 
     # ── Private helpers ──
@@ -358,11 +369,12 @@ class StepAggregator:
             "message": args.get("message", ""),
             "reason": args.get("reason", ""),
         }
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._resolve_delegation_title(
                 step_id, agent_meta, task_meta, instant_title,
             )
         )
+        self._delegation_title_tasks.append(task)
         return [self.card_builder.build_step_card(
             step_id=step_id, title=instant_title, status="running",
             source_type="tool", tool_name=tool_name, input_data=args,

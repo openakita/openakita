@@ -1089,6 +1089,7 @@ async def _call_agent_streaming(agent, session, message, event_bus, gateway=None
             session_messages=session_messages,
             session_id=session.id,
             session=session,
+            gateway=gateway,
         ):
             etype = event.get("type", "")
             if etype == "text_delta":

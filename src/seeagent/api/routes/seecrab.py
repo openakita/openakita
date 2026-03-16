@@ -242,6 +242,9 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                     await adapter.aggregator.flush()
                 except Exception:
                     pass
+            # Remove stale event_bus reference from session context
+            if session and hasattr(session, "context"):
+                session.context._sse_event_bus = None
             watcher_task.cancel()
             try:
                 await watcher_task
