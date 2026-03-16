@@ -115,3 +115,44 @@ class TestAskUser:
         # (from queue drain or from flush)
         step_cards = [e for e in events if e.get("type") == "step_card"]
         assert len(step_cards) >= 1
+
+
+class TestAgentHeader:
+    @pytest.mark.asyncio
+    async def test_agent_header_passthrough(self):
+        """agent_header events should pass through to output."""
+        events = await _events_from([
+            {"type": "agent_header", "agent_id": "researcher", "agent_name": "研究员"},
+            {"type": "text_delta", "content": "Hello"},
+        ])
+        headers = [e for e in events if e["type"] == "agent_header"]
+        assert len(headers) == 1
+        assert headers[0]["agent_id"] == "researcher"
+        assert headers[0]["agent_name"] == "研究员"
+
+    @pytest.mark.asyncio
+    async def test_agent_switch_flushes_aggregator(self):
+        """Switching agents should flush the previous agent's aggregator."""
+        events = await _events_from([
+            {"type": "tool_call_start", "tool": "load_skill", "args": {}, "id": "t1"},
+            {"type": "agent_header", "agent_id": "sub", "agent_name": "Sub"},
+            {"type": "text_delta", "content": "Done"},
+        ])
+        step_cards = [e for e in events if e["type"] == "step_card"]
+        # The skill card from main should be flushed (completed) on agent switch
+        completed = [c for c in step_cards if c["status"] == "completed"]
+        assert len(completed) >= 1
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_tools_get_own_cards(self):
+        """Sub-agent tool calls should produce their own step cards."""
+        events = await _events_from([
+            {"type": "agent_header", "agent_id": "sub", "agent_name": "Sub"},
+            {"type": "tool_call_start", "tool": "web_search", "args": {"query": "test"}, "id": "t1"},
+            {"type": "tool_call_end", "tool": "web_search", "result": "results", "id": "t1", "is_error": False},
+            {"type": "agent_header", "agent_id": "main", "agent_name": "SeeAgent"},
+            {"type": "text_delta", "content": "Done"},
+        ])
+        step_cards = [e for e in events if e["type"] == "step_card"]
+        assert len(step_cards) >= 1
+        assert any("test" in c.get("title", "") for c in step_cards)

@@ -31,6 +31,8 @@ class SeeCrabAdapter:
             timer=self.timer,
             title_update_queue=self._title_queue,
         )
+        self._aggregators: dict[str, StepAggregator] = {"main": self.aggregator}
+        self._active_agent_id = "main"
 
     async def transform(
         self,
@@ -52,9 +54,10 @@ class SeeCrabAdapter:
                 except asyncio.QueueEmpty:
                     break
 
-        # Flush pending aggregation
-        for e in await self.aggregator.flush():
-            yield e
+        # Flush pending aggregation from all agents
+        for agg in self._aggregators.values():
+            for e in await agg.flush():
+                yield e
 
         # Drain remaining title updates after stream ends
         while not self._title_queue.empty():
@@ -70,6 +73,9 @@ class SeeCrabAdapter:
     async def _process_event(self, event: dict) -> list[dict]:
         """Dispatch a single raw event to handlers."""
         etype = event.get("type", "")
+
+        if etype == "agent_header":
+            return await self._handle_agent_switch(event)
 
         if etype == "thinking_delta":
             return self._handle_thinking(event)
@@ -156,7 +162,7 @@ class SeeCrabAdapter:
         events.append({
             "type": "thinking",
             "content": event.get("content", ""),
-            "agent_id": "main",
+            "agent_id": self._active_agent_id,
         })
         return events
 
@@ -171,7 +177,7 @@ class SeeCrabAdapter:
         events.append({
             "type": "ai_text",
             "content": event.get("content", ""),
-            "agent_id": "main",
+            "agent_id": self._active_agent_id,
         })
         return events
 
@@ -206,3 +212,30 @@ class SeeCrabAdapter:
             "question": event.get("question", ""),
             "options": mapped,
         }
+
+    async def _handle_agent_switch(self, event: dict) -> list[dict]:
+        """Handle agent switch: flush current aggregator, switch to new agent."""
+        agent_id = event.get("agent_id", "main")
+        events: list[dict] = []
+        # Flush current aggregator
+        current_agg = self._aggregators.get(self._active_agent_id)
+        if current_agg:
+            events.extend(await current_agg.flush())
+        # Switch aggregator (create if new)
+        if agent_id not in self._aggregators:
+            self._aggregators[agent_id] = StepAggregator(
+                title_gen=self.title_gen,
+                card_builder=self.card_builder,
+                timer=self.timer,
+                title_update_queue=self._title_queue,
+            )
+        self._active_agent_id = agent_id
+        self.aggregator = self._aggregators[agent_id]
+        # Pass through agent_header to frontend
+        events.append({
+            "type": "agent_header",
+            "agent_id": agent_id,
+            "agent_name": event.get("agent_name", agent_id),
+            "agent_description": event.get("agent_description", ""),
+        })
+        return events
