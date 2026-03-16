@@ -277,7 +277,7 @@ class SeeCrabAdapter:
 
     async def _handle_agent_switch(self, event: dict) -> list[dict]:
         """Handle agent switch: flush current aggregator, switch to new agent."""
-        agent_id = event.get("agent_id", "main")
+        agent_id = event.get("agent_id", "main") or "sub_agent"
         events: list[dict] = []
         # Flush current aggregator
         current_agg = self._aggregators.get(self._active_agent_id)

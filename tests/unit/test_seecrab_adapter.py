@@ -157,6 +157,54 @@ class TestAgentHeader:
         assert len(step_cards) >= 1
         assert any("test" in c.get("title", "") for c in step_cards)
 
+    @pytest.mark.asyncio
+    async def test_empty_agent_id_defaults_to_sub_agent(self):
+        """Empty agent_id in agent_header should fallback, not produce 'main'."""
+        events = await _events_from([
+            {"type": "agent_header", "agent_id": "", "agent_name": "Sub"},
+            {"type": "tool_call_start", "tool": "web_search", "args": {"query": "test"}, "id": "t1"},
+            {"type": "tool_call_end", "tool": "web_search", "result": "results", "id": "t1", "is_error": False},
+            {"type": "agent_header", "agent_id": "main", "agent_name": "SeeAgent"},
+            {"type": "text_delta", "content": "Done"},
+        ])
+        step_cards = [e for e in events if e["type"] == "step_card"]
+        for card in step_cards:
+            if "test" in card.get("title", ""):
+                assert card["agent_id"] != "main", "Empty agent_id should not default to 'main'"
+                assert card["agent_id"] != "", "agent_id should not be empty string"
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_step_cards_carry_correct_agent_id(self):
+        """Step cards from sub-agent should have the sub-agent's agent_id."""
+        events = await _events_from([
+            {"type": "agent_header", "agent_id": "researcher", "agent_name": "研究员"},
+            {"type": "tool_call_start", "tool": "web_search", "args": {"query": "test"}, "id": "t1"},
+            {"type": "tool_call_end", "tool": "web_search", "result": "results", "id": "t1", "is_error": False},
+            {"type": "agent_header", "agent_id": "main", "agent_name": "SeeAgent"},
+            {"type": "text_delta", "content": "Done"},
+        ])
+        step_cards = [e for e in events if e["type"] == "step_card"]
+        search_cards = [c for c in step_cards if "test" in c.get("title", "")]
+        assert len(search_cards) >= 1
+        for card in search_cards:
+            assert card["agent_id"] == "researcher"
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_ai_text_carries_agent_id(self):
+        """ai_text events from sub-agent should carry the sub-agent's agent_id."""
+        events = await _events_from([
+            {"type": "agent_header", "agent_id": "researcher", "agent_name": "研究员"},
+            {"type": "text_delta", "content": "Sub-agent summary"},
+            {"type": "agent_header", "agent_id": "main", "agent_name": "SeeAgent"},
+            {"type": "text_delta", "content": "Main summary"},
+        ])
+        ai_texts = [e for e in events if e["type"] == "ai_text"]
+        assert len(ai_texts) == 2
+        assert ai_texts[0]["agent_id"] == "researcher"
+        assert ai_texts[0]["content"] == "Sub-agent summary"
+        assert ai_texts[1]["agent_id"] == "main"
+        assert ai_texts[1]["content"] == "Main summary"
+
 
 class TestEventBusMerge:
     @pytest.mark.asyncio
