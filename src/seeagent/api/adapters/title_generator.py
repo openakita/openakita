@@ -49,7 +49,7 @@ HUMANIZE_MAP: dict[str, object] = {
     "news_search": lambda args: f'搜索新闻 "{args.get("query", "")}"',
     "browser_task": lambda _: "浏览网页获取内容",
     "generate_image": lambda _: "生成插图",
-    "deliver_artifacts": lambda args: f'发送 {args.get("filename", "文件")}',
+
     "delegate_to_agent": lambda _: "委派专家代理处理",
     "delegate_parallel": lambda _: "并行调研多个方向",
 }

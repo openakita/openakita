@@ -190,11 +190,6 @@ class SeeCrabAdapter:
         events = await self.aggregator.on_tool_call_end(
             tool_name, tool_id, result, is_error
         )
-        # Synthesize artifact from deliver_artifacts
-        if tool_name == "deliver_artifacts" and not is_error:
-            artifact = self._extract_artifact(result)
-            if artifact:
-                events.append(artifact)
         return events
 
     @staticmethod
@@ -211,23 +206,3 @@ class SeeCrabAdapter:
             "question": event.get("question", ""),
             "options": mapped,
         }
-
-    @staticmethod
-    def _extract_artifact(result: str) -> dict | None:
-        """Try to extract artifact info from deliver_artifacts result."""
-        import json
-        try:
-            data = json.loads(result) if isinstance(result, str) else result
-            receipts = data.get("receipts", []) if isinstance(data, dict) else []
-            if receipts:
-                r = receipts[0]
-                return {
-                    "type": "artifact",
-                    "artifact_type": r.get("type", "file"),
-                    "file_url": r.get("file_url", ""),
-                    "filename": r.get("name", ""),
-                    "mime_type": r.get("mime_type", ""),
-                }
-        except Exception:
-            pass
-        return None

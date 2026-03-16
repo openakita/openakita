@@ -19,7 +19,7 @@ class TestClassify:
 
     def test_whitelist(self):
         assert self.f.classify("web_search", {"query": "test"}) == FilterResult.WHITELIST
-        assert self.f.classify("deliver_artifacts", {}) == FilterResult.WHITELIST
+
 
     def test_hidden(self):
         assert self.f.classify("read_file", {}) == FilterResult.HIDDEN

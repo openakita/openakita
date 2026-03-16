@@ -57,7 +57,7 @@ class TestGetCardType:
         assert self.builder._get_card_type("code_execute") == "code"
 
     def test_file_types(self):
-        assert self.builder._get_card_type("deliver_artifacts") == "file"
+        assert self.builder._get_card_type("deliver_artifacts") == "default"
 
     def test_browser_wildcard(self):
         assert self.builder._get_card_type("browser_task") == "browser"

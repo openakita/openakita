@@ -15,7 +15,7 @@ class CardBuilder:
         "python_execute": "code",
         "shell_execute": "code",
         "generate_report": "file",
-        "deliver_artifacts": "file",
+
         "export_*": "file",
         "analyze_data": "analysis",
         "chart_*": "analysis",

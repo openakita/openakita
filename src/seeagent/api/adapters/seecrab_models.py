@@ -31,7 +31,7 @@ class StepFilterConfig:
 
     whitelist: list[str] = field(default_factory=lambda: [
         "web_search", "news_search", "browser_task",
-        "generate_image", "deliver_artifacts",
+        "generate_image",
         "delegate_to_agent", "delegate_parallel",
     ])
     skill_triggers: list[str] = field(default_factory=lambda: [

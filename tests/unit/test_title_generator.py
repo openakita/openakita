@@ -23,10 +23,6 @@ class TestHumanizeToolTitle:
         title = self.gen.humanize_tool_title("browser_task", {})
         assert title  # non-empty
 
-    def test_deliver_artifacts_with_filename(self):
-        title = self.gen.humanize_tool_title("deliver_artifacts", {"filename": "report.pdf"})
-        assert "report.pdf" in title
-
     def test_unknown_tool_fallback(self):
         title = self.gen.humanize_tool_title("unknown_tool", {})
         assert title  # should return a fallback
