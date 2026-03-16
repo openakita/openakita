@@ -45,8 +45,8 @@ export const useSessionStore = defineStore('session', () => {
   async function deleteSession(id: string) {
     try {
       await httpClient.deleteSession(id)
-    } catch {
-      // Session may already be gone on backend, still remove locally
+    } catch (e) {
+      console.error('[Session] Failed to delete session on backend:', e)
     }
     sessions.value = sessions.value.filter(s => s.id !== id)
     if (activeSessionId.value === id) {
