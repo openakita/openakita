@@ -4,7 +4,11 @@ import { useChatStore } from '@/stores/chat'
 export class SSEClient {
   private abortController: AbortController | null = null
 
-  async sendMessage(message: string, conversationId?: string): Promise<void> {
+  async sendMessage(
+    message: string,
+    conversationId?: string,
+    options?: { thinking_mode?: string; thinking_depth?: string },
+  ): Promise<void> {
     this.abort()
     this.abortController = new AbortController()
     const store = useChatStore()
@@ -13,7 +17,11 @@ export class SSEClient {
       const resp = await fetch('/api/seecrab/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, conversation_id: conversationId }),
+        body: JSON.stringify({
+          message,
+          conversation_id: conversationId,
+          ...options,
+        }),
         signal: this.abortController.signal,
       })
 

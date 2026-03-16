@@ -53,7 +53,9 @@ async function send() {
   chatStore.addUserMessage(msg)
   isStreaming.value = true
   try {
-    await sseClient.sendMessage(msg, sessionStore.activeSessionId ?? undefined)
+    await sseClient.sendMessage(msg, sessionStore.activeSessionId ?? undefined, {
+      thinking_mode: 'auto',
+    })
   } finally {
     isStreaming.value = false
   }
