@@ -63,14 +63,15 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
 
-      case 'ai_text':
-        if (reply.agentId !== 'main') {
-          const aid = reply.agentId
+      case 'ai_text': {
+        const aid = (event as any).agent_id ?? reply.agentId
+        if (aid && aid !== 'main') {
           reply.agentSummaries[aid] = (reply.agentSummaries[aid] ?? '') + ((event as any).content ?? '')
         } else {
           reply.summaryText += (event as any).content ?? ''
         }
         break
+      }
 
       case 'timer_update':
         _handleTimer(reply, event)
