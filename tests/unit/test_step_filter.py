@@ -52,6 +52,23 @@ class TestUserMention:
         assert self.f.classify("web_search", {"query": "test"}) == FilterResult.WHITELIST
 
 
+class TestAgentTrigger:
+    def setup_method(self):
+        self.f = StepFilter()
+
+    def test_delegate_to_agent_is_agent_trigger(self):
+        assert self.f.classify("delegate_to_agent", {"agent_id": "researcher"}) == FilterResult.AGENT_TRIGGER
+
+    def test_delegate_parallel_is_agent_trigger(self):
+        assert self.f.classify("delegate_parallel", {"tasks": []}) == FilterResult.AGENT_TRIGGER
+
+    def test_delegate_not_in_whitelist(self):
+        """After moving to agent_triggers, these must NOT match WHITELIST."""
+        config = self.f.config
+        assert "delegate_to_agent" not in config.whitelist
+        assert "delegate_parallel" not in config.whitelist
+
+
 class TestCustomConfig:
     def test_custom_whitelist(self):
         config = StepFilterConfig(whitelist=["my_tool"])

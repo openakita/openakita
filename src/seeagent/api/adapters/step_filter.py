@@ -18,13 +18,16 @@ class StepFilter:
     def classify(self, tool_name: str, args: dict) -> FilterResult:
         """Classify a tool call.
 
-        Priority: skill_trigger > mcp_trigger > whitelist > user_mention > hidden.
+        Priority: skill_trigger > mcp_trigger > agent_trigger > whitelist > user_mention > hidden.
         """
         if tool_name in self.config.skill_triggers:
             return FilterResult.SKILL_TRIGGER
 
         if tool_name == self.config.mcp_trigger:
             return FilterResult.MCP_TRIGGER
+
+        if tool_name in self.config.agent_triggers:
+            return FilterResult.AGENT_TRIGGER
 
         if tool_name in self.config.whitelist:
             return FilterResult.WHITELIST

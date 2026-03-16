@@ -20,6 +20,7 @@ class FilterResult(Enum):
 
     SKILL_TRIGGER = "skill_trigger"
     MCP_TRIGGER = "mcp_trigger"
+    AGENT_TRIGGER = "agent_trigger"
     WHITELIST = "whitelist"
     USER_MENTION = "user_mention"
     HIDDEN = "hidden"
@@ -32,12 +33,14 @@ class StepFilterConfig:
     whitelist: list[str] = field(default_factory=lambda: [
         "web_search", "news_search", "browser_task",
         "generate_image",
-        "delegate_to_agent", "delegate_parallel",
     ])
     skill_triggers: list[str] = field(default_factory=lambda: [
         "load_skill", "run_skill_script",
     ])
     mcp_trigger: str = "call_mcp_tool"
+    agent_triggers: list[str] = field(default_factory=lambda: [
+        "delegate_to_agent", "delegate_parallel",
+    ])
     user_mention_keywords: dict[str, list[str]] = field(default_factory=lambda: {
         "read_file": ["读取", "读", "查看文件", "打开文件", "read"],
         "write_file": ["写入", "写", "创建文件", "生成文件", "write"],
