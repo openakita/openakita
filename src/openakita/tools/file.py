@@ -319,23 +319,21 @@ class FileTool:
         return results
 
     async def delete(self, path: str) -> bool:
-        """
-        删除文件或目录
-
-        Args:
-            path: 路径
-
-        Returns:
-            是否成功
-        """
+        """删除单个文件或空目录。非空目录一律拒绝。"""
         file_path = self._resolve_path(path)
         logger.debug(f"Deleting: {file_path}")
 
         try:
-            if file_path.is_file():
+            if file_path.is_file() or file_path.is_symlink():
                 await aiofiles.os.remove(file_path)
             elif file_path.is_dir():
-                shutil.rmtree(file_path)
+                children = list(file_path.iterdir())
+                if children:
+                    logger.warning(
+                        f"Refused to delete non-empty directory {file_path}"
+                    )
+                    return False
+                file_path.rmdir()
             return True
         except Exception as e:
             logger.error(f"Failed to delete {file_path}: {e}")

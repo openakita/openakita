@@ -22,7 +22,8 @@
     "skillStore": "Skill Store",
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar",
-    "docs": "Docs"
+    "docs": "Docs",
+    "security": "Security"
   },
   "topbar": {
     "workspace": "Workspace",
@@ -1536,5 +1537,26 @@
     "groupModeHint_smart": "AI decides whether to reply",
     "groupModeHint_always": "Reply to all messages in group (use with caution)",
     "groupModeHint": "Requires enabling \"Receive all group messages\" in Feishu Developer Console → App → Bot → Message receiving mode, otherwise the bot only receives @mentions"
+  },
+  "security": {
+    "title": "Security Policy",
+    "desc": "Manage agent security isolation and sandbox configuration. Six-layer protection system prevents accidental damage.",
+    "zones": "Security Zones",
+    "commands": "Command Intercept",
+    "sandbox": "Sandbox",
+    "audit": "Audit Log",
+    "checkpoints": "Checkpoints",
+    "zonesDesc": "Configure paths for four security zones. Unmatched paths default to Protected (read-only).",
+    "commandsDesc": "Configure dangerous command pattern matching. CRITICAL patterns are auto-denied, HIGH patterns require confirmation and run in sandbox.",
+    "sandboxDesc": "Configure OS-level sandbox execution, only enabled for HIGH-risk commands. Normal operations are unaffected.",
+    "sandboxEnabled": "Enable Sandbox",
+    "sandboxBackend": "Sandbox Backend",
+    "save": "Save",
+    "confirmTitle": "Security Confirmation",
+    "tool": "Tool",
+    "reason": "Reason",
+    "allow": "Allow",
+    "deny": "Deny",
+    "sandboxExec": "Run in Sandbox"
   }
 }

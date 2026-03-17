@@ -9,6 +9,7 @@ when connected to an already-running serve instance.
 from __future__ import annotations
 
 import json
+from typing import Any
 import logging
 import os
 import re
@@ -165,6 +166,36 @@ class ListModelsRequest(BaseModel):
     base_url: str
     provider_slug: str | None = None
     api_key: str
+
+
+class SecurityConfigUpdate(BaseModel):
+    security: dict[str, Any]
+
+
+class SecurityZonesUpdate(BaseModel):
+    workspace: list[str] = []
+    controlled: list[str] = []
+    protected: list[str] = []
+    forbidden: list[str] = []
+
+
+class SecurityCommandsUpdate(BaseModel):
+    custom_critical: list[str] = []
+    custom_high: list[str] = []
+    excluded_patterns: list[str] = []
+    blocked_commands: list[str] = []
+
+
+class SecuritySandboxUpdate(BaseModel):
+    enabled: bool = True
+    backend: str = "auto"
+    sandbox_risk_levels: list[str] = ["HIGH"]
+    exempt_commands: list[str] = []
+
+
+class SecurityConfirmRequest(BaseModel):
+    confirm_id: str
+    decision: str  # "allow" | "deny" | "sandbox"
 
 
 # ─── Routes ────────────────────────────────────────────────────────────
@@ -581,3 +612,227 @@ async def list_models_api(body: ListModelsRequest):
         elif len(friendly) > 150:
             friendly = friendly[:150] + "…"
         return {"error": friendly, "models": []}
+
+
+# ─── Security Policy Routes ───────────────────────────────────────────
+
+def _read_policies_yaml() -> dict:
+    """Read identity/POLICIES.yaml as dict."""
+    import yaml
+    policies_path = _project_root() / "identity" / "POLICIES.yaml"
+    if not policies_path.exists():
+        return {}
+    try:
+        return yaml.safe_load(policies_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _write_policies_yaml(data: dict) -> None:
+    """Write dict to identity/POLICIES.yaml."""
+    import yaml
+    policies_path = _project_root() / "identity" / "POLICIES.yaml"
+    policies_path.parent.mkdir(parents=True, exist_ok=True)
+    policies_path.write_text(
+        yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+@router.get("/api/config/security")
+async def read_security_config():
+    """Read the full security policy configuration."""
+    data = _read_policies_yaml()
+    return {"security": data.get("security", {})}
+
+
+@router.post("/api/config/security")
+async def write_security_config(body: SecurityConfigUpdate):
+    """Write the full security policy configuration."""
+    data = _read_policies_yaml()
+    data["security"] = body.security
+    _write_policies_yaml(data)
+    try:
+        from openakita.core.policy import reset_policy_engine
+        reset_policy_engine()
+    except Exception:
+        pass
+    logger.info("[Config API] Updated security policy")
+    return {"status": "ok"}
+
+
+@router.get("/api/config/security/zones")
+async def read_security_zones():
+    """Read zone path configuration."""
+    data = _read_policies_yaml()
+    zones = data.get("security", {}).get("zones", {})
+    return {
+        "workspace": zones.get("workspace", []),
+        "controlled": zones.get("controlled", []),
+        "protected": zones.get("protected", []),
+        "forbidden": zones.get("forbidden", []),
+        "default_zone": zones.get("default_zone", "protected"),
+    }
+
+
+@router.post("/api/config/security/zones")
+async def write_security_zones(body: SecurityZonesUpdate):
+    """Update zone path configuration."""
+    data = _read_policies_yaml()
+    if "security" not in data:
+        data["security"] = {}
+    if "zones" not in data["security"]:
+        data["security"]["zones"] = {}
+    z = data["security"]["zones"]
+    z["workspace"] = body.workspace
+    z["controlled"] = body.controlled
+    z["protected"] = body.protected
+    z["forbidden"] = body.forbidden
+    _write_policies_yaml(data)
+    try:
+        from openakita.core.policy import reset_policy_engine
+        reset_policy_engine()
+    except Exception:
+        pass
+    logger.info("[Config API] Updated security zones")
+    return {"status": "ok"}
+
+
+@router.get("/api/config/security/commands")
+async def read_security_commands():
+    """Read command pattern configuration."""
+    data = _read_policies_yaml()
+    cp = data.get("security", {}).get("command_patterns", {})
+    return {
+        "custom_critical": cp.get("custom_critical", []),
+        "custom_high": cp.get("custom_high", []),
+        "excluded_patterns": cp.get("excluded_patterns", []),
+        "blocked_commands": cp.get("blocked_commands", []),
+    }
+
+
+@router.post("/api/config/security/commands")
+async def write_security_commands(body: SecurityCommandsUpdate):
+    """Update command pattern configuration."""
+    data = _read_policies_yaml()
+    if "security" not in data:
+        data["security"] = {}
+    if "command_patterns" not in data["security"]:
+        data["security"]["command_patterns"] = {}
+    cp = data["security"]["command_patterns"]
+    cp["custom_critical"] = body.custom_critical
+    cp["custom_high"] = body.custom_high
+    cp["excluded_patterns"] = body.excluded_patterns
+    cp["blocked_commands"] = body.blocked_commands
+    _write_policies_yaml(data)
+    try:
+        from openakita.core.policy import reset_policy_engine
+        reset_policy_engine()
+    except Exception:
+        pass
+    logger.info("[Config API] Updated security commands")
+    return {"status": "ok"}
+
+
+@router.get("/api/config/security/sandbox")
+async def read_security_sandbox():
+    """Read sandbox configuration."""
+    data = _read_policies_yaml()
+    sb = data.get("security", {}).get("sandbox", {})
+    return {
+        "enabled": sb.get("enabled", True),
+        "backend": sb.get("backend", "auto"),
+        "sandbox_risk_levels": sb.get("sandbox_risk_levels", ["HIGH"]),
+        "exempt_commands": sb.get("exempt_commands", []),
+        "network": sb.get("network", {}),
+    }
+
+
+@router.post("/api/config/security/sandbox")
+async def write_security_sandbox(body: SecuritySandboxUpdate):
+    """Update sandbox configuration."""
+    data = _read_policies_yaml()
+    if "security" not in data:
+        data["security"] = {}
+    if "sandbox" not in data["security"]:
+        data["security"]["sandbox"] = {}
+    sb = data["security"]["sandbox"]
+    sb["enabled"] = body.enabled
+    sb["backend"] = body.backend
+    sb["sandbox_risk_levels"] = body.sandbox_risk_levels
+    sb["exempt_commands"] = body.exempt_commands
+    _write_policies_yaml(data)
+    try:
+        from openakita.core.policy import reset_policy_engine
+        reset_policy_engine()
+    except Exception:
+        pass
+    logger.info("[Config API] Updated security sandbox")
+    return {"status": "ok"}
+
+
+@router.get("/api/config/security/audit")
+async def read_security_audit():
+    """Read recent audit log entries."""
+    try:
+        from openakita.core.audit_logger import get_audit_logger
+        entries = get_audit_logger().tail(50)
+        return {"entries": entries}
+    except Exception as e:
+        return {"entries": [], "error": str(e)}
+
+
+@router.get("/api/config/security/checkpoints")
+async def list_checkpoints():
+    """List recent file checkpoints."""
+    try:
+        from openakita.core.checkpoint import get_checkpoint_manager
+        checkpoints = get_checkpoint_manager().list_checkpoints(20)
+        return {"checkpoints": checkpoints}
+    except Exception as e:
+        return {"checkpoints": [], "error": str(e)}
+
+
+@router.post("/api/config/security/checkpoint/rewind")
+async def rewind_checkpoint(body: dict):
+    """Rewind to a specific checkpoint."""
+    checkpoint_id = body.get("checkpoint_id", "")
+    if not checkpoint_id:
+        return {"status": "error", "message": "checkpoint_id required"}
+    try:
+        from openakita.core.checkpoint import get_checkpoint_manager
+        success = get_checkpoint_manager().rewind_to_checkpoint(checkpoint_id)
+        return {"status": "ok" if success else "error"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/api/chat/security-confirm")
+async def security_confirm(body: SecurityConfirmRequest):
+    """Handle security confirmation from UI.
+
+    Calls mark_confirmed() on the policy engine so that the agent's
+    subsequent retry of the same tool bypasses the CONFIRM gate.
+    """
+    logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {body.decision}")
+    try:
+        from openakita.core.policy import get_policy_engine
+        engine = get_policy_engine()
+        found = engine.resolve_ui_confirm(body.confirm_id, body.decision)
+        if not found:
+            logger.warning(f"[Security] No pending confirm found for id={body.confirm_id}")
+    except Exception as e:
+        logger.warning(f"[Security] Failed to resolve confirmation: {e}")
+    return {"status": "ok", "confirm_id": body.confirm_id, "decision": body.decision}
+
+
+@router.post("/api/config/security/death-switch/reset")
+async def reset_death_switch():
+    """Reset the death switch (exit read-only mode)."""
+    try:
+        from openakita.core.policy import get_policy_engine
+        engine = get_policy_engine()
+        engine.reset_readonly_mode()
+        return {"status": "ok", "readonly_mode": False}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

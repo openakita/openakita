@@ -2057,7 +2057,8 @@ class ReasoningEngine:
                         # PolicyEngine 检查（与 execute_batch 一致）
                         from .policy import PolicyDecision, get_policy_engine
                         _pe = get_policy_engine()
-                        _pr = _pe.assert_tool_allowed(tool_name, tool_args if isinstance(tool_args, dict) else {})
+                        _tool_args_dict = tool_args if isinstance(tool_args, dict) else {}
+                        _pr = _pe.assert_tool_allowed(tool_name, _tool_args_dict)
                         if _pr.decision == PolicyDecision.DENY:
                             result_text = f"⚠️ 策略拒绝: {_pr.reason}"
                             yield {
@@ -2068,6 +2069,37 @@ class ReasoningEngine:
                             _deny_summary = self._summarize_tool_result(tool_name, result_text)
                             if _deny_summary:
                                 yield {"type": "chain_text", "content": _deny_summary}
+                            tool_results_for_msg.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": result_text,
+                                "is_error": True,
+                            })
+                            continue
+
+                        if _pr.decision == PolicyDecision.CONFIRM:
+                            _risk = _pr.metadata.get("risk_level", "HIGH")
+                            _needs_sb = _pr.metadata.get("needs_sandbox", False)
+                            _pe.store_ui_pending(tool_id, tool_name, _tool_args_dict)
+                            yield {
+                                "type": "security_confirm",
+                                "tool": tool_name,
+                                "args": _tool_args_dict,
+                                "id": tool_id,
+                                "reason": _pr.reason,
+                                "risk_level": _risk,
+                                "needs_sandbox": _needs_sb,
+                            }
+                            result_text = (
+                                f"⚠️ 需要用户确认: {_pr.reason}\n"
+                                "请使用 ask_user 工具询问用户是否允许此操作，"
+                                "得到用户同意后再重新调用此工具。"
+                            )
+                            yield {
+                                "type": "tool_call_end", "tool": tool_name,
+                                "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
+                                "id": tool_id, "is_error": True,
+                            }
                             tool_results_for_msg.append({
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,

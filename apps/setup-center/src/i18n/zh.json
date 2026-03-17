@@ -22,7 +22,8 @@
     "skillStore": "Skill Store",
     "collapse": "收起侧栏",
     "expand": "展开侧栏",
-    "docs": "文档"
+    "docs": "文档",
+    "security": "安全策略"
   },
   "topbar": {
     "workspace": "工作区",
@@ -1536,5 +1537,26 @@
     "groupModeHint_smart": "AI 判断消息是否需要回复",
     "groupModeHint_always": "回复群内所有消息（慎用）",
     "groupModeHint": "⚠ 需要在飞书开放平台 → 应用 → 机器人 → 消息接收模式 中开启「接收群聊中所有消息」，否则机器人只能收到 @消息"
+  },
+  "security": {
+    "title": "安全策略",
+    "desc": "管理 Agent 的安全隔离与沙箱防护配置。六层防护体系保护系统免受误操作。",
+    "zones": "安全区域",
+    "commands": "命令拦截",
+    "sandbox": "沙箱",
+    "audit": "审计日志",
+    "checkpoints": "文件快照",
+    "zonesDesc": "配置四个安全区域的路径。未匹配任何区域的路径默认归入保护区（只读）。",
+    "commandsDesc": "配置危险命令的模式匹配。CRITICAL 模式直接拒绝，HIGH 模式需要确认后在沙箱中执行。",
+    "sandboxDesc": "配置 OS 级沙箱执行，仅对 HIGH 风险命令启用。日常操作不受影响。",
+    "sandboxEnabled": "启用沙箱",
+    "sandboxBackend": "沙箱后端",
+    "save": "保存",
+    "confirmTitle": "安全确认",
+    "tool": "工具",
+    "reason": "原因",
+    "allow": "允许",
+    "deny": "拒绝",
+    "sandboxExec": "沙箱执行"
   }
 }

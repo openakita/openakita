@@ -3440,6 +3440,55 @@ class MessageGateway:
 
         return result
 
+    async def send_security_confirm(
+        self,
+        session: "Session",
+        tool_name: str,
+        reason: str,
+        risk_level: str = "HIGH",
+    ) -> None:
+        """Send a security confirmation request to the IM channel.
+
+        Uses platform-native interactive elements when available
+        (Feishu cards, Telegram InlineKeyboard), falls back to plain text.
+        """
+        adapter = self._adapters.get(session.channel)
+        if adapter is None:
+            return
+
+        text = (
+            f"⚠️ **安全确认**\n\n"
+            f"工具: `{tool_name}`\n"
+            f"风险等级: **{risk_level}**\n"
+            f"原因: {reason}\n\n"
+            f"请回复: **允许** / **拒绝**"
+        )
+
+        if hasattr(adapter, "build_simple_card") and hasattr(adapter, "send_card"):
+            card = adapter.build_simple_card(
+                title=f"⚠️ 安全确认 — {risk_level}",
+                content=(
+                    f"**工具**: {tool_name}\n"
+                    f"**原因**: {reason}"
+                ),
+                buttons=[
+                    {"text": "✅ 允许", "value": "security_allow"},
+                    {"text": "❌ 拒绝", "value": "security_deny"},
+                ],
+            )
+            try:
+                chat_id = session.chat_id
+                reply_to = session.thread_id
+                await adapter.send_card(chat_id, card, reply_to=reply_to)
+                return
+            except Exception as e:
+                logger.warning(f"[Security] Card send failed, falling back to text: {e}")
+
+        try:
+            await self.send_to_session(session, text, role="system")
+        except Exception as e:
+            logger.warning(f"[Security] Failed to send confirmation: {e}")
+
     async def emit_progress_event(
         self,
         session: Session,

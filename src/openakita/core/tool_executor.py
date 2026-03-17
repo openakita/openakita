@@ -129,6 +129,11 @@ class ToolExecutor:
         for handler_name in ("browser", "desktop", "mcp"):
             self._handler_locks[handler_name] = asyncio.Lock()
 
+        # Security: pending confirmations — tool calls that returned CONFIRM
+        # and are awaiting user decision via ask_user.
+        # When the agent retries after ask_user, we auto-mark as confirmed.
+        self._pending_confirms: dict[str, dict] = {}  # cache_key → params
+
     # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
     # 值为 0 表示不设硬超时（由工具自身的进度监控负责，如 Orchestrator 的 idle-timeout）
     _TOOL_HARD_TIMEOUT: int = 120
@@ -377,6 +382,22 @@ class ToolExecutor:
             from .policy import PolicyDecision, get_policy_engine
             policy_engine = get_policy_engine()
             policy_result = policy_engine.assert_tool_allowed(tool_name, tool_input)
+
+            # Persist audit for non-ALLOW decisions
+            if policy_result.decision != PolicyDecision.ALLOW:
+                try:
+                    from .audit_logger import get_audit_logger
+                    get_audit_logger().log(
+                        tool_name=tool_name,
+                        decision=policy_result.decision.value,
+                        reason=policy_result.reason,
+                        policy=policy_result.policy_name,
+                        params_preview=str(tool_input)[:200],
+                        metadata=policy_result.metadata,
+                    )
+                except Exception:
+                    pass
+
             if policy_result.decision == PolicyDecision.DENY:
                 return (
                     idx,
@@ -389,6 +410,118 @@ class ToolExecutor:
                     None,
                     None,
                 )
+
+            if policy_result.decision == PolicyDecision.CONFIRM:
+                # Check if this is a retry of a previously CONFIRM'd call
+                # (agent asked user via ask_user, user approved, agent retried).
+                confirm_key = policy_engine._confirm_cache_key(tool_name, tool_input)
+                if confirm_key in self._pending_confirms:
+                    # Treat as user-approved retry → mark confirmed & proceed
+                    policy_engine.mark_confirmed(tool_name, tool_input)
+                    del self._pending_confirms[confirm_key]
+                    logger.info(
+                        f"[Security] Auto-allowed retry of confirmed tool: {tool_name}"
+                    )
+                else:
+                    # First CONFIRM hit — store pending and block
+                    self._pending_confirms[confirm_key] = {
+                        "tool_name": tool_name,
+                        "params": tool_input,
+                        "metadata": policy_result.metadata,
+                    }
+                    risk = policy_result.metadata.get("risk_level", "")
+                    sandbox_hint = ""
+                    if policy_result.metadata.get("needs_sandbox"):
+                        sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
+
+                    return (
+                        idx,
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": (
+                                f"⚠️ 需要用户确认: {policy_result.reason}"
+                                f"{sandbox_hint}\n"
+                                "请使用 ask_user 工具询问用户是否允许此操作，"
+                                "得到用户同意后再重新调用此工具。"
+                            ),
+                            "is_error": True,
+                            "_security_confirm": {
+                                "tool_name": tool_name,
+                                "params": tool_input,
+                                "risk_level": risk,
+                                "needs_sandbox": policy_result.metadata.get(
+                                    "needs_sandbox", False
+                                ),
+                            },
+                        },
+                        None,
+                        None,
+                    )
+
+            # L4: Checkpoint — create snapshot if needed
+            if policy_result.metadata.get("needs_checkpoint"):
+                try:
+                    from .checkpoint import get_checkpoint_manager
+                    path = tool_input.get("path", "") or tool_input.get("file_path", "")
+                    if path:
+                        cp_id = get_checkpoint_manager().create_checkpoint(
+                            file_paths=[path],
+                            tool_name=tool_name,
+                            description=f"Auto-snapshot before {tool_name}",
+                        )
+                        if cp_id:
+                            logger.debug(f"[Checkpoint] Created {cp_id} for {path}")
+                except Exception as e:
+                    logger.debug(f"[Checkpoint] Failed: {e}")
+
+            # L6: Sandbox execution for HIGH-risk shell commands
+            if (
+                tool_name == "run_shell"
+                and policy_result.metadata.get("needs_sandbox")
+            ):
+                try:
+                    from .sandbox import get_sandbox_executor
+                    sandbox = get_sandbox_executor()
+                    command = tool_input.get("command", "")
+                    cwd = tool_input.get("cwd")
+                    timeout = tool_input.get("timeout", 60)
+                    sb_result = await sandbox.execute(
+                        command, cwd=cwd, timeout=float(timeout)
+                    )
+                    sandbox_output = (
+                        f"[沙箱执行 backend={sb_result.backend}]\n"
+                        f"Exit code: {sb_result.returncode}\n"
+                    )
+                    if sb_result.stdout:
+                        sandbox_output += f"stdout:\n{sb_result.stdout}\n"
+                    if sb_result.stderr:
+                        sandbox_output += f"stderr:\n{sb_result.stderr}\n"
+
+                    policy_engine._on_allow(tool_name)
+                    return (
+                        idx,
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": sandbox_output,
+                        },
+                        tool_name,
+                        None,
+                    )
+                except Exception as e:
+                    logger.warning(f"[Sandbox] Execution failed: {e}")
+                    return (
+                        idx,
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": f"⚠️ 沙箱执行失败: {e}",
+                            "is_error": True,
+                        },
+                        None,
+                        None,
+                    )
 
             handler_name = self.get_handler_name(tool_name)
             handler_lock = self._handler_locks.get(handler_name) if handler_name else None

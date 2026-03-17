@@ -616,15 +616,14 @@ class FilesystemHandler:
             return f"❌ 路径不存在: {path}"
 
         if file_path.is_dir():
-            # 安全限制：只删除空目录
             try:
                 children = list(file_path.iterdir())
             except PermissionError:
                 return f"❌ 没有权限访问目录: {path}"
             if children:
                 return (
-                    f"❌ 目录非空 ({len(children)} 个项目)，拒绝删除。"
-                    f"如需递归删除，请使用 run_shell 执行删除命令。"
+                    f"❌ 目录非空 ({len(children)} 个项目)，不允许直接删除。"
+                    f"请确认是否确实需要删除此目录及其所有内容。"
                 )
 
         success = await self.agent.file_tool.delete(path)

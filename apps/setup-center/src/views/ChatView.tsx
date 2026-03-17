@@ -280,6 +280,7 @@ type StreamEvent =
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "agent_handoff"; from_agent: string; to_agent: string; reason?: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
+  | { type: "security_confirm"; tool: string; args: Record<string, unknown>; id?: string; reason: string; risk_level: string; needs_sandbox: boolean }
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "error"; message: string }
   | { type: "done"; usage?: { input_tokens: number; output_tokens: number; total_tokens?: number; context_tokens?: number; context_limit?: number } };
@@ -1737,6 +1738,91 @@ function SubAgentCards({ tasks }: { tasks: SubAgentTaskDisplay[] }) {
   );
 }
 
+// ─── SecurityConfirmModal: 安全确认弹窗 ───
+
+function SecurityConfirmModal({
+  data, apiBase, onClose, timerRef, setData,
+}: {
+  data: { tool: string; args: Record<string, unknown>; reason: string; riskLevel: string; needsSandbox: boolean; toolId?: string; countdown: number };
+  apiBase: string;
+  onClose: () => void;
+  timerRef: React.MutableRefObject<ReturnType<typeof setInterval> | null>;
+  setData: React.Dispatch<React.SetStateAction<typeof data | null>>;
+}) {
+  const { t } = useTranslation();
+
+  useEffect(() => {
+    timerRef.current = setInterval(() => {
+      setData((prev) => {
+        if (!prev) return null;
+        const next = prev.countdown - 1;
+        if (next <= 0) {
+          safeFetch(`${apiBase}/api/chat/security-confirm`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirm_id: prev.toolId || "", decision: "deny" }),
+          }).catch(() => {});
+          onClose();
+          return null;
+        }
+        return { ...prev, countdown: next };
+      });
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [apiBase, onClose, timerRef, setData]);
+
+  const respond = (decision: "allow" | "deny" | "sandbox") => {
+    safeFetch(`${apiBase}/api/chat/security-confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_id: data.toolId || "", decision }),
+    }).catch(() => {});
+    onClose();
+  };
+
+  const riskColors: Record<string, string> = {
+    CRITICAL: "bg-red-600", HIGH: "bg-orange-500", MEDIUM: "bg-yellow-500", LOW: "bg-green-500",
+  };
+  const riskBg = riskColors[data.riskLevel] || "bg-gray-500";
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="w-[440px] rounded-xl bg-white dark:bg-gray-900 shadow-2xl border border-gray-200 dark:border-gray-700 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-xl">⚠️</div>
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t("security.confirmTitle", "安全确认")}</h3>
+            <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium text-white ${riskBg}`}>{data.riskLevel}</span>
+          </div>
+          <span className="ml-auto text-sm text-gray-400">{data.countdown}s</span>
+        </div>
+        <div className="mb-4 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+          <div><span className="font-medium">{t("security.tool", "工具")}:</span> <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">{data.tool}</code></div>
+          <div><span className="font-medium">{t("security.reason", "原因")}:</span> {data.reason}</div>
+          {data.args.command && (
+            <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded font-mono text-xs break-all max-h-24 overflow-y-auto">
+              {String(data.args.command)}
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => respond("allow")} className="flex-1 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium text-sm transition-colors">
+            ✅ {t("security.allow", "允许")}
+          </button>
+          <button onClick={() => respond("deny")} className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-medium text-sm transition-colors">
+            ❌ {t("security.deny", "拒绝")}
+          </button>
+          {data.needsSandbox && (
+            <button onClick={() => respond("sandbox")} className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors">
+              🔒 {t("security.sandbox", "沙箱执行")}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── 主组件 ───
 
 export function ChatView({
@@ -1798,6 +1884,12 @@ export function ChatView({
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [securityConfirm, setSecurityConfirm] = useState<{
+    tool: string; args: Record<string, unknown>; reason: string;
+    riskLevel: string; needsSandbox: boolean; toolId?: string;
+    countdown: number;
+  } | null>(null);
+  const securityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
     if (!lightbox) return;
@@ -3493,6 +3585,18 @@ export function ChatView({
                   currentPlan = { ...currentPlan, status: "cancelled" } as ChatPlan;
                 }
                 break;
+              case "security_confirm": {
+                setSecurityConfirm({
+                  tool: event.tool,
+                  args: event.args,
+                  reason: event.reason,
+                  riskLevel: event.risk_level,
+                  needsSandbox: event.needs_sandbox,
+                  toolId: event.id,
+                  countdown: 60,
+                });
+                break;
+              }
               case "ask_user": {
                 const askQuestions = event.questions;
                 // 如果没有 questions 数组但有 allow_multiple，构造一个统一的 questions
@@ -5140,6 +5244,19 @@ export function ChatView({
         </div>
       )}
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+      {securityConfirm && createPortal(
+        <SecurityConfirmModal
+          data={securityConfirm}
+          apiBase={apiBaseUrl}
+          onClose={() => {
+            if (securityTimerRef.current) clearInterval(securityTimerRef.current);
+            setSecurityConfirm(null);
+          }}
+          timerRef={securityTimerRef}
+          setData={setSecurityConfirm}
+        />,
+        document.body,
+      )}
     </div>
   );
 }

@@ -1,40 +1,92 @@
-# Agent Harness: 策略配置文件
-# 集中管理工具权限、路径限制、Shell 命令黑名单等安全策略。
+# OpenAkita 安全策略配置 — 六层防护体系
+# L1: 四区路径  L2: 确认门  L3: 命令拦截  L4: 文件快照  L5: 自保护  L6: 沙箱
 
-# 工具级策略
-tool_policies:
-  - tool_name: "run_shell"
-    require_confirmation: false
-    dangerous_patterns:
-      - 'rm\s+-rf\s+/'
-      - 'format\s+'
-      - 'del\s+/[sS]'
-      - 'rmdir\s+/[sS]'
-      - 'mkfs\.'
-      - 'dd\s+if='
+security:
+  enabled: true
 
-# 范围策略
-scope_policy:
-  # 路径白名单（为空则不限制；非空则只允许匹配的路径）
-  allowed_paths: []
+  # === L1: 区域配置 ===
+  zones:
+    enabled: true
+    workspace:
+      - "${CWD}"
+    controlled: []
+    protected:
+      # Windows
+      - "C:/Program Files/**"
+      - "C:/Program Files (x86)/**"
+      - "C:/Windows/**"
+      - "C:/ProgramData/**"
+      # Linux
+      - "/usr/**"
+      - "/bin/**"
+      - "/sbin/**"
+      - "/lib/**"
+      - "/lib64/**"
+      - "/boot/**"
+      - "/etc/**"
+      - "/dev/**"
+      - "/proc/**"
+      - "/sys/**"
+      # macOS
+      - "/System/**"
+      - "/Library/**"
+    forbidden:
+      - "~/.ssh/**"
+      - "~/.gnupg/**"
+      - "C:/Windows/System32/config/**"
+      - "/etc/shadow"
+      - "/etc/gshadow"
+    default_zone: protected
 
-  # 路径黑名单
-  blocked_paths:
-    - "/etc/shadow"
-    - "/etc/passwd"
-    - "C:/Windows/System32/*"
+  # === L2: 确认门 ===
+  confirmation:
+    enabled: true
+    timeout_seconds: 60
+    default_on_timeout: deny
+    auto_confirm: false
 
-  # Shell 命令黑名单（只匹配命令名，不含参数）
-  blocked_commands:
-    - reg
-    - regedit
-    - netsh
-    - schtasks
-    - sc
-    - wmic
-    - bcdedit
-    - shutdown
-    - taskkill
+  # === L3: 命令模式拦截 ===
+  command_patterns:
+    enabled: true
+    custom_critical: []
+    custom_high: []
+    excluded_patterns: []
+    blocked_commands:
+      - reg
+      - regedit
+      - netsh
+      - schtasks
+      - sc
+      - wmic
+      - bcdedit
+      - shutdown
+      - taskkill
 
-# 自动确认模式（true = 跳过危险操作确认）
-auto_confirm: false
+  # === L4: 文件快照 ===
+  checkpoint:
+    enabled: true
+    max_snapshots: 50
+    snapshot_dir: "data/checkpoints"
+
+  # === L5: 自保护 ===
+  self_protection:
+    enabled: true
+    protected_dirs:
+      - "data/"
+      - "identity/"
+      - "logs/"
+      - "src/"
+    audit_to_file: true
+    audit_path: "data/audit/policy_decisions.jsonl"
+    death_switch_threshold: 3
+
+  # === L6: 沙箱 ===
+  sandbox:
+    enabled: true
+    backend: auto
+    sandbox_risk_levels:
+      - HIGH
+    exempt_commands: []
+    network:
+      allow_in_sandbox: false
+      allowed_domains: []
