@@ -338,8 +338,18 @@ export function App() {
         if (parsed.stepId) setStepId(parsed.stepId);
       }
     };
+    // Listen for postMessage from embedded docs iframe (cross-origin safe)
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "openakita-navigate" && typeof e.data.hash === "string") {
+        window.location.hash = e.data.hash;
+      }
+    };
     window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    window.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("message", onMessage);
+    };
   }, []);
 
   // ── Data mode: "local" (Tauri commands) or "remote" (HTTP API) ──

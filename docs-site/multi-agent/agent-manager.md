@@ -27,8 +27,7 @@ Agent 管理是创建、编辑和组织 Agent 的中心页面。每个 Agent 有
 | 模式 | 效果 |
 |------|------|
 | **all（全部）** | 该 Agent 可使用系统中所有已启用的技能 |
-| **include（仅包含）** | 只能使用你勾选的技能，其余禁用 |
-| **exclude（排除）** | 使用所有技能，但排除你勾选的 |
+| **selected（指定）** | 只能使用你勾选的技能，其余禁用 |
 
 ::: tip 何时使用 include 模式
 当你希望 Agent 高度专注时使用。例如"浏览器 Agent"只需要网页浏览和截图技能，排除文件写入等可以避免误操作。
@@ -59,9 +58,9 @@ Agent 管理是创建、编辑和组织 Agent 的中心页面。每个 Agent 有
 | 预设 Agent | 技能模式 | 特长 |
 |-----------|---------|------|
 | **default** | all | 通用对话、任务规划 |
-| **office-doc** | include: 文档相关 | Word、PPT、Excel 处理 |
-| **code-assistant** | include: 代码相关 | 编程、调试、代码审查 |
-| **browser-agent** | include: 浏览器 | 网页浏览、截图、信息采集 |
+| **office-doc** | selected: 文档相关 | Word、PPT、Excel 处理 |
+| **code-assistant** | selected: 代码相关 | 编程、调试、代码审查 |
+| **browser-agent** | selected: 浏览器 | 网页浏览、截图、信息采集 |
 | **data-analyst** | include: 数据相关 | 数据清洗、分析、可视化 |
 
 预设 Agent 可直接使用，也可以复制后修改为自己的版本。
