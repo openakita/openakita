@@ -84,7 +84,7 @@ import { ProviderSearchSelect } from "./components/ProviderSearchSelect";
 import { TroubleshootPanel } from "./components/TroubleshootPanel";
 import { CliManager } from "./components/CliManager";
 import { WebPasswordManager } from "./components/WebPasswordManager";
-import { FieldText, FieldBool, FieldSelect, FieldCombo, TelegramPairingCodeHint } from "./components/EnvFields";
+import { FieldText, FieldBool, FieldSelect, FieldCombo, FieldSlider, TelegramPairingCodeHint } from "./components/EnvFields";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ModalOverlay } from "./components/ModalOverlay";
 import { Section } from "./components/Section";
@@ -3087,6 +3087,9 @@ export function App() {
           "API_HOST", "TRUST_PROXY",
           "BACKUP_ENABLED", "BACKUP_PATH", "BACKUP_CRON",
           "BACKUP_MAX_BACKUPS", "BACKUP_INCLUDE_USERDATA", "BACKUP_INCLUDE_MEDIA",
+          "CONTEXT_MAX_WINDOW", "CONTEXT_COMPRESSION_RATIO", "CONTEXT_COMPRESSION_THRESHOLD",
+          "CONTEXT_BOUNDARY_COMPRESSION_RATIO", "CONTEXT_MIN_RECENT_TURNS",
+          "CONTEXT_ENABLE_TOOL_COMPRESSION", "CONTEXT_LARGE_TOOL_THRESHOLD",
         ];
       default:
         return [];
@@ -5325,6 +5328,8 @@ export function App() {
     <FieldSelect key={p.k} {...p} {..._envBase} />;
   const FC = (p: { k: string; label: string; options: { value: string; label: string }[]; placeholder?: string; help?: string }) =>
     <FieldCombo key={p.k} {...p} {..._envBase} />;
+  const FR = (p: { k: string; label: string; help?: string; min: number; max: number; step: number; defaultValue: number; unit?: string }) =>
+    <FieldSlider key={p.k} {...p} {..._envBase} />;
 
   async function renderIntegrationsSave(keys: string[], successText: string) {
     if (!currentWorkspaceId) { notifyError(t("common.error")); return; }
@@ -5867,6 +5872,27 @@ export function App() {
             <div className="grid3">
               {FB({ k: "LOG_TO_CONSOLE", label: t("config.agentLogConsole") })}
               {FB({ k: "LOG_TO_FILE", label: t("config.agentLogFile") })}
+            </div>
+          </Section>
+        </div>
+
+        {/* ── 上下文管理 ── */}
+        <div className="card" style={{ marginTop: 12 }}>
+          <Section title={t("config.ctxMgmtTitle")}>
+            <div className="grid2">
+              {FT({ k: "CONTEXT_MAX_WINDOW", label: t("config.ctxMaxWindow") + " (tokens)", help: t("config.ctxMaxWindowHelp"), placeholder: t("config.ctxMaxWindowPlaceholder") })}
+              {FR({ k: "CONTEXT_MIN_RECENT_TURNS", label: t("config.ctxMinRecentTurns"), help: t("config.ctxMinRecentTurnsHelp"), min: 2, max: 30, step: 1, defaultValue: 8, unit: t("config.ctxUnitTurns") })}
+            </div>
+            <div className="grid2">
+              {FR({ k: "CONTEXT_COMPRESSION_RATIO", label: t("config.ctxCompressionRatio"), help: t("config.ctxCompressionRatioHelp"), min: 0.05, max: 0.5, step: 0.01, defaultValue: 0.15, unit: "×" })}
+              {FR({ k: "CONTEXT_COMPRESSION_THRESHOLD", label: t("config.ctxCompressionThreshold"), help: t("config.ctxCompressionThresholdHelp"), min: 0.5, max: 0.95, step: 0.01, defaultValue: 0.85, unit: "×" })}
+            </div>
+            <div className="grid2">
+              {FR({ k: "CONTEXT_BOUNDARY_COMPRESSION_RATIO", label: t("config.ctxBoundaryRatio"), help: t("config.ctxBoundaryRatioHelp"), min: 0.05, max: 0.5, step: 0.01, defaultValue: 0.18, unit: "×" })}
+              {FR({ k: "CONTEXT_LARGE_TOOL_THRESHOLD", label: t("config.ctxLargeToolThreshold"), help: t("config.ctxLargeToolThresholdHelp"), min: 500, max: 20000, step: 500, defaultValue: 5000, unit: "tokens" })}
+            </div>
+            <div className="grid2">
+              {FB({ k: "CONTEXT_ENABLE_TOOL_COMPRESSION", label: t("config.ctxEnableToolCompression"), help: t("config.ctxEnableToolCompressionHelp") })}
             </div>
           </Section>
         </div>

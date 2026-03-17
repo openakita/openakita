@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { IconRefresh } from "../icons";
 
@@ -162,6 +163,65 @@ export function FieldCombo({
             placeholder={placeholder || t("common.custom") || "自定义输入..."}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+export function FieldSlider({
+  k, label, help, min, max, step, defaultValue, unit,
+  envDraft, onEnvChange,
+}: EnvFieldProps & {
+  k: string; label: string; help?: string; unit?: string;
+  min: number; max: number; step: number; defaultValue: number;
+}) {
+  const raw = envGet(envDraft, k, String(defaultValue));
+  const num = Number(raw) || defaultValue;
+  const clamped = Math.min(Math.max(num, min), max);
+
+  const handleSlider = (vals: number[]) => {
+    onEnvChange((m) => envSet(m, k, String(vals[0])));
+  };
+
+  const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    onEnvChange((m) => envSet(m, k, v));
+  };
+
+  const handleBlur = () => {
+    const v = Math.min(Math.max(Number(raw) || defaultValue, min), max);
+    const rounded = Math.round(v / step) * step;
+    onEnvChange((m) => envSet(m, k, String(rounded)));
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <FieldLabel label={label} help={help} envKey={k} />
+      <div className="flex items-center gap-3">
+        <div className="flex-1 flex flex-col">
+          <Slider
+            min={min}
+            max={max}
+            step={step}
+            value={[clamped]}
+            onValueChange={handleSlider}
+          />
+          <div className="flex justify-between text-[11px] text-muted-foreground mt-1 px-0.5">
+            <span>{min}</span>
+            <span>{max}</span>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center gap-1">
+          <Input
+            className="w-20 text-center tabular-nums text-xs"
+            value={raw}
+            onChange={handleInput}
+            onBlur={handleBlur}
+            type="text"
+            inputMode="decimal"
+          />
+          {unit && <span className="text-[11px] text-muted-foreground whitespace-nowrap">{unit}</span>}
+        </div>
       </div>
     </div>
   );

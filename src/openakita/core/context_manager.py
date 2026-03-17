@@ -24,11 +24,7 @@ from .tool_executor import OVERFLOW_MARKER
 
 logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 2  # JSON 序列化后约 2 字符 = 1 token
-MIN_RECENT_TURNS = 8  # 至少保留最近 8 组对话（工具密集型对话需要更多上下文）
-COMPRESSION_RATIO = 0.15  # 目标压缩到原上下文的 15%
-BOUNDARY_COMPRESSION_RATIO = 0.18  # 上下文边界前的旧话题压缩到 18%
 CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
-LARGE_TOOL_RESULT_THRESHOLD = 5000  # 单条 tool_result 超过此 token 数时独立压缩
 CONTEXT_BOUNDARY_MARKER = "[上下文边界]"  # 话题切换边界标记
 
 
@@ -237,7 +233,9 @@ class ContextManager:
                 f"Falling back to {min_hard_limit}."
             )
             hard_limit = min_hard_limit
-        soft_limit = int(hard_limit * 0.85)
+        from ..config import settings as _settings
+        _threshold = _settings.context_compression_threshold
+        soft_limit = int(hard_limit * _threshold)
 
         current_tokens = self.estimate_messages_tokens(messages)
 
@@ -280,11 +278,12 @@ class ContextManager:
             return result_msgs
 
         # Step 1: 对单条过大的 tool_result 独立压缩
-        messages = await self._compress_large_tool_results(messages)
-        current_tokens = self.estimate_messages_tokens(messages)
-        if current_tokens <= soft_limit:
-            logger.info(f"After tool_result compression: {current_tokens} tokens, within limit")
-            return _end_ctx_span(messages)
+        if _settings.context_enable_tool_compression:
+            messages = await self._compress_large_tool_results(messages)
+            current_tokens = self.estimate_messages_tokens(messages)
+            if current_tokens <= soft_limit:
+                logger.info(f"After tool_result compression: {current_tokens} tokens, within limit")
+                return _end_ctx_span(messages)
 
         # Step 1.5: 上下文边界感知 — 如果存在边界标记，对旧话题使用更激进的压缩
         messages = await self._compress_across_boundary(messages, soft_limit, memory_manager)
@@ -306,7 +305,7 @@ class ContextManager:
             groups = groups[:-2] + [merged]
             logger.debug("[Compress] Merged trailing assistant-question + user-answer into one group")
 
-        recent_group_count = min(MIN_RECENT_TURNS, len(groups))
+        recent_group_count = min(_settings.context_min_recent_turns, len(groups))
 
         if len(groups) <= recent_group_count:
             messages = await self._compress_large_tool_results(messages, threshold=2000)
@@ -325,7 +324,7 @@ class ContextManager:
 
         # Step 3: LLM 分块摘要早期对话
         early_tokens = self.estimate_messages_tokens(early_messages)
-        target_summary_tokens = max(int(early_tokens * COMPRESSION_RATIO), 200)
+        target_summary_tokens = max(int(early_tokens * _settings.context_compression_ratio), 200)
         summary = await self._summarize_messages_chunked(early_messages, target_summary_tokens)
 
         compressed = self._inject_summary_into_recent(summary, recent_messages)
@@ -379,7 +378,8 @@ class ContextManager:
             f"(~{pre_tokens} tokens) with aggressive ratio"
         )
 
-        target_tokens = max(int(pre_tokens * BOUNDARY_COMPRESSION_RATIO), 100)
+        from ..config import settings as _settings
+        target_tokens = max(int(pre_tokens * _settings.context_boundary_compression_ratio), 100)
         summary = await self._summarize_messages_chunked_for_boundary(
             pre_boundary, target_tokens
         )
@@ -473,9 +473,12 @@ class ContextManager:
             reset_tracking_context(_tt)
 
     async def _compress_large_tool_results(
-        self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
+        self, messages: list[dict], threshold: int | None = None
     ) -> list[dict]:
         """对单条过大的 tool_result 内容独立 LLM 压缩"""
+        if threshold is None:
+            from ..config import settings as _settings
+            threshold = _settings.context_large_tool_threshold
         result = []
         for msg in messages:
             content = msg.get("content", "")
@@ -490,7 +493,8 @@ class ContextManager:
                             continue
                         result_tokens = self.estimate_tokens(result_text)
                         if result_tokens > threshold:
-                            target_tokens = max(int(result_tokens * COMPRESSION_RATIO), 100)
+                            from ..config import settings as _s
+                            target_tokens = max(int(result_tokens * _s.context_compression_ratio), 100)
                             compressed_text = await self._llm_compress_text(
                                 result_text, target_tokens, context_type="tool_result"
                             )
@@ -507,7 +511,8 @@ class ContextManager:
                         input_text = json.dumps(item.get("input", {}), ensure_ascii=False)
                         input_tokens = self.estimate_tokens(input_text)
                         if input_tokens > threshold:
-                            target_tokens = max(int(input_tokens * COMPRESSION_RATIO), 100)
+                            from ..config import settings as _s
+                            target_tokens = max(int(input_tokens * _s.context_compression_ratio), 100)
                             compressed_input = await self._llm_compress_text(
                                 input_text, target_tokens, context_type="tool_input"
                             )
@@ -775,7 +780,8 @@ class ContextManager:
         recent_messages = [msg for group in recent_groups for msg in group]
 
         early_tokens = self.estimate_messages_tokens(early_messages)
-        target = max(int(early_tokens * COMPRESSION_RATIO), 100)
+        from ..config import settings as _settings
+        target = max(int(early_tokens * _settings.context_compression_ratio), 100)
         summary = await self._summarize_messages_chunked(early_messages, target)
 
         compressed = self._inject_summary_into_recent(summary, recent_messages)

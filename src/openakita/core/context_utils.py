@@ -63,6 +63,8 @@ def get_max_context_tokens(
     """
     FALLBACK_CONTEXT_WINDOW = 200000
 
+    from ..config import settings
+
     try:
         info = brain.get_current_model_info(conversation_id=conversation_id)
         ep_name = info.get("name", "")
@@ -71,6 +73,8 @@ def get_max_context_tokens(
                 ctx = getattr(ep, "context_window", 0) or 0
                 if ctx <= 0:
                     ctx = FALLBACK_CONTEXT_WINDOW
+                if settings.context_max_window > 0:
+                    ctx = min(ctx, settings.context_max_window)
                 output_reserve = ep.max_tokens or 4096
                 output_reserve = min(output_reserve, ctx // 3)
                 result = int((ctx - output_reserve) * 0.95)
