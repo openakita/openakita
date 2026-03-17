@@ -107,6 +107,60 @@ def _find_web_dist() -> Path | None:
     return None
 
 
+def _find_docs_dist() -> Path | None:
+    """Locate bundled user docs dist directory.
+
+    Search order:
+    1. openakita/docs_dist/ (pip wheel install)
+    2. docs-site/.vitepress/dist/ (development)
+    """
+    pkg_docs = Path(__file__).parent.parent / "docs_dist"
+    if (pkg_docs / "index.html").exists():
+        return pkg_docs
+
+    dev_docs = (
+        Path(__file__).parent.parent.parent.parent
+        / "docs-site" / ".vitepress" / "dist"
+    )
+    if (dev_docs / "index.html").exists():
+        return dev_docs
+
+    return None
+
+
+def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
+    """Deploy bundled docs to data/docs/v{version}/ if not already present.
+
+    Historical versions are never deleted so users can switch between them.
+    """
+    import json
+    import shutil
+
+    bundled = _find_docs_dist()
+    if not bundled:
+        return None
+
+    docs_root = data_dir / "docs"
+    version_clean = app_version.split("+")[0]
+    version_dir = docs_root / f"v{version_clean}"
+
+    if not (version_dir / "index.html").exists():
+        version_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(bundled, version_dir, dirs_exist_ok=True)
+        logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
+
+    versions_file = docs_root / "versions.json"
+    try:
+        versions = json.loads(versions_file.read_text("utf-8")) if versions_file.exists() else []
+    except Exception:
+        versions = []
+    if version_clean not in versions:
+        versions.insert(0, version_clean)
+        versions_file.write_text(json.dumps(versions, indent=2), encoding="utf-8")
+
+    return docs_root
+
+
 def _mount_web_frontend(app: FastAPI) -> None:
     """Mount the web frontend static files if available.
 
@@ -301,6 +355,26 @@ def create_app(
     _avatar_dir = _settings.data_dir / "avatars"
     _avatar_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/api/avatars", _StaticFiles(directory=str(_avatar_dir)), name="avatars")
+
+    # ── Serve versioned user docs ──
+    from openakita import get_version_string as _get_ver
+    _docs_ver = _get_ver().split("+")[0]
+    _docs_root = _deploy_docs(data_dir, _docs_ver)
+    if _docs_root:
+        from fastapi.staticfiles import StaticFiles as _DocsStatic
+        from fastapi.responses import RedirectResponse as _Redirect
+
+        @app.get("/user-docs", include_in_schema=False)
+        @app.get("/user-docs/", include_in_schema=False)
+        async def _docs_redirect():
+            return _Redirect(f"/user-docs/v{_docs_ver}/")
+
+        app.mount(
+            "/user-docs",
+            _DocsStatic(directory=str(_docs_root), html=True),
+            name="user-docs",
+        )
+        logger.info(f"Mounted user docs at /user-docs/ from {_docs_root}")
 
     # ── Serve web frontend static files ──
     _mount_web_frontend(app)

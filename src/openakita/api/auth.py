@@ -43,7 +43,7 @@ AUTH_EXEMPT_PATHS = frozenset({
     "/api/auth/check",
     "/api/logs/frontend",
 })
-AUTH_EXEMPT_PREFIXES = ("/web/", "/web", "/ws/", "/docs", "/openapi.json", "/redoc")
+AUTH_EXEMPT_PREFIXES = ("/web/", "/web", "/ws/", "/docs", "/openapi.json", "/redoc", "/user-docs")
 
 # ---------------------------------------------------------------------------
 # Helpers: base64url encoding (JWT-compatible, no padding)

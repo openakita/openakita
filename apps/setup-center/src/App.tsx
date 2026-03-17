@@ -114,6 +114,43 @@ interface EnvFieldCtx {
 
 const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
 
+type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "docs";
+
+const _HASH_TO_VIEW: Record<string, ViewId> = {
+  "chat": "chat", "im": "im", "skills": "skills", "mcp": "mcp",
+  "scheduler": "scheduler", "memory": "memory", "status": "status",
+  "token-stats": "token_stats", "identity": "identity",
+  "dashboard": "dashboard", "org-editor": "org_editor",
+  "agent-manager": "agent_manager", "agent-store": "agent_store",
+  "skill-store": "skill_store", "wizard": "wizard", "docs": "docs",
+};
+
+const _VIEW_TO_HASH: Record<string, string> = Object.fromEntries(
+  Object.entries(_HASH_TO_VIEW).map(([k, v]) => [v, k]),
+);
+
+const _HASH_TO_STEP: Record<string, StepId> = {
+  "llm": "llm", "im": "im", "tools": "tools", "agent": "agent", "advanced": "advanced",
+};
+
+function _parseHashRoute(hash: string): { view: ViewId; stepId?: StepId } | null {
+  const path = hash.replace(/^#\/?/, "");
+  if (!path) return null;
+  if (_HASH_TO_VIEW[path]) return { view: _HASH_TO_VIEW[path] };
+  if (path.startsWith("config/")) {
+    const step = path.slice(7);
+    if (_HASH_TO_STEP[step]) return { view: "wizard", stepId: _HASH_TO_STEP[step] as StepId };
+  }
+  return null;
+}
+
+function _viewToHash(view: string, stepId?: string): string {
+  if (view === "wizard" && stepId) {
+    return `#/config/${stepId}`;
+  }
+  return _VIEW_TO_HASH[view] ? `#/${_VIEW_TO_HASH[view]}` : "";
+}
+
 export function App() {
   const { t, i18n } = useTranslation();
 
@@ -277,8 +314,8 @@ export function App() {
   );
 
   const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store">(() => {
-    const hash = window.location.hash;
-    if (hash === "#/org-editor") return "org_editor";
+    const parsed = _parseHashRoute(window.location.hash);
+    if (parsed) return parsed.view;
     return (IS_WEB || IS_CAPACITOR) ? "chat" : "wizard";
   });
   const [appInitializing, setAppInitializing] = useState(!(IS_WEB || IS_CAPACITOR));
@@ -291,6 +328,19 @@ export function App() {
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const [multiAgentEnabled, setMultiAgentEnabled] = useState(false);
   const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
+
+  // ── Hash-based deep link routing ──
+  useEffect(() => {
+    const onHashChange = () => {
+      const parsed = _parseHashRoute(window.location.hash);
+      if (parsed) {
+        setView(parsed.view);
+        if (parsed.stepId) setStepId(parsed.stepId);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   // ── Data mode: "local" (Tauri commands) or "remote" (HTTP API) ──
   // Web mode always starts in "remote" since the backend is already running
@@ -315,7 +365,10 @@ export function App() {
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
   }, [apiBaseUrl]);
 
-  const [stepId, setStepId] = useState<StepId>("llm");
+  const [stepId, setStepId] = useState<StepId>(() => {
+    const parsed = _parseHashRoute(window.location.hash);
+    return parsed?.stepId || "llm";
+  });
   const currentStepIdxRaw = useMemo(() => steps.findIndex((s) => s.id === stepId), [steps, stepId]);
   const currentStepIdx = currentStepIdxRaw < 0 ? 0 : currentStepIdxRaw;
 
@@ -8055,6 +8108,18 @@ export function App() {
         />
       );
     }
+    if (view === "docs") {
+      const docsBase = httpApiBase();
+      return (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+          <iframe
+            src={`${docsBase}/user-docs/`}
+            style={{ flex: 1, border: "none", width: "100%", height: "100%", borderRadius: 8, background: "var(--bg, #fff)" }}
+            title={t("sidebar.docs")}
+          />
+        </div>
+      );
+    }
     if (view === "modules") {
       return (
         <div>
@@ -8331,10 +8396,11 @@ export function App() {
         onViewChange={(v) => {
           setView(v);
           setMobileSidebarOpen(false);
-          if (v === "org_editor") {
-            window.location.hash = "#/org-editor";
-          } else if (window.location.hash === "#/org-editor") {
-            window.location.hash = "";
+          const newHash = _viewToHash(v);
+          if (newHash) {
+            window.location.hash = newHash;
+          } else if (window.location.hash) {
+            history.replaceState(null, "", window.location.pathname + window.location.search);
           }
         }}
         mobileOpen={mobileSidebarOpen}
@@ -8345,7 +8411,10 @@ export function App() {
         }}
         steps={steps}
         stepId={stepId}
-        onStepChange={setStepId}
+        onStepChange={(s: StepId) => {
+          setStepId(s);
+          if (view === "wizard") window.location.hash = _viewToHash("wizard", s);
+        }}
         disabledViews={disabledViews}
         multiAgentEnabled={multiAgentEnabled}
         onToggleMultiAgent={toggleMultiAgent}

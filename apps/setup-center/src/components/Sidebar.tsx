@@ -10,7 +10,7 @@ import {
 } from "../icons";
 import logoUrl from "../assets/logo.png";
 
-type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store";
+type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "docs";
 
 export type SidebarProps = {
   collapsed: boolean;
@@ -265,6 +265,16 @@ export function Sidebar({
                 <span className="feedbackText" style={{ fontSize: 11 }}>反馈</span>
               </span>
             )}
+            <span
+              onClick={() => onViewChange("docs")}
+              style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer" }}
+              onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
+              onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
+              title={t("sidebar.docs")}
+            >
+              <IconBook size={12} />
+              {t("sidebar.docs")}
+            </span>
             <a
               href="https://github.com/openakita/openakita"
               title="GitHub"
@@ -311,6 +321,13 @@ export function Sidebar({
             )}
           </div>
           <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
+            <span
+              onClick={() => onViewChange("docs")}
+              title={t("sidebar.docs")}
+              style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
+            >
+              <IconBook size={14} />
+            </span>
             <a
               href="https://github.com/openakita/openakita"
               title="GitHub"

@@ -21,7 +21,8 @@
     "agentStore": "Agent Store",
     "skillStore": "Skill Store",
     "collapse": "Collapse sidebar",
-    "expand": "Expand sidebar"
+    "expand": "Expand sidebar",
+    "docs": "Docs"
   },
   "topbar": {
     "workspace": "Workspace",

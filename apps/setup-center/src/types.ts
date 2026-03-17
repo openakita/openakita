@@ -94,7 +94,7 @@ export type Step = {
   desc: string;
 };
 
-export type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "dashboard" | "agent_manager" | "agent_store" | "skill_store" | "org_editor" | "identity";
+export type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "dashboard" | "agent_manager" | "agent_store" | "skill_store" | "org_editor" | "identity" | "docs";
 
 // ─── Health check types ───
 

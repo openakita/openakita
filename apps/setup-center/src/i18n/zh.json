@@ -21,7 +21,8 @@
     "agentStore": "Agent Store",
     "skillStore": "Skill Store",
     "collapse": "收起侧栏",
-    "expand": "展开侧栏"
+    "expand": "展开侧栏",
+    "docs": "文档"
   },
   "topbar": {
     "workspace": "工作区",
