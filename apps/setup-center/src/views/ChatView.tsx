@@ -1799,11 +1799,11 @@ function SecurityConfirmModal({
         <div className="mb-4 space-y-2 text-sm text-gray-700 dark:text-gray-300">
           <div><span className="font-medium">{t("security.tool", "工具")}:</span> <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">{data.tool}</code></div>
           <div><span className="font-medium">{t("security.reason", "原因")}:</span> {data.reason}</div>
-          {data.args.command && (
+          {data.args.command ? (
             <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded font-mono text-xs break-all max-h-24 overflow-y-auto">
               {String(data.args.command)}
             </div>
-          )}
+          ) : null}
         </div>
         <div className="flex gap-2">
           <button onClick={() => respond("allow")} className="flex-1 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium text-sm transition-colors">
