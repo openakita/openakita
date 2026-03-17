@@ -48,6 +48,16 @@ FEISHU_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token
 LARK_TOKEN_URL = "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal"
 
 
+def _aiohttp_timeout(total: float) -> Any:
+    """Build an aiohttp timeout object, or None if unavailable."""
+    if _aiohttp is None:
+        return None
+    cls = getattr(_aiohttp, "ClientTimeout", None)
+    if cls is not None:
+        return cls(total=total)
+    return None
+
+
 async def _async_post_form(
     url: str, data: dict[str, str], *, timeout: float = 30.0
 ) -> dict[str, Any]:
@@ -64,8 +74,11 @@ async def _async_post_form(
 
     import aiohttp
 
-    tout = aiohttp.ClientTimeout(total=timeout)
-    async with aiohttp.ClientSession(timeout=tout) as session:
+    kwargs: dict[str, Any] = {}
+    tout = _aiohttp_timeout(timeout)
+    if tout is not None:
+        kwargs["timeout"] = tout
+    async with aiohttp.ClientSession(**kwargs) as session:
         async with session.post(url, data=data) as resp:
             resp.raise_for_status()
             return await resp.json(content_type=None)
@@ -83,8 +96,11 @@ async def _async_post_json(
 
     import aiohttp
 
-    tout = aiohttp.ClientTimeout(total=timeout)
-    async with aiohttp.ClientSession(timeout=tout) as session:
+    kwargs: dict[str, Any] = {}
+    tout = _aiohttp_timeout(timeout)
+    if tout is not None:
+        kwargs["timeout"] = tout
+    async with aiohttp.ClientSession(**kwargs) as session:
         async with session.post(url, json=json_body) as resp:
             resp.raise_for_status()
             return await resp.json(content_type=None)
