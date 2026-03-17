@@ -28,7 +28,7 @@ import type {
   EndpointSummary as EndpointSummaryType,
   PlatformInfo, WorkspaceSummary, ProviderInfo, ListedModel,
   EndpointDraft, PythonCandidate, BundledPythonInstallResult, InstallSource,
-  EnvMap, StepId, Step,
+  EnvMap, StepId, Step, ViewId,
 } from "./types";
 import {
   IconRefresh, IconCheck, IconCheckCircle, IconX, IconXCircle,
@@ -114,8 +114,6 @@ interface EnvFieldCtx {
 }
 
 const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
-
-type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "docs" | "security";
 
 const _HASH_TO_VIEW: Record<string, ViewId> = {
   "chat": "chat", "im": "im", "skills": "skills", "mcp": "mcp",

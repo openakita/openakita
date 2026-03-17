@@ -1,16 +1,15 @@
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
-import type { StepId, Step } from "../types";
+import type { StepId, Step, ViewId } from "../types";
 import {
   IconChat, IconIM, IconSkills, IconStatus, IconConfig,
   IconChevronDown, IconChevronRight, IconGlobe,
   IconZap, IconPlug, IconCalendar,
   IconBug, IconBrain, IconGitHub, IconGitee, IconUsers, IconBot,
   IconGear, IconBook, IconStorefront, IconPuzzle, IconFingerprint, IconLayoutGrid,
+  IconShield,
 } from "../icons";
 import logoUrl from "../assets/logo.png";
-
-type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "docs";
 
 export type SidebarProps = {
   collapsed: boolean;
@@ -112,6 +111,9 @@ export function Sidebar({
         </div>
         <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats", "Token 统计")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
           <IconZap size={16} /> {!collapsed && <span>{t("sidebar.tokenStats", "Token 统计")}</span>}
+        </div>
+        <div className={`navItem ${view === "security" ? "navItemActive" : ""}`} onClick={() => onViewChange("security")} role="button" tabIndex={0} title={t("sidebar.security")}>
+          <IconShield size={16} /> {!collapsed && <span>{t("sidebar.security")}</span>}
         </div>
         {multiAgentEnabled && (
           <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
