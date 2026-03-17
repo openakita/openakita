@@ -1,3 +1,60 @@
+<<<<<<< HEAD
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0ea5e9" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/png" href="/web/logo.png" />
+    <link rel="manifest" href="/web/manifest.json" />
+    <link rel="apple-touch-icon" href="/web/logo.png" />
+    <title>OpenAkita</title>
+    <link rel="preconnect" href="https://fonts.googleapis.cn" />
+    <link rel="preconnect" href="https://fonts.gstatic.cn" crossorigin />
+    <link
+      href="https://fonts.googleapis.cn/css2?family=Noto+Sans+SC:wght@300;400;500;600;700;800;900&family=Noto+Serif+SC:wght@400;600;700;900&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link href="https://fonts.googleapis.cn/css2?family=Noto+Sans+SC:wght@300;400;500;600;700;800;900&family=Noto+Serif+SC:wght@400;600;700;900&display=swap" rel="stylesheet" />
+    </noscript>
+    <script>
+      (function() {
+        try {
+          var pref = localStorage.getItem('openakita-theme-pref') || 'system';
+          var theme = pref;
+          if (pref === 'system') {
+            theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch(e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="/web/assets/index-BU9tr8nP.js"></script>
+    <link rel="stylesheet" crossorigin href="/web/assets/index-Cxk27-U9.css">
+  </head>
+  <body>
+    <div id="boot" aria-hidden="true">
+      <div class="bootCard">
+        <div class="bootTitle">OpenAkita Setup Center</div>
+        <div class="bootSub">正在启动界面（如果卡住，可以点右下角“关闭/刷新”）。</div>
+        <div class="bootBar"><i></i></div>
+        <div class="bootActions">
+          <button id="bootClose" type="button">关闭</button>
+          <button id="bootReload" type="button">刷新</button>
+        </div>
+      </div>
+    </div>
+    <div id="root"></div>
+  </body>
+</html>
+
+=======
 <!doctype html>
 <html lang="zh-CN">
   <head>
@@ -53,3 +110,4 @@
   </body>
 </html>
 
+>>>>>>> origin/main

@@ -28,6 +28,9 @@ from .core.agent import Agent
 from .logging import setup_logging
 from .python_compat import patch_simplejson_jsondecodeerror
 
+# MCP stdio 子进程模式：stdout 专属 JSONRPC 协议，禁止一切控制台日志输出
+_is_mcp_subprocess = "run-mcp-module" in sys.argv
+
 # 配置日志系统（使用新的日志模块）
 setup_logging(
     log_dir=settings.log_dir_path,
@@ -36,7 +39,7 @@ setup_logging(
     log_file_prefix=settings.log_file_prefix,
     log_max_size_mb=settings.log_max_size_mb,
     log_backup_count=settings.log_backup_count,
-    log_to_console=settings.log_to_console,
+    log_to_console=settings.log_to_console and not _is_mcp_subprocess,
     log_to_file=settings.log_to_file,
 )
 logger = logging.getLogger(__name__)
@@ -50,7 +53,7 @@ def _init_tracing() -> None:
     tracer = AgentTracer(enabled=settings.tracing_enabled)
     if settings.tracing_enabled:
         tracer.add_exporter(FileExporter(settings.tracing_export_dir))
-        if settings.tracing_console_export:
+        if settings.tracing_console_export and not _is_mcp_subprocess:
             tracer.add_exporter(ConsoleExporter())
         logger.info("[Tracing] 追踪系统已启用")
     set_tracer(tracer)

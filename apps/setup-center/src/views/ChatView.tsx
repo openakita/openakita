@@ -2033,12 +2033,16 @@ export function ChatView({
   }, [flushCurrentConversationToStorage]);
 
   // ── APP 后台恢复：中断已断开的 SSE 流 ──
+  // Tauri WebView (macOS WKWebView / Windows WebView2) kills HTTP streams
+  // when the window is in the background, so we need to proactively abort and
+  // let the error handler clean up.  Regular browsers keep fetch streams alive
+  // across tab switches / minimize, so aborting would unnecessarily terminate
+  // a perfectly healthy response — skip for IS_WEB.
   useEffect(() => {
+    if (IS_WEB) return;
     const handler = () => {
       for (const [convId, ctx] of streamContexts.current) {
         if (!ctx.isStreaming) continue;
-        // Check if the reader is likely dead (WebView disconnects streams in background)
-        // Abort the stream and let the error handler show the disconnection message
         ctx.abort.abort();
         logger.warn("Chat", "SSE stream aborted after app resume", { convId });
       }
@@ -2283,12 +2287,17 @@ export function ChatView({
         const backendSessions: { id: string; title: string; lastMessage: string; timestamp: number; messageCount: number; agentProfileId?: string }[] = data.sessions || [];
         if (cancelled) return;
 
-        // Detect factory reset via data_epoch: if the backend's epoch changed,
-        // its data/ directory was recreated (factory reset or fresh install).
-        // Clear all stale local conversations so the web client stays in sync.
+        // ── Factory reset / data wipe detection ──
+        // Two complementary checks:
+        // 1) data_epoch mismatch: backend's data/ was recreated (epoch changed)
+        // 2) ready + 0 sessions: backend is fully initialized but has nothing —
+        //    local conversations are orphaned (handles bootstrap: first time the
+        //    epoch code runs, cached is null so #1 cannot fire).
+        const backendReady = data.ready !== false;
         const epoch = data.data_epoch as string | undefined;
+        const EPOCH_KEY = "openakita_data_epoch";
+
         if (epoch) {
-          const EPOCH_KEY = "openakita_data_epoch";
           const cached = localStorage.getItem(EPOCH_KEY);
           localStorage.setItem(EPOCH_KEY, epoch);
           if (cached && cached !== epoch) {
@@ -2304,6 +2313,18 @@ export function ChatView({
           }
         }
 
+        if (backendReady && backendSessions.length === 0) {
+          setConversations((prev) => {
+            if (prev.length === 0) return prev;
+            for (const c of prev) {
+              try { localStorage.removeItem(STORAGE_KEY_MSGS_PREFIX + c.id); } catch {}
+            }
+            return [];
+          });
+          setActiveConvId(null);
+          setMessages([]);
+          return;
+        }
         if (backendSessions.length === 0) return;
 
         const restoredConvs: ChatConversation[] = backendSessions.map((s) => ({
@@ -3640,27 +3661,83 @@ export function ChatView({
         }
       }
     } catch (e: unknown) {
-      const isAbort =
-        abort.signal.aborted ||
-        (e instanceof DOMException && e.name === "AbortError") ||
-        (e instanceof Error && e.name === "AbortError");
-
-      if (isAbort) {
+      // Only treat as user-initiated abort when OUR AbortController was triggered.
+      // DOMException "AbortError" can also originate from the browser itself
+      // (page lifecycle freeze, tab discard, memory pressure) and must NOT be
+      // conflated with explicit user cancellation.
+      if (abort.signal.aborted) {
         updateMessages((prev) => prev.map((m) =>
           m.id === assistantMsg.id ? { ...m, content: m.content || "（已中止）", streaming: false } : m
         ));
       } else {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        let guidance = t("chat.backendServiceHint");
-        try {
-          const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(2000) });
-          if (healthRes.ok) {
-            guidance = t("chat.backendOnlineUpstreamHint");
-          }
-        } catch { /* health probe failed -> keep backend guidance */ }
-        updateMessages((prev) => prev.map((m) =>
-          m.id === assistantMsg.id ? { ...m, content: `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
-        ));
+        const isBrowserAbort =
+          (e instanceof DOMException && e.name === "AbortError") ||
+          (e instanceof Error && e.name === "AbortError");
+
+        if (isBrowserAbort) {
+          // Browser killed the connection (tab frozen / discarded, etc.)
+          // Preserve whatever content we already received — don't overwrite it.
+          updateMessages((prev) => prev.map((m) =>
+            m.id === assistantMsg.id ? { ...m, streaming: false } : m
+          ));
+        } else {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          let guidance = t("chat.backendServiceHint");
+          try {
+            const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(2000) });
+            if (healthRes.ok) {
+              guidance = t("chat.backendOnlineUpstreamHint");
+            }
+          } catch { /* health probe failed -> keep backend guidance */ }
+          updateMessages((prev) => prev.map((m) =>
+            m.id === assistantMsg.id ? { ...m, content: m.content || `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
+          ));
+        }
+
+        // Fire-and-forget: try to recover the (possibly completed) response
+        // from backend session history.  The backend may have finished the
+        // LLM call even though the frontend stream was interrupted.
+        if (convId) {
+          const _recoverMsgId = assistantMsg.id;
+          const _recoverUserTs = userMsg.timestamp;
+          const _recoverKey = STORAGE_KEY_MSGS_PREFIX + thisConvId;
+          setTimeout(() => {
+            safeFetch(`${apiBase}/api/sessions/${encodeURIComponent(convId)}/history`)
+              .then((r) => r.ok ? r.json() : null)
+              .then((data) => {
+                if (!data) return;
+                const rows = Array.isArray(data?.messages) ? data.messages : [];
+                const candidates = rows.filter(
+                  (m: { role?: string; content?: string }) =>
+                    m?.role === "assistant" && typeof m?.content === "string",
+                );
+                const newerThanUser = candidates.filter(
+                  (m: { timestamp?: number }) =>
+                    typeof m?.timestamp === "number" && m.timestamp >= _recoverUserTs,
+                );
+                const lastAssistant = (newerThanUser.length > 0 ? newerThanUser : candidates).slice(-1)[0];
+                if (!lastAssistant?.content) return;
+                setMessages((prev) => {
+                  const updated = prev.map((m) => {
+                    if (m.id !== _recoverMsgId) return m;
+                    if (m.content && m.content.length >= (lastAssistant.content as string).length) return m;
+                    const patched: ChatMessage = { ...m, content: lastAssistant.content };
+                    if (
+                      (!m.thinkingChain || m.thinkingChain.length === 0) &&
+                      Array.isArray(lastAssistant.chain_summary) &&
+                      lastAssistant.chain_summary.length > 0
+                    ) {
+                      patched.thinkingChain = buildChainFromSummary(lastAssistant.chain_summary);
+                    }
+                    return patched;
+                  });
+                  try { saveMessagesToStorage(_recoverKey, updated); } catch { /* quota */ }
+                  return updated;
+                });
+              })
+              .catch(() => {});
+          }, 3000);
+        }
       }
     } finally {
       if (idleTimer) clearTimeout(idleTimer);

@@ -9,7 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { IconRefresh } from "../icons";
 
 type EnvFieldProps = {
   envDraft: EnvMap;
@@ -198,12 +200,9 @@ export function TelegramPairingCodeHint({ currentWorkspaceId }: { currentWorkspa
       ) : (
         <span className="opacity-50">{t("config.imPairingCodeNotGenerated")}</span>
       )}
-      <button
-        type="button"
-        className="text-[11px] px-2 py-0.5 rounded-md border border-input hover:bg-accent/50 transition-colors"
-        onClick={loadCode}
-        disabled={loading}
-      >↻ {t("common.refresh")}</button>
+      <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] gap-1" onClick={loadCode} disabled={loading}>
+        <IconRefresh size={12} /> {t("common.refresh")}
+      </Button>
     </div>
   );
 }

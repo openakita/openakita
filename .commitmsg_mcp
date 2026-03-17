@@ -1,0 +1,11 @@
+fix(mcp): 打包模式下内置 MCP 服务器 (desktop-control/web-search) 无法启动
+
+PyInstaller 冻结的 python.exe 是裸解释器，无法 import 冻结在主程序中的模块，
+导致 `python -m openakita.mcp_servers.*` 在打包环境中必然失败。
+
+修复方案：在打包模式下透明地将 stdio 启动命令适配为冻结主程序子命令
+`openakita-server run-mcp-module <module>`，保持进程隔离和统一 MCP 管线。
+
+- spec: 补充 openakita.mcp_servers.* hidden imports
+- main: 添加 run-mcp-module CLI 子命令（hidden，仅内部使用）
+- mcp: _adapt_bundled_module_command() 单点适配，非打包模式零影响

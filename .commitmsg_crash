@@ -1,0 +1,11 @@
+fix(desktop): D 盘安装闪退 — 添加崩溃日志 + 修复硬编码 C: 路径
+
+问题：用户反馈安装到 D 盘后打开 OpenAkita 闪退，安装到 C 盘正常。
+原先 Tauri 桌面端在 release 模式下无控制台，任何启动错误都导致静默闪退，无法诊断。
+
+改动：
+1. main.rs: 添加 write_crash_log() 将崩溃信息写入 crash.log 并弹出 MessageBox
+2. main.rs: 注册全局 panic hook 捕获所有 unhandled panic
+3. main.rs: 将 .build().expect() 替换为 match 错误处理
+4. main.rs: available_space_mb() 硬编码 C:\ 改为从路径推导根盘符
+5. chrome_finder.py / loader.py: Program Files 路径 fallback 改用 SYSTEMDRIVE

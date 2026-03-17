@@ -1,0 +1,6 @@
+refactor(setup-center): Agent 编辑面板迁移至 shadcn/ui，清理过期资源
+
+- AgentManagerView 编辑浮窗改用 Sheet 组件，表单控件统一为 shadcn/ui
+- 修复颜色输入框布局过窄、Sheet 打开时自动聚焦关闭按钮等问题
+- 更新微信群二维码，删除旧版二维码和误提交的 botpy 日志
+- .gitignore 补充 feedback-downloads/ 排除规则

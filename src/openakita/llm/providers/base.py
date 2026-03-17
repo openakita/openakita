@@ -70,21 +70,20 @@ class RPMRateLimiter:
             await asyncio.sleep(max(wait_time, 0.1))
 
 # 冷静期时长（秒）- 按错误类型区分
-# 设计原则：冷却只防止秒级连续轰炸，不阻塞其他会话；
-# 重试上限由上层（TaskMonitor / ReasoningEngine）控制，
-# 超过 3 次即终止并告知用户，用户重新发送即可重试。
 COOLDOWN_AUTH = 60         # 认证错误: 1 分钟（需要人工干预，但不宜锁太久）
-COOLDOWN_QUOTA = 20        # 配额耗尽: 20 秒
+COOLDOWN_QUOTA = 300       # 配额耗尽: 5 分钟（配额恢复通常需要数小时）
 COOLDOWN_STRUCTURAL = 10   # 结构性错误: 10 秒（上层会快速识别处理）
 COOLDOWN_TRANSIENT = 5     # 瞬时错误: 5 秒（超时/连接失败，很可能快速恢复）
 COOLDOWN_DEFAULT = 30      # 默认: 30 秒
 COOLDOWN_GLOBAL_FAILURE = 10  # 全局故障（所有端点同时失败）: 10 秒
 
-# 渐进式冷静期退避 —— 连续失败时按次数递增，上限 1 分钟
+# 渐进式冷静期退避 —— 连续失败时按次数递增
 COOLDOWN_ESCALATION_STEPS = [5, 10, 20, 60]  # 5s -> 10s -> 20s -> 60s(上限)
+# quota/auth 专用退避 —— 首次 5 分钟，连续失败升级到 30 分钟
+COOLDOWN_QUOTA_ESCALATION = [300, 600, 1200, 1800]  # 5m -> 10m -> 20m -> 30m
 
 # 向后兼容（旧代码引用）
-COOLDOWN_EXTENDED = COOLDOWN_ESCALATION_STEPS[-1]  # 300s，旧的 3600 已废弃
+COOLDOWN_EXTENDED = COOLDOWN_ESCALATION_STEPS[-1]
 CONSECUTIVE_FAILURE_THRESHOLD = 3  # 保留常量以向后兼容，但不再触发 1h 冷静期
 COOLDOWN_SECONDS = COOLDOWN_DEFAULT
 
@@ -201,10 +200,21 @@ class LLMProvider(ABC):
         if not skip_escalation and not was_already_unhealthy:
             self._consecutive_cooldowns += 1
 
-        # 渐进式退避：按连续失败次数从 COOLDOWN_ESCALATION_STEPS 取冷静期
-        # 本地端点 transient 错误固定 30s，不参与渐进升级
+        # 渐进式退避：按连续失败次数从对应退避序列取冷静期
         if self._error_category == "quota":
-            cooldown = COOLDOWN_QUOTA
+            step_idx = min(
+                max(self._consecutive_cooldowns - 1, 0),
+                len(COOLDOWN_QUOTA_ESCALATION) - 1,
+            )
+            cooldown = max(COOLDOWN_QUOTA, COOLDOWN_QUOTA_ESCALATION[step_idx])
+            if self._consecutive_cooldowns >= 2:
+                self._is_extended_cooldown = True
+                logger.warning(
+                    f"[LLM] endpoint={self.name} quota progressive cooldown "
+                    f"step {step_idx + 1}/{len(COOLDOWN_QUOTA_ESCALATION)} "
+                    f"({cooldown}s) after {self._consecutive_cooldowns} "
+                    f"consecutive failures"
+                )
         elif self._error_category == "auth":
             cooldown = COOLDOWN_AUTH
         elif self._error_category == "structural":

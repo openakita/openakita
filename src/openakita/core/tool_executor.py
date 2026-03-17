@@ -414,6 +414,13 @@ class ToolExecutor:
 
                 result_str = str(result) if result is not None else "操作已完成"
 
+                # execute_tool 内部捕获所有异常并返回字符串，不会抛到这里。
+                # 对于 PARSE_ERROR_KEY（参数截断）路径，需要在此修正 success
+                # 标志，使 tool_result 的 is_error 正确传播到 reasoning_engine。
+                from ..llm.converters.tools import PARSE_ERROR_KEY
+                if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
+                    success = False
+
                 # 终端输出工具返回结果（便于调试与观察）
                 _preview = result_str if len(result_str) <= 800 else result_str[:800] + "\n... (已截断)"
                 try:

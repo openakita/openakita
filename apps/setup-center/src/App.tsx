@@ -1,8 +1,8 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, getAppVersion, onWsEvent, reconnectWsNow, logger, openExternalUrl } from "./platform";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, logger, openExternalUrl } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
-import { checkAuth, tryRestoreLocalAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
+import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
 import { ServerManagerView } from "./views/ServerManagerView";
 import { ChatView } from "./views/ChatView";
@@ -47,6 +47,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import logoUrl from "./assets/logo.png";
@@ -92,6 +93,7 @@ import { Topbar } from "./components/Topbar";
 import { useNotifications } from "./hooks/useNotifications";
 import { notifySuccess, notifyError, notifyLoading, dismissLoading } from "./utils/notify";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { useVersionCheck, compareSemver } from "./hooks/useVersionCheck";
 
 const THEME_I18N_KEYS: Record<Theme, string> = { system: "topbar.themeSystem", dark: "topbar.themeDark", light: "topbar.themeLight" };
@@ -116,11 +118,12 @@ export function App() {
   const { t, i18n } = useTranslation();
 
   // ── Web / Capacitor auth gate ──
-  const needsRemoteAuth = IS_WEB || IS_CAPACITOR;
-  // Restore local-auth mode from sessionStorage so page refresh is instant
-  const cachedLocalAuth = needsRemoteAuth && !IS_CAPACITOR && tryRestoreLocalAuth();
-  const [webAuthed, setWebAuthed] = useState(!needsRemoteAuth || cachedLocalAuth);
-  const [authChecking, setAuthChecking] = useState(needsRemoteAuth && !cachedLocalAuth);
+  // IS_LOCAL_WEB: hostname is 127.0.0.1/localhost/::1 — backend authenticates
+  // by client IP, no tokens or round-trips needed.  This eliminates the entire
+  // class of "checkAuth timeout → login page flash" bugs.
+  const needsRemoteAuth = (IS_WEB || IS_CAPACITOR) && !IS_LOCAL_WEB;
+  const [webAuthed, setWebAuthed] = useState(!needsRemoteAuth);
+  const [authChecking, setAuthChecking] = useState(needsRemoteAuth);
   const [showPwBanner, setShowPwBanner] = useState(false);
   const [showServerManager, setShowServerManager] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -131,14 +134,24 @@ export function App() {
   const [tauriRemoteLoginUrl, setTauriRemoteLoginUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!needsRemoteAuth) return;
+    if (!needsRemoteAuth) {
+      // Local web: non-blocking fetch for password-banner check only
+      if (IS_LOCAL_WEB) {
+        fetch("/api/auth/check", { signal: AbortSignal.timeout(5000) })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.password_user_set === false && !localStorage.getItem("openakita_pw_banner_dismissed")) {
+              setShowPwBanner(true);
+            }
+          })
+          .catch(() => {});
+      }
+      return;
+    }
     if (IS_CAPACITOR && !getActiveServer()) {
       setAuthChecking(false);
       return;
     }
-    // If we restored local auth from cache, install interceptor immediately
-    // and still re-validate in background (if check fails, redirect to login)
-    if (cachedLocalAuth) installFetchInterceptor();
     checkAuth(IS_CAPACITOR ? (getActiveServer()?.url || "") : "").then((ok) => {
       if (ok) {
         installFetchInterceptor();
@@ -1974,7 +1987,10 @@ export function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ content: JSON.parse(content) }),
           });
-          triggerConfigReload().catch(() => {});
+          const reloaded = await triggerConfigReload();
+          if (!reloaded) {
+            toast.warning("配置已保存，但热重载未生效。建议重启后端服务以应用更改。", { duration: 6000 });
+          }
           return;
         }
         if (relativePath === "data/skills.json") {
@@ -2008,12 +2024,22 @@ export function App() {
   /**
    * 通知运行中的后端热重载配置。
    * 仅在后端运行时调用有意义；后端未运行时静默跳过。
+   * 返回 true 表示重载成功，false 表示失败或后端未运行。
    */
-  async function triggerConfigReload(): Promise<void> {
-    if (!shouldUseHttpApi()) return; // 后端未运行，无需热加载
+  async function triggerConfigReload(): Promise<boolean> {
+    if (!shouldUseHttpApi()) return false;
     try {
-      await safeFetch(`${httpApiBase()}/api/config/reload`, { method: "POST", signal: AbortSignal.timeout(3000) });
-    } catch { /* reload not supported or transient error — that's ok */ }
+      const resp = await safeFetch(`${httpApiBase()}/api/config/reload`, {
+        method: "POST",
+        signal: AbortSignal.timeout(3000),
+      });
+      const data = await resp.json();
+      if (data.reloaded) return true;
+      logger.warn("App", `Config reload not applied: ${data.reason || "unknown"}`);
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -4554,7 +4580,7 @@ export function App() {
             <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
               {/* Provider */}
               <div className="space-y-1.5">
-                <Label>{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(providerSlug) && <span className="text-[11px] font-normal text-muted-foreground/70">API 地址：{baseUrl || selectedProvider?.default_base_url || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setBaseUrlExpanded(v => !v)}>{baseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
+                <Label className="flex items-center gap-1">{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(providerSlug) && <span className="inline-flex items-center gap-0.5 text-[11px] font-normal text-muted-foreground/70 min-w-0"><span className="shrink-0">API 地址：</span><span className="inline-block max-w-[200px] overflow-x-auto whitespace-nowrap align-middle" style={{ scrollbarWidth: "thin" }}>{baseUrl || selectedProvider?.default_base_url || "—"}</span> <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] shrink-0" onClick={() => setBaseUrlExpanded(v => !v)}>{baseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
                 <ProviderSearchSelect
                   value={providerSlug}
                   onChange={(v) => { setProviderSlug(v); setBaseUrlExpanded(false); }}
@@ -4755,7 +4781,7 @@ export function App() {
             {editDraft && <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
               {/* Provider (read-only) */}
               <div className="space-y-1.5">
-                <Label>{t("llm.provider")} <span className="text-[11px] font-normal text-muted-foreground/70">服务商在创建时确定，不可更改</span> {!["custom", "ollama", "lmstudio"].includes(editDraft.providerSlug) && <span className="text-[11px] font-normal text-muted-foreground/70">API 地址：{editDraft.baseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setEditBaseUrlExpanded(v => !v)}>{editBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
+                <Label className="flex items-center gap-1 flex-wrap">{t("llm.provider")} <span className="text-[11px] font-normal text-muted-foreground/70">服务商在创建时确定，不可更改</span> {!["custom", "ollama", "lmstudio"].includes(editDraft.providerSlug) && <span className="inline-flex items-center gap-0.5 text-[11px] font-normal text-muted-foreground/70 min-w-0"><span className="shrink-0">API 地址：</span><span className="inline-block max-w-[200px] overflow-x-auto whitespace-nowrap align-middle" style={{ scrollbarWidth: "thin" }}>{editDraft.baseUrl || "—"}</span> <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] shrink-0" onClick={() => setEditBaseUrlExpanded(v => !v)}>{editBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
                 <Input value={(() => { const p = providers.find((x) => x.slug === editDraft.providerSlug); return p ? p.name : (editDraft.providerSlug || "custom"); })()} disabled className="opacity-70" />
               </div>
 
@@ -5345,6 +5371,8 @@ export function App() {
         )}
         <IMConfigView
           {..._configViewProps}
+          imDisabled={imDisabled}
+          onToggleIM={() => toggleViewDisabled("im")}
           apiBaseUrl={httpApiBase()}
           onNavigateToBotConfig={opts?.onboarding ? undefined : (presetType) => { setView("im"); }}
           {...(opts?.onboarding ? { pendingBots: obPendingBots, onPendingBotsChange: setObPendingBots } : {})}
@@ -6512,25 +6540,21 @@ export function App() {
                     <>
                       <div style={{ marginBottom: 8 }}>
                         <div className="label">{t("config.imWeworkMode")}</div>
-                        <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                          {(["http", "websocket"] as const).map((m) => (
-                            <button key={m} className={wMode === m ? "capChipActive" : "capChip"}
-                              onClick={() => {
-                                const oldKey = isWs ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED";
-                                const newKey = m === "websocket" ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED";
-                                setEnvDraft((d) => {
-                                  const wasEnabled = (d[oldKey] || "false").toLowerCase() === "true";
-                                  const next: Record<string, string> = { ...d, WEWORK_MODE: m };
-                                  if (wasEnabled && oldKey !== newKey) {
-                                    next[oldKey] = "false";
-                                    next[newKey] = "true";
-                                  }
-                                  return next;
-                                });
-                              }}
-                            >{m === "http" ? t("config.imWeworkModeHttp") : t("config.imWeworkModeWs")}</button>
-                          ))}
-                        </div>
+                        <ToggleGroup type="single" variant="outline" size="sm" value={wMode} onValueChange={(v) => {
+                          if (!v) return;
+                          const m = v as "http" | "websocket";
+                          const oldKey = isWs ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED";
+                          const newKey = m === "websocket" ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED";
+                          setEnvDraft((d) => {
+                            const wasEnabled = (d[oldKey] || "false").toLowerCase() === "true";
+                            const next: Record<string, string> = { ...d, WEWORK_MODE: m };
+                            if (wasEnabled && oldKey !== newKey) { next[oldKey] = "false"; next[newKey] = "true"; }
+                            return next;
+                          });
+                        }} className="mt-1 [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
+                          <ToggleGroupItem value="http">{t("config.imWeworkModeHttp")}</ToggleGroupItem>
+                          <ToggleGroupItem value="websocket">{t("config.imWeworkModeWs")}</ToggleGroupItem>
+                        </ToggleGroup>
                         <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
                           {isWs ? t("config.imWeworkModeWsHint") : t("config.imWeworkModeHttpHint")}
                         </div>
@@ -6577,12 +6601,10 @@ export function App() {
                     {FB({ k: "QQBOT_SANDBOX", label: t("config.imQQBotSandbox") })}
                     <div style={{ marginTop: 8 }}>
                       <div className="label">{t("config.imQQBotMode")}</div>
-                      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                        {["websocket", "webhook"].map((m) => (
-                          <button key={m} className={(envDraft["QQBOT_MODE"] || "websocket") === m ? "capChipActive" : "capChip"}
-                            onClick={() => setEnvDraft((d) => ({ ...d, QQBOT_MODE: m }))}>{m === "websocket" ? "WebSocket" : "Webhook"}</button>
-                        ))}
-                      </div>
+                      <ToggleGroup type="single" variant="outline" size="sm" value={envDraft["QQBOT_MODE"] || "websocket"} onValueChange={(v) => { if (v) setEnvDraft((d) => ({ ...d, QQBOT_MODE: v })); }} className="mt-1 [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
+                        <ToggleGroupItem value="websocket">WebSocket</ToggleGroupItem>
+                        <ToggleGroupItem value="webhook">Webhook</ToggleGroupItem>
+                      </ToggleGroup>
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
                         {(envDraft["QQBOT_MODE"] || "websocket") === "websocket"
                           ? t("config.imQQBotModeWsHint")
@@ -6609,13 +6631,10 @@ export function App() {
                     <>
                       <div style={{ marginBottom: 8 }}>
                         <div className="label">{t("config.imOneBotMode")}</div>
-                        <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                          {(["reverse", "forward"] as const).map((m) => (
-                            <button key={m} className={obMode === m ? "capChipActive" : "capChip"}
-                              onClick={() => setEnvDraft((d) => ({ ...d, ONEBOT_MODE: m }))}
-                            >{m === "reverse" ? t("config.imOneBotModeReverse") : t("config.imOneBotModeForward")}</button>
-                          ))}
-                        </div>
+                        <ToggleGroup type="single" variant="outline" size="sm" value={obMode} onValueChange={(v) => { if (v) setEnvDraft((d) => ({ ...d, ONEBOT_MODE: v })); }} className="mt-1 [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
+                          <ToggleGroupItem value="reverse">{t("config.imOneBotModeReverse")}</ToggleGroupItem>
+                          <ToggleGroupItem value="forward">{t("config.imOneBotModeForward")}</ToggleGroupItem>
+                        </ToggleGroup>
                         <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
                           {isReverse ? t("config.imOneBotModeReverseHint") : t("config.imOneBotModeForwardHint")}
                         </div>

@@ -1,0 +1,4 @@
+fix(installer): 隐藏安装/卸载时 taskkill 进程不存在的错误提示
+
+taskkill 在目标进程不存在时会输出红色错误信息，容易让用户误以为安装出错。
+用 cmd /c ... >nul 2>&1 包裹所有 taskkill 调用，抑制 stdout/stderr 输出。

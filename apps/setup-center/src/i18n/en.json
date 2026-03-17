@@ -911,7 +911,12 @@
     "custom": "Custom...",
     "prevPage": "Previous",
     "nextPage": "Next",
-    "pageInfo": "Page {{page}} / {{total}}"
+    "pageInfo": "Page {{page}} / {{total}}",
+    "refresh": "Refresh",
+    "copy": "Copy",
+    "copied": "Copied",
+    "close": "Close",
+    "confirmTitle": "Confirm"
   },
   "agentStore": {
     "subtitle": "Discover and install Agents from the OpenAkita community (requires network; local import/export unaffected)",
@@ -1223,9 +1228,9 @@
     "stepsPlaceholder": "1. ...\n2. ...\n3. ...",
     "images": "Screenshots",
     "imageDropHint": "Click or drag images here (max 10)",
-    "uploadLogs": "Upload recent logs",
-    "uploadDebug": "Upload recent 50 LLM debug files",
-    "debugWarning": "Debug files may contain recent conversation content",
+    "uploadLogs": "Upload recent logs (frontend, backend, delegation)",
+    "uploadDebug": "Upload debug data (LLM records, reasoning traces, agent state)",
+    "debugWarning": "Debug data may contain recent conversation content and system config. Sensitive info is auto-redacted, but uncheck if concerned",
     "contactHint": "Leave your contact info to receive bug fix updates",
     "systemInfo": "System Information (auto-collected)",
     "submit": "Submit Report",

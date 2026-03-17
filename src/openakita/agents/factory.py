@@ -362,10 +362,14 @@ class AgentInstancePool:
             if not lock.locked():
                 self._create_locks.pop(k, None)
 
-        to_remove = [
-            key for key, entry in self._pool.items()
-            if entry.idle_seconds > self._idle_timeout
-        ]
+        to_remove = []
+        for key, entry in self._pool.items():
+            if entry.idle_seconds <= self._idle_timeout:
+                continue
+            astate = getattr(entry.agent, "agent_state", None)
+            if astate and getattr(astate, "has_active_task", False):
+                continue
+            to_remove.append(key)
         for key in to_remove:
             entry = self._pool.pop(key)
             reaped_profile_ids.append(entry.profile_id)

@@ -911,7 +911,12 @@
     "custom": "自定义...",
     "prevPage": "上一页",
     "nextPage": "下一页",
-    "pageInfo": "第 {{page}} 页 / 共 {{total}} 页"
+    "pageInfo": "第 {{page}} 页 / 共 {{total}} 页",
+    "refresh": "刷新",
+    "copy": "复制",
+    "copied": "已复制",
+    "close": "关闭",
+    "confirmTitle": "确认操作"
   },
   "agentStore": {
     "subtitle": "从 OpenAkita 社区发现并安装 Agent（需要网络连接，本地导入导出不受影响）",
@@ -1223,9 +1228,9 @@
     "stepsPlaceholder": "1. ...\n2. ...\n3. ...",
     "images": "截图",
     "imageDropHint": "点击或拖拽图片到此处（最多 10 张）",
-    "uploadLogs": "上传近期日志",
-    "uploadDebug": "上传最近 50 条 LLM 调试文件",
-    "debugWarning": "调试文件可能包含近期对话内容，如涉及敏感信息请取消勾选",
+    "uploadLogs": "上传近期日志（含前端、后端、委派日志）",
+    "uploadDebug": "上传调试数据（LLM 记录、推理链、Agent 状态等）",
+    "debugWarning": "调试数据可能包含近期对话内容和系统配置，敏感信息已自动脱敏。如仍有顾虑请取消勾选",
     "contactHint": "如需接收修复进度通知，请留下联系方式",
     "systemInfo": "系统信息（自动采集）",
     "submit": "提交报告",

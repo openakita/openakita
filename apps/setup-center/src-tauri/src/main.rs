@@ -5725,9 +5725,105 @@ fn export_diagnostic_bundle(
         Ok(())
     }
 
-    add_dir_to_zip(&mut zip_writer, &logs_dir, "logs", options)?;
-    add_dir_to_zip(&mut zip_writer, &llm_debug_dir, "llm_debug", options)?;
+    fn add_dir_to_zip_capped(
+        zip_writer: &mut zip::ZipWriter<fs::File>,
+        dir: &Path,
+        prefix: &str,
+        options: zip::write::SimpleFileOptions,
+        max_bytes: u64,
+    ) -> Result<(), String> {
+        if !dir.exists() {
+            return Ok(());
+        }
+        let mut files = collect_files(dir);
+        files.sort_by(|a, b| {
+            let ma = fs::metadata(a).and_then(|m| m.modified()).ok();
+            let mb = fs::metadata(b).and_then(|m| m.modified()).ok();
+            mb.cmp(&ma)
+        });
+        let mut total: u64 = 0;
+        for file_path in files {
+            let sz = fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+            if total + sz > max_bytes {
+                continue;
+            }
+            if let Ok(rel) = file_path.strip_prefix(dir) {
+                let name = format!("{}/{}", prefix, rel.to_string_lossy().replace('\\', "/"));
+                zip_writer
+                    .start_file(&name, options)
+                    .map_err(|e| format!("zip start error: {e}"))?;
+                let data = fs::read(&file_path).unwrap_or_default();
+                zip_writer
+                    .write_all(&data)
+                    .map_err(|e| format!("zip write error: {e}"))?;
+                total += sz;
+            }
+        }
+        Ok(())
+    }
 
+    fn add_file_to_zip(
+        zip_writer: &mut zip::ZipWriter<fs::File>,
+        path: &Path,
+        zip_name: &str,
+        options: zip::write::SimpleFileOptions,
+    ) -> Result<(), String> {
+        if !path.exists() || !path.is_file() {
+            return Ok(());
+        }
+        zip_writer
+            .start_file(zip_name, options)
+            .map_err(|e| format!("zip start error: {e}"))?;
+        let data = fs::read(path).unwrap_or_default();
+        zip_writer
+            .write_all(&data)
+            .map_err(|e| format!("zip write error: {e}"))?;
+        Ok(())
+    }
+
+    // -- Logs (workspace) --
+    add_dir_to_zip(&mut zip_writer, &logs_dir, "logs", options)?;
+
+    // -- LLM debug data --
+    add_dir_to_zip_capped(&mut zip_writer, &llm_debug_dir, "llm_debug", options, 10 * 1024 * 1024)?;
+
+    // -- Debug data directories (capped per-dir) --
+    let data_dir = ws_dir.join("data");
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("delegation_logs"), "delegation_logs", options, 2 * 1024 * 1024)?;
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("react_traces"), "react_traces", options, 5 * 1024 * 1024)?;
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("traces"), "traces", options, 2 * 1024 * 1024)?;
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("orgs"), "orgs", options, 2 * 1024 * 1024)?;
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("tool_overflow"), "tool_overflow", options, 2 * 1024 * 1024)?;
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("failure_analysis"), "failure_analysis", options, 1 * 1024 * 1024)?;
+    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("retrospects"), "retrospects", options, 1 * 1024 * 1024)?;
+
+    // -- Small state files --
+    add_file_to_zip(&mut zip_writer, &data_dir.join("runtime_state.json"), "state/runtime_state.json", options)?;
+    add_file_to_zip(&mut zip_writer, &data_dir.join("sub_agent_states.json"), "state/sub_agent_states.json", options)?;
+    add_file_to_zip(&mut zip_writer, &data_dir.join("backend.heartbeat"), "state/backend.heartbeat", options)?;
+    add_file_to_zip(&mut zip_writer, &data_dir.join("sessions").join("sessions.json"), "state/sessions.json", options)?;
+    add_file_to_zip(&mut zip_writer, &data_dir.join("sessions").join("channel_registry.json"), "state/channel_registry.json", options)?;
+    add_file_to_zip(&mut zip_writer, &data_dir.join("scheduler").join("tasks.json"), "state/scheduler_tasks.json", options)?;
+    add_file_to_zip(&mut zip_writer, &data_dir.join("scheduler").join("executions.json"), "state/scheduler_executions.json", options)?;
+
+    // -- Global logs (frontend.log, crash.log, onboarding) --
+    let global_logs = setup_logs_dir();
+    add_file_to_zip(&mut zip_writer, &global_logs.join("frontend.log"), "global_logs/frontend.log", options)?;
+    add_file_to_zip(&mut zip_writer, &global_logs.join("crash.log"), "global_logs/crash.log", options)?;
+    for entry in fs::read_dir(&global_logs).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("onboarding-") && name_str.ends_with(".log") {
+            add_file_to_zip(
+                &mut zip_writer,
+                &entry.path(),
+                &format!("global_logs/{}", name_str),
+                options,
+            )?;
+        }
+    }
+
+    // -- System info --
     if let Some(info) = system_info_json {
         zip_writer
             .start_file("system-info.json", options)

@@ -2,23 +2,26 @@
 // Handles JWT access/refresh token lifecycle.
 // Tauri local: no-ops (backend exempts 127.0.0.1). Tauri remote: same as Capacitor.
 
-import { IS_TAURI, IS_CAPACITOR } from "./detect";
+import { IS_TAURI, IS_CAPACITOR, IS_LOCAL_WEB } from "./detect";
 
 const ACCESS_TOKEN_KEY = "openakita_access_token";
 
 let _tauriRemoteMode = false;
-let _localAuthMode = false;
+let _localAuthMode = IS_LOCAL_WEB;
 let _passwordUserSet = true;
 
 /** Enable/disable auth for Tauri desktop connecting to a remote backend. */
 export function setTauriRemoteMode(enabled: boolean): void {
   _tauriRemoteMode = enabled;
-  // Always reset: connecting to a new server must re-evaluate local exemption via checkAuth()
-  _localAuthMode = false;
+  // Reset for Tauri remote; IS_LOCAL_WEB always keeps local mode on.
+  _localAuthMode = IS_LOCAL_WEB;
 }
 export function isTauriRemoteMode(): boolean { return _tauriRemoteMode; }
 
-function needsAuth(): boolean { return !IS_TAURI || _tauriRemoteMode; }
+function needsAuth(): boolean {
+  if (IS_LOCAL_WEB) return false;
+  return !IS_TAURI || _tauriRemoteMode;
+}
 
 /** Cross-origin mode: Capacitor or Tauri remote — no httpOnly cookie refresh. */
 function isCrossOriginMode(): boolean { return IS_CAPACITOR || _tauriRemoteMode; }

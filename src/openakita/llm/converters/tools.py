@@ -41,6 +41,10 @@ def _try_repair_json(s: str) -> dict | None:
         try:
             result = json.loads(s + suffix)
             if isinstance(result, dict):
+                logger.debug(
+                    f"[JSON_REPAIR] Repaired with suffix {suffix!r}, "
+                    f"recovered {len(result)} keys: {sorted(result.keys())}"
+                )
                 return result
         except json.JSONDecodeError:
             continue
@@ -161,23 +165,34 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                         f"{je} | arg_len={arg_len} | preview={arg_preview!r}"
                     )
                     # 尝试修复截断的 JSON（补齐缺少的引号和括号）
+                    # ★ 修复成功 ≠ 参数完整：截断后补齐括号可能丢失尾部键值对。
+                    # 统一走 PARSE_ERROR_KEY 路径，避免以残缺参数执行工具
+                    # （尤其是 write_file 的巨大 content 会导致上下文膨胀）。
                     input_dict = _try_repair_json(arguments)
+                    _dump_raw_arguments(tool_name, arguments)
                     if input_dict is not None:
-                        logger.info(
+                        recovered_keys = sorted(input_dict.keys())
+                        err_msg = (
+                            f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断后自动修复，"
+                            f"但内容可能不完整（恢复的键: {recovered_keys}）。\n"
+                            f"原始参数长度: {arg_len} 字符。\n"
+                            "请缩短参数后重试：\n"
+                            "- write_file / edit_file：将大文件拆分为多次小写入\n"
+                            "- 其他工具：精简参数，避免嵌入超长文本"
+                        )
+                        input_dict = {PARSE_ERROR_KEY: err_msg}
+                        logger.warning(
                             f"[TOOL_CALL] JSON repair succeeded for tool '{tool_name}' "
-                            f"(recovered {len(input_dict)} keys)"
+                            f"(recovered keys: {recovered_keys}), treating as truncation "
+                            f"error. Raw args ({arg_len} chars) dumped to data/llm_debug/."
                         )
                     else:
-                        # ★ 不再静默回退为 {}。
-                        # 将错误信息放入 input，由 ToolExecutor 拦截并
-                        # 返回给 LLM，让模型知道参数被截断，可自行重试。
-                        _dump_raw_arguments(tool_name, arguments)
                         err_msg = (
-                            f"⚠️ 你的工具调用 '{tool_name}' 的 JSON 参数被 API 截断或格式错误 "
-                            f"(共 {arg_len} 字符)，无法解析。\n"
-                            "请缩短参数内容后重试，例如：\n"
-                            "- 对于 write_file：将大文件拆分为多次小写入\n"
-                            "- 对于其他工具：精简参数，避免在参数中嵌入过长文本"
+                            f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断且无法修复"
+                            f"（共 {arg_len} 字符）。\n"
+                            "请缩短参数后重试：\n"
+                            "- write_file / edit_file：将大文件拆分为多次小写入\n"
+                            "- 其他工具：精简参数，避免嵌入超长文本"
                         )
                         input_dict = {PARSE_ERROR_KEY: err_msg}
                         logger.error(
@@ -540,15 +555,38 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         try:
             arguments = json.loads(args_str)
         except json.JSONDecodeError:
+            arg_len = len(args_str)
             repaired = _try_repair_json(args_str)
+            _dump_raw_arguments(tool_name, args_str)
             if repaired is not None:
-                arguments = repaired
-            else:
-                logger.warning(
-                    f"[JSON_TOOL_PARSE] Failed to parse arguments for "
-                    f"'{tool_name}': {args_str[:120]}"
+                recovered_keys = sorted(repaired.keys())
+                err_msg = (
+                    f"❌ 工具 '{tool_name}' 的参数 JSON 被截断后自动修复，"
+                    f"但内容可能不完整（恢复的键: {recovered_keys}）。\n"
+                    f"原始参数长度: {arg_len} 字符。\n"
+                    "请缩短参数后重试：\n"
+                    "- write_file / edit_file：将大文件拆分为多次小写入\n"
+                    "- 其他工具：精简参数，避免嵌入超长文本"
                 )
-                arguments = {"raw": args_str}
+                arguments = {PARSE_ERROR_KEY: err_msg}
+                logger.warning(
+                    f"[JSON_TOOL_PARSE] JSON repair succeeded for '{tool_name}' "
+                    f"(recovered keys: {recovered_keys}), treating as truncation. "
+                    f"Raw args ({arg_len} chars) dumped."
+                )
+            else:
+                err_msg = (
+                    f"❌ 工具 '{tool_name}' 的参数 JSON 被截断且无法修复"
+                    f"（共 {arg_len} 字符）。\n"
+                    "请缩短参数后重试：\n"
+                    "- write_file / edit_file：将大文件拆分为多次小写入\n"
+                    "- 其他工具：精简参数，避免嵌入超长文本"
+                )
+                arguments = {PARSE_ERROR_KEY: err_msg}
+                logger.warning(
+                    f"[JSON_TOOL_PARSE] Failed to parse/repair arguments for "
+                    f"'{tool_name}' ({arg_len} chars). Injecting parse error marker."
+                )
 
         tc = ToolUseBlock(
             id=f"json_call_{uuid.uuid4().hex[:8]}",

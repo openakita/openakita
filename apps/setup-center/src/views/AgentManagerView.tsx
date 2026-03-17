@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 type AgentProfile = {
   id: string;
@@ -608,7 +610,8 @@ export function AgentManagerView({
             transition: "all 0.15s",
           }}
         >
-          {t("agentManager.categoryAll")} ({visibleProfiles.length})
+          {t("agentManager.categoryAll")}
+          <Badge variant="secondary" className={cn("ml-1.5 px-1.5 py-0 text-[11px] min-w-[1.25rem] justify-center rounded-full", activeCategory === "" ? "bg-white/25 text-primary-foreground" : "bg-foreground/10 text-foreground/60")}>{visibleProfiles.length}</Badge>
         </button>
         {categories.map((cat) => (
           <button
@@ -623,7 +626,8 @@ export function AgentManagerView({
               display: "inline-flex", alignItems: "center", gap: 4,
             }}
           >
-            {cat.label} ({cat.agent_count ?? 0})
+            {cat.label}
+            <Badge variant="secondary" className={cn("ml-1 px-1.5 py-0 text-[11px] min-w-[1.25rem] justify-center rounded-full", activeCategory === cat.id ? "bg-white/25 text-primary-foreground" : "bg-foreground/10 text-foreground/60")}>{cat.agent_count ?? 0}</Badge>
             {!cat.builtin && (
               <span
                 onClick={async (e) => {
@@ -648,83 +652,41 @@ export function AgentManagerView({
         ))}
         {/* Add category button / inline form */}
         {addingCategory ? (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <input
+          <div className="inline-flex items-center gap-1.5">
+            <Input
               autoFocus
-              placeholder="分类名称"
+              placeholder={t("agentManager.categoryName", { defaultValue: "分类名称" })}
               value={newCatLabel}
               onChange={(e) => setNewCatLabel(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") { setAddingCategory(false); setNewCatLabel(""); }
                 if (e.key === "Enter" && newCatLabel.trim()) handleAddCategory();
               }}
-              style={{
-                padding: "4px 10px", borderRadius: 16, border: "1px solid var(--line)",
-                background: "var(--panel)", fontSize: 12, width: 90, outline: "none",
-              }}
+              className="h-7 w-24 text-xs rounded-full px-3"
             />
-            <input
-              type="color"
-              value={newCatColor}
-              onChange={(e) => setNewCatColor(e.target.value)}
-              style={{ width: 26, height: 26, border: "none", cursor: "pointer", padding: 0, borderRadius: 4 }}
-            />
-            <button
-              onClick={handleAddCategory}
-              disabled={!newCatLabel.trim()}
-              style={{
-                padding: "4px 10px", borderRadius: 16, border: "none",
-                background: "var(--primary, #3b82f6)", color: "#fff",
-                cursor: newCatLabel.trim() ? "pointer" : "not-allowed",
-                fontSize: 12, fontWeight: 600, opacity: newCatLabel.trim() ? 1 : 0.5,
-              }}
-            >
-              {t("common.confirm") || "确定"}
-            </button>
-            <button
-              onClick={() => { setAddingCategory(false); setNewCatLabel(""); }}
-              style={{
-                padding: "4px 8px", borderRadius: 16, border: "1px solid var(--line)",
-                background: "var(--panel)", cursor: "pointer", fontSize: 12,
-              }}
-            >
-              {t("common.cancel") || "取消"}
-            </button>
+            <label className="relative size-7 shrink-0 cursor-pointer rounded-full border border-input overflow-hidden" title={t("agentManager.categoryColor", { defaultValue: "选择颜色" })}>
+              <span className="absolute inset-0 rounded-full" style={{ background: newCatColor }} />
+              <input
+                type="color"
+                value={newCatColor}
+                onChange={(e) => setNewCatColor(e.target.value)}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+              />
+            </label>
+            <Button size="sm" className="h-7 rounded-full text-xs px-3" onClick={handleAddCategory} disabled={!newCatLabel.trim()}>
+              {t("common.confirm")}
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 rounded-full text-xs px-2.5" onClick={() => { setAddingCategory(false); setNewCatLabel(""); }}>
+              {t("common.cancel")}
+            </Button>
           </div>
         ) : (
-          <button
-            onClick={() => setAddingCategory(true)}
-            style={{
-              padding: "5px 10px", borderRadius: 20, border: "1px dashed var(--line)",
-              background: "transparent", cursor: "pointer", fontSize: 12,
-              opacity: 0.6, display: "inline-flex", alignItems: "center", gap: 2,
-            }}
-          >
-            <IconPlus size={12} /> {t("agentManager.addCategory") || "添加分类"}
-          </button>
+          <Button variant="outline" size="sm" className="h-7 rounded-full text-xs px-3 border-dashed opacity-60 hover:opacity-100" onClick={() => setAddingCategory(true)}>
+            <IconPlus size={12} /> {t("agentManager.addCategory", { defaultValue: "添加分类" })}
+          </Button>
         )}
       </div>
 
-      {/* Filter indicator */}
-      {activeCategory && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
-          padding: "6px 12px", borderRadius: 8,
-          background: "var(--panel)", border: "1px solid var(--line)",
-          fontSize: 12, opacity: 0.8,
-        }}>
-          <span>{t("agentManager.filterHint", { shown: filteredProfiles.length, total: visibleProfiles.length })}</span>
-          <button
-            onClick={() => setActiveCategory("")}
-            style={{
-              padding: "2px 8px", borderRadius: 12, border: "1px solid var(--line)",
-              background: "transparent", cursor: "pointer", fontSize: 11,
-            }}
-          >
-            {t("agentManager.showAll")}
-          </button>
-        </div>
-      )}
 
       {/* Agent Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>

@@ -373,12 +373,16 @@ class ReasoningEngine:
         batch_failures = []
         for result in tool_results:
             content = ""
+            # 主信号: tool_result 的结构化 is_error 标志
+            is_error_flag = False
             if isinstance(result, dict):
                 content = str(result.get("content", ""))
+                is_error_flag = result.get("is_error", False)
             elif isinstance(result, str):
                 content = result
 
-            has_error = any(marker in content for marker in [
+            # 兜底: 字符串标记匹配（handler 返回的错误字符串）
+            has_error = is_error_flag or any(marker in content for marker in [
                 "❌", "⚠️ 工具执行错误", "错误类型:", "ToolError", "⚠️ 策略拒绝:",
             ])
             has_success = any(marker in content for marker in [
@@ -424,6 +428,8 @@ class ReasoningEngine:
             f"失败的决策: {cp.decision_summary}。"
             f"请尝试完全不同的方法来完成任务。"
             f"避免使用与之前相同的工具参数组合。"
+            f"如果是因为工具参数被 API 截断（如 write_file 内容过长），"
+            f"请将内容拆分为多次小写入。"
         )
         restored_messages.append({
             "role": "user",
@@ -1151,10 +1157,15 @@ class ReasoningEngine:
                 for i, tc in enumerate(decision.tool_calls):
                     _tc_name = tc.get("name", "")
                     result_content = ""
+                    is_error = False
                     if i < len(tool_results):
                         r = tool_results[i]
                         result_content = str(r.get("content", "")) if isinstance(r, dict) else str(r)
-                    is_error = any(m in result_content for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"])
+                        # 主信号: tool_result 的结构化 is_error 标志
+                        is_error = r.get("is_error", False) if isinstance(r, dict) else False
+                    # 兜底: 字符串标记匹配（handler 返回的错误字符串）
+                    if not is_error and result_content:
+                        is_error = any(m in result_content for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"])
                     self._record_tool_result(_tc_name, success=not is_error)
                     _r_summary = self._summarize_tool_result(_tc_name, result_content)
                     if _r_summary:
@@ -1226,10 +1237,13 @@ class ReasoningEngine:
                 for i, tc in enumerate(decision.tool_calls):
                     _tc_name = tc.get("name", "")
                     result_content = ""
+                    is_error = False
                     if i < len(tool_results):
                         r = tool_results[i]
                         result_content = str(r.get("content", "")) if isinstance(r, dict) else str(r)
-                    is_error = any(m in result_content for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"])
+                        is_error = r.get("is_error", False) if isinstance(r, dict) else False
+                    if not is_error and result_content:
+                        is_error = any(m in result_content for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"])
                     self._supervisor.record_tool_call(
                         tool_name=_tc_name, params=tc.get("input", {}),
                         success=not is_error, iteration=iteration,

@@ -58,7 +58,7 @@
   ${If} $0 != ""
     nsExec::ExecToLog 'powershell -NoProfile -Command "Stop-Process -Id $0 -Force -ErrorAction SilentlyContinue"'
     Pop $1
-    nsExec::ExecToLog 'taskkill /PID $0 /T /F'
+    nsExec::ExecToLog 'cmd /c taskkill /PID $0 /T /F >nul 2>&1'
     Pop $1
   ${EndIf}
 !macroend
@@ -139,9 +139,9 @@
 !macro NSIS_HOOK_PREINSTALL_KILLPROCS
   nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process -Name openakita-setup-center,openakita-server -EA SilentlyContinue | Stop-Process -Force"'
   Pop $0
-  nsExec::ExecToLog 'taskkill /IM openakita-setup-center.exe /T /F'
+  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
   Pop $0
-  nsExec::ExecToLog 'taskkill /IM openakita-server.exe /T /F'
+  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
   Pop $0
   !insertmacro _OpenAkita_KillAllServicePids
   System::Call 'kernel32::SetEnvironmentVariable(t "OA_KILL_DIR", t "$INSTDIR")'
@@ -187,9 +187,9 @@
   ; 卸载前：强制杀掉残留进程（合并 PowerShell 调用，nsExec 无弹窗）
   nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process -Name openakita-setup-center,openakita-server -EA SilentlyContinue | Stop-Process -Force"'
   Pop $0
-  nsExec::ExecToLog 'taskkill /IM openakita-setup-center.exe /T /F'
+  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
   Pop $0
-  nsExec::ExecToLog 'taskkill /IM openakita-server.exe /T /F'
+  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
   Pop $0
   !insertmacro _OpenAkita_KillAllServicePids
   ; 兜底：杀掉安装目录和数据目录下所有残留进程

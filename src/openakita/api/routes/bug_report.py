@@ -15,6 +15,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -44,7 +45,10 @@ KEY_PACKAGES = [
 ]
 
 LOG_TAIL_BYTES = 1 * 1024 * 1024  # last 1 MB of main log
+FRONTEND_LOG_TAIL_BYTES = 512 * 1024  # last 512 KB of frontend log
 MAX_ZIP_SIZE = 30 * 1024 * 1024  # 30 MB
+RECENT_DAYS = 3  # how far back to collect dated files
+DIR_MAX_BYTES = 5 * 1024 * 1024  # default per-directory byte budget
 
 
 def _get_bug_report_endpoint() -> str:
@@ -220,6 +224,120 @@ def _get_recent_llm_debug_files(count: int = 20) -> list[Path]:
 
     files = sorted(debug_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[:count]
+
+
+def _resolve_data_dir() -> Path:
+    """Return the workspace data/ directory."""
+    try:
+        from openakita.config import settings
+        return settings.data_dir
+    except Exception:
+        return Path.cwd() / "data"
+
+
+def _resolve_global_logs_dir() -> Path:
+    """Return the global logs directory (Tauri-managed, under openakita_home).
+
+    Respects custom root via OPENAKITA_ROOT env var or settings.openakita_home."""
+    try:
+        from openakita.config import settings
+        return settings.openakita_home / "logs"
+    except Exception:
+        import os
+        root = os.environ.get("OPENAKITA_ROOT", "").strip()
+        return Path(root) / "logs" if root else Path.home() / ".openakita" / "logs"
+
+
+def _recent_files(
+    directory: Path,
+    days: int = RECENT_DAYS,
+    patterns: tuple[str, ...] = ("*",),
+    max_total_bytes: int = DIR_MAX_BYTES,
+) -> list[Path]:
+    """Collect the most recent files from *directory* within *days*,
+    respecting a cumulative byte budget. Files sorted newest-first."""
+    if not directory.exists():
+        return []
+    cutoff = time.time() - days * 86400
+    files: list[Path] = []
+    for pat in patterns:
+        for p in directory.rglob(pat):
+            if p.is_file():
+                try:
+                    if p.stat().st_mtime >= cutoff:
+                        files.append(p)
+                except OSError:
+                    pass
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    selected: list[Path] = []
+    total = 0
+    for f in files:
+        sz = f.stat().st_size
+        if total + sz > max_total_bytes:
+            continue
+        selected.append(f)
+        total += sz
+    return selected
+
+
+def _add_dir_recent(
+    zf: zipfile.ZipFile,
+    directory: Path,
+    zip_prefix: str,
+    *,
+    days: int = RECENT_DAYS,
+    patterns: tuple[str, ...] = ("*",),
+    max_total_bytes: int = DIR_MAX_BYTES,
+) -> None:
+    """Add recent files from a directory into the zip under *zip_prefix*."""
+    for f in _recent_files(directory, days, patterns, max_total_bytes):
+        try:
+            rel = f.relative_to(directory)
+            zf.write(f, f"{zip_prefix}/{rel.as_posix()}")
+        except Exception:
+            pass
+
+
+def _add_file(zf: zipfile.ZipFile, path: Path, zip_name: str) -> None:
+    """Add a single file to the zip if it exists."""
+    if path.exists() and path.is_file():
+        try:
+            zf.write(path, zip_name)
+        except Exception:
+            pass
+
+
+_SENSITIVE_KEY_RE = None
+
+
+def _collect_sanitized_config() -> dict:
+    """Collect non-sensitive .env config and runtime state for diagnostics.
+
+    Keys whose names match common secret patterns are redacted."""
+    import os
+    import re
+
+    global _SENSITIVE_KEY_RE
+    if _SENSITIVE_KEY_RE is None:
+        _SENSITIVE_KEY_RE = re.compile(
+            r"(key|secret|token|password|credential|auth|apikey|api_key)", re.IGNORECASE,
+        )
+
+    sanitized: dict = {}
+    for k, v in sorted(os.environ.items()):
+        if not k.startswith(("OPENAKITA", "ANTHROPIC", "OPENAI", "FEISHU",
+                             "TELEGRAM", "DINGTALK", "WEWORK", "ONEBOT", "QQ")):
+            continue
+        sanitized[k] = "***" if _SENSITIVE_KEY_RE.search(k) else v
+
+    runtime_path = _resolve_data_dir() / "runtime_state.json"
+    if runtime_path.exists():
+        try:
+            sanitized["_runtime_state"] = json.loads(runtime_path.read_text("utf-8"))
+        except Exception:
+            pass
+
+    return sanitized
 
 
 @router.get("/api/system-info")
@@ -497,9 +615,11 @@ async def submit_bug_report(
                 from openakita.config import settings
                 main_log = settings.log_file_path
                 error_log = settings.error_log_path
+                logs_dir = settings.log_dir_path
             except Exception:
-                main_log = Path.cwd() / "logs" / "openakita.log"
-                error_log = Path.cwd() / "logs" / "error.log"
+                logs_dir = Path.cwd() / "logs"
+                main_log = logs_dir / "openakita.log"
+                error_log = logs_dir / "error.log"
 
             log_data = _tail_file(main_log, LOG_TAIL_BYTES)
             if log_data:
@@ -507,13 +627,87 @@ async def submit_bug_report(
             err_data = _tail_file(error_log, LOG_TAIL_BYTES)
             if err_data:
                 zf.writestr("logs/error.log", err_data)
+            serve_data = _tail_file(logs_dir / "openakita-serve.log", LOG_TAIL_BYTES)
+            if serve_data:
+                zf.writestr("logs/openakita-serve.log", serve_data)
+
+            # frontend.log lives in the global ~/.openakita/logs/ dir (Tauri-managed)
+            global_logs = _resolve_global_logs_dir()
+            fe_data = _tail_file(global_logs / "frontend.log", FRONTEND_LOG_TAIL_BYTES)
+            if fe_data:
+                zf.writestr("logs/frontend.log", fe_data)
+            crash_data = _tail_file(global_logs / "crash.log", FRONTEND_LOG_TAIL_BYTES)
+            if crash_data:
+                zf.writestr("logs/crash.log", crash_data)
+
+            # Multi-agent delegation logs (recent 3 days, max 2 MB)
+            data_dir = _resolve_data_dir()
+            _add_dir_recent(
+                zf, data_dir / "delegation_logs", "delegation_logs",
+                patterns=("*.jsonl",), max_total_bytes=2 * 1024 * 1024,
+            )
 
         if upload_debug:
+            data_dir = _resolve_data_dir()
             for df in _get_recent_llm_debug_files(50):
                 try:
                     zf.write(df, f"llm_debug/{df.name}")
                 except Exception:
                     pass
+            # ReAct reasoning traces (recent 3 days, max 5 MB)
+            _add_dir_recent(
+                zf, data_dir / "react_traces", "react_traces",
+                patterns=("*.json",), max_total_bytes=5 * 1024 * 1024,
+            )
+            # Agent traces (recent 3 days, max 2 MB)
+            _add_dir_recent(
+                zf, data_dir / "traces", "traces",
+                patterns=("*.json",), max_total_bytes=2 * 1024 * 1024,
+            )
+            # Orchestration org events (recent 3 days, max 2 MB)
+            _add_dir_recent(
+                zf, data_dir / "orgs", "orgs",
+                patterns=("*.jsonl", "*.md"), max_total_bytes=2 * 1024 * 1024,
+            )
+            # Tool output overflow (recent 3 days, max 2 MB)
+            _add_dir_recent(
+                zf, data_dir / "tool_overflow", "tool_overflow",
+                patterns=("*.txt",), max_total_bytes=2 * 1024 * 1024,
+            )
+            # Failure analysis reports (recent 3 days, max 1 MB)
+            _add_dir_recent(
+                zf, data_dir / "failure_analysis", "failure_analysis",
+                max_total_bytes=1 * 1024 * 1024,
+            )
+            # Task retrospects (recent 3 days, max 1 MB)
+            _add_dir_recent(
+                zf, data_dir / "retrospects", "retrospects",
+                patterns=("*.jsonl",), max_total_bytes=1 * 1024 * 1024,
+            )
+            # Small state files — always include
+            _add_file(zf, data_dir / "runtime_state.json", "state/runtime_state.json")
+            _add_file(zf, data_dir / "sub_agent_states.json", "state/sub_agent_states.json")
+            _add_file(zf, data_dir / "backend.heartbeat", "state/backend.heartbeat")
+            _add_file(zf, data_dir / "sessions" / "sessions.json", "state/sessions.json")
+            _add_file(
+                zf, data_dir / "sessions" / "channel_registry.json",
+                "state/channel_registry.json",
+            )
+            _add_file(zf, data_dir / "scheduler" / "tasks.json", "state/scheduler_tasks.json")
+            _add_file(
+                zf, data_dir / "scheduler" / "executions.json",
+                "state/scheduler_executions.json",
+            )
+            # Sanitized config snapshot
+            try:
+                config_snapshot = _collect_sanitized_config()
+                if config_snapshot:
+                    zf.writestr(
+                        "state/sanitized_config.json",
+                        json.dumps(config_snapshot, ensure_ascii=False, indent=2),
+                    )
+            except Exception:
+                pass
 
     sys_info_brief = f"OS: {sys_info.get('os', '?')} | Python: {sys_info.get('python', '?')} | OpenAkita: {sys_info.get('openakita_version', '?')}"
     return await _try_upload_or_save(

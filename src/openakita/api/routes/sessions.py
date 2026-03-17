@@ -31,7 +31,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     session_manager = getattr(request.app.state, "session_manager", None)
     if not session_manager:
         wac = getattr(request.app.state, "web_access_config", None)
-        return {"sessions": [], "data_epoch": wac.data_epoch if wac else ""}
+        return {"sessions": [], "data_epoch": wac.data_epoch if wac else "", "ready": False}
 
     sessions = session_manager.list_sessions(channel=channel)
     sessions.sort(key=lambda s: s.last_active, reverse=True)
@@ -66,7 +66,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     if wac:
         data_epoch = wac.data_epoch
 
-    return {"sessions": result, "data_epoch": data_epoch}
+    return {"sessions": result, "data_epoch": data_epoch, "ready": True}
 
 
 @router.get("/api/sessions/{conversation_id}/history")
@@ -149,12 +149,20 @@ async def delete_session(
 ):
     """Delete a session by chat_id.
 
-    Closes the session and removes it from the session manager.
-    Conversation history in memory DB is preserved for potential recovery.
+    Cancels any running tasks, closes the session and removes it from
+    the session manager. Conversation history in memory DB is preserved
+    for potential recovery.
     """
     session_manager = getattr(request.app.state, "session_manager", None)
     if not session_manager:
         return {"ok": False, "error": "session_manager not available"}
+
+    # 关闭前先通过公开 API 获取 session，用于取消关联任务
+    session = session_manager.get_session(
+        channel, conversation_id, user_id, create_if_missing=False
+    )
+    if session is not None:
+        _cancel_tasks_for_session(request, conversation_id, session.id)
 
     session_key = f"{channel}:{conversation_id}:{user_id}"
     removed = session_manager.close_session(session_key)
@@ -164,6 +172,36 @@ async def delete_session(
         logger.debug(f"[Sessions] Session not found for deletion: {session_key}")
 
     return {"ok": True, "removed": removed}
+
+
+def _cancel_tasks_for_session(
+    request: Request, conversation_id: str, session_id: str
+) -> None:
+    """Best-effort cancel of running tasks before session deletion.
+
+    Two levels of cancellation:
+    - Agent: cooperative cancel via cancel_event (task exits at next checkpoint)
+    - Orchestrator: forceful asyncio.Task.cancel (ensures task stops)
+    """
+    from .chat import _get_existing_agent, _resolve_agent
+
+    # Agent 级：协作式取消（设置 cancel_event，任务在下一个检查点退出）
+    try:
+        agent = _get_existing_agent(request, conversation_id)
+        actual_agent = _resolve_agent(agent) if agent else None
+        if actual_agent is not None:
+            actual_agent.cancel_current_task("对话已删除", session_id=conversation_id)
+            logger.info(f"[Sessions] Cancelled agent task: conv={conversation_id}")
+    except Exception as e:
+        logger.debug(f"[Sessions] Agent cancel skipped: {e}")
+
+    # Orchestrator 级：强制取消 asyncio Task（兜底，确保任务停止）
+    try:
+        orchestrator = getattr(request.app.state, "orchestrator", None)
+        if orchestrator is not None and orchestrator.cancel_request(session_id):
+            logger.info(f"[Sessions] Cancelled orchestrator tasks: sid={session_id}")
+    except Exception as e:
+        logger.debug(f"[Sessions] Orchestrator cancel skipped: {e}")
 
 
 class AppendMessageRequest(BaseModel):
