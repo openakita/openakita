@@ -1166,6 +1166,8 @@
     "preferredEndpoint": "首选模型",
     "preferredEndpointAuto": "自动选择（按优先级）",
     "id": "ID",
+    "idHint": "仅限小写字母、数字、下划线和连字符",
+    "idInvalid": "ID 格式错误：仅允许小写字母(a-z)、数字(0-9)、下划线(_)和连字符(-)",
     "confirmDelete": "确定删除该 Agent？",
     "disabled": "多Agent模式未开启",
     "saveSuccess": "保存成功",

@@ -1166,6 +1166,8 @@
     "preferredEndpoint": "Preferred Model",
     "preferredEndpointAuto": "Auto (by priority)",
     "id": "ID",
+    "idHint": "Only lowercase letters, numbers, underscores, and hyphens",
+    "idInvalid": "Invalid ID: only lowercase letters (a-z), numbers (0-9), underscores (_), and hyphens (-) allowed",
     "confirmDelete": "Are you sure you want to delete this Agent?",
     "disabled": "Multi-Agent mode is off",
     "saveSuccess": "Saved successfully",

@@ -397,8 +397,18 @@ export function AgentManagerView({
       .replace(/^-|-$/g, "")
       .slice(0, 32) || "custom-agent";
 
+  const ID_PATTERN = /^[a-z0-9_-]+$/;
+  const isIdValid =
+    editingProfile.id.length > 0 &&
+    editingProfile.id.length <= 64 &&
+    ID_PATTERN.test(editingProfile.id);
+
   const handleSave = async () => {
     if (!editingProfile.name.trim()) return;
+    if (isCreating && !isIdValid) {
+      showToast(t("agentManager.idInvalid"), "err");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -989,8 +999,15 @@ export function AgentManagerView({
                 onChange={(e) => setEditingProfile((p) => ({ ...p, id: e.target.value }))}
                 disabled={!isCreating}
                 placeholder="my-agent"
-                className="font-mono text-[13px]"
+                className={`font-mono text-[13px] ${isCreating && editingProfile.id && !isIdValid ? "border-red-500 focus-visible:ring-red-500" : ""}`}
               />
+              {isCreating && (
+                <p className={`text-[11px] ${editingProfile.id && !isIdValid ? "text-red-400" : "opacity-40"}`}>
+                  {editingProfile.id && !isIdValid
+                    ? t("agentManager.idInvalid")
+                    : t("agentManager.idHint")}
+                </p>
+              )}
             </div>
 
             {/* Name */}
@@ -1198,7 +1215,7 @@ export function AgentManagerView({
               <Button
                 className="flex-1"
                 onClick={handleSave}
-                disabled={saving || !editingProfile.name.trim()}
+                disabled={saving || !editingProfile.name.trim() || (isCreating && !isIdValid)}
               >
                 {saving ? t("common.loading") : t("agentManager.save")}
               </Button>
