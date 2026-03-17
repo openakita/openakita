@@ -22,9 +22,22 @@ import asyncio
 import logging
 from typing import Any
 
-import httpx
-
 logger = logging.getLogger(__name__)
+
+try:
+    import httpx as _httpx
+except ImportError:
+    _httpx = None  # type: ignore[assignment]
+
+try:
+    import aiohttp as _aiohttp
+except ImportError:
+    _aiohttp = None  # type: ignore[assignment]
+
+if _httpx is None and _aiohttp is None:
+    raise ImportError(
+        "feishu_onboard 需要 httpx 或 aiohttp 其中之一，请 pip install httpx 或 pip install aiohttp"
+    )
 
 FEISHU_ACCOUNTS_BASE = "https://accounts.feishu.cn"
 LARK_ACCOUNTS_BASE = "https://accounts.larksuite.com"
@@ -33,6 +46,48 @@ _DEVICE_FLOW_PATH = "/oauth/v1/app/registration"
 
 FEISHU_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 LARK_TOKEN_URL = "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal"
+
+
+async def _async_post_form(
+    url: str, data: dict[str, str], *, timeout: float = 30.0
+) -> dict[str, Any]:
+    """POST form-urlencoded, returns parsed JSON. Works with httpx or aiohttp."""
+    if _httpx is not None:
+        async with _httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    import aiohttp
+
+    tout = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(timeout=tout) as session:
+        async with session.post(url, data=data) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+
+
+async def _async_post_json(
+    url: str, json_body: dict[str, Any], *, timeout: float = 30.0
+) -> dict[str, Any]:
+    """POST JSON body, returns parsed JSON. Works with httpx or aiohttp."""
+    if _httpx is not None:
+        async with _httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, json=json_body)
+            resp.raise_for_status()
+            return resp.json()
+
+    import aiohttp
+
+    tout = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(timeout=tout) as session:
+        async with session.post(url, json=json_body) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
 
 
 class FeishuOnboardError(Exception):
@@ -158,14 +213,9 @@ class FeishuOnboard:
 
     async def _post(self, **form_fields: str) -> dict[str, Any]:
         """发送 x-www-form-urlencoded POST 请求到 Device Flow 端点"""
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                self._endpoint,
-                data=form_fields,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        return await _async_post_form(
+            self._endpoint, form_fields, timeout=self._timeout
+        )
 
 
 async def validate_credentials(
@@ -184,24 +234,18 @@ async def validate_credentials(
         {"valid": False, "error": "..."}
     """
     url = LARK_TOKEN_URL if domain == "lark" else FEISHU_TOKEN_URL
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            resp = await client.post(
-                url,
-                json={"app_id": app_id, "app_secret": app_secret},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("code", -1) == 0:
-                return {
-                    "valid": True,
-                    "tenant_access_token": data.get("tenant_access_token", ""),
-                }
-            return {"valid": False, "error": data.get("msg", "未知错误")}
-        except httpx.HTTPStatusError as e:
-            return {"valid": False, "error": f"HTTP {e.response.status_code}"}
-        except Exception as e:
-            return {"valid": False, "error": str(e)}
+    try:
+        data = await _async_post_json(
+            url, {"app_id": app_id, "app_secret": app_secret}, timeout=timeout
+        )
+        if data.get("code", -1) == 0:
+            return {
+                "valid": True,
+                "tenant_access_token": data.get("tenant_access_token", ""),
+            }
+        return {"valid": False, "error": data.get("msg", "未知错误")}
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
 
 
 def render_qr_terminal(url: str) -> None:
