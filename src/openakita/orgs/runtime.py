@@ -100,9 +100,8 @@ class OrgRuntime:
 
         self._active_orgs: dict[str, Organization] = {}
 
-        self._cascade_depth: dict[str, int] = {}
+        self._chain_delegation_depth: dict[str, int] = {}  # chain_id -> delegation depth
         self._node_current_chain: dict[str, str] = {}  # org_id:node_id -> chain_id
-        self.max_cascade_depth: int = 5
         self.max_concurrent_per_node: int = 2
         self._idle_tasks: dict[str, asyncio.Task] = {}
 
@@ -930,19 +929,6 @@ class OrgRuntime:
         if not node or node.status in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
             return
 
-        depth = msg.metadata.get("_cascade_depth", 0)
-        max_depth = org.max_delegation_depth
-        if depth >= max_depth:
-            logger.warning(
-                f"[OrgRuntime] Cascade depth limit ({max_depth}) "
-                f"reached for {node_id}, queuing message instead of activating"
-            )
-            self.get_event_store(org_id).emit(
-                "cascade_limited", node_id,
-                {"depth": depth, "msg_id": msg.id, "from": msg.from_node},
-            )
-            return
-
         active_key = f"{org_id}:{node_id}"
         running = self._running_tasks.get(org_id, {})
         active_count = sum(
@@ -957,7 +943,6 @@ class OrgRuntime:
             target_clone = self._try_route_to_clone(org, node, msg, pending)
             if target_clone:
                 task_prompt = self._format_incoming_message(msg)
-                self._cascade_depth[f"{org_id}:{target_clone.id}"] = depth
                 chain_id = msg.metadata.get("task_chain_id") or None
                 await self._activate_and_run(org, target_clone, task_prompt, chain_id=chain_id)
                 return
@@ -967,7 +952,6 @@ class OrgRuntime:
                 if new_clone:
                     self._register_clone_in_messenger(org_id, new_clone)
                     task_prompt = self._format_incoming_message(msg)
-                    self._cascade_depth[f"{org_id}:{new_clone.id}"] = depth
                     chain_id = msg.metadata.get("task_chain_id") or None
                     await self._activate_and_run(org, new_clone, task_prompt, chain_id=chain_id)
                     return
@@ -977,8 +961,6 @@ class OrgRuntime:
                 f"active tasks, message {msg.id} stays in mailbox"
             )
             return
-
-        self._cascade_depth[active_key] = depth
 
         task_prompt = self._format_incoming_message(msg)
         chain_id = msg.metadata.get("task_chain_id") or ""
@@ -1218,6 +1200,9 @@ class OrgRuntime:
         for k in list(self._node_busy_since.keys()):
             if k.startswith(f"{org_id}:"):
                 self._node_busy_since.pop(k, None)
+        for k in list(self._node_current_chain.keys()):
+            if k.startswith(f"{org_id}:"):
+                self._node_current_chain.pop(k, None)
 
     def _get_save_lock(self, org_id: str) -> asyncio.Lock:
         lock = self._save_locks.get(org_id)
@@ -1303,8 +1288,29 @@ class OrgRuntime:
     # Task completion hook & idle probe
     # ------------------------------------------------------------------
 
+    async def _drain_node_pending(self, org: Organization, node: OrgNode) -> bool:
+        """Process one pending message from a node's mailbox. Returns True if processed."""
+        messenger = self.get_messenger(org.id)
+        if not messenger:
+            return False
+        mailbox = messenger.get_mailbox(node.id)
+        if not mailbox or mailbox.pending_count <= 0:
+            return False
+        msg = await mailbox.get(timeout=0.5)
+        if not msg:
+            return False
+        mailbox.mark_dispatched()
+        logger.info(
+            f"[OrgRuntime] Draining pending message {msg.id} for {node.id} "
+            f"(remaining: {mailbox.pending_count})"
+        )
+        task_prompt = self._format_incoming_message(msg)
+        chain_id = msg.metadata.get("task_chain_id") or None
+        await self._activate_and_run(org, node, task_prompt, chain_id=chain_id)
+        return True
+
     async def _post_task_hook(self, org: Organization, node: OrgNode) -> None:
-        """After a node finishes, notify its parent/supervisor to continue work."""
+        """After a node finishes, process pending messages or notify parent."""
         try:
             await asyncio.sleep(2)
             org = self.get_org(org.id)
@@ -1312,6 +1318,9 @@ class OrgRuntime:
                 return
             node = org.get_node(node.id)
             if not node or node.status != NodeStatus.IDLE:
+                return
+
+            if await self._drain_node_pending(org, node):
                 return
 
             parent = org.get_parent(node.id)
@@ -1324,6 +1333,8 @@ class OrgRuntime:
             pending = messenger.get_pending_count(parent.id) if messenger else 0
 
             if pending > 0:
+                if parent.status == NodeStatus.IDLE:
+                    await self._drain_node_pending(org, parent)
                 return
 
             role_title = node.role_title or node.id
@@ -1332,7 +1343,6 @@ class OrgRuntime:
                 f"请检查当前进展，看是否有新任务需要分配给 {role_title} 或其他成员。\n"
                 f"如果所有工作已完成，请更新黑板上的进度记录。"
             )
-            self._cascade_depth[f"{org.id}:{parent.id}"] = 0
             await self._activate_and_run(org, parent, prompt)
         except Exception as e:
             logger.debug(f"[OrgRuntime] Post-task hook error: {e}")
@@ -1531,7 +1541,6 @@ class OrgRuntime:
                                 f"请查看是否有待办工作，或向上级汇报空闲状态以获取新任务。"
                             )
 
-                        self._cascade_depth[cache_key] = 0
                         node_last_probed[node.id] = now
                         node_thresholds[node.id] = min(threshold * 1.5, 600)
                         await self._activate_and_run(org, node, prompt)

@@ -48,6 +48,19 @@ class OrgToolHandler:
                 args["bandwidth_limit"] = 60
         return args
 
+    @staticmethod
+    def _effective_max_delegation_depth(org: Any) -> int:
+        """Compute effective max delegation depth based on org structure.
+
+        Ensures the limit is at least the org's actual hierarchy depth + a buffer,
+        so tasks can always reach the lowest level of the org chart.
+        """
+        if not org:
+            return 10
+        org_depth = max((n.level for n in org.nodes), default=0)
+        explicit = org.max_delegation_depth
+        return max(explicit, org_depth + 3)
+
     def _resolve_node_refs(self, args: dict, org_id: str) -> None:
         """Resolve node references: LLM may pass role titles or wrong-cased IDs."""
         org = self._runtime.get_org(org_id)
@@ -328,8 +341,7 @@ class OrgToolHandler:
         if not messenger:
             return "组织未运行"
 
-        parent_depth = self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0)
-        metadata = {"_cascade_depth": parent_depth + 1}
+        metadata: dict = {}
 
         raw_type = args.get("msg_type", "question")
         try:
@@ -393,18 +405,30 @@ class OrgToolHandler:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
             return "组织未运行"
+
+        org = self._runtime.get_org(org_id)
+
+        chain_id = (
+            args.get("task_chain_id")
+            or self._runtime.get_current_chain_id(org_id, node_id)
+            or _now_iso() + ":" + node_id[:8]
+        )
+        chain_depth = self._runtime._chain_delegation_depth.get(chain_id, 0)
+        max_depth = self._effective_max_delegation_depth(org)
+        if chain_depth + 1 > max_depth:
+            return (
+                f"此任务链的委派层级已达上限（{max_depth}层），无法继续向下委派。"
+                f"请自行完成此项工作，或用 org_submit_deliverable 提交当前成果给上级重新安排。"
+            )
+
         metadata = {}
         if args.get("deadline"):
             metadata["task_deadline"] = args["deadline"]
 
-        parent_depth = self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0)
-        metadata["_cascade_depth"] = parent_depth + 1
-
-        chain_id = args.get("task_chain_id") or _now_iso() + ":" + node_id[:8]
+        metadata["_delegation_depth"] = chain_depth + 1
         metadata["task_chain_id"] = chain_id
 
         to_node = args["to_node"]
-        org = self._runtime.get_org(org_id)
 
         existing_affinity = messenger.get_task_affinity(chain_id)
         if existing_affinity:
@@ -430,6 +454,7 @@ class OrgToolHandler:
         )
 
         messenger.bind_task_affinity(chain_id, to_node)
+        self._runtime._chain_delegation_depth[chain_id] = chain_depth + 1
 
         self._runtime.get_event_store(org_id).emit(
             "task_assigned", node_id,
@@ -477,11 +502,9 @@ class OrgToolHandler:
         if not messenger:
             return "组织未运行"
 
-        parent_depth = self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0)
-
         result = await messenger.escalate(
             node_id, args["content"], priority=args.get("priority", 1),
-            metadata={"_cascade_depth": parent_depth + 1},
+            metadata={},
         )
         if result:
             await self._runtime._broadcast_ws("org:escalation", {
@@ -505,14 +528,12 @@ class OrgToolHandler:
         if msg_type == MsgType.BROADCAST and node and node.level > 0:
             return "只有顶层节点可以全组织广播，你可以使用部门广播"
 
-        parent_depth = self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0)
-
         msg = OrgMessage(
             org_id=org_id,
             from_node=node_id,
             msg_type=msg_type,
             content=args["content"],
-            metadata={"_cascade_depth": parent_depth + 1},
+            metadata={},
         )
         await messenger.send(msg)
         scope_label = "部门" if scope == "department" else "全组织"
@@ -905,7 +926,6 @@ class OrgToolHandler:
             "deliverable": deliverable[:2000],
             "summary": summary[:500],
             "task_chain_id": chain_id,
-            "_cascade_depth": self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0) + 1,
         }
 
         msg = OrgMessage(
@@ -964,7 +984,6 @@ class OrgToolHandler:
         metadata = {
             "task_chain_id": chain_id,
             "acceptance_feedback": feedback[:500],
-            "_cascade_depth": self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0) + 1,
         }
 
         msg = OrgMessage(
@@ -979,6 +998,7 @@ class OrgToolHandler:
 
         if chain_id:
             messenger.release_task_affinity(chain_id)
+            self._runtime._chain_delegation_depth.pop(chain_id, None)
 
         self._runtime.get_event_store(org_id).emit(
             "task_accepted", node_id,
@@ -1033,7 +1053,6 @@ class OrgToolHandler:
         metadata = {
             "task_chain_id": chain_id,
             "rejection_reason": reason[:500],
-            "_cascade_depth": self._runtime._cascade_depth.get(f"{org_id}:{node_id}", 0) + 1,
         }
 
         msg = OrgMessage(

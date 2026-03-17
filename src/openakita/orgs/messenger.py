@@ -37,6 +37,7 @@ class NodeMailbox:
         self._paused = False
         self._seq = 0
         self._frozen_buffer: list = []
+        self._dispatched = 0
 
     async def put(self, msg: OrgMessage) -> None:
         priority = -(int(msg.priority) if msg.priority else 0)
@@ -54,6 +55,10 @@ class NodeMailbox:
             return msg
         except asyncio.TimeoutError:
             return None
+
+    def mark_dispatched(self) -> None:
+        """Mark one message as dispatched to handler for processing."""
+        self._dispatched += 1
 
     def pause(self) -> None:
         self._paused = True
@@ -74,6 +79,11 @@ class NodeMailbox:
 
     @property
     def pending_count(self) -> int:
+        return max(0, self._queue.qsize() - self._dispatched)
+
+    @property
+    def total_received(self) -> int:
+        """Total messages ever received (queue + dispatched)."""
         return self._queue.qsize()
 
     @property
@@ -288,6 +298,8 @@ class OrgMessenger:
         if msg.to_node in self._message_handlers:
             try:
                 await self._message_handlers[msg.to_node](msg)
+                if mailbox and not mailbox.is_paused:
+                    mailbox.mark_dispatched()
             except Exception as e:
                 logger.error(f"[Messenger] Handler error for {msg.to_node}: {e}")
 
@@ -384,7 +396,7 @@ class OrgMessenger:
                 msg_type=msg.msg_type,
                 content=msg.content,
                 priority=msg.priority,
-                metadata=msg.metadata,
+                metadata=dict(msg.metadata) if msg.metadata else {},
             )
             mailbox = self._mailboxes.get(nid)
             if mailbox:
@@ -392,6 +404,8 @@ class OrgMessenger:
             if trigger_handler and nid in self._message_handlers:
                 try:
                     await self._message_handlers[nid](copy)
+                    if mailbox:
+                        mailbox.mark_dispatched()
                 except Exception as e:
                     logger.error(f"[Messenger] Broadcast handler error for {nid}: {e}")
 
