@@ -63,20 +63,27 @@ class TestCascadeDepthLimiting:
     def handler(self, mock_runtime) -> OrgToolHandler:
         return OrgToolHandler(mock_runtime)
 
-    async def test_cascade_depth_increments(self, handler, persisted_org, mock_runtime):
-        mock_runtime._cascade_depth = {"org_test:node_ceo": 3}
+    async def test_delegation_depth_tracked_per_chain(self, handler, persisted_org, mock_runtime):
+        mock_runtime._chain_delegation_depth = {}
         result = await handler.handle(
             "org_delegate_task",
-            {"to_node": "node_cto", "task": "传递任务"},
+            {"to_node": "node_cto", "task": "传递任务", "task_chain_id": "chain_a"},
             persisted_org.id, "node_ceo",
         )
         assert "任务已分配" in result or "已分配" in result
-        es = mock_runtime.get_event_store(persisted_org.id)
-        events = es.query(event_type="task_assigned", limit=10)
-        assert len(events) >= 1
+        assert mock_runtime._chain_delegation_depth.get("chain_a", 0) == 1
 
-    async def test_escalation_cascade_depth(self, handler, persisted_org, mock_runtime):
-        mock_runtime._cascade_depth = {"org_test:node_cto": 2}
+    async def test_delegation_depth_blocks_at_limit(self, handler, persisted_org, mock_runtime):
+        mock_runtime._chain_delegation_depth = {"chain_deep": 99}
+        result = await handler.handle(
+            "org_delegate_task",
+            {"to_node": "node_cto", "task": "太深了", "task_chain_id": "chain_deep"},
+            persisted_org.id, "node_ceo",
+        )
+        assert "上限" in result or "无法" in result
+
+    async def test_escalation_not_affected_by_depth(self, handler, persisted_org, mock_runtime):
+        mock_runtime._chain_delegation_depth = {}
         result = await handler.handle(
             "org_escalate",
             {"content": "需要决策", "priority": 1},
@@ -149,7 +156,7 @@ class TestMessageFormatting:
     def _make_runtime(self):
         from openakita.orgs.runtime import OrgRuntime
         rt = MagicMock()
-        rt._cascade_depth = {}
+        rt._chain_delegation_depth = {}
         return rt
 
     def test_task_assign_format(self):

@@ -131,6 +131,7 @@ def mock_runtime(persisted_org: Organization, org_manager: OrgManager, org_dir: 
     rt._manager = org_manager
     rt.get_org = MagicMock(return_value=persisted_org)
     rt._active_orgs = {persisted_org.id: persisted_org}
+    rt._chain_delegation_depth = {}
 
     from openakita.orgs.event_store import OrgEventStore
     from openakita.orgs.blackboard import OrgBlackboard

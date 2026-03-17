@@ -492,7 +492,7 @@ class TestAcceptRejectIdempotency:
         rt._manager = MagicMock()
         rt._manager._org_dir = MagicMock(return_value=org_dir)
         rt.get_org = MagicMock(return_value=sample_org)
-        rt._cascade_depth = {}
+        rt._chain_delegation_depth = {}
 
         messenger = OrgMessenger(sample_org, org_dir)
         rt.get_messenger = MagicMock(return_value=messenger)
@@ -518,7 +518,7 @@ class TestAcceptRejectIdempotency:
         rt._manager = MagicMock()
         messenger = OrgMessenger(sample_org, org_dir)
         rt.get_messenger = MagicMock(return_value=messenger)
-        rt._cascade_depth = {}
+        rt._chain_delegation_depth = {}
 
         handler = OrgToolHandler(rt)
         result = await handler._handle_org_reject_deliverable(
