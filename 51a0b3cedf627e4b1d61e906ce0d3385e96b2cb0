@@ -1,0 +1,8 @@
+feat(security/ui): 新增 SecurityView.tsx — 安全策略可视化配置面板
+
+提供桌面端 Setup Center 的安全配置界面：
+- Tab 分栏：安全区域 / 命令规则 / 沙箱与审计
+- 安全区域增删改（workspace/controlled/protected/forbidden）
+- Shell 命令拦截规则管理
+- 沙箱开关、审计日志查看、检查点管理
+- 全部文案走 i18n，支持中英文
