@@ -1,0 +1,12 @@
+feat(security): 前端组件库对齐 + 后端 lint/bug 修复（安全模块收尾）
+
+前端重构：
+- SecurityView 全面改用 shadcn Button/Input/Switch/Select/Badge
+- 图标系统从 emoji 迁移到 icons.tsx SVG 组件
+- SecurityConfirmModal 组件化 + i18n key 修正
+- Tab 选中效果修复（var(--accent) 内联样式）
+
+后端修复：
+- sandbox.py: Windows sid 变量未初始化 → finally NameError
+- policy.py: str+Enum → StrEnum 迁移，移除未使用导入
+- 新增 audit_logger.py / checkpoint.py / sandbox.py
