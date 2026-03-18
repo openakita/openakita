@@ -557,18 +557,42 @@ class Agent:
 
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
+    # Categories that must always remain available regardless of intent filtering.
+    # These are infrastructure tools that any task may need.
+    _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
+        "System",       # ask_user, enable_thinking, get_tool_info, etc.
+        "Memory",       # search_memory, add_memory — context recall
+        "Plan",         # create_plan, update_plan_step — task orchestration
+        "Skills",       # list_skills, run_skill_script — capability discovery
+        "Skill Store",  # search/install skills from store
+        "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
+    })
+
     @property
     def _effective_tools(self) -> list[dict]:
         """Tools available for the current call context.
 
-        Sub-agents must not have delegation tools to prevent
-        uncontrolled recursive delegation chains.
-
-        Small context window models get a reduced tool set to save tokens.
+        Filtering layers (applied in order):
+        1. Sub-agent restriction: remove delegation tools
+        2. Intent-driven: filter by IntentResult.tool_hints (category-based),
+           but always keep infrastructure categories (System, Memory, Plan,
+           Skills, Skill Store, MCP) so the LLM can recall context, orchestrate
+           plans, invoke skills/MCP, and use meta tools regardless of intent.
+        3. Context window: reduce set for small models
         """
         tools = self._tools
         if self._is_sub_agent_call:
             tools = [t for t in tools if t.get("name") not in self._agent_tool_names]
+
+        intent = getattr(self, "_current_intent", None)
+        if intent and intent.tool_hints and hasattr(self, "tool_catalog"):
+            tool_groups = self.tool_catalog.get_tool_groups()
+            allowed: set[str] = set()
+            for cat in self._ALWAYS_KEEP_CATEGORIES:
+                allowed |= tool_groups.get(cat, set())
+            for hint in intent.tool_hints:
+                allowed |= tool_groups.get(hint, set())
+            tools = [t for t in tools if t.get("name") in allowed]
 
         ctx = self._get_raw_context_window()
         if 0 < ctx < 8000:
@@ -2279,7 +2303,12 @@ search_github → install_skill → 使用
         prompt += self._build_multi_agent_prompt_section()
         return prompt
 
-    async def _build_system_prompt_compiled(self, task_description: str = "", session_type: str = "cli") -> str:
+    async def _build_system_prompt_compiled(
+        self,
+        task_description: str = "",
+        session_type: str = "cli",
+        tools_enabled: bool = True,
+    ) -> str:
         """
         使用编译管线构建系统提示词 (v2)
 
@@ -2289,6 +2318,7 @@ search_github → install_skill → 使用
         Args:
             task_description: 任务描述 (用于检索相关记忆)
             session_type: 会话类型 "cli" 或 "im"
+            tools_enabled: 是否启用工具（CHAT 轻量路径传 False）
 
         Returns:
             编译后的系统提示词
@@ -2299,9 +2329,13 @@ search_github → install_skill → 使用
                 return ctx.system
 
         ctx_window = self._get_raw_context_window()
+        intent = getattr(self, "_current_intent", None)
+        _mem_keywords = intent.memory_keywords if intent else None
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description, session_type=session_type, context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
+            tools_enabled=tools_enabled,
+            memory_keywords=_mem_keywords,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -2961,37 +2995,40 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             except Exception as e:
                 logger.debug(f"[TraitMiner] Mining failed (non-critical): {e}")
 
-        # 7. Prompt Compiler (两段式第一阶段)
+        # 7. IntentAnalyzer (unified intent analysis — all messages go through LLM)
+        from .intent_analyzer import IntentAnalyzer, IntentType
+
+        if not hasattr(self, "_intent_analyzer"):
+            self._intent_analyzer = IntentAnalyzer(self.brain)
+
+        try:
+            intent_result = await asyncio.wait_for(
+                self._intent_analyzer.analyze(message), timeout=15,
+            )
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"[Session:{session_id}] Intent analysis failed/timed out: {e}")
+            from .intent_analyzer import _make_default
+            intent_result = _make_default(message)
+
+        self._current_intent = intent_result
+        compiler_summary = intent_result.task_definition
         compiled_message = message
-        compiler_output = ""
-        compiler_summary = ""
+        logger.info(
+            f"[Session:{session_id}] Intent: {intent_result.intent.value}, "
+            f"task_type: {intent_result.task_type}, "
+            f"tool_hints: {intent_result.tool_hints}, "
+            f"memory_keywords: {intent_result.memory_keywords}"
+        )
 
-        if self._should_compile_prompt(message):
-            try:
-                compiled_message, compiler_output = await asyncio.wait_for(
-                    self._compile_prompt(message), timeout=15,
+        # 8. Plan mode detection
+        if intent_result.plan_required:
+            from ..tools.handlers.plan import require_plan_for_session, should_require_plan
+            has_multi_actions = should_require_plan(message)
+            if intent_result.plan_required or has_multi_actions:
+                require_plan_for_session(conversation_id, True)
+                logger.info(
+                    f"[Session:{session_id}] Multi-step task detected, Plan required"
                 )
-            except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(f"[Session:{session_id}] Prompt compilation failed/timed out: {e}")
-            if compiler_output:
-                logger.info(f"[Session:{session_id}] Prompt compiled")
-                compiler_summary = self._summarize_compiler_output(compiler_output)
-
-                # 8. Plan 模式自动检测
-                from ..tools.handlers.plan import require_plan_for_session, should_require_plan
-
-                is_compound = (
-                    "task_type: compound" in compiler_output
-                    or "task_type:compound" in compiler_output
-                )
-                has_multi_actions = should_require_plan(message)
-
-                if is_compound or has_multi_actions:
-                    require_plan_for_session(conversation_id, True)
-                    logger.info(
-                        f"[Session:{session_id}] Multi-step task detected "
-                        f"(compound={is_compound}, multi_actions={has_multi_actions}), Plan required"
-                    )
 
         # 9. Task definition setup
         self._current_task_definition = compiler_summary
@@ -3040,9 +3077,9 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 except Exception as _tc_err:
                     logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {_tc_err}")
 
-        # 9.7 同步更新 Scratchpad 当前任务
+        # 9.7 同步更新 Scratchpad 当前任务 (skip for CHAT intent to avoid overwriting task focus)
         _new_task = compiler_summary or message[:200]
-        if _new_task:
+        if _new_task and intent_result.intent != IntentType.CHAT:
             try:
                 _sp_store = getattr(self.memory_manager, "store", None)
                 if _sp_store:
@@ -3571,14 +3608,34 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                             pass
                     _progress_cb = _im_chain_progress
 
-            # === 核心推理 (同步返回) ===
-            response_text = await self._chat_with_tools_and_context(
-                messages, task_monitor=task_monitor, session_type=session_type,
-                thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
-                progress_callback=_progress_cb,
-                session=session,
-                endpoint_override=endpoint_override,
-            )
+            # === Intent-driven routing ===
+            from .intent_analyzer import IntentType as _IT
+            _intent = getattr(self, "_current_intent", None)
+
+            if _intent and _intent.intent == _IT.CHAT:
+                # Lightweight path: no tools, slim system prompt
+                response_text = await self._chat_lightweight(
+                    messages, session_type=session_type,
+                    endpoint_override=endpoint_override,
+                )
+            elif _intent and _intent.intent == _IT.COMMAND:
+                response_text = await self._chat_with_tools_and_context(
+                    messages, task_monitor=task_monitor, session_type=session_type,
+                    thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
+                    progress_callback=_progress_cb,
+                    session=session,
+                    endpoint_override=endpoint_override,
+                )
+            else:
+                # TASK / QUERY / FOLLOW_UP → full ReasoningEngine
+                response_text = await self._chat_with_tools_and_context(
+                    messages, task_monitor=task_monitor, session_type=session_type,
+                    thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
+                    progress_callback=_progress_cb,
+                    session=session,
+                    endpoint_override=endpoint_override,
+                    intent_result=_intent,
+                )
 
             # === flush 残留的 IM 进度消息，确保思维链先于回答到达 ===
             if gateway and session:
@@ -3759,10 +3816,61 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 except Exception:
                     pass
 
-            # === 核心推理 (流式) ===
+            # === Intent-driven routing (streaming) ===
+            from .intent_analyzer import IntentType as _IT
+            _intent = getattr(self, "_current_intent", None)
+
+            # Intent-driven ForceToolCall for streaming path
+            _force_tool_retries = None
+            if _intent:
+                if _intent.intent in (_IT.CHAT, _IT.QUERY):
+                    _force_tool_retries = 0
+                elif _intent.force_tool:
+                    pass
+                else:
+                    _force_tool_retries = max(0, settings.max_no_tool_retries - 1) if hasattr(settings, "max_no_tool_retries") else None
+
             _agent_profile_id = "default"
             if session and hasattr(session, "context"):
                 _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
+
+            if _intent and _intent.intent == _IT.CHAT:
+                # Lightweight streaming path for CHAT: single LLM call, no tools
+                _chat_prompt = await self._build_system_prompt_compiled(
+                    task_description="", session_type=session_type, tools_enabled=False,
+                )
+                try:
+                    response = await self.brain.messages_create_async(
+                        system=_chat_prompt,
+                        messages=messages,
+                        tools=[],
+                        max_tokens=self.brain.max_tokens,
+                        endpoint_override=endpoint_override,
+                    )
+                    content = getattr(response, "content", None)
+                    if isinstance(content, list):
+                        for block in content:
+                            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+                            if text:
+                                _reply_text += text
+                                yield {"type": "text_delta", "content": text}
+                    elif content:
+                        _reply_text = str(content)
+                        yield {"type": "text_delta", "content": _reply_text}
+                except Exception as e:
+                    logger.error(f"[ChatLightweight/Stream] LLM call failed: {e}")
+                    yield {"type": "text_delta", "content": "抱歉，暂时无法回复，请稍后再试。"}
+                    _reply_text = "抱歉，暂时无法回复，请稍后再试。"
+                yield {"type": "done"}
+
+                await self._finalize_session(
+                    response_text=_reply_text,
+                    session=session,
+                    session_id=session_id,
+                    task_monitor=task_monitor,
+                )
+                return
+
             async for event in self.reasoning_engine.reason_stream(
                 messages=messages,
                 tools=self._effective_tools,
@@ -3778,6 +3886,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 thinking_depth=_thinking_depth,
                 agent_profile_id=_agent_profile_id,
                 session=session,
+                force_tool_retries=_force_tool_retries,
             ):
                 # 收集回复文本（用于 session 保存 & memory）
                 if event.get("type") == "text_delta":
@@ -4570,6 +4679,42 @@ NEXT: 建议的下一步（如有）"""
         except Exception as e:
             logger.warning(f"[StopTask] Failed to persist cancel to context: {e}")
 
+    async def _chat_lightweight(
+        self,
+        messages: list[dict],
+        session_type: str = "cli",
+        endpoint_override: str | None = None,
+    ) -> str:
+        """Lightweight path for CHAT intent: no tools, slim system prompt."""
+        system_prompt = await self._build_system_prompt_compiled(
+            task_description="",
+            session_type=session_type,
+            tools_enabled=False,
+        )
+
+        try:
+            response = await self.brain.messages_create_async(
+                system=system_prompt,
+                messages=messages,
+                tools=[],
+                max_tokens=self.brain.max_tokens,
+                endpoint_override=endpoint_override,
+            )
+
+            content = getattr(response, "content", None)
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if hasattr(block, "text"):
+                        text_parts.append(block.text)
+                    elif isinstance(block, dict) and "text" in block:
+                        text_parts.append(block["text"])
+                return "\n".join(text_parts) or ""
+            return str(content or "")
+        except Exception as e:
+            logger.error(f"[ChatLightweight] LLM call failed: {e}")
+            return "抱歉，暂时无法回复，请稍后再试。"
+
     async def _chat_with_tools_and_context(
         self,
         messages: list[dict],
@@ -4581,6 +4726,7 @@ NEXT: 建议的下一步（如有）"""
         progress_callback: Any = None,
         session: Any = None,
         endpoint_override: str | None = None,
+        intent_result: Any = None,
     ) -> str:
         """
         使用指定的消息上下文进行对话（委托给 ReasoningEngine）
@@ -4597,6 +4743,7 @@ NEXT: 建议的下一步（如有）"""
             thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
             progress_callback: 进度回调 async fn(str) -> None，IM 实时思维链
             endpoint_override: 端点覆盖
+            intent_result: IntentResult from IntentAnalyzer (drives ForceToolCall policy)
 
         Returns:
             最终响应文本
@@ -4627,6 +4774,17 @@ NEXT: 建议的下一步（如有）"""
         if session and hasattr(session, "context"):
             _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
 
+        # === Intent-driven ForceToolCall policy ===
+        force_tool_retries = None
+        if intent_result:
+            from .intent_analyzer import IntentType as _IT
+            if intent_result.intent in (_IT.CHAT, _IT.QUERY):
+                force_tool_retries = 0
+            elif intent_result.force_tool:
+                pass  # None = use default from settings
+            else:
+                force_tool_retries = max(0, settings.max_no_tool_retries - 1)
+
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
             messages,
@@ -4642,6 +4800,7 @@ NEXT: 建议的下一步（如有）"""
             progress_callback=progress_callback,
             agent_profile_id=_agent_profile_id,
             endpoint_override=endpoint_override,
+            force_tool_retries=force_tool_retries,
         )
 
         # ==================== 以下为旧代码（保留参考，后续完全清理） ====================

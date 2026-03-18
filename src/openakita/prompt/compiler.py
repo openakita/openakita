@@ -10,8 +10,7 @@ Prompt Compiler (v2) — LLM 辅助编译 + 缓存 + 规则降级
 
 编译目标:
 - SOUL.md -> soul.summary.md (<=150 tokens)
-- AGENT.md -> agent.core.md (<=250 tokens)
-- AGENT.md -> agent.tooling.md (<=200 tokens)
+- AGENT.md -> agent.core.md (<=300 tokens)
 - USER.md -> user.summary.md (<=120 tokens)
 - personas/user_custom.md -> persona.custom.md (<=150 tokens)
 """
@@ -49,23 +48,6 @@ _COMPILE_PROMPTS: dict[str, dict] = {
 {content}""",
         "max_tokens": 250,
     },
-    "agent_tooling": {
-        "target": "agent_tooling",
-        "system": "你是一个文本精简专家。",
-        "user": """从以下文档中提取工具使用原则。
-
-要求:
-- 保留工具选择优先级（技能→MCP→Shell→临时脚本→搜索安装→自建技能）
-- 保留能力扩展协议（缺少能力时的搜索/安装/创建流程）
-- 保留禁止的敷衍响应模式
-- 删除具体工具列表（运行时通过 tools 参数注入）
-- 删除代码块和命令示例
-- 输出纯 Markdown，不超过 {max_tokens} tokens
-
-原文:
-{content}""",
-        "max_tokens": 200,
-    },
     "user": {
         "target": "user",
         "system": "你是一个文本精简专家。",
@@ -101,7 +83,6 @@ _COMPILE_PROMPTS: dict[str, dict] = {
 _SOURCE_MAP: dict[str, str] = {
     # SOUL.md 不再编译 — 全文注入
     "agent_core": "AGENT.md",
-    "agent_tooling": "AGENT.md",
     "user": "USER.md",
     "persona_custom": "personas/user_custom.md",
 }
@@ -109,7 +90,6 @@ _SOURCE_MAP: dict[str, str] = {
 _OUTPUT_MAP: dict[str, str] = {
     # soul.summary.md 不再生成 — SOUL.md 全文注入
     "agent_core": "agent.core.md",
-    "agent_tooling": "agent.tooling.md",
     "user": "user.summary.md",
     "persona_custom": "persona.custom.md",
 }
@@ -232,11 +212,6 @@ _RELEVANCE_KEYWORDS: dict[str, list[str]] = {
         "self-check", "prohibited", "禁止", "proactive", "主动",
         "self-healing", "自修复", "成长循环", "growth", "每轮自检",
     ],
-    "agent_tooling": [
-        "工具", "tool", "技能", "skill", "mcp", "脚本", "script",
-        "优先级", "priority", "临时脚本", "能力扩展", "capability",
-        "敷衍", "没有工具",
-    ],
     "user": ["基本", "技术", "偏好", "profile", "习惯", "工作"],
     "persona_custom": ["性格", "风格", "沟通", "偏好", "特质"],
 }
@@ -248,12 +223,6 @@ _EXCLUDE_SECTIONS: dict[str, list[str]] = {
         "environment", "环境", "build", "running", "multi-agent",
         "orchestration", "codebase", "code style", "skill definition",
         "operational notes", "learned patterns", "common issues",
-    ],
-    "agent_tooling": [
-        "ralph", "wiggum", "铁律", "永不放弃", "backpressure",
-        "self-check", "environment", "环境", "build", "running",
-        "multi-agent", "orchestration", "codebase", "code style",
-        "skill definition", "operational notes", "validation",
     ],
 }
 
@@ -386,34 +355,13 @@ _STATIC_FALLBACKS: dict[str, str] = {
 - 删除用户数据（除非明确要求）
 - 访问敏感系统路径
 - 放弃任务（除非用户明确取消）
-- 对用户撒谎或隐瞒重要信息""",
-
-    "agent_tooling": """\
-## 工具使用原则
-
-### 核心原则：任务必须通过工具或脚本完成
-不使用工具/脚本 = 没有真正执行任务
-
-### 工具选择顺序
-1. **已安装的本地技能** — skills/ 目录下的技能
-2. **MCP 服务器工具** — 通过 MCP 协议调用的外部工具
-3. **Shell 命令** — 系统命令和脚本
-4. **临时脚本** — write_file 写脚本 + run_shell 执行
-5. **网络搜索 + 安装** — 搜索 GitHub 找到并安装新能力
-6. **自己编写技能** — 用 skill-creator 创建永久技能
-
-### 能力扩展协议（缺少能力时）
-1. **搜索** — 先查已安装 skills，再搜索网络
-2. **安装** — 找到合适的 skill → 直接安装并加载
-3. **创建** — 没有现成的 → 用 skill-creator 创建
-4. **记录** — 新能力获取后，更新经验记忆
-缺少能力 = 需要获取能力 = 获取能力 = 继续任务。中间没有"报告给用户"这一步。
+- 对用户撒谎或隐瞒重要信息
 
 ### 禁止的敷衍行为
 - ❌ "这个功能我暂时没有"
 - ❌ "你需要自己去..."
 - ❌ "我建议你手动..."
-- ❌ 只回复文字而不调用任何工具
+- ❌ 只回复文字而不调用任何工具（任务场景下）
 - ✅ "让我来处理" → 立即调用工具执行
 - ✅ "这个功能我还没有，让我创建一个" → skill-creator 或临时脚本""",
 }
@@ -443,9 +391,19 @@ def check_compiled_outdated(identity_dir: Path, max_age_hours: int = 24) -> bool
             timestamp_file.read_text(encoding="utf-8").strip()
         )
         age = datetime.now() - compiled_at
-        return age.total_seconds() > max_age_hours * 3600
+        if age.total_seconds() > max_age_hours * 3600:
+            return True
     except Exception:
         return True
+
+    # Source file mtime check: recompile if any source changed after last compilation
+    for target, source_file in _SOURCE_MAP.items():
+        source_path = identity_dir / source_file
+        output_path = runtime_dir / _OUTPUT_MAP[target]
+        if source_path.exists() and not _is_up_to_date(source_path, output_path):
+            return True
+
+    return False
 
 
 def get_compiled_content(identity_dir: Path) -> dict[str, str]:
@@ -469,9 +427,6 @@ def compile_soul(content: str) -> str:
 
 def compile_agent_core(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["agent_core"])
-
-def compile_agent_tooling(content: str) -> str:
-    return _compile_with_rules(content, _COMPILE_PROMPTS["agent_tooling"])
 
 def compile_user(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["user"])

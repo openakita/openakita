@@ -30,8 +30,7 @@ router = APIRouter(prefix="/api/identity", tags=["identity"])
 
 _BUDGET_MAP = {
     "SOUL.md": 3600,
-    "runtime/agent.core.md": 720,
-    "runtime/agent.tooling.md": 480,
+    "runtime/agent.core.md": 1200,
     "runtime/user.summary.md": 300,
     "runtime/persona.custom.md": 150,
     "prompts/policies.md": 1200,
@@ -48,7 +47,6 @@ _EDITABLE_SOURCE_FILES = [
 
 _RUNTIME_FILES = [
     "runtime/agent.core.md",
-    "runtime/agent.tooling.md",
     "runtime/user.summary.md",
     "runtime/persona.custom.md",
 ]
@@ -361,7 +359,6 @@ async def compile_identity(request: Request, mode: str = "rules"):
     compiled = get_compiled_content(identity_dir)
     _key_rt = {
         "agent_core": "runtime/agent.core.md",
-        "agent_tooling": "runtime/agent.tooling.md",
         "user": "runtime/user.summary.md",
         "persona_custom": "runtime/persona.custom.md",
     }
@@ -399,7 +396,6 @@ async def compile_status():
 
     key_to_runtime = {
         "agent_core": "runtime/agent.core.md",
-        "agent_tooling": "runtime/agent.tooling.md",
         "user": "runtime/user.summary.md",
         "persona_custom": "runtime/persona.custom.md",
     }

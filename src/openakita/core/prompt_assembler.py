@@ -133,6 +133,8 @@ class PromptAssembler:
         session_type: str = "cli",
         context_window: int = 0,
         is_sub_agent: bool = False,
+        tools_enabled: bool = True,
+        memory_keywords: list[str] | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -145,6 +147,7 @@ class PromptAssembler:
             session_type: 会话类型
             context_window: 目标模型上下文窗口大小（>0 时启用自适应预算）
             is_sub_agent: 是否为子 Agent 调用（子 Agent 不注入委派优先声明）
+            tools_enabled: 是否启用工具（CHAT 轻量路径传 False 跳过 Catalogs 层）
 
         Returns:
             编译后的系统提示词
@@ -167,17 +170,18 @@ class PromptAssembler:
 
         return build_system_prompt(
             identity_dir=identity_dir,
-            tools_enabled=True,
-            tool_catalog=self._tool_catalog,
-            skill_catalog=self._skill_catalog,
-            mcp_catalog=self._mcp_catalog,
+            tools_enabled=tools_enabled,
+            tool_catalog=self._tool_catalog if tools_enabled else None,
+            skill_catalog=self._skill_catalog if tools_enabled else None,
+            mcp_catalog=self._mcp_catalog if tools_enabled else None,
             memory_manager=self._memory_manager,
             task_description=task_description,
             budget_config=budget_config,
-            include_tools_guide=True,
+            include_tools_guide=tools_enabled,
             session_type=session_type,
             persona_manager=self._persona_manager,
             is_sub_agent=is_sub_agent,
+            memory_keywords=memory_keywords,
         )
 
     def _build_compiled_sync(

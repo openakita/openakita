@@ -4,10 +4,9 @@ Prompt Budget - Token 预算裁剪模块
 控制各部分的 token 预算，确保系统提示词不超出限制。
 
 预算分配:
-- identity_budget: 6000 tokens (SOUL 全文 + agent.core + agent.tooling + policies)
+- identity_budget: 6000 tokens (SOUL 全文 + agent.core + policies)
   - SOUL.md 全文注入（~3600, 60%）：保留哲学基调和情感共鸣
-  - agent.core（~720, 12%）：手写的核心执行原则精简版
-  - agent.tooling（~480, 8%）：手写的工具使用原则精简版
+  - agent.core（~1200, 20%）：核心执行原则 + 禁止敷衍行为
   - policies（~1200, 20%）：系统策略 + 用户策略
 - catalogs_budget: 12000 tokens (tools 33% + skills 55% + mcp 10%)
 - user_budget: 300 tokens (user.summary + runtime_facts)
@@ -31,7 +30,7 @@ class BudgetConfig:
     """Token 预算配置"""
 
     # 各部分预算（tokens）
-    identity_budget: int = 6000   # SOUL全文 + agent.core + agent.tooling + policies
+    identity_budget: int = 6000   # SOUL全文 + agent.core + policies
     catalogs_budget: int = 12000  # tools(33%) + skills(55%) + mcp(10%) 全量注入
     user_budget: int = 300        # user.summary + runtime_facts
     memory_budget: int = 2500     # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
@@ -293,8 +292,7 @@ def apply_budget_to_sections(
     # 按区域分配预算
     budget_map = {
         "soul": config.identity_budget * 60 // 100,
-        "agent_core": config.identity_budget * 12 // 100,
-        "agent_tooling": config.identity_budget * 8 // 100,
+        "agent_core": config.identity_budget * 20 // 100,
         "policies": config.identity_budget * 20 // 100,
         "tools": config.catalogs_budget // 3,            # 33%
         "skills": config.catalogs_budget * 55 // 100,    # 55%

@@ -473,6 +473,7 @@ class ReasoningEngine:
         progress_callback: Any = None,
         agent_profile_id: str = "default",
         endpoint_override: str | None = None,
+        force_tool_retries: int | None = None,
     ) -> str:
         """
         主推理循环: Reason -> Act -> Observe。
@@ -491,6 +492,8 @@ class ReasoningEngine:
             thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
             progress_callback: 进度回调 async fn(str) -> None，用于 IM 实时输出思维链
             endpoint_override: 端点覆盖（来自 Agent profile 或 API 请求）
+            force_tool_retries: Intent-driven override for max ForceToolCall retries
+                (None = use default from settings, 0 = disable ForceToolCall)
 
         Returns:
             最终响应文本
@@ -577,6 +580,12 @@ class ReasoningEngine:
             base_force_retries = max(0, configured)
 
         max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)
+
+        # Intent-driven override (from IntentAnalyzer)
+        if force_tool_retries is not None:
+            max_no_tool_retries = force_tool_retries
+            logger.info(f"[ForceToolCall] Intent override: max_retries={force_tool_retries}")
+
         max_verify_retries = 3
         max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
 
@@ -591,12 +600,6 @@ class ReasoningEngine:
         verify_incomplete_count = 0
         no_confirmation_text_count = 0
         tools_executed_in_task = False
-
-        # 循环检测
-        recent_tool_signatures: list[str] = []
-        tool_pattern_window = 8
-        llm_self_check_interval = 10
-        extreme_safety_threshold = 50
 
         def _build_effective_system_prompt() -> str:
             """动态追加活跃 Plan"""
@@ -690,7 +693,6 @@ class ReasoningEngine:
                     verify_incomplete_count = 0
                     executed_tool_names = []
                     consecutive_tool_rounds = 0
-                    recent_tool_signatures = []
                     no_confirmation_text_count = 0
 
             _ctx_compressed_info: dict | None = None
@@ -816,7 +818,6 @@ class ReasoningEngine:
                     verify_incomplete_count = 0
                     executed_tool_names = []
                     consecutive_tool_rounds = 0
-                    recent_tool_signatures = []
                     no_confirmation_text_count = 0
                     continue
                 else:
@@ -1319,9 +1320,6 @@ class ReasoningEngine:
                 # 工具签名循环检测 (Supervisor-based)
                 round_signatures = [_make_tool_signature(tc) for tc in decision.tool_calls]
                 round_sig_str = "+".join(sorted(round_signatures))
-                recent_tool_signatures.append(round_sig_str)
-                if len(recent_tool_signatures) > tool_pattern_window:
-                    recent_tool_signatures = recent_tool_signatures[-tool_pattern_window:]
                 self._supervisor.record_tool_signature(round_sig_str)
 
                 # Supervisor 综合评估
@@ -1414,6 +1412,7 @@ class ReasoningEngine:
         thinking_depth: str | None = None,
         agent_profile_id: str = "default",
         session: Any = None,
+        force_tool_retries: int | None = None,
     ):
         """
         流式推理循环，为 HTTP API (SSE) 设计。
@@ -1534,6 +1533,12 @@ class ReasoningEngine:
                 base_force_retries = max(0, configured)
 
             max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)
+
+            # Intent-driven override (from IntentAnalyzer)
+            if force_tool_retries is not None:
+                max_no_tool_retries = force_tool_retries
+                logger.info(f"[ForceToolCall/Stream] Intent override: max_retries={force_tool_retries}")
+
             max_verify_retries = 3
             max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
 
@@ -1545,12 +1550,6 @@ class ReasoningEngine:
             verify_incomplete_count = 0
             no_confirmation_text_count = 0
             tools_executed_in_task = False
-
-            # 循环检测
-            recent_tool_signatures: list[str] = []
-            tool_pattern_window = 8
-            llm_self_check_interval = 10
-            extreme_safety_threshold = 50
 
             def _make_tool_sig(tc: dict) -> str:
                 nonlocal _last_browser_url
@@ -1622,7 +1621,6 @@ class ReasoningEngine:
                         verify_incomplete_count = 0
                         executed_tool_names = []
                         consecutive_tool_rounds = 0
-                        recent_tool_signatures = []
                         no_confirmation_text_count = 0
 
                 logger.info(
@@ -1780,7 +1778,6 @@ class ReasoningEngine:
                         verify_incomplete_count = 0
                         executed_tool_names = []
                         consecutive_tool_rounds = 0
-                        recent_tool_signatures = []
                         no_confirmation_text_count = 0
                         continue
                     else:
@@ -2356,9 +2353,6 @@ class ReasoningEngine:
                     # Supervisor 综合评估
                     round_signatures = [_make_tool_sig(tc) for tc in decision.tool_calls]
                     round_sig_str = "+".join(sorted(round_signatures))
-                    recent_tool_signatures.append(round_sig_str)
-                    if len(recent_tool_signatures) > tool_pattern_window:
-                        recent_tool_signatures = recent_tool_signatures[-tool_pattern_window:]
                     self._supervisor.record_tool_signature(round_sig_str)
 
                     _has_plan_s = self._has_active_plan_pending(conversation_id)
@@ -3266,82 +3260,6 @@ class ReasoningEngine:
         )
 
     # ==================== 循环检测 ====================
-
-    def _detect_loops(
-        self,
-        recent_signatures: list[str],
-        consecutive_rounds: int,
-        working_messages: list[dict],
-        text_content: str,
-        self_check_interval: int,
-        extreme_threshold: int,
-        conversation_id: str | None,
-    ) -> str | None:
-        """
-        循环检测。
-
-        Returns:
-            "terminate" - 终止循环
-            "disable_force" - 禁用 ForceToolCall
-            None - 继续
-        """
-        # 签名重复检测
-        if len(recent_signatures) >= 3:
-            from collections import Counter
-            sig_counts = Counter(recent_signatures)
-            most_common_sig, most_common_count = sig_counts.most_common(1)[0]
-
-            if most_common_count >= 3:
-                logger.warning(
-                    f"[LoopGuard] True loop: '{most_common_sig}' repeated {most_common_count} times"
-                )
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                        "请评估：1. 任务已完成则停止调用。2. 遇到困难则换方法。"
-                    ),
-                })
-
-                if most_common_count >= 5:
-                    logger.error(f"[LoopGuard] Dead loop ({most_common_count} repeats). Terminating.")
-                    return "terminate"
-
-        # 定期 LLM 自检
-        if consecutive_rounds > 0 and consecutive_rounds % self_check_interval == 0:
-            has_plan = self._has_active_plan_pending(conversation_id)
-            if has_plan:
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[系统提示] 已连续执行 {consecutive_rounds} 轮，Plan 仍有未完成步骤。"
-                        "如果遇到困难，请换一种方法继续推进。"
-                    ),
-                })
-            else:
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[系统提示] 你已连续执行了 {consecutive_rounds} 轮工具调用。请自我评估：\n"
-                        "1. 当前任务进度如何？\n"
-                        "2. 是否陷入了循环？\n"
-                        "3. 如果任务已完成，请停止工具调用，直接回复用户。"
-                    ),
-                })
-
-        # 极端安全阈值
-        if consecutive_rounds == extreme_threshold:
-            logger.warning(f"[LoopGuard] Extreme safety threshold ({extreme_threshold})")
-            working_messages.append({
-                "role": "user",
-                "content": (
-                    f"[系统提示] 当前任务已连续执行了 {extreme_threshold} 轮。"
-                    "请向用户汇报进度并询问是否继续。"
-                ),
-            })
-            return "disable_force"
-
-        return None
 
     # ==================== 模型切换 ====================
 

@@ -25,11 +25,6 @@ class TestPromptCompileFunctions:
         result = compile_agent_core("## Core Behaviors\n- Never give up\n- Be honest")
         assert isinstance(result, str)
 
-    def test_compile_agent_tooling(self):
-        from openakita.prompt.compiler import compile_agent_tooling
-        result = compile_agent_tooling("## Tool Usage\n- Use tools wisely")
-        assert isinstance(result, str)
-
     def test_compile_user(self):
         from openakita.prompt.compiler import compile_user
         result = compile_user("User prefers Chinese. Name: 小明")

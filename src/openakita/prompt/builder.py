@@ -4,7 +4,7 @@ Prompt Builder - 消息组装模块
 组装最终的系统提示词，整合编译产物、清单和记忆。
 
 组装顺序:
-1. Identity 层: soul.summary + agent.core + agent.tooling + policies
+1. Identity 层: soul.summary + agent.core + policies
 2. Persona 层: 当前人格描述（预设 + 用户自定义 + 上下文适配）
 3. Runtime 层: runtime_facts (OS/CWD/时间)
 4. Catalogs 层: tools + skills + mcp 清单
@@ -152,17 +152,18 @@ def build_system_prompt(
     task_description: str = "",
     budget_config: BudgetConfig | None = None,
     include_tools_guide: bool = False,
-    session_type: str = "cli",  # 建议 8: 区分 CLI/IM
+    session_type: str = "cli",
     precomputed_memory: str | None = None,
     persona_manager: Optional["PersonaManager"] = None,
     is_sub_agent: bool = False,
+    memory_keywords: list[str] | None = None,
 ) -> str:
     """
     组装系统提示词
 
     Args:
         identity_dir: identity 目录路径
-        tools_enabled: 是否启用工具（影响 agent.tooling 注入）
+        tools_enabled: 是否启用工具（影响 Catalogs 层注入）
         tool_catalog: ToolCatalog 实例（用于生成工具清单）
         skill_catalog: SkillCatalog 实例（用于生成技能清单）
         mcp_catalog: MCPCatalog 实例（用于 MCP 清单）
@@ -260,6 +261,7 @@ def build_system_prompt(
             memory_manager=memory_manager,
             task_description=task_description,
             budget_tokens=budget_config.memory_budget,
+            memory_keywords=memory_keywords,
         )
     if memory_section:
         developer_parts.append(memory_section)
@@ -320,7 +322,7 @@ def _build_identity_section(
     """构建 Identity 层
 
     SOUL.md 全文注入（只清理 HTML 注释），保留哲学基调和情感共鸣。
-    AGENT 行为规范使用手写的 runtime 精简版（agent.core.md / agent.tooling.md）。
+    AGENT 行为规范使用手写的 runtime 精简版（agent.core.md）。
     """
     import re
 
@@ -343,18 +345,10 @@ def _build_identity_section(
         parts.append(compiled["soul"])
         parts.append("")
 
-    # Agent core (~12%) — 手写的核心执行原则精简版
+    # Agent core (~20%) — 核心执行原则 + 禁止敷衍行为
     if compiled.get("agent_core"):
-        core_result = apply_budget(compiled["agent_core"], budget_tokens * 12 // 100, "agent_core")
+        core_result = apply_budget(compiled["agent_core"], budget_tokens * 20 // 100, "agent_core")
         parts.append(core_result.content)
-        parts.append("")
-
-    # Agent tooling (~8%, only if tools enabled)
-    if tools_enabled and compiled.get("agent_tooling"):
-        tooling_result = apply_budget(
-            compiled["agent_tooling"], budget_tokens * 8 // 100, "agent_tooling"
-        )
-        parts.append(tooling_result.content)
         parts.append("")
 
     # Policies (~20%) = 系统策略（代码层，不可删除）+ 用户策略（文件层，可定制）
@@ -828,6 +822,7 @@ def _build_memory_section(
     memory_manager: Optional["MemoryManager"],
     task_description: str,
     budget_tokens: int,
+    memory_keywords: list[str] | None = None,
 ) -> str:
     """
     构建 Memory 层 — 渐进式披露:
@@ -835,8 +830,7 @@ def _build_memory_section(
     1. Scratchpad (当前任务 + 近期完成)
     2. Core Memory (MEMORY.md 用户基本信息 + 永久规则)
     3. Experience Hints (高权重经验记忆)
-
-    Dynamic Memories 不再自动注入，由 LLM 按需调用 search_memory 检索。
+    4. Active Retrieval (if memory_keywords provided by IntentAnalyzer)
     """
     if not memory_manager:
         return ""
@@ -868,7 +862,41 @@ def _build_memory_section(
     if experience_text:
         parts.append(experience_text)
 
+    # Layer 4: Active Retrieval (driven by IntentAnalyzer memory_keywords)
+    if memory_keywords:
+        retrieved = _retrieve_by_keywords(memory_manager, memory_keywords, max_tokens=500)
+        if retrieved:
+            parts.append(f"## 相关记忆（自动检索）\n\n{retrieved}")
+
     return "\n\n".join(parts)
+
+
+def _retrieve_by_keywords(
+    memory_manager: Optional["MemoryManager"],
+    keywords: list[str],
+    max_tokens: int = 500,
+) -> str:
+    """Use IntentAnalyzer-extracted keywords to actively retrieve relevant memories."""
+    if not memory_manager or not keywords:
+        return ""
+
+    try:
+        retrieval_engine = getattr(memory_manager, "retrieval_engine", None)
+        if retrieval_engine is None:
+            return ""
+
+        query = " ".join(keywords)
+        recent_messages = getattr(memory_manager, "_recent_messages", [])
+
+        result = retrieval_engine.retrieve(
+            query=query,
+            recent_messages=recent_messages,
+            max_tokens=max_tokens,
+        )
+        return result if result else ""
+    except Exception as e:
+        logger.debug(f"[MemoryRetrieval] Active retrieval failed: {e}")
+        return ""
 
 
 def _build_scratchpad_section(memory_manager: Optional["MemoryManager"]) -> str:
@@ -1064,7 +1092,6 @@ def get_prompt_debug_info(
         "compiled_files": {
             "soul": estimate_tokens(compiled.get("soul", "")),
             "agent_core": estimate_tokens(compiled.get("agent_core", "")),
-            "agent_tooling": estimate_tokens(compiled.get("agent_tooling", "")),
             "user": estimate_tokens(compiled.get("user", "")),
         },
         "catalogs": {},

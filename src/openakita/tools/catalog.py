@@ -61,6 +61,18 @@ class ToolCatalog:
     CATALOG_TEMPLATE = """
 ## Available System Tools
 
+### Tool Selection Priority
+1. **Installed skills** — check skills/ first
+2. **MCP server tools** — external integrations via MCP protocol
+3. **Shell commands** — system commands and scripts
+4. **Temporary scripts** — write_file + run_shell for one-off tasks
+5. **Search + install** — find and install new capabilities from GitHub
+6. **Create skills** — use skill-creator for permanent capabilities
+
+### Capability Extension Protocol
+Missing a capability? Search installed skills -> search web -> install or create -> continue task.
+Never tell user "I can't do this" — acquire the capability and proceed.
+
 Use `get_tool_info(tool_name)` to see full parameters before calling.
 
 {tool_list}
@@ -251,6 +263,17 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         first_line = description.split("\n")[0].strip()
 
         return first_line
+
+    def get_tool_groups(self) -> dict[str, set[str]]:
+        """Auto-build tool groups from each tool's category field. No hardcoded mapping needed."""
+        groups: dict[str, set[str]] = {}
+        for name, tool in self._tools.items():
+            cat = tool.get("category")
+            if not cat:
+                cat = infer_category(name)
+            if cat:
+                groups.setdefault(cat, set()).add(name)
+        return groups
 
     def get_catalog(self, refresh: bool = False, exclude_high_freq: bool = True) -> str:
         """

@@ -14,7 +14,6 @@ from .budget import BudgetConfig, apply_budget
 from .builder import build_system_prompt
 from .compiler import (
     compile_agent_core,
-    compile_agent_tooling,
     compile_all,
     compile_soul,
     compile_user,
@@ -26,7 +25,6 @@ __all__ = [
     "compile_all",
     "compile_soul",
     "compile_agent_core",
-    "compile_agent_tooling",
     "compile_user",
     # Retriever
     "retrieve_memory",

@@ -7,7 +7,7 @@ Identity 模块 - 加载和管理核心文档
 - 提取精简版本用于系统提示
 
 注入策略 (v2 - 编译管线):
-- 编译产物: soul.summary + agent.core + agent.tooling + user.summary
+- 编译产物: soul.summary + agent.core + user.summary
 - 硬规则: policies.md
 - 记忆: 语义检索相关片段
 - 向后兼容: get_system_prompt() 保留全文注入模式
