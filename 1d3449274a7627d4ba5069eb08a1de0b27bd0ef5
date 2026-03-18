@@ -1,0 +1,45 @@
+feat(security): 六层安全隔离与沙箱防护体系 — 核心后端实现
+
+本次提交是 OpenAkita 安全模块的核心实现，包含：
+
+【L1 元数据层】PolicyEngine 六层安全引擎
+- 四安全区（workspace / controlled / protected / forbidden）
+- 操作类型矩阵（read / create / edit / overwrite / delete / recursive_delete）
+- ${CWD} 变量展开，支持动态工作区路径
+
+【L2 确认层】高危操作确认流程
+- Desktop: SSE security_confirm 事件 → 模态弹窗
+- IM: 交互卡片/按钮确认
+- CLI: 终端输入确认
+- 确认缓存防止重复弹窗
+
+【L3 命令拦截层】Shell 命令风险分级
+- CRITICAL / HIGH / MEDIUM / LOW 四级风险分类
+- 正则匹配 rm -rf、format、shutdown 等危险命令
+- 用户可配置拦截/放行规则
+
+【L4 文件检查点】修改前自动快照
+- checkpoint.py: 文件修改前创建可逆快照
+- 支持回滚到任意检查点
+
+【L5 自我保护 + 审计】
+- audit_logger.py: 持久化审计日志
+- 自我保护：禁止 agent 破坏自身核心目录
+- 死亡开关：连续拒绝后自动进入只读模式
+
+【L6 OS 级沙箱】
+- sandbox.py: 按需隔离高危操作
+- Linux: bubblewrap
+- macOS: Seatbelt (sandbox-exec)
+- Windows: Low Integrity Level Process
+
+涉及文件：
+- src/openakita/core/policy.py (核心引擎重写)
+- src/openakita/core/tool_executor.py (集成安全检查)
+- src/openakita/api/routes/config.py (安全配置 API)
+- src/openakita/channels/gateway.py (IM 确认流)
+- src/openakita/core/reasoning_engine.py (SSE 确认事件)
+- src/openakita/tools/file.py (移除 shutil.rmtree)
+- src/openakita/tools/handlers/filesystem.py (移除危险提示)
+- identity/POLICIES.yaml (六层配置)
+- apps/setup-center/src/ (前端 i18n + ChatView 确认弹窗)
