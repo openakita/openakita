@@ -502,6 +502,15 @@ if (web_dist_dir / "index.html").exists():
 else:
     print("[spec] INFO: dist-web not found, web remote access will not be available")
 
+# openakita source package: bridge commands (feishu onboard, list-providers, etc.)
+# use `_internal/python.exe -m openakita.setup_center.bridge` which bypasses the
+# PyInstaller bootloader and cannot access the PYZ archive. Bundle the full source
+# tree as regular .py files so the raw interpreter can import them.
+_openakita_src = SRC_DIR / "openakita"
+if _openakita_src.exists():
+    datas.append((str(_openakita_src), "openakita"))
+    print(f"[spec] Bundling openakita source for bridge commands: {_openakita_src}")
+
 # Provider list (single source of truth, shared by frontend and backend)
 # Must be bundled to openakita/llm/registries/ directory, Python reads via Path(__file__).parent
 providers_json = SRC_DIR / "openakita" / "llm" / "registries" / "providers.json"
