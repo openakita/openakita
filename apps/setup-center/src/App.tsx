@@ -313,7 +313,7 @@ export function App() {
     [t],
   );
 
-  const [view, setView] = useState<"wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store">(() => {
+  const [view, setView] = useState<ViewId>(() => {
     const parsed = _parseHashRoute(window.location.hash);
     if (parsed) return parsed.view;
     return (IS_WEB || IS_CAPACITOR) ? "chat" : "wizard";
