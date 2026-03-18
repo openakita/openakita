@@ -218,6 +218,64 @@ def make_download_url(asset: dict, cdn_base: str, tag: str) -> dict:
     return entry
 
 
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
+
+
+def split_notes(notes: str) -> tuple[str, str]:
+    """Split bilingual release notes into (notes_zh, notes_en).
+
+    Detects Chinese / English sections by scanning ``## `` (H2) headings:
+    headings containing CJK characters are classified as Chinese, others as
+    English.  ``**Full Changelog**`` footer is appended to both languages.
+
+    Returns ``("", "")`` when the notes are not bilingual (caller should
+    fall back to the original ``notes`` field).
+    """
+    if not notes or not notes.strip():
+        return "", ""
+
+    lines = notes.split("\n")
+
+    h2_indices: list[tuple[int, bool]] = []
+    footer_start = len(lines)
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("**Full Changelog**"):
+            footer_start = i
+            break
+        if stripped.startswith("## "):
+            h2_indices.append((i, bool(_CJK_RE.search(stripped))))
+
+    if not h2_indices:
+        return "", ""
+
+    has_zh = any(is_zh for _, is_zh in h2_indices)
+    has_en = any(not is_zh for _, is_zh in h2_indices)
+    if not (has_zh and has_en):
+        return "", ""
+
+    zh_chunks: list[str] = []
+    en_chunks: list[str] = []
+
+    for idx, (start, is_zh) in enumerate(h2_indices):
+        end = h2_indices[idx + 1][0] if idx + 1 < len(h2_indices) else footer_start
+        chunk = "\n".join(lines[start:end])
+        (zh_chunks if is_zh else en_chunks).append(chunk)
+
+    footer = "\n".join(lines[footer_start:]).strip()
+    zh_text = "\n".join(zh_chunks).strip()
+    en_text = "\n".join(en_chunks).strip()
+
+    if footer:
+        if zh_text:
+            zh_text += "\n\n" + footer
+        if en_text:
+            en_text += "\n\n" + footer
+
+    return zh_text, en_text
+
+
 def parse_semver(v: str) -> tuple:
     """Parse version string for sorting. Pre-release tags sort lower."""
     v = v.lstrip("v")
@@ -299,7 +357,13 @@ def generate_manifest(
     updater = build_updater_platforms(assets, cdn_base, tag)
     downloads = build_grouped_downloads(assets, cdn_base, tag)
 
-    return {
+    notes_zh, notes_en = split_notes(notes)
+    if notes_zh or notes_en:
+        print(f"  notes: bilingual split — zh={len(notes_zh)} chars, en={len(notes_en)} chars")
+    else:
+        print("  notes: single-language (no split)")
+
+    manifest: dict = {
         "version": version,
         "channel": channel,
         "pub_date": pub_date,
@@ -307,6 +371,12 @@ def generate_manifest(
         "platforms": updater,
         "downloads": downloads,
     }
+    if notes_zh:
+        manifest["notes_zh"] = notes_zh
+    if notes_en:
+        manifest["notes_en"] = notes_en
+
+    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -423,13 +493,17 @@ def main():
 
     # 3) Tauri updater compat (latest.json — matches tauri.conf.json endpoint)
     if args.compat_release_json or channel == "release":
-        compat = {
+        compat: dict = {
             "version": version,
             "notes": manifest["notes"],
             "pub_date": manifest["pub_date"],
             "platforms": manifest["platforms"],
             "downloads": flatten_downloads(manifest["downloads"]),
         }
+        if manifest.get("notes_zh"):
+            compat["notes_zh"] = manifest["notes_zh"]
+        if manifest.get("notes_en"):
+            compat["notes_en"] = manifest["notes_en"]
         compat_file = out_dir / "latest.json"
         with open(compat_file, "w", encoding="utf-8") as f:
             json.dump(compat, f, indent=2, ensure_ascii=False)
