@@ -275,8 +275,8 @@ MasterAgent ReAct Loop
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                       │
 │  ┌─ YAML 配置文件 ──────────────────────────────────────────────┐    │
-│  │  bestpractice/configs/*.yaml      — BP 模板定义 (系统内置)   │    │
-│  │  {project}/bestpractice/*.yaml    — BP 模板定义 (用户自定义) │    │
+│  │  bestpractice/configs/*/config.yaml — BP 模板定义 (系统内置)    │    │
+│  │  {project}/best_practice/*/config.yaml — BP 模板 (用户自定义) │    │
 │  │  agents/profiles/*.yaml           — Agent 角色定义           │    │
 │  │  skills/*/SKILL.md                — 技能定义                 │    │
 │  └───────────────────────────────────────────────────────────────┘   │
@@ -297,7 +297,7 @@ MasterAgent ReAct Loop
 │  │  _instances: { instance_id → BPInstanceSnapshot }         │      │
 │  │  _active_map: { session_id → active_instance_id }         │      │
 │  │  _session_index: { session_id → [instance_ids] }          │      │
-│  │  持久化：persist(session) → session.metadata["_bp_state"]  │      │
+│  │  持久化：persist(session) → session.metadata["bp_state"]  │      │
 │  │  恢复：restore_from_session(session) → 从 metadata 重建    │      │
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                       │
@@ -634,7 +634,7 @@ BP 操作涉及多个存储位置的更新，需要保证顺序：
 
 | 故障场景 | 影响 | 恢复策略 |
 |---------|------|---------|
-| 子任务执行中进程崩溃 | BPInstanceSnapshot 在内存中丢失 | 从 Session.metadata (`sessions.json`) 恢复。`BPEngine.restore_session()` 在 session 加载后自动调用，从 `session.metadata["_bp_state"]` 重建所有实例快照，并重新关联 `bp_config` |
+| 子任务执行中进程崩溃 | BPInstanceSnapshot 在内存中丢失 | 从 Session.metadata (`sessions.json`) 恢复。`BPEngine.restore_session()` 在 session 加载后自动调用，从 `session.metadata["bp_state"]` 重建所有实例快照，并重新关联 `bp_config` |
 | 子任务超时 | SubAgent 被 kill | AgentOrchestrator 返回 timeout 错误，BPEngine 可重试或通知用户 |
 | 上下文压缩失败 | contextSummary 为空 | 使用 subtask_outputs 作为最小恢复信息，提示用户可能丢失部分上下文 |
 | SSE 连接断开 | 前端错过 bp_* 事件 | 前端重连后发送 `bp_get_status` 请求全量状态同步 |
@@ -646,7 +646,7 @@ BP 操作涉及多个存储位置的更新，需要保证顺序：
 ```python
 class BPStateManager:
     async def persist(self, session: Session) -> None:
-        """将当前 session 的所有实例快照序列化到 session.metadata['_bp_state']。
+        """将当前 session 的所有实例快照序列化到 session.metadata['bp_state']。
         H1 改进：使用 _serialize_snapshot 方法，排除 bp_config（运行时引用），
         枚举字段序列化为 .value，避免 asdict() 的递归序列化问题。"""
         async with self._lock:
@@ -656,7 +656,7 @@ class BPStateManager:
                 snap = self._instances.get(iid)
                 if snap:
                     snapshots[iid] = self._serialize_snapshot(snap)
-            session.set_metadata("_bp_state", {
+            session.set_metadata("bp_state", {
                 "instances": snapshots,
                 "active_id": self._active_map.get(session.id),
                 "cooldown": self._cooldowns.get(session.id, 0),
@@ -668,7 +668,7 @@ class BPStateManager:
         """从 session.metadata 恢复实例状态，返回恢复的实例数。
         H1 改进：使用 _deserialize_snapshot 方法，正确恢复枚举字段。
         bp_config 为 None，由 BPEngine.restore_session 关联。"""
-        saved = session.get_metadata("_bp_state", {})
+        saved = session.get_metadata("bp_state", {})
         if not saved or saved.get("version") != 1:
             return 0
         count = 0

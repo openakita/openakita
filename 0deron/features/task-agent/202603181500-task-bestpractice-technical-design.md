@@ -19,7 +19,19 @@
 | Prompt 可维护 | 独立 `.md` 模板文件，`string.Template` 变量注入 |
 | KV-Cache 友好 | 系统提示按 静态→半静态→动态 排列，动态段置于末尾 |
 
-### 1.2 与现有系统的 3 个交互面
+### 1.2 对现有模块的修改要求
+
+> 以下修改是 BP 模块正常运作的**前置条件**，需在 BP 实现前或同步完成。
+
+| 现有模块 | 修改内容 | 原因 |
+|---------|---------|------|
+| `AgentOrchestrator.delegate()` | 增加 `session_messages: list[dict] | None = None` 可选参数。为 None 时保持现有行为（传递完整会话历史）；传 `[]` 时 SubAgent 以空上下文启动 | C-1：BP SubAgent 需要上下文隔离，不应看到 MasterAgent 对话历史 |
+| `PromptAssembler.build_system_prompt()` | 重构为有序段落列表，暴露 `register_section()` 注册接口 | C-2：BP 需要在 `[9]` 和 `[10]` 之间动态插入 BP_STATIC 和 BP_DYNAMIC 段 |
+| `Agent.chat_with_session()` | 在 `reasoning_engine.run()` 前增加 `_pre_reasoning_hook()` 调用 | C-3：PendingContextSwitch 需要在推理循环外的安全时机消费 |
+| `AgentProfile` | 新增 `tools`/`tools_mode`/`mcps`/`mcps_mode` 字段 | H-1：BP SubAgent 需要 per-agent 工具/MCP 过滤 |
+| `AgentFactory.create()` | 新增 `_apply_tool_filter()`、`_apply_mcp_filter()` | H-1：对称于已有 `_apply_skill_filter()` |
+
+### 1.3 与现有系统的 3 个交互面
 
 ```
 bestpractice 模块
@@ -31,7 +43,7 @@ bestpractice 模块
 
 不修改 `AgentState`、`TaskState`、`SessionContext` 的核心结构。
 
-### 1.3 与现有组件的关系
+### 1.4 与现有组件的关系
 
 BP 模块引入的新组件（`BPToolHandler`、`BPEngine`、`BPStateManager`）与现有多 Agent 体系中的 `AgentToolHandler`、`AgentOrchestrator` 的关系如下：
 
@@ -41,7 +53,7 @@ SystemHandlerRegistry (工具路由)
   ├── AgentToolHandler                    ← 现有，处理 delegate_to_agent / spawn_agent / create_agent
   │     └── 调用 → AgentOrchestrator.delegate()
   │
-  ├── BPToolHandler (新增)                ← 新增，处理 bp_start / bp_continue / bp_edit_output / bp_switch_task
+  ├── BPToolHandler (新增)                ← 新增，处理 bp_start / bp_continue / bp_edit_output / bp_switch_task / bp_supplement_input
   │     ├── 调用 → BPEngine（编排逻辑）
   │     │     └── 调用 → AgentOrchestrator.delegate()  ← 复用同一条执行路径
   │     └── 读写 → BPStateManager（状态管理）
@@ -150,6 +162,11 @@ SystemHandlerRegistry (已有)
 ```python
 from dataclasses import dataclass, field
 from enum import Enum
+
+
+# ── 常量 ──
+
+DEFAULT_BP_SUBTASK_TIMEOUT = 600  # 子任务默认超时（秒），可被 SubtaskConfig.timeout_seconds 覆盖
 
 
 class RunMode(str, Enum):
@@ -358,6 +375,11 @@ class BPConfigLoader:
                             f"Profile '{data.get('id')}' prompt_file not found: {prompt_path}"
                         )
                 profile = AgentProfile.from_dict(data)
+                if self._profile_store.exists(profile.id):
+                    logger.warning(
+                        f"BP profile '{profile.id}' from '{json_file}' "
+                        f"overrides existing profile"
+                    )
                 self._profile_store.save(profile)
             except Exception as e:
                 logger.warning(f"Failed to load BP profile '{json_file}': {e}")
@@ -417,6 +439,15 @@ class BPConfigLoader:
                         f"not found in ProfileStore"
                     )
 
+        # 8. input_mapping 引用检查
+        for st in config.subtasks:
+            for field_name, upstream_id in st.input_mapping.items():
+                if upstream_id not in id_set:
+                    errors.append(
+                        f"Subtask '{st.id}' input_mapping field '{field_name}' "
+                        f"references unknown subtask '{upstream_id}'"
+                    )
+
         return errors
 ```
 
@@ -442,7 +473,7 @@ BP Profile JSON 包含 `prompt_file` 字段（如 `"prompts/topic-researcher.md"
 
 `_shared/profiles/` 在所有 BP 子目录之前加载，其 `prompt_file` 解析基准为 `_shared/` 目录。
 共享 Profile 可被多个 BP 的 `subtask.agent_profile` 引用。
-若 BP 子目录中有同 `id` 的 Profile，会覆盖 `_shared/` 中的同名 Profile（后加载优先）。
+若 BP 子目录中有同 `id` 的 Profile，会覆盖 `_shared/` 中的同名 Profile（后加载优先），并记录 warning 日志。不同 BP 子目录间若有同 `id` 的 Profile，也会静默覆盖（按目录名排序，后者优先），同样记录 warning。（L-2 修复）
 
 #### 枚举值大小写
 
@@ -451,6 +482,38 @@ Profile JSON 中的枚举字段使用小写值：
 - `"skills_mode": "inclusive"`（对应 `SkillsMode.INCLUSIVE`）
 
 与 `AgentType` 和 `SkillsMode` 枚举的 `.value` 一致。
+
+#### AgentProfile 扩展字段（H-1 修复）
+
+需求文档要求 per-agent 的 tools 和 MCPs 过滤。当前 `AgentProfile` 仅有 `skills` + `skills_mode`。需新增：
+
+```python
+# agents/profile.py — AgentProfile 新增字段
+@dataclass
+class AgentProfile:
+    # ...现有字段...
+    tools: list[str] = field(default_factory=list)
+    tools_mode: SkillsMode = SkillsMode.ALL         # 复用 SkillsMode 枚举
+    mcps: list[str] = field(default_factory=list)
+    mcps_mode: SkillsMode = SkillsMode.ALL
+```
+
+`AgentFactory.create()` 新增 `_apply_tool_filter()` 和 `_apply_mcp_filter()`，逻辑与 `_apply_skill_filter()` 对称。BP Profile JSON 中可配置：
+
+```json
+{
+  "id": "market-researcher",
+  "type": "custom",
+  "skills": ["web_search", "read_file"],
+  "skills_mode": "inclusive",
+  "tools": ["web_search", "read_file", "write_file"],
+  "tools_mode": "inclusive",
+  "mcps": [],
+  "mcps_mode": "all"
+}
+```
+
+**不配置时（ALL 模式）与主 Agent 完全一致**，无需额外处理。BP SubAgent 无需强制限制工具，ALL 是安全的默认值。
 
 ### 3.5 组件生命周期与所有权
 
@@ -571,7 +634,8 @@ class BPStateManager:
                 if snap:
                     snapshots[iid] = self._serialize_snapshot(snap)
 
-            session.metadata["_bp_state"] = {
+            # 注意：不使用 _ 前缀，因为 Session 序列化时会过滤 _ 开头的 metadata key
+            session.metadata["bp_state"] = {
                 "instances": snapshots,
                 "active_id": self._active_map.get(session_id),
                 "cooldown": self._cooldowns.get(session_id, 0),  # M13 改进
@@ -581,7 +645,7 @@ class BPStateManager:
     def restore_from_session(self, session: "Session") -> int:
         """从 Session.metadata 恢复 BP 实例状态。
         返回恢复的实例数量。应在 Session 加载时调用。"""
-        saved = session.metadata.get("_bp_state")
+        saved = session.metadata.get("bp_state")
         if not saved or saved.get("version") != 1:
             return 0
 
@@ -785,7 +849,8 @@ class BPStateManager:
                         if inst.initial_input else ""
                     )
                     input_preview = f" ({first_val})" if first_val else ""
-            rows.append(f"| {inst.bp_name}{input_preview} | {inst.instance_id[:8]} | ...")
+            bp_name = inst.bp_config.name if inst.bp_config else inst.bp_id
+            rows.append(f"| {bp_name}{input_preview} | {inst.instance_id[:8]} | ...")
         return "\n".join(rows)
 
     def get_outputs_summary(self, instance_id: str) -> str:
@@ -897,6 +962,53 @@ class PromptTemplateLoader:
 
 > **注意**：受限于已有 `env_snapshot` 在 `[3]` 位置打断缓存，完整的前缀缓存仅 `[1]+[2]`。但 Anthropic API 的 prompt caching 支持多个 cache_control breakpoint，可在 `[9.1]` 末尾设置第二个缓存点，使得 `[4]~[9.1]` 的静态内容也能获得缓存命中。
 
+#### PromptAssembler 改造要点（C-2 修复）
+
+当前 `prompt_assembler.py` 的 `build_system_prompt()` 使用**硬编码 f-string 拼接**，无法动态插入 BP 段落。需要重构为有序段落列表模式：
+
+```python
+# prompt_assembler.py 改造方案
+class PromptSection(NamedTuple):
+    name: str           # 段落标识符
+    content: str        # 段落内容
+    cache_type: str     # "static" | "dynamic"
+
+class PromptAssembler:
+    def __init__(self, ...):
+        self._extra_sections: list[tuple[str, Callable, str, str]] = []
+        # (name, builder_fn, cache_type, insert_after)
+
+    def register_section(
+        self, name: str, builder_fn: Callable[[], str],
+        cache_type: str = "dynamic", insert_after: str = "core_principles",
+    ) -> None:
+        """注册额外的系统提示段落。BPEngine 在初始化时调用此方法注入 BP 段。"""
+        self._extra_sections.append((name, builder_fn, cache_type, insert_after))
+
+    def build_system_prompt(self, ...) -> str:
+        sections = [
+            PromptSection("base_prompt", base_prompt, "static"),
+            PromptSection("system_info", system_info, "static"),
+            PromptSection("env_snapshot", env_snapshot, "dynamic"),
+            PromptSection("skill_catalog", skill_catalog, "static"),
+            # ... 其余段落
+            PromptSection("core_principles", core_principles, "static"),
+            # BP 段落在此动态插入
+            PromptSection("profile_prompt", profile_prompt, "dynamic"),
+        ]
+        # 插入注册的额外段落
+        for name, builder_fn, cache_type, insert_after in self._extra_sections:
+            content = builder_fn()
+            if content:
+                idx = next(i for i, s in enumerate(sections) if s.name == insert_after)
+                sections.insert(idx + 1, PromptSection(name, content, cache_type))
+        return "\n\n".join(s.content for s in sections if s.content)
+```
+
+**KV-Cache breakpoint 实现**（M-1 修复）：
+
+`build_system_prompt()` 应返回 `(text, breakpoints)` 元组，其中 `breakpoints` 是 `cache_type="static"` 段的末尾字符偏移列表。`Brain` 在构建 API 请求时，在这些位置插入 `cache_control: {"type": "ephemeral"}`。这样 `[4]~[9.1]` 的静态内容可获得次级缓存命中。
+
 ### 5.3 模板文件设计
 
 #### `system_static.md` — 注入到系统提示静态段
@@ -926,6 +1038,16 @@ $available_practices
 8. **Chat-to-Edit 流程**：修改子任务输出前，先调用 bp_get_output 获取完整当前值，
    再基于完整数据生成 changes JSON，最后调用 bp_edit_output。（H2 改进）
 9. **取消任务**：用户明确表示要取消/放弃当前任务时，调用 bp_cancel 终止实例。（H5 改进）
+10. **输入不完整暂停**：当 bp_continue 返回结果包含"输入数据不完整"时，
+   表示下一个子任务的 input_schema required 字段缺失。此时：
+   - 使用 ask_user 向用户展示缺失字段及其说明，引导补充
+   - 用户提供信息后，调用 bp_supplement_input 将数据 merge 到上游输出
+   - 然后调用 bp_continue 继续执行（自动模式下补充后立即恢复自动执行）
+
+### 推断冷却规则（M-3 修复）
+- 冷却期**仅作用于 CONTEXT 推断触发**（关键词匹配）
+- COMMAND 触发（精确命令匹配）、UI_CLICK、EVENT 触发不受冷却影响
+- 冷却期间用户输入精确匹配 COMMAND pattern 时，仍然正常触发 BP
 
 ### 自动模式中断规则（S1 改进）
 - 如果在自动执行过程中收到用户消息，**优先处理用户消息**
@@ -971,6 +1093,10 @@ $output_schema
 ```
 
 严格按 Schema 的 required 字段输出，不要遗漏。
+
+## 限制
+
+- **禁止使用 ask_user 工具**：你是自动执行的子任务 Agent，无法与用户交互。如果信息不足，基于已有输入数据做出最佳判断并在输出中标注不确定项。（H-5 修复）
 ```
 
 #### `chat_to_edit.md` — Deep Merge 指令（M2 改进：明确数组语义）
@@ -1124,6 +1250,13 @@ BPEngine.execute_subtask(instance_id)
    └─ DAG 扩展预留：按 input_mapping 从多个上游子任务汇聚输入
   │
   ▼
+2.5 校验输入完整性（input_schema.required）：
+   ├─ 所有 required 字段都存在 → 继续执行
+   └─ 存在缺失字段 → 返回 INPUT_INCOMPLETE 结果，
+      指令 MasterAgent 通过 ask_user 让用户补充缺失信息
+      （自动模式暂停，手动模式同理）
+  │
+  ▼
 3. 推导输出 Schema（schema_chain.py）：
    ├─ 非最后一个子任务 → output_schema = next_subtask.input_schema
    └─ 最后一个子任务   → output_schema = bp_config.final_output_schema || null
@@ -1233,6 +1366,13 @@ class BPEngine:
         # 准备输入（抽象为 _resolve_input，线性/DAG 通用）
         input_data = self._resolve_input(instance, subtask)
 
+        # ── 输入完整性校验：required 字段缺失时暂停并请求用户补充 ──
+        missing_fields = self._check_input_completeness(subtask, input_data)
+        if missing_fields:
+            return self._format_input_incomplete_result(
+                instance, subtask, input_data, missing_fields,
+            )
+
         # 推导输出 Schema
         output_schema = self._schema_chain.derive_output_schema(config, idx)
 
@@ -1248,23 +1388,33 @@ class BPEngine:
         )
 
         # 委派执行（复用已有机制）
-        # 注意：同一 session 中多个 BP 实例共享同一个 AgentInstancePool 缓存。
-        # 这是安全的，因为 AgentOrchestrator._call_agent() 每次都以
-        # session_messages=[] 调用 SubAgent，Brain.Context 每次全新构建。
+        # ⚠️ 关键：传递 session_messages=[] 实现上下文隔离（C-1 修复）
+        # 当前 orchestrator._call_agent() 默认传递完整会话历史给 SubAgent，
+        # 但 BP SubAgent 应仅接收委派消息，不应看到 MasterAgent 的对话历史。
+        # 需要给 delegate() 增加 session_messages 可选参数，BP 调用时传 []。
+        #
+        # 同一 session 中多个 BP 实例共享同一个 AgentInstancePool 缓存。
+        # 这是安全的，因为每次委派都以 session_messages=[] 调用 SubAgent，
+        # Brain.Context 每次全新构建。
         # AgentState._tasks 按 session_id 隔离，delegate() 内部管理 begin/reset。
         # 如果未来需要跨子任务保留 SubAgent 上下文（如 DAG 扩展中的迭代执行），
         # 需要为每个 (bp_instance_id, subtask_id) 创建独立的 pool key。（M1 改进）
+        timeout = subtask.timeout_seconds or DEFAULT_BP_SUBTASK_TIMEOUT  # 默认 600s（H-4 修复）
         max_attempts = subtask.max_retries + 1  # M9 改进
         last_error = None
 
         for attempt in range(max_attempts):
             try:
-                result = await orchestrator.delegate(
-                    session=session,
-                    from_agent="main",
-                    to_agent=subtask.agent_profile,
-                    message=message,
-                    reason=f"BP:{config.name} / {subtask.name}",
+                result = await asyncio.wait_for(
+                    orchestrator.delegate(
+                        session=session,
+                        from_agent="main",
+                        to_agent=subtask.agent_profile,
+                        message=message,
+                        reason=f"BP:{config.name} / {subtask.name}",
+                        session_messages=[],  # C-1 修复：上下文隔离
+                    ),
+                    timeout=timeout,  # H-4 修复：子任务超时
                 )
                 last_error = None
                 break
@@ -1301,6 +1451,16 @@ class BPEngine:
 
         # ── C1 改进：不再递归，统一返回 ──
         if idx >= len(config.subtasks) - 1:
+            # M-2 修复：最后一个子任务完成时校验 final_output_schema
+            if config.final_output_schema:
+                missing = [
+                    k for k in config.final_output_schema.get("required", [])
+                    if k not in output
+                ]
+                if missing:
+                    logger.warning(
+                        f"[BPEngine] Final output missing required fields: {missing}"
+                    )
             self._state_manager.complete(instance_id)
             await self._state_manager.persist(session)
             return self._format_completion_result(instance)
@@ -1424,6 +1584,70 @@ class BPEngine:
             prev_subtask = config.subtasks[idx - 1]
             return instance.subtask_outputs.get(prev_subtask.id, {})
 
+    # ── 输入完整性校验 ──
+
+    def _check_input_completeness(
+        self, subtask: SubtaskConfig, input_data: dict,
+    ) -> list[str]:
+        """
+        校验 input_data 是否满足 subtask.input_schema 的 required 字段。
+        返回缺失的字段名列表（空列表表示完整）。
+
+        此校验发生在委派前，确保子任务在信息充分时才启动。
+        无论手动/自动模式都执行，但在自动模式下更关键——
+        防止上游输出缺失字段时盲目执行下游子任务。
+        """
+        schema = subtask.input_schema
+        if not isinstance(schema, dict):
+            return []
+        required = schema.get("required", [])
+        return [field for field in required if field not in input_data]
+
+    def _format_input_incomplete_result(
+        self,
+        instance: BPInstanceSnapshot,
+        subtask: SubtaskConfig,
+        input_data: dict,
+        missing_fields: list[str],
+    ) -> str:
+        """
+        格式化输入不完整的返回结果。
+        指令 MasterAgent 通过 ask_user 引导用户补充缺失字段。
+
+        注意：此时 current_subtask_index 不推进，
+        bp_continue 再次调用时会重新进入同一子任务。
+        用户补充信息后，MasterAgent 应调用 bp_supplement_input 将数据
+        merge 到上游输出（或 initial_input），然后调用 bp_continue 重试。
+        """
+        config = instance.bp_config
+        field_descriptions = []
+        properties = subtask.input_schema.get("properties", {})
+        for field in missing_fields:
+            desc = properties.get(field, {}).get("description", field)
+            field_type = properties.get(field, {}).get("type", "unknown")
+            field_descriptions.append(f"  - {field} ({field_type}): {desc}")
+
+        fields_text = "\n".join(field_descriptions)
+        present_keys = list(input_data.keys()) if input_data else ["(无)"]
+
+        result = (
+            f"子任务「{subtask.name}」的输入数据不完整，无法启动执行。\n"
+            f"当前已有字段: {', '.join(present_keys)}\n"
+            f"缺失的必要字段:\n{fields_text}\n\n"
+            f"请使用 ask_user 向用户询问以上缺失信息。\n"
+            f"用户提供后，将补充数据通过 bp_supplement_input("
+            f"instance_id=\"{instance.instance_id}\", "
+            f"subtask_id=\"{subtask.id}\", data={{...}}) 填入，"
+            f"然后调用 bp_continue 继续执行。"
+        )
+
+        if instance.run_mode == RunMode.AUTO:
+            result += (
+                f"\n\n⚠️ 自动模式已暂停。用户补充信息并调用 bp_continue 后将自动恢复执行。"
+            )
+
+        return result
+
     # ── 输出解析 ──
 
     def _parse_output_json(self, result: str) -> dict:
@@ -1436,7 +1660,9 @@ class BPEngine:
     async def emit_progress(self, instance_id: str, session: "Session") -> None:
         """发射 bp_progress SSE 事件，更新所有 TaskProgressCard。"""
 
-    async def _emit_bp_events(self, instance_id: str, subtask_id: str, output: dict) -> None:
+    async def _emit_bp_events(
+        self, instance_id: str, subtask_id: str, output: dict, session: "Session",
+    ) -> None:
         """发射 bp_progress + bp_subtask_output 事件（子任务完成后调用）。"""
 
     async def emit_stale(self, instance_id: str, stale_ids: list[str], session: "Session") -> None:
@@ -1516,16 +1742,22 @@ BPToolHandler.bp_edit_output():
   ├─ 1. state_manager.merge_subtask_output() → deep merge
   │     返回 (old_output, new_output)
   │
-  ├─ 2. 检查下游影响：
+  ├─ 2. 宽松校验下游 Schema（M-4 修复）：
+  │     warnings = engine.validate_output_soft(instance, subtask_id, new_output)
+  │     # 不阻断操作，仅在返回结果中包含 warning
+  │
+  ├─ 3. 检查下游影响：
   │     stale_ids = state_manager.mark_downstream_stale(instance_id, changed_subtask_id)
   │
-  ├─ 3. 发射事件：
+  ├─ 4. 发射事件：
   │     ├─ bp_subtask_output (更新后的数据)
   │     └─ bp_stale (被标记的子任务列表)
   │
-  └─ 4. 返回结果给 MasterAgent：
+  └─ 5. 返回结果给 MasterAgent：
         ├─ diff 摘要
+        ├─ 完整的修改后 output（H3 改进：确保 Brain.Context 包含正确数据）
         ├─ stale 子任务列表
+        ├─ Schema 校验 warning（如有缺失的 required 字段）（M-4 修复）
         └─ 如果有 stale → 提示 MasterAgent 用 ask_user 确认是否级联重跑
 
 MasterAgent 收到 tool_result → ask_user 确认级联重跑
@@ -1617,6 +1849,42 @@ BPToolHandler.bp_switch_task():
   │
   └─ 继续正常推理...
 ```
+
+**C-3 修复：推理前钩子的实现位置**
+
+当前 `agent.py` 的 `chat_with_session()` 中**不存在** `_prepare_session_context` 方法。需要在推理循环入口处添加钩子：
+
+```python
+# agent.py — chat_with_session() 中，reasoning_engine.run() 调用前
+class Agent:
+    async def chat_with_session(self, message, session, ...):
+        self._current_session = session
+        # ...现有初始化逻辑...
+
+        # C-3 修复：推理前钩子 — 在 Brain.Context 不被 ReasoningEngine 使用时消费 PendingContextSwitch
+        await self._pre_reasoning_hook(session)
+
+        result = await self._reasoning_engine.run(...)
+        # ...
+
+    async def _pre_reasoning_hook(self, session: "Session") -> None:
+        """推理循环开始前的安全钩子。
+        当前仅处理 PendingContextSwitch，未来可扩展。"""
+        try:
+            bp_engine = get_bp_engine()  # 延迟导入，无 BP 时返回 None 不会出错
+        except Exception:
+            return
+        switch = bp_engine.state_manager.consume_pending_switch(session.id)
+        if switch:
+            await bp_engine._context_bridge.execute_pending_switch(
+                switch=switch,
+                brain_context=self._brain.context,
+                session=session,
+                state_manager=bp_engine.state_manager,
+            )
+```
+
+注意：`get_bp_engine()` 如果 BP 未启用会返回已有单例或创建新的（延迟初始化）。如果 `_bp_engine` 为 None 且无 BP 配置，`consume_pending_switch` 返回 None，钩子直接返回，无性能影响。
 
 ---
 
@@ -1788,7 +2056,11 @@ class ContextBridge:
 
 ### 7.4 SubAgent 上下文隔离
 
-SubAgent 的上下文与 MasterAgent **完全隔离**（已有机制）：
+SubAgent 的上下文与 MasterAgent **完全隔离**（需要 C-1 修复后生效）：
+
+> **⚠️ 实现前提**：当前 `orchestrator._call_agent()` 默认传递完整会话历史给 SubAgent。
+> BP 调用 `delegate()` 时必须传递 `session_messages=[]` 参数实现隔离。
+> 见 §1.2 对 `AgentOrchestrator.delegate()` 的修改要求。
 
 ```
 AgentOrchestrator.delegate()
@@ -1819,7 +2091,7 @@ AgentOrchestrator.delegate()
 - SubAgent 不知道自己在 BP 流程中（对它来说就是一个普通委派任务）
 - SubAgent 的 SSE 事件通过 `session.context._sse_event_bus` 流到前端
 - SubAgent 的工具/技能由 `AgentProfile` 的 `skills_mode` / `tools_mode` / `mcps_mode` 控制
-- SubAgent 可调用 `ask_user` 工具向用户提问。该调用通过 `session.context._sse_event_bus` 发送 `ask_user` SSE 事件到前端，用户回复通过 `pending_user_inserts` 注入 SubAgent 的 `TaskState`，由 `AgentOrchestrator` 的已有机制路由。SubAgent 的 `ask_user` 不影响 MasterAgent 的对话流。（S3 改进）
+- **SubAgent 禁止使用 `ask_user` 工具**（H-5 修复）：SubAgent 执行期间无法可靠地接收用户回复（用户回复路由到 MasterAgent 的 `pending_user_inserts`）。BP SubAgent 的 `subtask_instruction.md` 模板中明确禁止 `ask_user`，要求基于已有输入做出最佳判断。如果 SubAgent 确实需要用户交互，应在 MasterAgent 层面通过 `ask_user` 收集信息后再委派。
 
 ### 7.5 消息标签方案
 
@@ -1858,7 +2130,7 @@ bp_messages = [
 │  职责：对话管理、意图识别、BP 工具调用、用户交互              │
 │  上下文：完整用户对话 + BP 管理消息                          │
 │  工具：bp_start, bp_continue, bp_edit_output,              │
-│        bp_switch_task + 所有现有工具                        │
+│        bp_switch_task, bp_supplement_input + 所有现有工具    │
 ├───────────────────────────────────────────────────────────┤
 │  BPEngine（编排引擎 — 非 Agent，纯逻辑）                     │
 │  职责：实例管理、子任务调度、Schema 推导、事件发射            │
@@ -2236,6 +2508,30 @@ BP_TOOL_DEFINITIONS = [
         },
         "category": "BestPractice",
     },
+    # ── 输入补充工具（配合 input_schema 校验暂停机制）──
+    {
+        "name": "bp_supplement_input",
+        "description": "补充子任务缺失的输入数据。当 bp_continue 因输入不完整暂停时，用此工具将用户提供的补充信息 merge 到对应的上游输出中，然后调用 bp_continue 继续执行。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instance_id": {
+                    "type": "string",
+                    "description": "BP 实例 ID",
+                },
+                "subtask_id": {
+                    "type": "string",
+                    "description": "需要补充输入的子任务 ID（当前待执行的子任务）",
+                },
+                "data": {
+                    "type": "object",
+                    "description": "用户补充的输入数据（将 merge 到上游输出或 initial_input 中）",
+                },
+            },
+            "required": ["subtask_id", "data"],
+        },
+        "category": "BestPractice",
+    },
 ]
 ```
 
@@ -2274,7 +2570,7 @@ class BPToolHandler:
     """
 
     TOOLS = ["bp_start", "bp_continue", "bp_edit_output", "bp_switch_task",
-             "bp_get_output", "bp_cancel"]
+             "bp_get_output", "bp_cancel", "bp_supplement_input"]
 
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
@@ -2330,6 +2626,7 @@ class BPToolHandler:
             "bp_switch_task": self._bp_switch_task,
             "bp_get_output": self._bp_get_output,
             "bp_cancel": self._bp_cancel,
+            "bp_supplement_input": self._bp_supplement_input,
         }.get(tool_name)
         if handler is None:
             return f"未知的 BP 工具: {tool_name}"
@@ -2514,6 +2811,69 @@ class BPToolHandler:
 
         bp_name = instance.bp_config.name if instance.bp_config else instance.bp_id
         return f"已取消最佳实践任务「{bp_name}」。"
+
+    async def _bp_supplement_input(
+        self, args: dict, *, session, orchestrator,
+    ) -> str:
+        """
+        补充子任务缺失的输入数据。
+
+        当 execute_subtask 因 input_schema required 字段缺失而暂停时，
+        MasterAgent 通过 ask_user 收集缺失信息后调用此工具。
+
+        数据 merge 目标：
+        - 第一个子任务 → merge 到 instance.initial_input
+        - 后续子任务 → merge 到上游子任务的 subtask_outputs
+        merge 完成后 MasterAgent 调用 bp_continue 重试执行。
+        """
+        instance_id = args.get("instance_id") or self._get_active_id(session)
+        if not instance_id:
+            return "当前没有活跃的最佳实践实例。"
+
+        instance = self._state.get(instance_id)
+        if instance is None:
+            return "实例不存在"
+
+        subtask_id = args["subtask_id"]
+        supplement_data = args["data"]
+        config = instance.bp_config
+        idx = next(
+            (i for i, s in enumerate(config.subtasks) if s.id == subtask_id),
+            None,
+        )
+        if idx is None:
+            return f"子任务 '{subtask_id}' 不存在"
+
+        # 确定 merge 目标
+        if idx == 0:
+            # 第一个子任务：merge 到 initial_input
+            instance.initial_input.update(supplement_data)
+            target_desc = "初始输入"
+        else:
+            # 后续子任务：merge 到上游子任务输出
+            prev_subtask = config.subtasks[idx - 1]
+            prev_output = instance.subtask_outputs.get(prev_subtask.id, {})
+            prev_output.update(supplement_data)
+            instance.subtask_outputs[prev_subtask.id] = prev_output
+            target_desc = f"子任务「{prev_subtask.name}」的输出"
+
+        # 持久化
+        await self._state.persist(session)
+
+        added_keys = list(supplement_data.keys())
+        result = (
+            f"已将补充数据 merge 到{target_desc}。\n"
+            f"补充字段: {', '.join(added_keys)}\n"
+            f"请调用 bp_continue(instance_id=\"{instance_id}\") 继续执行子任务「{config.subtasks[idx].name}」。"
+        )
+
+        if instance.run_mode == RunMode.AUTO:
+            result += (
+                f"\n当前为自动模式，请立即调用 bp_continue("
+                f"instance_id=\"{instance_id}\") 恢复自动执行。"
+            )
+
+        return result
 ```
 
 ---
@@ -2667,11 +3027,15 @@ class BPEngine:
         )
 ```
 
-### 12.2 PromptAssembler 修改（最小化）
+### 12.2 PromptAssembler 修改
+
+> **注意**：此节为最小化改造方案（仅在现有 f-string 中追加 BP 段），适用于快速原型验证。
+> 生产实现应采用 §5.2 中的 `register_section()` 段落列表模式（C-2 修复），
+> 使 BP 模块通过注册接口注入段落，而非修改 PromptAssembler 源码。
 
 ```python
-# prompt_assembler.py — 修改点：build_system_prompt 增加 session_id 参数，
-# bp_engine 通过 get_bp_engine() 延迟获取（与 BPToolHandler 共享同一单例）
+# prompt_assembler.py — 最小化改造方案（过渡期使用）
+# 生产版本应重构为 §5.2 的 register_section() 模式
 
 class PromptAssembler:
     def __init__(self, ...):
@@ -2757,6 +3121,7 @@ class PromptAssembler:
 冷却期间，`get_dynamic_prompt_section` 在状态表末尾注入提示：
 ```
 ⚠️ 用户 N 轮消息内选择了自由模式，不要推断触发最佳实践。
+但如果用户消息精确匹配 COMMAND pattern，仍然正常触发。（M-3 修复：冷却仅限 CONTEXT 推断）
 ```
 
 ### 13.3 CRON 触发完整链路（H6 改进）
