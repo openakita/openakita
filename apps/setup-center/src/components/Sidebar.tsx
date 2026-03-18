@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { StepId, Step, ViewId } from "../types";
 import {
@@ -47,6 +47,37 @@ function StepDot({ stepId: sid }: { stepId: StepId }) {
   return <div className="stepDot">{stepIcons[sid]}</div>;
 }
 
+type NavGroupId = "capabilities" | "monitor" | "multiAgent" | "store";
+
+const BETA_SUP = <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup>;
+
+function NavGroupHeader({
+  collapsed: sidebarCollapsed,
+  label,
+  expanded,
+  onToggle,
+}: {
+  collapsed: boolean;
+  label: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="navGroupHeader" onClick={onToggle} role="button" tabIndex={0}>
+      {!sidebarCollapsed ? (
+        <>
+          <span className="navGroupLabel">{label}</span>
+          <span className="navGroupChevron">
+            {expanded ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+          </span>
+        </>
+      ) : (
+        <span className="navGroupDot" title={label} />
+      )}
+    </div>
+  );
+}
+
 export function Sidebar({
   collapsed, onToggleCollapsed,
   view, onViewChange,
@@ -58,6 +89,32 @@ export function Sidebar({
   onBugReport, onRefreshStatus, isWeb, mobileOpen,
 }: SidebarProps) {
   const { t } = useTranslation();
+
+  const [expandedGroups, setExpandedGroups] = useState<Record<NavGroupId, boolean>>({
+    capabilities: false,
+    monitor: false,
+    multiAgent: false,
+    store: false,
+  });
+
+  const toggleGroup = useCallback((id: NavGroupId) => {
+    setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const capViews: ViewId[] = ["skills", "mcp", "memory", "scheduler"];
+  const monViews: ViewId[] = ["token_stats", "security"];
+  const maViews: ViewId[] = ["dashboard", "org_editor", "agent_manager"];
+  const stViews: ViewId[] = ["agent_store", "skill_store"];
+
+  const capActive = capViews.includes(view);
+  const monActive = monViews.includes(view);
+  const maActive = maViews.includes(view);
+  const stActive = stViews.includes(view);
+
+  const capExpanded = expandedGroups.capabilities || capActive;
+  const monExpanded = expandedGroups.monitor || monActive;
+  const maExpanded = expandedGroups.multiAgent || maActive;
+  const stExpanded = expandedGroups.store || stActive;
 
   return (
     <aside className={`sidebar ${collapsed ? "sidebarCollapsed" : ""}${mobileOpen ? " sidebarOpen" : ""}`}>
@@ -80,8 +137,8 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Primary nav */}
       <div className="sidebarNav">
+        {/* ── Primary: always visible ── */}
         <div className={`navItem ${view === "chat" ? "navItemActive" : ""}`} onClick={() => onViewChange("chat")} role="button" tabIndex={0} title={t("sidebar.chat")}>
           <IconChat size={16} /> {!collapsed && <span>{t("sidebar.chat")}</span>}
         </div>
@@ -90,55 +147,80 @@ export function Sidebar({
             <IconIM size={16} /> {!collapsed && <span>{t("sidebar.im")}</span>}
           </div>
         )}
-        {!disabledViews.includes("skills") && (
-          <div className={`navItem ${view === "skills" ? "navItemActive" : ""}`} onClick={() => onViewChange("skills")} role="button" tabIndex={0} title={t("sidebar.skills")}>
-            <IconSkills size={16} /> {!collapsed && <span>{t("sidebar.skills")}</span>}
-          </div>
-        )}
-        {!disabledViews.includes("mcp") && (
-          <div className={`navItem ${view === "mcp" ? "navItemActive" : ""}`} onClick={() => onViewChange("mcp")} role="button" tabIndex={0} title="MCP">
-            <IconPlug size={16} /> {!collapsed && <span>MCP <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
-          </div>
-        )}
-        <div className={`navItem ${view === "scheduler" ? "navItemActive" : ""}`} onClick={() => onViewChange("scheduler")} role="button" tabIndex={0} title={t("sidebar.scheduler")} style={disabledViews.includes("scheduler") ? { opacity: 0.4 } : undefined}>
-          <IconCalendar size={16} /> {!collapsed && <span>{t("sidebar.scheduler")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
-        </div>
-        <div className={`navItem ${view === "memory" ? "navItemActive" : ""}`} onClick={() => onViewChange("memory")} role="button" tabIndex={0} title={t("sidebar.memory")} style={disabledViews.includes("memory") ? { opacity: 0.4 } : undefined}>
-          <IconBrain size={16} /> {!collapsed && <span>{t("sidebar.memory")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
-        </div>
         <div className={`navItem ${view === "status" ? "navItemActive" : ""}`} onClick={async () => { onViewChange("status"); try { await onRefreshStatus(); } catch { /* ignore */ } }} role="button" tabIndex={0} title={t("sidebar.status")}>
           <IconStatus size={16} /> {!collapsed && <span>{t("sidebar.status")}</span>}
         </div>
-        <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats", "Token 统计")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
-          <IconZap size={16} /> {!collapsed && <span>{t("sidebar.tokenStats", "Token 统计")}</span>}
-        </div>
-        <div className={`navItem ${view === "security" ? "navItemActive" : ""}`} onClick={() => onViewChange("security")} role="button" tabIndex={0} title={t("sidebar.security")}>
-          <IconShield size={16} /> {!collapsed && <span>{t("sidebar.security")}</span>}
-        </div>
-        {multiAgentEnabled && (
-          <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
-            <IconUsers size={16} /> {!collapsed && <span>{t("sidebar.dashboard")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
+
+        {/* ── Group: Capabilities ── */}
+        <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupCapabilities")} expanded={capExpanded} onToggle={() => toggleGroup("capabilities")} />
+        {(collapsed || capExpanded) && (
+          <div className="navGroupItems">
+            {!disabledViews.includes("skills") && (
+              <div className={`navItem ${view === "skills" ? "navItemActive" : ""}`} onClick={() => onViewChange("skills")} role="button" tabIndex={0} title={t("sidebar.skills")}>
+                <IconSkills size={16} /> {!collapsed && <span>{t("sidebar.skills")}</span>}
+              </div>
+            )}
+            {!disabledViews.includes("mcp") && (
+              <div className={`navItem ${view === "mcp" ? "navItemActive" : ""}`} onClick={() => onViewChange("mcp")} role="button" tabIndex={0} title="MCP">
+                <IconPlug size={16} /> {!collapsed && <span>MCP {BETA_SUP}</span>}
+              </div>
+            )}
+            <div className={`navItem ${view === "memory" ? "navItemActive" : ""}`} onClick={() => onViewChange("memory")} role="button" tabIndex={0} title={t("sidebar.memory")} style={disabledViews.includes("memory") ? { opacity: 0.4 } : undefined}>
+              <IconBrain size={16} /> {!collapsed && <span>{t("sidebar.memory")} {BETA_SUP}</span>}
+            </div>
+            <div className={`navItem ${view === "scheduler" ? "navItemActive" : ""}`} onClick={() => onViewChange("scheduler")} role="button" tabIndex={0} title={t("sidebar.scheduler")} style={disabledViews.includes("scheduler") ? { opacity: 0.4 } : undefined}>
+              <IconCalendar size={16} /> {!collapsed && <span>{t("sidebar.scheduler")} {BETA_SUP}</span>}
+            </div>
           </div>
         )}
-        {multiAgentEnabled && (
-          <div className={`navItem ${view === "org_editor" ? "navItemActive" : ""}`} onClick={() => onViewChange("org_editor")} role="button" tabIndex={0} title={t("sidebar.orgEditor")}>
-            <IconLayoutGrid size={16} /> {!collapsed && <span>{t("sidebar.orgEditor")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
+
+        {/* ── Group: Monitor ── */}
+        <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupMonitor")} expanded={monExpanded} onToggle={() => toggleGroup("monitor")} />
+        {(collapsed || monExpanded) && (
+          <div className="navGroupItems">
+            <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
+              <IconZap size={16} /> {!collapsed && <span>{t("sidebar.tokenStats")}</span>}
+            </div>
+            <div className={`navItem ${view === "security" ? "navItemActive" : ""}`} onClick={() => onViewChange("security")} role="button" tabIndex={0} title={t("sidebar.security")}>
+              <IconShield size={16} /> {!collapsed && <span>{t("sidebar.security")}</span>}
+            </div>
           </div>
         )}
+
+        {/* ── Group: Multi-Agent ── */}
         {multiAgentEnabled && (
-          <div className={`navItem ${view === "agent_manager" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_manager")} role="button" tabIndex={0} title={t("sidebar.agentManager")}>
-            <IconBot size={16} /> {!collapsed && <span>{t("sidebar.agentManager")}</span>}
-          </div>
+          <>
+            <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
+            {(collapsed || maExpanded) && (
+              <div className="navGroupItems">
+                <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
+                  <IconUsers size={16} /> {!collapsed && <span>{t("sidebar.dashboard")} {BETA_SUP}</span>}
+                </div>
+                <div className={`navItem ${view === "org_editor" ? "navItemActive" : ""}`} onClick={() => onViewChange("org_editor")} role="button" tabIndex={0} title={t("sidebar.orgEditor")}>
+                  <IconLayoutGrid size={16} /> {!collapsed && <span>{t("sidebar.orgEditor")} {BETA_SUP}</span>}
+                </div>
+                <div className={`navItem ${view === "agent_manager" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_manager")} role="button" tabIndex={0} title={t("sidebar.agentManager")}>
+                  <IconBot size={16} /> {!collapsed && <span>{t("sidebar.agentManager")}</span>}
+                </div>
+              </div>
+            )}
+          </>
         )}
+
+        {/* ── Group: Store ── */}
         {storeVisible && (
           <>
-            <div style={{ height: 1, background: "var(--line)", margin: "6px 12px" }} />
-            <div className={`navItem ${view === "agent_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_store")} role="button" tabIndex={0} title={t("sidebar.agentStore")}>
-              <IconStorefront size={16} /> {!collapsed && <span>{t("sidebar.agentStore")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
-            </div>
-            <div className={`navItem ${view === "skill_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("skill_store")} role="button" tabIndex={0} title={t("sidebar.skillStore")}>
-              <IconPuzzle size={16} /> {!collapsed && <span>{t("sidebar.skillStore")} <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup></span>}
-            </div>
+            <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupStore")} expanded={stExpanded} onToggle={() => toggleGroup("store")} />
+            {(collapsed || stExpanded) && (
+              <div className="navGroupItems">
+                <div className={`navItem ${view === "agent_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_store")} role="button" tabIndex={0} title={t("sidebar.agentStore")}>
+                  <IconStorefront size={16} /> {!collapsed && <span>{t("sidebar.agentStore")} {BETA_SUP}</span>}
+                </div>
+                <div className={`navItem ${view === "skill_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("skill_store")} role="button" tabIndex={0} title={t("sidebar.skillStore")}>
+                  <IconPuzzle size={16} /> {!collapsed && <span>{t("sidebar.skillStore")} {BETA_SUP}</span>}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

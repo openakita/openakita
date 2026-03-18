@@ -245,6 +245,52 @@ a:hover {
   border-color: var(--nav-active-border);
 }
 
+/* ─── Nav group (collapsible sections in sidebar) ─── */
+
+.navGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 2px 10px;
+  margin-top: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.navGroupLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted2);
+}
+
+.navGroupChevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted2);
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.navGroupHeader:hover .navGroupLabel { color: var(--muted); }
+.navGroupHeader:hover .navGroupChevron { opacity: 1; }
+
+.navGroupDot {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--muted2);
+  opacity: 0.4;
+  margin: 4px auto;
+}
+
+.navGroupItems {
+  /* children inherit normal navItem styles */
+}
+
+.sidebarCollapsed .navGroupHeader { justify-content: center; padding: 4px 0; }
+
 /* ─── Config section (collapsible) ─── */
 
 .configSection {
