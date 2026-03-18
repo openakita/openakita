@@ -2,13 +2,13 @@
   "id": "requirements-analyst",
   "name": "需求分析专家",
   "description": "负责需求挖掘、干系人分析、约束识别与用例建模，输出结构化的需求分析文档",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@content-research-writer",
     "seeagent/skills@docx",
     "seeagent/skills@summarizer"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/requirements-analyst.md",
   "icon": "📐",

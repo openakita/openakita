@@ -1,79 +1,78 @@
-best_practice:
-  id: "competitor-analysis"
-  name: "竞品分析"
-  description: "系统性收集竞品信息，对比分析并输出竞争洞察"
-  default_run_mode: manual
+id: "competitor-analysis"
+name: "竞品分析"
+description: "系统性收集竞品信息，对比分析并输出竞争洞察"
+default_run_mode: manual
 
-  final_output_schema:
-    type: object
-    properties:
-      title: { type: string }
-      competitors:
-        type: array
-        items: { type: object }
-      comparison_matrix: { type: object }
-      strategic_insights:
-        type: array
-        items: { type: string }
-    required: [title, competitors, strategic_insights]
+final_output_schema:
+  type: object
+  properties:
+    title: { type: string }
+    competitors:
+      type: array
+      items: { type: object }
+    comparison_matrix: { type: object }
+    strategic_insights:
+      type: array
+      items: { type: string }
+  required: [title, competitors, strategic_insights]
 
-  triggers:
-    - type: command
-      pattern: "竞品分析"
-    - type: context
-      conditions: ["竞品", "竞争对手", "对标"]
+triggers:
+  - type: command
+    pattern: "竞品分析"
+  - type: context
+    conditions: ["竞品", "竞争对手", "对标"]
 
-  subtasks:
-    - id: "data-collection"
-      name: "竞品数据收集"
-      description: "收集目标竞品的产品、定价、技术、融资等公开信息"
-      agent_profile: "competitor-researcher"
-      input_schema:
-        type: object
-        properties:
-          target_product:
-            type: string
-            description: "我方产品/服务名称"
-          competitors:
-            type: array
-            items: { type: string }
-            description: "竞品名称列表（可为空，由 Agent 自行发现）"
-          dimensions:
-            type: array
-            items: { type: string }
-            description: "分析维度（如定价、功能、技术栈、用户规模）"
-        required: [target_product]
+subtasks:
+  - id: "data-collection"
+    name: "竞品数据收集"
+    description: "收集目标竞品的产品、定价、技术、融资等公开信息"
+    agent_profile: "competitor-researcher"
+    input_schema:
+      type: object
+      properties:
+        target_product:
+          type: string
+          description: "我方产品/服务名称"
+        competitors:
+          type: array
+          items: { type: string }
+          description: "竞品名称列表（可为空，由 Agent 自行发现）"
+        dimensions:
+          type: array
+          items: { type: string }
+          description: "分析维度（如定价、功能、技术栈、用户规模）"
+      required: [target_product]
 
-    - id: "comparison"
-      name: "对比分析"
-      description: "基于收集的数据进行多维度对比，生成对比矩阵"
-      agent_profile: "comparison-analyst"
-      input_schema:
-        type: object
-        properties:
-          competitor_profiles:
-            type: array
-            items: { type: object }
-            description: "各竞品资料卡"
-          target_product_info:
-            type: object
-            description: "我方产品信息"
-        required: [competitor_profiles]
+  - id: "comparison"
+    name: "对比分析"
+    description: "基于收集的数据进行多维度对比，生成对比矩阵"
+    agent_profile: "comparison-analyst"
+    input_schema:
+      type: object
+      properties:
+        competitor_profiles:
+          type: array
+          items: { type: object }
+          description: "各竞品资料卡"
+        target_product_info:
+          type: object
+          description: "我方产品信息"
+      required: [competitor_profiles]
 
-    - id: "insights"
-      name: "洞察总结"
-      description: "从对比结果中提炼竞争优势、劣势和战略建议"
-      agent_profile: "insight-summarizer"
-      input_schema:
-        type: object
-        properties:
-          comparison_matrix:
-            type: object
-            description: "对比矩阵"
-          strengths:
-            type: array
-            items: { type: string }
-          weaknesses:
-            type: array
-            items: { type: string }
-        required: [comparison_matrix]
+  - id: "insights"
+    name: "洞察总结"
+    description: "从对比结果中提炼竞争优势、劣势和战略建议"
+    agent_profile: "insight-summarizer"
+    input_schema:
+      type: object
+      properties:
+        comparison_matrix:
+          type: object
+          description: "对比矩阵"
+        strengths:
+          type: array
+          items: { type: string }
+        weaknesses:
+          type: array
+          items: { type: string }
+      required: [comparison_matrix]

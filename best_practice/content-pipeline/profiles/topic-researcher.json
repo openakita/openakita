@@ -2,14 +2,14 @@
   "id": "topic-researcher",
   "name": "选题研究员",
   "description": "专注于内容创作的选题研究与策划，通过数据分析和趋势洞察挖掘高价值选题",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@content-research-writer",
     "seeagent/skills@apify-scraper",
     "seeagent/skills@summarizer",
     "jimliu/baoyu-skills@baoyu-url-to-markdown"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/topic-researcher.md",
   "icon": "\ud83c\udfaf",

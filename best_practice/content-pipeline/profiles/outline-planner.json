@@ -2,12 +2,12 @@
   "id": "outline-planner",
   "name": "大纲规划师",
   "description": "负责内容结构设计与大纲编排，确保内容逻辑清晰、叙事流畅",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@content-research-writer",
     "jimliu/baoyu-skills@baoyu-format-markdown"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/outline-planner.md",
   "icon": "\ud83d\udccb",

@@ -78,14 +78,12 @@ src/seeagent/bestpractice/
 ├── engine.py                 # BPEngine — 主编排引擎
 ├── state_manager.py          # BPStateManager — 实例生命周期与状态
 ├── schema_chain.py           # Schema 推导链逻辑
-├── trigger.py                # 触发检测（COMMAND/EVENT/CONTEXT/UI_CLICK）
 ├── context_bridge.py         # 上下文桥接（压缩/恢复/注入）
 ├── prompt_loader.py          # Prompt 模板加载器
 └── prompts/                  # Prompt 模板文件
     ├── system_static.md      # 系统提示 — 静态段（可缓存）
-    ├── system_dynamic.md     # 系统提示 — 动态段（每次请求）
+    ├── system_dynamic.md     # 系统提示 — 动态段（每次请求，含条件性意图路由指令）
     ├── subtask_instruction.md # SubAgent 子任务指令
-    ├── intent_router.md      # 意图路由（触发/编辑/切换/追问）
     ├── chat_to_edit.md       # Deep Merge 指令
     ├── context_restore.md    # 上下文恢复注入
     └── cascade_confirm.md    # 级联重跑确认
@@ -93,6 +91,29 @@ src/seeagent/bestpractice/
 src/seeagent/tools/handlers/
 └── bestpractice.py           # BPToolHandler — 工具处理器（薄层）
 ```
+
+#### BP 配置文件目录（项目根目录 / 用户自定义）
+
+```
+best_practice/                       # 用户自定义 BP 配置根目录（注意下划线）
+├── _shared/                         # 可复用的共享 Agent（所有 BP 可引用）
+│   ├── profiles/
+│   │   └── web-researcher.json
+│   └── prompts/
+│       └── web-researcher.md
+├── {bp-id}/                         # 每个 BP 一个子目录，bp-id 与 config.yaml 中的 id 一致
+│   ├── config.yaml                  # BP 配置文件（字段直接对应 BestPracticeConfig，无包装键）
+│   ├── profiles/                    # 该 BP 使用的 Agent Profile
+│   │   └── {agent-id}.json         # AgentProfile JSON（含 prompt_file 指向 prompts/ 下的 .md）
+│   └── prompts/                     # Agent 角色 Prompt（独立 .md 文件，可维护性好）
+│       └── {agent-id}.md
+```
+
+**配置文件格式**：`config.yaml` 顶层键直接对应 `BestPracticeConfig` 字段（`id`、`name`、`subtasks` 等），不使用 `best_practice:` 包装键。
+
+**Agent Profile JSON**：包含标准 `AgentProfile` 字段，额外有 `prompt_file` 字段指向相对路径的 `.md` 文件。`BPConfigLoader` 在加载时读取 `.md` 内容填入 `custom_prompt`，注册到 `ProfileStore`。
+
+**`_shared/` 目录**：共享 Agent 先于各 BP 子目录加载，可被多个 BP 的 `subtask.agent_profile` 引用。
 
 ### 2.2 依赖关系（单向）
 
@@ -112,15 +133,13 @@ src/seeagent/tools/handlers/
                     │     │
                     │     └──→ prompt_loader.py
                     │
-                    ├── trigger.py ──→ config.py
-                    │
 SystemHandlerRegistry (已有)
     └── tools/handlers/bestpractice.py ──→ engine.py + state_manager.py
 ```
 
 - `engine.py` 是唯一的 "胖" 模块，依赖多个内部模块 + 外部 `AgentOrchestrator`
 - `BPToolHandler` 在 `SystemHandlerRegistry` 中注册，与 `AgentToolHandler` 并列
-- `trigger.py` 仅依赖 `config.py`（读取触发配置），不依赖 engine 或 prompt_loader
+- 触发检测通过系统提示引导 LLM 直接识别，无需独立模块（M4 改进）
 
 ---
 
@@ -142,6 +161,7 @@ class BPStatus(str, Enum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"                         # H5 改进：用户主动取消
 
 
 class SubtaskStatus(str, Enum):
@@ -149,6 +169,7 @@ class SubtaskStatus(str, Enum):
     CURRENT = "current"
     DONE = "done"
     STALE = "stale"
+    FAILED = "failed"                               # H7 改进：区分"未执行"和"执行失败"
 
 
 @dataclass
@@ -165,6 +186,16 @@ class SubtaskConfig:
     # 输入字段到上游子任务输出的映射，例: {"market_data": "research"}
     # 为空时默认取前一个子任务的完整 output（线性模式兼容）。
     # DAG 扩展预留：支持 fan-in，从多个上游子任务汇聚输入。
+    timeout_seconds: int | None = None          # 子任务超时（秒），None 使用全局默认值（M9）
+    max_retries: int = 0                        # 最大重试次数，0 表示不重试（M9）
+
+
+@dataclass
+class PendingContextSwitch:
+    """待执行的上下文切换操作，由 bp_switch_task 创建，由 Agent 推理准备阶段消费（C2）"""
+    suspended_instance_id: str      # 要挂起的实例
+    target_instance_id: str         # 要恢复的实例
+    created_at: float = 0.0        # 创建时间
 
 
 @dataclass
@@ -215,50 +246,237 @@ class BPInstanceSnapshot:
     # DAG 模式：完全依赖此字段判断 ready/completed/stale 集合
 
     # 数据
+    initial_input: dict = field(default_factory=dict)
+    # bp_start 时传入的初始输入数据（M8 改进，替代 subtask_outputs["__initial_input__"] 魔法键）
     subtask_outputs: dict[str, dict] = field(default_factory=dict)
     # subtask_id → output JSON
 
     # 上下文
     context_summary: str = ""                   # 挂起时 LLM 压缩生成
-    master_messages_snapshot: list[dict] | None = None
-    # 挂起时 MasterAgent.Context.messages 的副本（可选，用于精确恢复）
 
     # 配置引用
     bp_config: BestPracticeConfig | None = None
+    # 实际使用中，bp_config 仅在反序列化恢复的瞬间为 None，
+    # 恢复完成后由 BPEngine.restore_session 关联。
+    # 所有正常路径中 bp_config 非空。（D3 改进）
 ```
 
 ### 3.3 配置加载 (`config.py`)
 
 ```python
 class BPConfigLoader:
-    """从 YAML 文件发现并加载 BestPractice 配置"""
+    """从子目录结构发现并加载 BestPractice 配置及 Agent Profile。
 
-    def __init__(self, search_paths: list[Path]):
+    目录结构约定：
+    best_practice/
+    ├── _shared/profiles/*.json       # 共享 Agent（先加载）
+    ├── {bp-id}/config.yaml           # BP 配置（字段直接对应 BestPracticeConfig）
+    ├── {bp-id}/profiles/*.json       # BP 专用 Agent Profile
+    └── {bp-id}/prompts/*.md          # Agent 角色 Prompt
+    """
+
+    def __init__(
+        self,
+        search_paths: list[Path],
+        profile_store: "ProfileStore | None" = None,
+    ):
         # 默认搜索路径：
         # 1. src/seeagent/bestpractice/configs/  （系统内置）
-        # 2. {project_root}/bestpractice/          （用户自定义）
+        # 2. {project_root}/best_practice/         （用户自定义，注意下划线）
         self._search_paths = search_paths
+        self._profile_store = profile_store
         self._configs: dict[str, BestPracticeConfig] = {}
 
     def load_all(self) -> dict[str, BestPracticeConfig]:
-        """扫描所有路径，解析 YAML → BestPracticeConfig"""
+        """扫描所有路径的子目录，解析 config.yaml → BestPracticeConfig。
+        同时加载 Agent Profile 并注册到 ProfileStore。
+        对每个配置进行验证，记录 warning 但不阻断加载（M12 改进）。"""
+        configs = {}
+        for path in self._search_paths:
+            if not path.is_dir():
+                continue
+
+            # 1. 优先加载 _shared/ 目录的共享 Agent Profile
+            shared_dir = path / "_shared"
+            if shared_dir.is_dir():
+                self._load_profiles_from_dir(shared_dir)
+
+            # 2. 遍历子目录，查找 config.yaml
+            for bp_dir in sorted(path.iterdir()):
+                if not bp_dir.is_dir() or bp_dir.name.startswith(("_", ".")):
+                    continue
+                config_file = bp_dir / "config.yaml"
+                if not config_file.exists():
+                    continue
+                try:
+                    config = self._parse_yaml(config_file)
+                    errors = self._validate(config)
+                    if errors:
+                        logger.warning(
+                            f"BP config '{config_file}' has validation warnings:\n"
+                            + "\n".join(f"  - {e}" for e in errors)
+                        )
+                    configs[config.id] = config
+
+                    # 3. 加载该 BP 目录下的 Agent Profile
+                    self._load_profiles_from_dir(bp_dir)
+                except Exception as e:
+                    logger.error(f"Failed to load BP config '{config_file}': {e}")
+
+        self._configs = configs
+        return configs
+
+    def _parse_yaml(self, yaml_file: Path) -> BestPracticeConfig:
+        """解析 YAML → BestPracticeConfig。
+        兼容两种格式：有 best_practice: 包装键（旧格式）和无包装键（新格式）。"""
+        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+        # 兼容旧格式：如果有 best_practice: 包装键则自动解包
+        if isinstance(data, dict) and "best_practice" in data and len(data) == 1:
+            data = data["best_practice"]
+        return load_bp_config(data)
+
+    def _load_profiles_from_dir(self, bp_dir: Path) -> None:
+        """从 bp_dir/profiles/*.json 加载 Agent Profile，
+        解析 prompt_file → 读取 .md 内容 → 填入 custom_prompt，
+        然后注册到 ProfileStore。"""
+        if self._profile_store is None:
+            return
+        profiles_dir = bp_dir / "profiles"
+        if not profiles_dir.is_dir():
+            return
+        for json_file in sorted(profiles_dir.glob("*.json")):
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                # 解析 prompt_file：弹出字段，读取 .md 内容，填入 custom_prompt
+                prompt_file = data.pop("prompt_file", None)
+                if prompt_file and not data.get("custom_prompt"):
+                    prompt_path = bp_dir / prompt_file
+                    if prompt_path.exists():
+                        data["custom_prompt"] = prompt_path.read_text(encoding="utf-8")
+                    else:
+                        logger.warning(
+                            f"Profile '{data.get('id')}' prompt_file not found: {prompt_path}"
+                        )
+                profile = AgentProfile.from_dict(data)
+                self._profile_store.save(profile)
+            except Exception as e:
+                logger.warning(f"Failed to load BP profile '{json_file}': {e}")
 
     def get(self, bp_id: str) -> BestPracticeConfig | None:
         """按 ID 获取配置"""
+        return self._configs.get(bp_id)
+
+    def _validate(self, config: BestPracticeConfig) -> list[str]:
+        """验证 BP 配置的完整性（M12 改进）"""
+        errors = []
+
+        # 1. subtask id 唯一性
+        ids = [st.id for st in config.subtasks]
+        if len(ids) != len(set(ids)):
+            errors.append(f"Duplicate subtask IDs: {[x for x in ids if ids.count(x) > 1]}")
+
+        # 2. depends_on 引用的 subtask_id 存在
+        id_set = set(ids)
+        for st in config.subtasks:
+            for dep in st.depends_on:
+                if dep not in id_set:
+                    errors.append(f"Subtask '{st.id}' depends_on unknown '{dep}'")
+
+        # 3. 循环依赖检测
+        if any(st.depends_on for st in config.subtasks):
+            cycle = self._detect_cycle(config.subtasks)
+            if cycle:
+                errors.append(f"Circular dependency detected: {' → '.join(cycle)}")
+
+        # 4. input_schema 基本结构检查
+        for st in config.subtasks:
+            if not isinstance(st.input_schema, dict):
+                errors.append(f"Subtask '{st.id}' input_schema is not a dict")
+            elif st.input_schema.get("type") != "object":
+                errors.append(f"Subtask '{st.id}' input_schema.type should be 'object'")
+
+        # 5. Schema 深度检查（M11）
+        for st in config.subtasks:
+            depth_warnings = self._validate_schema_depth(st.input_schema, st.id)
+            errors.extend(depth_warnings)
+
+        # 6. description 非空检查（m3）
+        for st in config.subtasks:
+            if not st.description:
+                errors.append(
+                    f"Subtask '{st.id}' has empty description, "
+                    f"will use name '{st.name}' as fallback"
+                )
+
+        # 7. agent_profile 存在性检查
+        if self._profile_store:
+            for st in config.subtasks:
+                if not self._profile_store.exists(st.agent_profile):
+                    errors.append(
+                        f"Subtask '{st.id}' agent_profile '{st.agent_profile}' "
+                        f"not found in ProfileStore"
+                    )
+
+        return errors
 ```
 
-### 3.4 组件生命周期与所有权
+### 3.4 BP Profile 加载策略
+
+BP Agent Profile 的加载由 `BPConfigLoader._load_profiles_from_dir()` 在 `load_all()` 时完成，
+注册到全局 `ProfileStore`，使得 `orchestrator.delegate(to_agent=profile_id)` 可直接查找。
+
+#### prompt_file 解析
+
+BP Profile JSON 包含 `prompt_file` 字段（如 `"prompts/topic-researcher.md"`），
+指向同 BP 目录下的 Markdown 文件。加载时：
+
+1. 从 JSON 数据中弹出 `prompt_file` 字段
+2. 以 BP 目录为基准解析相对路径，读取 `.md` 文件内容
+3. 填入 `custom_prompt` 字段（仅当 `custom_prompt` 为空时）
+4. 调用 `AgentProfile.from_dict(data)` 构造 Profile
+5. 调用 `ProfileStore.save(profile)` 注册
+
+`AgentProfile` 本身不需要 `prompt_file` 字段。`from_dict()` 的字段过滤机制会忽略未知字段。
+
+#### _shared/ 目录
+
+`_shared/profiles/` 在所有 BP 子目录之前加载，其 `prompt_file` 解析基准为 `_shared/` 目录。
+共享 Profile 可被多个 BP 的 `subtask.agent_profile` 引用。
+若 BP 子目录中有同 `id` 的 Profile，会覆盖 `_shared/` 中的同名 Profile（后加载优先）。
+
+#### 枚举值大小写
+
+Profile JSON 中的枚举字段使用小写值：
+- `"type": "custom"`（对应 `AgentType.CUSTOM`）
+- `"skills_mode": "inclusive"`（对应 `SkillsMode.INCLUSIVE`）
+
+与 `AgentType` 和 `SkillsMode` 枚举的 `.value` 一致。
+
+### 3.5 组件生命周期与所有权
 
 ```
 初始化链（应用启动时）:
 
 Agent.__init__()
   │
-  ├─ BPToolHandler(agent)          ← 注册到 SystemHandlerRegistry
+  ├─ BPToolHandler(agent)          ← **条件注册**：仅当 BP 配置子目录存在时注册（M5 改进）
   │     └─ 延迟初始化：首次工具调用时通过 get_bp_engine() 获取单例
   │
   └─ PromptAssembler(..., bp_engine=None)
         └─ bp_engine 延迟绑定：首次 build_system_prompt 调用时通过 get_bp_engine() 获取
+
+**条件注册**（M5 改进）：
+- 只有当搜索路径下存在 BP 配置子目录时才注册 BPToolHandler
+- 避免无 BP 配置时 bp_* 工具出现在 LLM tool catalog 中浪费 token
+- 检测逻辑：
+  ```python
+  any(
+      (d / "config.yaml").exists()
+      for p in search_paths if p.is_dir()
+      for d in p.iterdir()
+      if d.is_dir() and not d.name.startswith(("_", "."))
+  )
+  ```
 
 首次 BP 工具调用时：
 
@@ -280,12 +498,22 @@ get_bp_engine()（模块级单例工厂）
 # bestpractice/__init__.py
 _bp_engine: BPEngine | None = None
 
-def get_bp_engine() -> BPEngine:
-    """返回进程级 BPEngine 单例。BPToolHandler 和 PromptAssembler 共享同一实例。"""
+def get_bp_engine(profile_store: "ProfileStore | None" = None) -> BPEngine:
+    """返回进程级 BPEngine 单例。BPToolHandler 和 PromptAssembler 共享同一实例。
+    首次调用时需要 profile_store 参数（用于加载 BP Agent Profile）。"""
     global _bp_engine
     if _bp_engine is None:
+        if profile_store is None:
+            # 从 orchestrator 获取（延迟导入避免循环依赖）
+            import seeagent.main as _main
+            profile_store = getattr(
+                getattr(_main, "_orchestrator", None), "_profile_store", None
+            )
         state_manager = BPStateManager()
-        _bp_engine = BPEngine(state_manager=state_manager)
+        _bp_engine = BPEngine(
+            state_manager=state_manager,
+            profile_store=profile_store,
+        )
     return _bp_engine
 ```
 
@@ -297,7 +525,7 @@ def get_bp_engine() -> BPEngine:
 | `BPEngine` | `get_bp_engine()` 单例工厂 | 进程级 | 编排逻辑，无状态（状态在 BPStateManager 中） |
 | `BPToolHandler` | `SystemHandlerRegistry` | 进程级 | 薄层，通过 `get_bp_engine()` 获取共享 engine |
 | `PromptAssembler` | `Agent` | 进程级 | 通过 `_get_bp_engine()` 延迟获取共享 engine |
-| `BPConfigLoader` | `BPEngine` | 进程级 | 配置缓存，启动时加载 |
+| `BPConfigLoader` | `BPEngine` | 进程级 | 配置缓存 + Profile 注册，启动时加载 |
 | `ContextBridge` | `BPEngine` | 进程级 | 无状态工具类 |
 
 > **注意**：`BPToolHandler` 和 `PromptAssembler` 均采用延迟初始化模式，
@@ -317,8 +545,8 @@ class BPStateManager:
 
     设计决策：
     - 独立于 AgentState / TaskState / SessionContext
-    - 内存存储，会话级生命周期
-    - 后续可扩展为 SQLite 持久化
+    - 内存存储 + Session.metadata 持久化（C3 改进）
+    - 通过 SessionManager 的 5s 防抖写入机制实现持久化
     """
 
     def __init__(self) -> None:
@@ -326,17 +554,154 @@ class BPStateManager:
         self._session_index: dict[str, list[str]] = {}       # session_id → [instance_ids]
         self._active_map: dict[str, str | None] = {}          # session_id → active_instance_id
         self._lock = asyncio.Lock()  # 必须用 asyncio.Lock，系统全异步
+        self._pending_switches: dict[str, PendingContextSwitch] = {}  # session_id → switch（C2 改进）
+        self._cooldowns: dict[str, int] = {}  # session_id → remaining_turns（M4/M13 改进）
+
+    # ── 持久化（C3 改进）──
+
+    async def persist(self, session: "Session") -> None:
+        """将该会话的所有 BP 实例序列化到 Session.metadata。
+        利用 SessionManager 已有的 5s 防抖写入机制，不会产生 I/O 热点。"""
+        async with self._lock:
+            session_id = session.id
+            instance_ids = self._session_index.get(session_id, [])
+            snapshots = {}
+            for iid in instance_ids:
+                snap = self._instances.get(iid)
+                if snap:
+                    snapshots[iid] = self._serialize_snapshot(snap)
+
+            session.metadata["_bp_state"] = {
+                "instances": snapshots,
+                "active_id": self._active_map.get(session_id),
+                "cooldown": self._cooldowns.get(session_id, 0),  # M13 改进
+                "version": 1,
+            }
+
+    def restore_from_session(self, session: "Session") -> int:
+        """从 Session.metadata 恢复 BP 实例状态。
+        返回恢复的实例数量。应在 Session 加载时调用。"""
+        saved = session.metadata.get("_bp_state")
+        if not saved or saved.get("version") != 1:
+            return 0
+
+        count = 0
+        for iid, data in saved.get("instances", {}).items():
+            try:
+                snap = self._deserialize_snapshot(data, session.id)
+                if snap:
+                    self._instances[iid] = snap
+                    self._session_index.setdefault(session.id, []).append(iid)
+                    count += 1
+            except Exception as e:
+                logger.warning(f"Failed to restore BP instance {iid}: {e}")
+
+        active_id = saved.get("active_id")
+        if active_id and active_id in self._instances:
+            self._active_map[session.id] = active_id
+
+        cooldown = saved.get("cooldown", 0)
+        if cooldown > 0:
+            self._cooldowns[session.id] = cooldown
+
+        return count
+
+    # ── 序列化/反序列化（H1 改进）──
+
+    @staticmethod
+    def _serialize_snapshot(snap: BPInstanceSnapshot) -> dict:
+        """将快照序列化为可 JSON 化的 dict。
+        排除 bp_config（运行时引用，恢复时由 BPEngine.restore_session 关联）。
+        枚举字段序列化为 .value。"""
+        return {
+            "bp_id": snap.bp_id,
+            "instance_id": snap.instance_id,
+            "session_id": snap.session_id,
+            "status": snap.status.value,
+            "created_at": snap.created_at,
+            "completed_at": snap.completed_at,
+            "suspended_at": snap.suspended_at,
+            "current_subtask_index": snap.current_subtask_index,
+            "run_mode": snap.run_mode.value,
+            "subtask_statuses": {k: v.value for k, v in snap.subtask_statuses.items()},
+            "initial_input": snap.initial_input,
+            "subtask_outputs": snap.subtask_outputs,
+            "context_summary": snap.context_summary,
+            # 注意：不序列化 bp_config，恢复时由 BPEngine.restore_session 关联
+        }
+
+    @staticmethod
+    def _deserialize_snapshot(data: dict, session_id: str) -> BPInstanceSnapshot | None:
+        """从序列化 dict 重建快照。枚举字段从 .value 恢复。"""
+        try:
+            return BPInstanceSnapshot(
+                bp_id=data["bp_id"],
+                instance_id=data["instance_id"],
+                session_id=session_id,
+                status=BPStatus(data.get("status", "active")),
+                created_at=data.get("created_at", 0.0),
+                completed_at=data.get("completed_at"),
+                suspended_at=data.get("suspended_at"),
+                current_subtask_index=data.get("current_subtask_index", 0),
+                run_mode=RunMode(data.get("run_mode", "manual")),
+                subtask_statuses={
+                    k: SubtaskStatus(v)
+                    for k, v in data.get("subtask_statuses", {}).items()
+                },
+                initial_input=data.get("initial_input", {}),
+                subtask_outputs=data.get("subtask_outputs", {}),
+                context_summary=data.get("context_summary", ""),
+                bp_config=None,  # 由 BPEngine.restore_session 关联
+            )
+        except (KeyError, ValueError) as e:
+            logger.warning(f"Failed to deserialize BP snapshot: {e}")
+            return None
+
+    # ── Pending 上下文切换（C2 改进）──
+
+    def set_pending_switch(
+        self, session_id: str, switch: PendingContextSwitch,
+    ) -> None:
+        """设置待执行的上下文切换"""
+        self._pending_switches[session_id] = switch
+
+    def consume_pending_switch(
+        self, session_id: str,
+    ) -> PendingContextSwitch | None:
+        """消费并清除待执行的上下文切换，返回 None 表示无待执行切换"""
+        return self._pending_switches.pop(session_id, None)
+
+    def has_pending_switch(self, session_id: str) -> bool:
+        return session_id in self._pending_switches
+
+    # ── 推断冷却管理（M4/M13 改进）──
+
+    def set_cooldown(self, session_id: str, turns: int = 5) -> None:
+        """设置推断冷却（选择自由模式后）"""
+        self._cooldowns[session_id] = turns
+
+    def tick_cooldown(self, session_id: str) -> None:
+        """每轮用户输入递减"""
+        if session_id in self._cooldowns:
+            self._cooldowns[session_id] = max(0, self._cooldowns[session_id] - 1)
+            if self._cooldowns[session_id] == 0:
+                del self._cooldowns[session_id]
+
+    def get_cooldown(self, session_id: str) -> int:
+        return self._cooldowns.get(session_id, 0)
 
     # ── 生命周期 ──
+    # 注：以下方法在当前线性模式下由调用方保证串行访问（同一会话的请求通过 busy_lock 串行化）。
+    # DAG 扩展引入并行子任务后，需为所有写方法加 async with self._lock。（M3 改进）
 
-    def create_instance(
+    async def create_instance(
         self,
         bp_config: BestPracticeConfig,
         session_id: str,
     ) -> BPInstanceSnapshot:
         """创建新实例，设为该会话的活跃实例"""
 
-    def suspend(
+    async def suspend(
         self,
         instance_id: str,
         context_summary: str,
@@ -344,11 +709,14 @@ class BPStateManager:
     ) -> None:
         """挂起实例：保存上下文摘要，状态 → SUSPENDED"""
 
-    def resume(self, instance_id: str) -> BPInstanceSnapshot:
+    async def resume(self, instance_id: str) -> BPInstanceSnapshot:
         """恢复实例：状态 → ACTIVE，返回快照"""
 
-    def complete(self, instance_id: str) -> None:
+    async def complete(self, instance_id: str) -> None:
         """标记实例完成"""
+
+    async def cancel(self, instance_id: str) -> None:
+        """取消实例：状态 → CANCELLED，清除 active_map（H5 改进）"""
 
     # ── 子任务数据 ──
 
@@ -402,7 +770,23 @@ class BPStateManager:
         """获取会话的所有实例"""
 
     def get_status_table(self, session_id: str) -> str:
-        """生成系统提示注入的状态表文本"""
+        """生成系统提示注入的状态表文本（S2: 包含 input_preview 区分同配置多实例）"""
+        rows = []
+        for inst in self.get_all_for_session(session_id):
+            # S2: 添加输入参数摘要用于区分同配置多实例
+            input_preview = ""
+            if inst.initial_input:
+                topic = inst.initial_input.get("topic", "")
+                if topic:
+                    input_preview = f" ({topic[:30]})"
+                else:
+                    first_val = (
+                        str(list(inst.initial_input.values())[0])[:30]
+                        if inst.initial_input else ""
+                    )
+                    input_preview = f" ({first_val})" if first_val else ""
+            rows.append(f"| {inst.bp_name}{input_preview} | {inst.instance_id[:8]} | ...")
+        return "\n".join(rows)
 
     def get_outputs_summary(self, instance_id: str) -> str:
         """生成子任务输出摘要（用于意图路由上下文）"""
@@ -421,7 +805,8 @@ class BPStateManager:
 │  BPStateManager (BP 实例状态)                                  │
 │  ├── _instances: { instance_id → BPInstanceSnapshot }         │
 │  ├── _active_map: { session_id → active_instance_id }         │
-│  └── 内存存储，独立于 SessionContext                           │
+│  ├── 内存存储 + Session.metadata 持久化（C3 改进）              │
+│  └── pending_switches / cooldowns 管理（C2/M13 改进）          │
 ├───────────────────────────────────────────────────────────────┤
 │  MasterAgent 层（运行时）                                      │
 │                                                               │
@@ -532,17 +917,34 @@ $available_practices
 3. **输出编辑**：用户可通过自然语言修改已完成子任务输出（调用 bp_edit_output）
 4. **任务切换**：用户可通过自然语言切换到其他 BP 实例（调用 bp_switch_task）
 5. **手动模式**：子任务完成后展示 [查看结果] [进入下一步] 等待用户操作
-6. **自动模式**：子任务完成后自动调用 bp_continue
+6. **自动模式**：当 bp_start 或 bp_continue 的返回结果中包含
+   "当前为自动模式，请立即调用 bp_continue" 时，
+   你必须**立即**调用 bp_continue，不要等待用户操作。
+   但如果用户在此期间发送了消息，优先处理用户消息。（C1 改进）
+7. **Chat-to-Edit 确认**：当 bp_edit_output 调用前，如果修改意图可能有歧义，
+   先通过 ask_user 确认修改范围。（S4 改进）
+8. **Chat-to-Edit 流程**：修改子任务输出前，先调用 bp_get_output 获取完整当前值，
+   再基于完整数据生成 changes JSON，最后调用 bp_edit_output。（H2 改进）
+9. **取消任务**：用户明确表示要取消/放弃当前任务时，调用 bp_cancel 终止实例。（H5 改进）
+
+### 自动模式中断规则（S1 改进）
+- 如果在自动执行过程中收到用户消息，**优先处理用户消息**
+- 如果用户表达了暂停、取消或修改意图，停止自动执行
+- 处理完用户消息后，如果任务未取消，可询问用户是否继续自动执行
 ```
 
-#### `system_dynamic.md` — 注入到系统提示动态段
+#### `system_dynamic.md` — 注入到系统提示动态段（含条件性意图路由指令，M3 改进）
 
 ```markdown
 ## 当前最佳实践状态
 
+> 以下子任务输出数据为最新版本。如与上文 tool_result 中的旧数据冲突，以此为准。（H3 改进）
+
 $status_table
 
 $active_context
+
+$intent_routing_instruction
 ```
 
 #### `subtask_instruction.md` — SubAgent 委派消息
@@ -571,23 +973,7 @@ $output_schema
 严格按 Schema 的 required 字段输出，不要遗漏。
 ```
 
-#### `intent_router.md` — 暂停期间意图检测（注入到 MasterAgent 上下文）
-
-```markdown
-[系统提示] 用户在最佳实践暂停期间发送了消息。请判断意图：
-
-当前活跃任务：$active_task_info
-已完成子任务输出摘要：
-$outputs_summary
-
-根据用户消息判断：
-A) 修改某个子任务的输出 → 调用 bp_edit_output
-B) 切换到其他任务 → 调用 bp_switch_task
-C) 确认进入下一步 → 调用 bp_continue
-D) 与当前任务相关的追问 → 直接回答
-```
-
-#### `chat_to_edit.md` — Deep Merge 指令
+#### `chat_to_edit.md` — Deep Merge 指令（M2 改进：明确数组语义）
 
 ```markdown
 用户要求修改子任务「$subtask_name」的输出。
@@ -599,10 +985,22 @@ $current_output
 
 修改意图：$user_message
 
-请执行 deep merge：
-- 仅修改用户明确提及的字段
-- 未提及的字段保持原值不变
-- 返回修改后的完整 JSON（保持原有 Schema 结构）
+请生成修改后的 changes JSON，规则如下：
+- 仅包含**需要修改的字段**
+- 未提及的字段不要包含在 changes 中，它们将保持原值
+- **对象字段**：递归合并（仅覆盖提及的子字段）
+- **数组字段**：提供**完整的新数组**（数组不支持部分修改，必须给出完整替换值）
+- **删除字段**：将字段值设为 null
+
+示例：
+用户说 "把盈利模式改成纯SaaS"
+当前 findings = ["技术架构：TokenML引擎", "盈利模式：SaaS+抽成", "竞争壁垒：3项专利"]
+正确的 changes = {
+  "findings": ["技术架构：TokenML引擎", "盈利模式：纯SaaS订阅", "竞争壁垒：3项专利"]
+}
+（注意：完整数组，包含未修改的元素）
+
+请输出 changes JSON。
 ```
 
 #### `context_restore.md` — 任务恢复注入
@@ -770,8 +1168,10 @@ BPEngine.execute_subtask(instance_id)
   ▼
 12. 判断下一步：
     ├─ 是最后一个子任务 → 标记实例 COMPLETED，返回最终结果
-    ├─ auto 模式 → 递归调用 execute_subtask (下一个)
-    └─ manual 模式 → 返回完成信息，等待 MasterAgent 展示按钮
+    └─ 推进到下一个子任务，根据 run_mode 返回不同 tool_result：
+        ├─ auto 模式 → tool_result 含 "请立即调用 bp_continue" 指令，
+        │   MasterAgent 收到后自动调用下一个 bp_continue（C1 改进：迭代式执行）
+        └─ manual 模式 → 返回完成信息，引导 MasterAgent 展示交互按钮
 ```
 
 **关键代码流**：
@@ -792,13 +1192,28 @@ class BPEngine:
     实现时应合并为单个类。
     """
 
-    def __init__(self, state_manager: "BPStateManager") -> None:
+    def __init__(
+        self,
+        state_manager: "BPStateManager",
+        profile_store: "ProfileStore | None" = None,
+    ) -> None:
         self._state_manager = state_manager
-        self._config_loader = BPConfigLoader(search_paths=[...])  # 系统内置 + 用户自定义
-        self._config_loader.load_all()
+        self._config_loader = BPConfigLoader(
+            search_paths=[
+                Path(__file__).parent / "configs",       # 系统内置
+                Path(project_root) / "best_practice",    # 用户自定义（注意下划线）
+            ],
+            profile_store=profile_store,
+        )
+        self._config_loader.load_all()  # 加载配置 + 注册 Agent Profile
         self._prompt_loader = PromptTemplateLoader()
         self._schema_chain = SchemaChain()
         self._context_bridge: ContextBridge | None = None  # 延迟创建（依赖 ContextManager）
+
+    @property
+    def state_manager(self) -> "BPStateManager":
+        """公开属性，供 BPToolHandler 访问（m2 改进：消除私有成员访问）"""
+        return self._state_manager
 
     def get_config(self, bp_id: str) -> BestPracticeConfig | None:
         """按 ID 获取 BP 配置。"""
@@ -833,21 +1248,45 @@ class BPEngine:
         )
 
         # 委派执行（复用已有机制）
-        try:
-            result = await orchestrator.delegate(
-                session=session,
-                from_agent="main",
-                to_agent=subtask.agent_profile,
-                message=message,
-                reason=f"BP:{config.name} / {subtask.name}",
-            )
-        except Exception as e:
-            # 委派失败：标记子任务为 PENDING（可重试），返回错误信息给 MasterAgent
-            logger.error(f"SubTask delegation failed: {subtask.id} - {e}")
-            self._state_manager.update_subtask_status(instance_id, subtask.id, SubtaskStatus.PENDING)
+        # 注意：同一 session 中多个 BP 实例共享同一个 AgentInstancePool 缓存。
+        # 这是安全的，因为 AgentOrchestrator._call_agent() 每次都以
+        # session_messages=[] 调用 SubAgent，Brain.Context 每次全新构建。
+        # AgentState._tasks 按 session_id 隔离，delegate() 内部管理 begin/reset。
+        # 如果未来需要跨子任务保留 SubAgent 上下文（如 DAG 扩展中的迭代执行），
+        # 需要为每个 (bp_instance_id, subtask_id) 创建独立的 pool key。（M1 改进）
+        max_attempts = subtask.max_retries + 1  # M9 改进
+        last_error = None
+
+        for attempt in range(max_attempts):
+            try:
+                result = await orchestrator.delegate(
+                    session=session,
+                    from_agent="main",
+                    to_agent=subtask.agent_profile,
+                    message=message,
+                    reason=f"BP:{config.name} / {subtask.name}",
+                )
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        f"SubTask '{subtask.id}' failed (attempt {attempt + 1}/{max_attempts}): {e}"
+                    )
+                    await asyncio.sleep(2 ** attempt)  # 指数退避
+                else:
+                    logger.error(
+                        f"SubTask '{subtask.id}' failed after {max_attempts} attempts: {e}"
+                    )
+
+        if last_error:
+            # H7 改进：标记为 FAILED（区分于 PENDING 的"从未执行"状态）
+            # current_subtask_index 不推进，bp_continue 重试时仍指向当前子任务
+            self._state_manager.update_subtask_status(instance_id, subtask.id, SubtaskStatus.FAILED)
             return (
-                f"子任务「{subtask.name}」执行失败: {e}\n"
-                f"子任务已重置为 PENDING，可通过 bp_continue 重试。"
+                f"子任务「{subtask.name}」执行失败（尝试 {max_attempts} 次）: {last_error}\n"
+                f"子任务已标记为 FAILED。可通过 bp_continue 重试，或使用 bp_cancel 取消整个任务。"
             )
 
         # 解析输出
@@ -855,24 +1294,53 @@ class BPEngine:
         self._state_manager.update_subtask_output(instance_id, subtask.id, output)
 
         # 发射事件
-        await self._emit_bp_events(instance_id, subtask.id, output)
+        await self._emit_bp_events(instance_id, subtask.id, output, session)
 
-        # 判断下一步
+        # 持久化（C3 改进）
+        await self._state_manager.persist(session)
+
+        # ── C1 改进：不再递归，统一返回 ──
         if idx >= len(config.subtasks) - 1:
             self._state_manager.complete(instance_id)
+            await self._state_manager.persist(session)
             return self._format_completion_result(instance)
 
         self._state_manager.advance_subtask(instance_id)
 
+        # 根据 run_mode 返回不同的 tool_result
+        # MasterAgent 收到后根据内容决定行为
+        return self._format_subtask_complete_result(instance, subtask, output)
+
+    def _format_subtask_complete_result(
+        self,
+        instance: BPInstanceSnapshot,
+        subtask: SubtaskConfig,
+        output: dict,
+    ) -> str:
+        """
+        格式化子任务完成结果。
+        手动和自动模式返回不同指令，引导 MasterAgent 做出正确行为。（C1 改进）
+        """
+        next_subtask = instance.bp_config.subtasks[instance.current_subtask_index]
+        output_preview = json.dumps(output, ensure_ascii=False)[:200]
+
         if instance.run_mode == RunMode.AUTO:
-            # 自动模式：递归执行下一个（中间检查 cancel_event）
-            task_state = session.agent_state.get_task_for_session(session.id)
-            if task_state and task_state.cancelled:
-                return "任务已取消"
-            return await self.execute_subtask(instance_id, orchestrator, session)
+            # 自动模式：指令 MasterAgent 立即调用 bp_continue
+            return (
+                f"子任务「{subtask.name}」已完成。输出预览: {output_preview}\n"
+                f"当前为自动模式，请立即调用 bp_continue("
+                f"instance_id=\"{instance.instance_id}\") "
+                f"执行下一个子任务「{next_subtask.name}」。"
+            )
         else:
-            # 手动模式：返回，等待用户操作
-            return self._format_subtask_complete_result(instance, subtask, output)
+            # 手动模式：指令 MasterAgent 展示交互按钮
+            return (
+                f"子任务「{subtask.name}」已完成。输出预览: {output_preview}\n"
+                f"下一个子任务: 「{next_subtask.name}」\n"
+                f"请使用 ask_user 展示以下选项让用户选择：\n"
+                f"- [查看结果]（纯 UI 操作，不生成消息）\n"
+                f"- [进入下一步]（用户确认后调用 bp_continue）"
+            )
 
     def reset_stale_if_needed(self, instance: BPInstanceSnapshot) -> None:
         """
@@ -899,15 +1367,16 @@ class BPEngine:
         instance: BPInstanceSnapshot,
         subtask_id: str,
         output: dict,
-    ) -> None:
+    ) -> list[str]:
         """
         宽松校验子任务输出是否符合下游 input_schema。
+        返回缺失的 required 字段列表（空列表表示通过）。（M10 改进）
         不阻断操作，仅记录 warning 供调试。
         """
         config = instance.bp_config
         idx = next((i for i, s in enumerate(config.subtasks) if s.id == subtask_id), None)
         if idx is None or idx >= len(config.subtasks) - 1:
-            return  # 最后一个子任务无下游约束
+            return []  # 最后一个子任务无下游约束
 
         next_schema = config.subtasks[idx + 1].input_schema
         missing = [k for k in next_schema.get("required", []) if k not in output]
@@ -916,6 +1385,14 @@ class BPEngine:
                 f"[BPEngine] Edited output for '{subtask_id}' missing required fields "
                 f"for downstream: {missing}"
             )
+        return missing
+
+    def get_subtask_names(
+        self, instance: BPInstanceSnapshot, subtask_ids: list[str],
+    ) -> list[str]:
+        """将 subtask_id 列表转换为显示名（M10 改进）"""
+        name_map = {st.id: st.name for st in instance.bp_config.subtasks}
+        return [f"「{name_map.get(sid, sid)}」" for sid in subtask_ids]
 
     def _resolve_input(
         self,
@@ -926,7 +1403,7 @@ class BPEngine:
         解析子任务的输入数据。抽象为独立方法，线性/DAG 通用。
 
         线性模式（当前）：
-          - 第一个子任务 → __initial_input__
+          - 第一个子任务 → initial_input（M8 改进）
           - 后续子任务 → 前一个子任务的 output
         DAG 扩展：
           - 按 subtask.input_mapping 从多个上游子任务汇聚输入
@@ -942,7 +1419,7 @@ class BPEngine:
                 for field, upstream_id in subtask.input_mapping.items()
             }
         elif idx == 0:
-            return instance.subtask_outputs.get("__initial_input__", {})
+            return instance.initial_input  # M8 改进：使用独立字段
         else:
             prev_subtask = config.subtasks[idx - 1]
             return instance.subtask_outputs.get(prev_subtask.id, {})
@@ -969,6 +1446,33 @@ class BPEngine:
         self, instance_id: str, subtask_id: str, output: dict, session: "Session",
     ) -> None:
         """发射 bp_subtask_output 事件（更新 SubtaskOutputPanel）。"""
+
+    async def emit_task_switch(
+        self, session: "Session", suspended_id: str, activated_id: str,
+    ) -> None:
+        """发射 bp_task_switch 事件（C2 改进：前端提前通知）。"""
+
+    # ── Session 恢复（C3 改进）──
+
+    def restore_session(self, session: "Session") -> int:
+        """从 Session 恢复 BP 实例状态，关联 bp_config 引用。
+        应在 Session 加载/激活时调用。"""
+        count = self._state_manager.restore_from_session(session)
+        if count > 0:
+            # 关联 bp_config
+            for iid in self._state_manager._session_index.get(session.id, []):
+                snap = self._state_manager.get(iid)
+                if snap and snap.bp_config is None:
+                    config = self._config_loader.get(snap.bp_id)
+                    if config:
+                        snap.bp_config = config
+                    else:
+                        logger.warning(
+                            f"BP config '{snap.bp_id}' not found for instance {iid}, "
+                            f"marking as completed"
+                        )
+                        snap.status = BPStatus.COMPLETED
+        return count
 
     # ── 结果格式化 ──
 
@@ -1062,7 +1566,15 @@ def _deep_merge(base: dict, patch: dict) -> dict:
     return result
 ```
 
-### 6.4 多任务切换
+**H3 改进：Chat-to-Edit 数据一致性**
+
+编辑子任务输出后，`BPStateManager.subtask_outputs` 已更新，但 `Brain.Context.messages` 中的旧 `tool_result` 仍包含修改前的值。为避免 MasterAgent 基于过时数据推理：
+
+1. `bp_edit_output` 的 `tool_result` 中返回**完整的修改后 output**（不仅是 diff），使 Brain.Context 最新消息包含正确数据
+2. `system_dynamic.md` 模板中注入提示：「以下子任务输出为最新版本，如与上文 tool_result 冲突，以此为准」
+3. MasterAgent 在 Chat-to-Edit 前应先调用 `bp_get_output` 获取完整当前值（H2 改进），再生成 `changes` JSON
+
+### 6.4 多任务切换（C2 改进：安全钩子点）
 
 ```
 用户消息："回到市场调研"
@@ -1078,25 +1590,32 @@ LLM 识别：切换到实例 "bp-002"
   ▼
 BPToolHandler.bp_switch_task():
   │
-  ├─ 1. 挂起当前活跃任务
-  │     ├─ context_bridge.compress_for_suspend() → context_summary
-  │     └─ state_manager.suspend(current_id, context_summary)
+  ├─ 1. 设置 PendingContextSwitch（不直接操作上下文）
+  │     state_manager.set_pending_switch(session_id, PendingContextSwitch(
+  │       suspended_instance_id=current.instance_id,
+  │       target_instance_id="bp-002",
+  │     ))
   │
-  ├─ 2. 恢复目标任务
-  │     ├─ state_manager.resume(target_id) → snapshot
-  │     └─ context_bridge.prepare_restore_messages(snapshot) → restore_messages
+  ├─ 2. 发射前端事件（提前通知）：
+  │     bp_task_switch (活跃任务即将变更)
   │
-  ├─ 3. 替换 MasterAgent 工作上下文
-  │     ├─ 清空 Brain.Context.messages
-  │     └─ 注入 restore_messages
+  └─ 3. 返回信息性结果给 MasterAgent（不包含上下文操作）：
+        ├─ suspended → "已准备切换。上下文将在下一轮推理时自动切换。"
+        └─ completed → "已准备切换。任务已完成。"
+
+下一轮推理准备阶段（_prepare_session_context）：
   │
-  ├─ 4. 发射事件：
-  │     └─ bp_task_switch (活跃任务变更)
+  ├─ 检测 pending_switch → 消费
   │
-  └─ 5. 返回结果给 MasterAgent：
-        ├─ suspended → "任务已切换。市场调研还剩 2 个子任务..."
-        │   MasterAgent → ask_user "是否继续执行？"
-        └─ completed → "这个任务已完成。" 附带结果摘要
+  ├─ context_bridge.execute_pending_switch()：
+  │   ├─ 1. 压缩当前上下文 → context_summary（失败时使用 _fallback_summary）
+  │   ├─ 2. state_manager.suspend(current_id, context_summary)
+  │   ├─ 3. state_manager.resume(target_id) → snapshot
+  │   ├─ 4. prepare_restore_messages(snapshot) → restore_messages
+  │   ├─ 5. Brain.Context.messages 清空 + 注入 restore_messages（此时安全）
+  │   └─ 6. persist(session)（C3 改进）
+  │
+  └─ 继续正常推理...
 ```
 
 ---
@@ -1184,12 +1703,18 @@ class ContextBridge:
         ]
         """
         # 构建已完成子任务列表
+        # M1 改进：每个子任务 output 最多 2000 字符，避免恢复消息导致 token 溢出。
+        # 超过阈值时截断并提示通过 bp_get_output 查看完整数据。
+        MAX_OUTPUT_CHARS = 2000
         completed_lines = []
         for subtask in snapshot.bp_config.subtasks[:snapshot.current_subtask_index]:
             output = snapshot.subtask_outputs.get(subtask.id, {})
-            # 恢复时需保留完整 output 以支持 Chat-to-Edit。
-            # 仅在 status_table（系统提示注入）中截断为预览。
             output_json = json.dumps(output, ensure_ascii=False, indent=2)
+            if len(output_json) > MAX_OUTPUT_CHARS:
+                output_json = (
+                    output_json[:MAX_OUTPUT_CHARS]
+                    + f"\n... [截断，完整数据请使用 bp_get_output(subtask_id=\"{subtask.id}\") 查看]"
+                )
             status = snapshot.subtask_statuses.get(subtask.id, "done")
             completed_lines.append(
                 f"- 子任务「{subtask.name}」{status}，输出:\n```json\n{output_json}\n```"
@@ -1207,6 +1732,58 @@ class ContextBridge:
         )
 
         return [{"role": "user", "content": restore_text}]
+
+    async def execute_pending_switch(
+        self,
+        switch: PendingContextSwitch,
+        brain_context: "BrainContext",
+        session: "Session",
+        state_manager: "BPStateManager",
+    ) -> None:
+        """
+        在安全时机（推理准备阶段）执行上下文切换。（C2 改进）
+        此时 Brain.Context 不在被 ReasoningEngine 使用中，修改是安全的。
+        """
+        # 1. 压缩当前上下文 → contextSummary
+        current_messages = list(brain_context.messages)
+        try:
+            summary = await self.compress_for_suspend(
+                current_messages,
+                system_prompt=brain_context.system or "",
+            )
+        except Exception as e:
+            # m1 改进：压缩失败降级
+            logger.warning(f"Context compression failed, using fallback: {e}")
+            summary = self._fallback_summary(current_messages)
+
+        # 2. 挂起当前实例
+        state_manager.suspend(
+            switch.suspended_instance_id,
+            context_summary=summary,
+        )
+
+        # 3. 恢复目标实例
+        target_snapshot = state_manager.resume(switch.target_instance_id)
+
+        # 4. 构建恢复消息
+        restore_messages = self.prepare_restore_messages(target_snapshot)
+
+        # 5. 替换 Brain.Context（此时安全）
+        brain_context.messages.clear()
+        brain_context.messages.extend(restore_messages)
+
+        # 6. 持久化（C3 改进）
+        await state_manager.persist(session)
+
+    def _fallback_summary(self, messages: list[dict]) -> str:
+        """m1 改进：压缩失败时的降级方案 — 截取最后几条消息的文本"""
+        recent = messages[-5:] if len(messages) > 5 else messages
+        lines = []
+        for m in recent:
+            role = m.get("role", "?")
+            content = str(m.get("content", ""))[:200]
+            lines.append(f"[{role}] {content}")
+        return "（上下文压缩失败，以下为最近对话片段）\n" + "\n".join(lines)
 ```
 
 ### 7.4 SubAgent 上下文隔离
@@ -1242,6 +1819,7 @@ AgentOrchestrator.delegate()
 - SubAgent 不知道自己在 BP 流程中（对它来说就是一个普通委派任务）
 - SubAgent 的 SSE 事件通过 `session.context._sse_event_bus` 流到前端
 - SubAgent 的工具/技能由 `AgentProfile` 的 `skills_mode` / `tools_mode` / `mcps_mode` 控制
+- SubAgent 可调用 `ask_user` 工具向用户提问。该调用通过 `session.context._sse_event_bus` 发送 `ask_user` SSE 事件到前端，用户回复通过 `pending_user_inserts` 注入 SubAgent 的 `TaskState`，由 `AgentOrchestrator` 的已有机制路由。SubAgent 的 `ask_user` 不影响 MasterAgent 的对话流。（S3 改进）
 
 ### 7.5 消息标签方案
 
@@ -1366,7 +1944,9 @@ bp_messages = [
         "analysis": "current",
         "report": "pending",
     },
+    "current_subtask_index": 1,                # L1 改进：冗余字段，简化前端高亮逻辑
     "run_mode": "manual",
+    "status": "active",                        # H5 改进：实例级状态（active/suspended/completed/cancelled）
 }
 
 # ── bp_subtask_output: 子任务输出数据 ──
@@ -1436,11 +2016,126 @@ BP 事件 ───────────┘                           │
                             (step_card等)     Store(bp_*事件)   (面板控制)
 ```
 
+### 9.4 SSE 重连全量状态同步 API（M7 改进）
+
+前端 SSE 连接断开后重连时，需要获取当前所有 BP 实例的全量状态：
+
+```python
+# api/routes/seecrab.py — 新增 endpoint
+@router.get("/api/bp/status/{conversation_id}")
+async def get_bp_status(conversation_id: str) -> dict:
+    """前端 SSE 重连后调用，获取所有 BP 实例的全量状态。"""
+    session = session_manager.get_by_conversation(conversation_id)
+    if not session:
+        return {"instances": [], "active_id": None}
+
+    try:
+        from seeagent.bestpractice import get_bp_engine
+        engine = get_bp_engine()
+    except ImportError:
+        return {"instances": [], "active_id": None}
+
+    state = engine._state_manager
+    instances = state.get_all_for_session(session.id)
+    active = state.get_active(session.id)
+
+    return {
+        "active_id": active.instance_id if active else None,
+        "instances": [
+            {
+                "instance_id": inst.instance_id,
+                "bp_id": inst.bp_id,
+                "bp_name": inst.bp_config.name if inst.bp_config else inst.bp_id,
+                "status": inst.status.value,
+                "run_mode": inst.run_mode.value,
+                "current_subtask_index": inst.current_subtask_index,
+                "subtasks": [
+                    {"id": st.id, "name": st.name}
+                    for st in (inst.bp_config.subtasks if inst.bp_config else [])
+                ],
+                "statuses": {k: v.value for k, v in inst.subtask_statuses.items()},
+                "outputs": inst.subtask_outputs,
+            }
+            for inst in instances
+        ],
+    }
+```
+
+### 9.5 非 SeeCrab 通道降级策略（S5 改进）
+
+BP 功能依赖 SSE 事件（`bp_progress`、`bp_subtask_output` 等）。对于非 SeeCrab 通道（Telegram、Feishu 等），采用以下降级策略：
+
+| 功能 | SeeCrab（完整） | 非 SeeCrab 通道（降级） |
+|------|----------------|----------------------|
+| 进度展示 | SSE → TaskProgressCard | tool_result 文本中包含进度摘要 |
+| 输出编辑 | SubtaskOutputPanel + Chat-to-Edit | 仅支持 Chat-to-Edit（通过自然语言） |
+| 任务切换 | bp_task_switch SSE | 通过对话指令切换 |
+| 实时步骤 | StepCard + ThinkingBlock | 仅最终文本输出 |
+
+降级检测在 `BPEngine._emit_event` 中实现：
+
+```python
+async def _emit_event(self, event_type: str, data: dict, session: "Session") -> None:
+    event_bus = getattr(session.context, "_sse_event_bus", None)
+    if event_bus is not None:
+        await event_bus.put({"type": event_type, **data})
+    # 非 SeeCrab 通道无 event_bus，事件静默丢弃
+    # 所有关键信息已包含在 tool_result 文本中
+```
+
+### 9.6 前端 REST API（H4/H8 改进）
+
+BP 功能除 SSE 事件外，还需要以下 REST API 供前端直接调用（非 LLM 工具调用）：
+
+```python
+# api/routes/seecrab.py — 新增 BP endpoints
+
+@router.put("/api/bp/run-mode/{conversation_id}")
+async def set_run_mode(conversation_id: str, body: dict) -> dict:
+    """前端切换手动/自动模式时调用（H4 改进）。
+    body: { "instance_id": str, "run_mode": "manual" | "auto" }
+    不生成用户消息，纯状态变更。"""
+    session = session_manager.get_by_conversation(conversation_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    engine = get_bp_engine()
+    instance = engine.state_manager.get(body["instance_id"])
+    if not instance:
+        return {"error": "Instance not found"}
+
+    instance.run_mode = RunMode(body["run_mode"])
+    await engine.state_manager.persist(session)
+    # 发射 bp_progress 事件通知其他可能的 SSE 消费者
+    await engine.emit_progress(instance.instance_id, session)
+    return {"success": True}
+
+
+@router.post("/api/bp/start/{conversation_id}")
+async def start_bp_from_ui(conversation_id: str, body: dict) -> dict:
+    """UI_CLICK 触发：前端直接启动 BP 任务（H8 改进）。
+    body: { "bp_id": str, "input_data"?: dict }
+    构造用户消息注入到会话，触发 MasterAgent 调用 bp_start。"""
+    session = session_manager.get_by_conversation(conversation_id)
+    if not session:
+        return {"error": "Session not found"}
+
+    # 构造用户消息并注入
+    bp_id = body["bp_id"]
+    input_data = body.get("input_data", {})
+    message = f"请执行最佳实践「{bp_id}」"
+    if input_data:
+        message += f"，输入参数：{json.dumps(input_data, ensure_ascii=False)}"
+
+    # 通过 pending_user_inserts 或直接发起新请求
+    # 实现取决于 Agent 是否当前空闲（idle vs busy）
+    await inject_user_message(session, message)
+    return {"success": True, "message": message}
+```
+
 ---
 
 ## 10. 工具定义
-
-### 10.1 BP 工具注册
 
 BP 工具注册在 `tools/handlers/bestpractice.py`，通过 `ToolCatalog` 的标准机制加入系统。
 采用**渐进式披露**（Level 1 目录 → Level 2 详情），不加入 HIGH_FREQ_TOOLS。
@@ -1454,36 +2149,45 @@ BP_TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "bp_id": {"type": "string", "description": "最佳实践配置 ID"},
-                "input_data": {"type": "object", "description": "初始输入数据"},
+                "input_data": {"type": "object", "description": "初始输入数据（可为空，由子任务通过 ask_user 补充）"},
             },
-            "required": ["bp_id", "input_data"],
+            "required": ["bp_id"],  # input_data 可选（M5 改进）
         },
         "category": "BestPractice",
         "triggers": ["用户确认进入最佳实践模式时调用"],
     },
     {
         "name": "bp_continue",
-        "description": "继续执行下一个子任务",
+        "description": "继续执行当前活跃最佳实践的下一个子任务",
         "input_schema": {
             "type": "object",
             "properties": {
-                "instance_id": {"type": "string"},
+                "instance_id": {
+                    "type": "string",
+                    "description": "BP 实例 ID。不提供则使用当前活跃实例。",
+                },
             },
-            "required": ["instance_id"],
+            "required": [],  # 全部可选（M5 改进）
         },
         "category": "BestPractice",
     },
     {
         "name": "bp_edit_output",
-        "description": "编辑已完成子任务的输出（Deep Merge）",
+        "description": "编辑已完成子任务的输出。对象字段递归合并，数组字段整体替换。",
         "input_schema": {
             "type": "object",
             "properties": {
-                "instance_id": {"type": "string"},
+                "instance_id": {
+                    "type": "string",
+                    "description": "BP 实例 ID。不提供则使用当前活跃实例。",
+                },
                 "subtask_id": {"type": "string"},
-                "changes": {"type": "object", "description": "要修改的字段及新值"},
+                "changes": {
+                    "type": "object",
+                    "description": "要修改的字段及新值。对象字段递归合并，数组字段提供完整新数组。（M2 改进）",
+                },
             },
-            "required": ["instance_id", "subtask_id", "changes"],
+            "required": ["subtask_id", "changes"],  # instance_id 可选（M5 改进）
         },
         "category": "BestPractice",
     },
@@ -1495,7 +2199,40 @@ BP_TOOL_DEFINITIONS = [
             "properties": {
                 "target_instance_id": {"type": "string"},
             },
-            "required": ["target_instance_id"],
+            "required": ["target_instance_id"],  # 切换目标必须明确
+        },
+        "category": "BestPractice",
+    },
+    # ── H2 改进：新增只读工具 ──
+    {
+        "name": "bp_get_output",
+        "description": "获取已完成子任务的完整输出 JSON（Chat-to-Edit 前调用，获取当前值）",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instance_id": {
+                    "type": "string",
+                    "description": "BP 实例 ID。不提供则使用当前活跃实例。",
+                },
+                "subtask_id": {"type": "string", "description": "子任务 ID"},
+            },
+            "required": ["subtask_id"],
+        },
+        "category": "BestPractice",
+    },
+    # ── H5 改进：新增取消工具 ──
+    {
+        "name": "bp_cancel",
+        "description": "取消最佳实践任务。如果有正在执行的子任务会等待其完成后取消。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instance_id": {
+                    "type": "string",
+                    "description": "BP 实例 ID。不提供则取消当前活跃实例。",
+                },
+            },
+            "required": [],
         },
         "category": "BestPractice",
     },
@@ -1536,7 +2273,8 @@ class BPToolHandler:
     - orchestrator: seeagent.main._orchestrator （模块级单例）
     """
 
-    TOOLS = ["bp_start", "bp_continue", "bp_edit_output", "bp_switch_task"]
+    TOOLS = ["bp_start", "bp_continue", "bp_edit_output", "bp_switch_task",
+             "bp_get_output", "bp_cancel"]
 
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
@@ -1550,7 +2288,7 @@ class BPToolHandler:
         if self._engine is None:
             from ...bestpractice import get_bp_engine
             self._engine = get_bp_engine()  # 模块级单例工厂
-            self._state = self._engine._state_manager
+            self._state = self._engine.state_manager  # m2 改进：通过公开属性访问
 
     def _get_session(self):
         """获取当前活跃 session（与 AgentToolHandler 相同模式）。"""
@@ -1590,6 +2328,8 @@ class BPToolHandler:
             "bp_continue": self._bp_continue,
             "bp_edit_output": self._bp_edit_output,
             "bp_switch_task": self._bp_switch_task,
+            "bp_get_output": self._bp_get_output,
+            "bp_cancel": self._bp_cancel,
         }.get(tool_name)
         if handler is None:
             return f"未知的 BP 工具: {tool_name}"
@@ -1601,9 +2341,9 @@ class BPToolHandler:
             return f"未找到最佳实践配置: {args['bp_id']}"
 
         instance = self._state.create_instance(config, session.id)
-        self._state.update_subtask_output(
-            instance.instance_id, "__initial_input__", args.get("input_data", {})
-        )
+
+        # M8 改进：使用独立字段存储初始输入
+        instance.initial_input = args.get("input_data", {})
 
         # 发射初始进度事件
         await self._engine.emit_progress(instance.instance_id, session)
@@ -1613,8 +2353,18 @@ class BPToolHandler:
             instance.instance_id, orchestrator, session,
         )
 
+    def _resolve_instance_id(self, args: dict, session) -> str | None:
+        """解析 instance_id，不提供时使用当前活跃实例（M5 改进）"""
+        instance_id = args.get("instance_id")
+        if instance_id:
+            return instance_id
+        active = self._state.get_active(session.id)
+        return active.instance_id if active else None
+
     async def _bp_continue(self, args: dict, *, session, orchestrator) -> str:
-        instance_id = args["instance_id"]
+        instance_id = self._resolve_instance_id(args, session)
+        if not instance_id:
+            return "当前没有活跃的最佳实践实例，请先调用 bp_start。"
         instance = self._state.get(instance_id)
         if instance is None:
             return "实例不存在"
@@ -1627,41 +2377,143 @@ class BPToolHandler:
         )
 
     async def _bp_edit_output(self, args: dict, *, session, orchestrator) -> str:
+        instance_id = self._resolve_instance_id(args, session)  # M5 改进
+        if not instance_id:
+            return "当前没有活跃的最佳实践实例。"
+
         old, new = self._state.merge_subtask_output(
-            args["instance_id"], args["subtask_id"], args["changes"],
+            instance_id, args["subtask_id"], args["changes"],
         )
 
-        # 宽松校验：合并后的 output 仍应满足下游子任务的 input_schema
-        # 只记录 warning，不阻断编辑（用户意图优先）
-        instance = self._state.get(args["instance_id"])
+        # M10 改进：校验并在结果中传达
+        instance = self._state.get(instance_id)
+        validation_warning = ""
         if instance:
-            self._engine.validate_output_soft(instance, args["subtask_id"], new)
+            missing = self._engine.validate_output_soft(instance, args["subtask_id"], new)
+            if missing:
+                validation_warning = (
+                    f"\n⚠️ 修改后输出缺少下游必需字段: {missing}。"
+                    f"下游子任务可能因此需要通过 ask_user 向用户补充信息。"
+                )
 
         # 标记下游 stale（基于 subtask_id，线性/DAG 通用）
         stale_ids = self._state.mark_downstream_stale(
-            args["instance_id"], args["subtask_id"],
+            instance_id, args["subtask_id"],
         )
 
         # 发射事件
-        await self._engine.emit_stale(args["instance_id"], stale_ids, session)
+        await self._engine.emit_stale(instance_id, stale_ids, session)
         await self._engine.emit_subtask_output(
-            args["instance_id"], args["subtask_id"], new, session,
+            instance_id, args["subtask_id"], new, session,
         )
+
+        # C3 改进：持久化
+        await self._state.persist(session)
 
         if stale_ids:
+            stale_names = self._engine.get_subtask_names(instance, stale_ids)
             return (
-                f"已修改子任务「{args['subtask_id']}」的输出。"
-                f"下游子任务 {stale_ids} 需基于新数据重新执行。"
+                f"已修改子任务「{args['subtask_id']}」的输出。{validation_warning}\n"
+                f"下游子任务 {stale_names} 需基于新数据重新执行。\n"
                 f"请使用 ask_user 确认用户是否继续级联重跑。"
             )
-        return f"已修改子任务「{args['subtask_id']}」的输出，无需重跑下游。"
+        return f"已修改子任务「{args['subtask_id']}」的输出，无需重跑下游。{validation_warning}"
 
     async def _bp_switch_task(self, args: dict, *, session, orchestrator) -> str:
-        return await self._engine.switch_task(
-            target_instance_id=args["target_instance_id"],
-            orchestrator=orchestrator,
-            session=session,
+        """C2 改进：不直接操作上下文，只设置 PendingContextSwitch"""
+        target_id = args["target_instance_id"]
+        target = self._state.get(target_id)
+        if target is None:
+            return f"目标实例不存在: {target_id}"
+
+        current_active = self._state.get_active(session.id)
+        if current_active is None:
+            return "当前没有活跃的最佳实践实例"
+        if current_active.instance_id == target_id:
+            return "目标实例已经是当前活跃实例"
+
+        # 设置 pending switch，实际切换在下一轮推理准备阶段执行
+        self._state.set_pending_switch(
+            session.id,
+            PendingContextSwitch(
+                suspended_instance_id=current_active.instance_id,
+                target_instance_id=target_id,
+                created_at=time.time(),
+            ),
         )
+
+        # 发射前端事件
+        await self._engine.emit_task_switch(
+            session,
+            suspended_id=current_active.instance_id,
+            activated_id=target_id,
+        )
+
+        # 返回信息性结果
+        target_config = target.bp_config
+        progress = sum(
+            1 for s in target.subtask_statuses.values()
+            if s == SubtaskStatus.DONE
+        )
+        total = len(target_config.subtasks)
+
+        if target.status == BPStatus.COMPLETED:
+            return (
+                f"已准备切换到任务「{target_config.name}」（已完成）。\n"
+                f"上下文将在下一轮推理时自动切换。\n"
+                f"请回复用户关于该任务的信息。"
+            )
+        else:
+            return (
+                f"已准备切换到任务「{target_config.name}」"
+                f"（{progress}/{total} 子任务已完成）。\n"
+                f"上下文将在下一轮推理时自动切换。\n"
+                f"请使用 ask_user 询问用户是否继续执行剩余子任务。"
+            )
+
+    # ── H2 改进：只读获取完整子任务输出 ──
+
+    async def _bp_get_output(self, args: dict, *, session, orchestrator) -> str:
+        """返回指定子任务的完整输出 JSON，供 MasterAgent 在 Chat-to-Edit 前查看。"""
+        instance_id = self._resolve_instance_id(args, session)
+        if not instance_id:
+            return "当前没有活跃的最佳实践实例。"
+
+        instance = self._state.get(instance_id)
+        if instance is None:
+            return "实例不存在"
+
+        subtask_id = args["subtask_id"]
+        output = instance.subtask_outputs.get(subtask_id)
+        if output is None:
+            return f"子任务「{subtask_id}」尚未有输出数据。"
+
+        return json.dumps(output, ensure_ascii=False, indent=2)
+
+    # ── H5 改进：取消 BP 实例 ──
+
+    async def _bp_cancel(self, args: dict, *, session, orchestrator) -> str:
+        """取消 BP 实例，清除活跃状态。"""
+        instance_id = self._resolve_instance_id(args, session)
+        if not instance_id:
+            return "当前没有活跃的最佳实践实例。"
+
+        instance = self._state.get(instance_id)
+        if instance is None:
+            return "实例不存在"
+        if instance.status in (BPStatus.COMPLETED, BPStatus.CANCELLED):
+            return f"实例已经处于 {instance.status.value} 状态，无需取消。"
+
+        await self._state.cancel(instance_id)
+
+        # 发射进度事件通知前端
+        await self._engine.emit_progress(instance_id, session)
+
+        # 持久化
+        await self._state.persist(session)
+
+        bp_name = instance.bp_config.name if instance.bp_config else instance.bp_id
+        return f"已取消最佳实践任务「{bp_name}」。"
 ```
 
 ---
@@ -1706,17 +2558,26 @@ class SchemaChain:
         """
         宽松验证输入数据是否满足 Schema。
         返回缺失的 required 字段列表（空列表表示验证通过）。
-        不使用 jsonschema 库，仅检查 required 字段存在性。
+        优先使用 jsonschema 库（如果可用），否则退化为 required 字段检查。（m4 改进）
         """
-        required = schema.get("required", [])
-        if isinstance(required, list):
-            return [f for f in required if f not in data]
-        # 兼容 property-level required
-        props = schema.get("properties", {})
-        return [
-            k for k, v in props.items()
-            if v.get("required") is True and k not in data
-        ]
+        try:
+            import jsonschema
+            errors = []
+            validator = jsonschema.Draft7Validator(schema)
+            for error in validator.iter_errors(data):
+                errors.append(error.message)
+            return errors
+        except ImportError:
+            # 无 jsonschema 库时，退化为简单的 required 字段检查
+            required = schema.get("required", [])
+            if isinstance(required, list):
+                return [f for f in required if f not in data]
+            # 兼容 property-level required
+            props = schema.get("properties", {})
+            return [
+                k for k, v in props.items()
+                if v.get("required") is True and k not in data
+            ]
 ```
 
 ---
@@ -1743,20 +2604,66 @@ class BPEngine:
     def get_dynamic_prompt_section(self, session_id: str) -> str:
         """
         返回 BP 动态提示段，注入到系统提示的动态区域。
-        内容包含：当前实例状态表 + 活跃任务上下文。
-        每次 LLM 调用都可能不同。
+        内容包含：当前实例状态表 + 活跃任务上下文 + 条件性意图路由指令。
+        每次 LLM 调用都可能不同。（M3 改进：合并 intent_router）
         """
+        instances = self._state_manager.get_all_for_session(session_id)
+        if not instances:
+            return ""
+
         status_table = self._state_manager.get_status_table(session_id)
+
+        # M4/M13 改进：注入 cooldown 提示
+        cooldown = self._state_manager.get_cooldown(session_id)
+        if cooldown > 0:
+            status_table += (
+                f"\n⚠️ 用户 {cooldown} 轮消息内选择了自由模式，"
+                f"不要推断触发最佳实践。"
+            )
+
         active = self._state_manager.get_active(session_id)
 
         if active is None:
-            return ""
+            # 有实例但无活跃的（全部 completed/suspended）
+            return self._prompt_loader.render(
+                "system_dynamic",
+                status_table=status_table,
+                active_context="",
+                intent_routing_instruction=(
+                    "如果用户消息提及上述任何已完成或挂起的任务，"
+                    "请调用 bp_switch_task 切换到该任务。"
+                ),
+            )
 
         active_context = self._state_manager.get_outputs_summary(active.instance_id)
+
+        # M3 改进：根据活跃实例的当前状态决定路由指令
+        current_subtask_id = active.bp_config.subtasks[
+            active.current_subtask_index
+        ].id if active.current_subtask_index < len(active.bp_config.subtasks) else None
+
+        at_pause_point = (
+            current_subtask_id
+            and active.subtask_statuses.get(current_subtask_id) != SubtaskStatus.CURRENT
+        )
+
+        if at_pause_point:
+            intent_instruction = (
+                "用户在暂停点发送消息时，请判断意图：\n"
+                "A) 修改某个已完成子任务的输出 → 调用 bp_edit_output\n"
+                "B) 确认进入下一步 → 调用 bp_continue\n"
+                "C) 切换到其他任务 → 调用 bp_switch_task\n"
+                "D) 与当前任务相关的追问 → 直接回答\n"
+                "E) 无关话题 / 全新任务 → 正常处理，可能触发新的最佳实践"
+            )
+        else:
+            intent_instruction = ""
+
         return self._prompt_loader.render(
             "system_dynamic",
             status_table=status_table,
             active_context=active_context,
+            intent_routing_instruction=intent_instruction,
         )
 ```
 
@@ -1825,58 +2732,108 @@ class PromptAssembler:
 
 ---
 
-## 13. 触发检测 (`trigger.py`)
+## 13. 触发机制（M4 改进：纯 LLM 触发）
 
-```python
-class BPTriggerDetector:
-    """检测用户消息是否匹配 BestPractice 触发条件"""
+> **设计决策变更**：删除 `BPTriggerDetector`（原 `trigger.py`），所有触发检测交由 LLM 完成。
 
-    def __init__(self, configs: dict[str, BestPracticeConfig]) -> None:
-        self._configs = configs
-        self._cooldowns: dict[str, int] = {}  # session_id → remaining_turns
+### 13.1 触发方式
 
-    def detect(
-        self,
-        message: str,
-        session_id: str,
-    ) -> list[TriggerMatch]:
-        """
-        扫描所有配置的触发条件，返回匹配结果列表。
+| 触发类型 | 机制 | 说明 |
+|---------|------|------|
+| COMMAND | LLM 在系统提示中看到 BP 定义的 `pattern`，直接识别并调用 `bp_start` | 高置信度，无需预筛 |
+| CONTEXT | LLM 根据 `conditions` 关键词判断，通过 `ask_user` 让用户选择 | 最终决策在 LLM |
+| CRON | 复用已有 `ScheduledTask` + CRON，在 `prompt` 中注入 `bp_start` 指令 | 不涉及 LLM 触发 |
+| EVENT | 通过 `pending_user_inserts` 注入触发消息 | MasterAgent 识别后调用 |
+| UI_CLICK | 前端 API 直接构造 `bp_start` 参数 | 不涉及 LLM 触发 |
 
-        优先级：COMMAND > CONTEXT（有 cooldown 限制）
-        EVENT 和 UI_CLICK 不通过此方法触发。
-        """
-        if self._cooldowns.get(session_id, 0) > 0:
-            return []  # 冷却期内不检测 CONTEXT
+### 13.2 推断冷却（inferCooldown）
 
-        matches = []
-        for config in self._configs.values():
-            for trigger in config.triggers:
-                if trigger.type == "command" and self._match_command(message, trigger):
-                    matches.append(TriggerMatch(config, trigger, confidence=1.0))
-                elif trigger.type == "context" and self._match_context(message, trigger):
-                    matches.append(TriggerMatch(config, trigger, confidence=0.7))
+冷却管理已移至 `BPStateManager`（见 §4.1），通过 `persist()` 持久化到 `Session.metadata`（M13 改进）。
 
-        return sorted(matches, key=lambda m: m.confidence, reverse=True)
+- `set_cooldown(session_id, turns=5)` — 用户选择自由模式后调用
+- `tick_cooldown(session_id)` — 每轮用户输入递减
+- `get_cooldown(session_id)` — 在 `get_dynamic_prompt_section` 中检查
 
-    def apply_cooldown(self, session_id: str, turns: int = 5) -> None:
-        """选择自由模式后设置冷却"""
-        self._cooldowns[session_id] = turns
-
-    def tick_cooldown(self, session_id: str) -> None:
-        """每轮用户输入递减冷却计数"""
-        if session_id in self._cooldowns:
-            self._cooldowns[session_id] = max(0, self._cooldowns[session_id] - 1)
-
-
-@dataclass
-class TriggerMatch:
-    config: BestPracticeConfig
-    trigger: TriggerConfig
-    confidence: float
+冷却期间，`get_dynamic_prompt_section` 在状态表末尾注入提示：
+```
+⚠️ 用户 N 轮消息内选择了自由模式，不要推断触发最佳实践。
 ```
 
-> **注意**：CONTEXT 触发的最终决策由 LLM 在 MasterAgent 推理中完成（系统提示包含可用 BP 列表和触发条件），`TriggerDetector` 仅做预筛选。COMMAND 触发由 LLM 直接识别（高置信度）。
+### 13.3 CRON 触发完整链路（H6 改进）
+
+CRON 触发复用已有 `ScheduledTask` 机制，完整链路如下：
+
+```
+BP 配置中声明 CRON 触发：
+  triggers:
+    - type: schedule
+      cron: "0 1 * * 1"
+        │
+        ▼
+BPEngine.register_cron_triggers()（启动时调用）
+  │
+  ├─ 遍历所有 BestPracticeConfig.triggers
+  ├─ 筛选 type == "schedule"
+  └─ 为每个 CRON 触发创建 ScheduledTask：
+      ScheduledTask(
+        trigger_type=TriggerType.CRON,
+        trigger_config={"cron": "0 1 * * 1"},
+        task_type=TaskType.TASK,
+        prompt="请执行最佳实践「{bp_id}」，调用 bp_start(bp_id=\"{bp_id}\")",
+        agent_profile_id="default",  # 由 MasterAgent 执行
+      )
+        │
+        ▼
+SchedulerEngine（已有）
+  ├─ CRON 到期 → 执行 prompt
+  ├─ 查找目标 session（使用默认/最近活跃 session）
+  └─ 如果 Agent idle：创建新的 chat_with_session 请求
+     如果 Agent busy：通过 pending_user_inserts 注入
+        │
+        ▼
+MasterAgent 收到 prompt → 识别 bp_start 指令 → 调用 bp_start 工具
+```
+
+**关键点**：
+- CRON 触发的 `prompt` 字段显式包含 `bp_start` 调用指令，MasterAgent 无需推断
+- 使用 `agent_profile_id="default"` 确保由 MasterAgent 处理
+- Session 选择策略：优先使用指定 `conversation_id`，否则使用最近活跃 session
+
+### 13.4 EVENT 触发完整链路（H6 改进）
+
+EVENT 触发通过外部事件回调注入消息：
+
+```
+外部事件到达（webhook / 内部事件总线）
+  │
+  ▼
+EventHandler.on_event(event_name, payload)
+  │
+  ├─ 查找匹配的 BP 配置（triggers 中 type=="event" 且 event==event_name）
+  ├─ 确定目标 session（event payload 中的 session_id 或 conversation_id）
+  │
+  ├─ 如果 Agent 有活跃 task：
+  │   └─ task_state.pending_user_inserts.append(
+  │       f"[系统事件] {event_name} 触发，请执行最佳实践「{bp_id}」，"
+  │       f"调用 bp_start(bp_id=\"{bp_id}\", input_data={payload})"
+  │     )
+  │
+  └─ 如果 Agent idle（无活跃 task）：
+      └─ 发起新的 chat_with_session 请求，消息内容同上
+```
+
+**关键点**：
+- idle 状态下不能使用 `pending_user_inserts`（TaskState 不存在），需发起新请求
+- event payload 作为 `input_data` 传入 `bp_start`
+- 安全考虑：外部事件来源需要鉴权，防止未授权的 BP 触发
+
+### 13.5 理由
+
+1. LLM 在系统提示中已有完整的 BP 定义和触发条件
+2. COMMAND 触发由 LLM 直接识别，不需要规则预筛
+3. CONTEXT 触发最终也依赖 LLM 判断
+4. CRON/EVENT 通过显式 prompt 指令避免 LLM 推断
+5. 减少代码量和维护负担
 
 ---
 
@@ -1937,11 +2894,11 @@ function handleBPEvent(event: SSEEvent): void {
 |------|------|------|------|
 | BP 与 Agent 的关系 | A) BP 作为 Agent / B) BP 作为工具 / C) BP 作为中间件 | **B) 工具** | 低耦合，复用现有工具基础设施，MasterAgent 自然管理对话 |
 | 子任务执行粒度 | A) 整个 BP 一次工具调用 / B) 每个子任务一次 | **B) 每个子任务一次** | 允许子任务间用户交互（Chat-to-Edit），支持手动模式暂停 |
-| 自动模式实现 | A) MasterAgent 决定继续 / B) 工具内递归 | **B) 工具内递归** | 避免额外 LLM 轮次，降低延迟和成本 |
-| 状态存储 | A) 扩展 AgentState / B) 扩展 SessionContext / C) 独立 | **C) 独立 BPStateManager** | 低耦合，清晰职责边界，可独立演进 |
+| 自动模式实现 | A) MasterAgent 驱动迭代 / B) 工具内递归 | **A) MasterAgent 驱动迭代** | tool_result 含指令引导 MasterAgent 自动调用 bp_continue，每个子任务间 MasterAgent ReAct 循环可响应 cancel/skip/user_insert（C1 改进）。**Trade-off**：自动执行 N 个子任务需额外 N 次 MasterAgent LLM 调用（每次约 2K-5K output tokens），是安全性换 token 成本（M4 改进） |
+| 状态存储 | A) 扩展 AgentState / B) 扩展 SessionContext / C) 独立 | **C) 独立 BPStateManager** | 低耦合，清晰职责边界，可独立演进。通过 Session.metadata 持久化（C3 改进） |
 | Prompt 注入方式 | A) 硬编码 / B) 模板文件 | **B) 模板文件** | 可维护性，非工程师也可调整 prompt |
-| 上下文切换 | A) 追加标记 / B) 清空替换 | **B) 清空替换** | 避免上下文膨胀，干净的任务隔离 |
-| 触发检测 | A) 纯 LLM / B) 规则预筛 + LLM 确认 | **B) 规则预筛 + LLM** | 降低误触发率，减少不必要的 LLM 调用 |
+| 上下文切换 | A) 追加标记 / B) 清空替换 / C) 延迟切换 | **C) 延迟切换（PendingContextSwitch）** | 工具调用期间不直接操作 Brain.Context，改为在推理准备阶段安全执行（C2 改进） |
+| 触发检测 | A) 纯 LLM / B) 规则预筛 + LLM 确认 | **A) 纯 LLM** | LLM 在系统提示中已有完整触发条件，规则预筛结果缺乏传递机制，减少代码量（M4 改进） |
 | Prompt KV-Cache | A) 不考虑 / B) 静态段前置 | **B) 静态段前置** | BP 规则和可用列表会话内不变，适合缓存 |
 | 子任务调度模型 | A) 固定线性 / B) 线性优先，预留 DAG 扩展 | **B) 线性 + DAG 预留** | 当前需求为线性，但 `depends_on` / `input_mapping` / `subtask_statuses` 作为主真值源等设计使 DAG 扩展零破坏性 |
 

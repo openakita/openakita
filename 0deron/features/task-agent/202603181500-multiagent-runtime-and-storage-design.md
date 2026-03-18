@@ -21,7 +21,7 @@
 │  ┌──────────────────────────────────────────────────────────────┐    │
 │  │ 第2层：最佳实践实例 (BestPractice Instance)                    │    │
 │  │ 代码实体：BPInstanceSnapshot                                   │    │
-│  │ 存储：BPStateManager (内存，会话级生命周期)                     │    │
+│  │ 存储：BPStateManager (内存 + Session.metadata 持久化)           │    │
 │  │ 生命周期：触发创建 → active/suspended 切换 → completed          │    │
 │  │                                                                │    │
 │  │  ┌─────────────────────────────────────────────────────────┐  │    │
@@ -55,7 +55,7 @@
 | 产品概念 | 代码实体 | 存储位置 | 生命周期 | 数量关系 |
 |---------|---------|---------|---------|---------|
 | 会话 | `Session` + `SessionContext` | `sessions.json` (持久) | 30min 超时 | 1 个用户 : N 个会话 |
-| BP 实例 | `BPInstanceSnapshot` | `BPStateManager` (内存) | 会话级 | 1 个会话 : N 个 BP 实例 |
+| BP 实例 | `BPInstanceSnapshot` | `BPStateManager` (内存 + Session.metadata 持久化) | 会话级 | 1 个会话 : N 个 BP 实例 |
 | 子任务 | `SubtaskConfig` + `DelegationRequest` | 执行中临时 / 完成后快照 | 委派级 | 1 个 BP : N 个子任务 |
 | 步骤 | `tool_use` + `tool_result` 消息对 | `Brain.Context.messages` | ReAct 循环内 | 1 个子任务 : N 个步骤 |
 | 推理轮次 | `Decision` + `TaskState.iteration` | `ReasoningEngine` 内部 | 单次 LLM 调用 | 1 个步骤 : 1~N 轮推理 |
@@ -212,8 +212,8 @@ MasterAgent ReAct Loop
   │       │
   │       ├─ 存储 output → BPInstanceSnapshot.subtask_outputs
   │       │
-  │       ├─ [auto 模式] → 子任务 2: delegate() → SubAgent-2
-  │       │   ...递归直到全部完成
+  │       ├─ [auto 模式] → tool_result 含 "请调用 bp_continue" 指令
+  │       │   MasterAgent 自动调用 bp_continue → 迭代执行下一个子任务
   │       │
   │       └─ [manual 模式] → 返回完成信息
   │           MasterAgent → ask_user("查看结果 / 进入下一步")
@@ -293,10 +293,12 @@ MasterAgent ReAct Loop
 │  │  variables: dict               — 会话变量                   │     │
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                       │
-│  ┌─ BPStateManager (内存，不序列化) ─────────────────────────┐      │
+│  ┌─ BPStateManager (内存 + Session.metadata 持久化) ────────────┐      │
 │  │  _instances: { instance_id → BPInstanceSnapshot }         │      │
 │  │  _active_map: { session_id → active_instance_id }         │      │
 │  │  _session_index: { session_id → [instance_ids] }          │      │
+│  │  持久化：persist(session) → session.metadata["_bp_state"]  │      │
+│  │  恢复：restore_from_session(session) → 从 metadata 重建    │      │
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                       │
 │  ┌─ AgentInstancePool (内存) ────────────────────────────────┐      │
@@ -411,29 +413,32 @@ class BPInstanceSnapshot:
     session_id: str                 # 所属会话 ID
 
     # ── 生命周期 ──
-    status: BPStatus                # active / suspended / completed
+    status: BPStatus                # active / suspended / completed / cancelled（H5 改进）
     created_at: float               # time.time()
     suspended_at: float | None      # 最近一次挂起时间
-    completed_at: float | None      # 完成时间
+    completed_at: float | None      # 完成/取消时间
 
     # ── 执行进度 ──
     current_subtask_index: int      # 当前执行到第几步（0-based）
                                     # 线性模式下的便捷指针，DAG 模式下由 subtask_statuses 推导
     run_mode: RunMode               # manual / auto
-    subtask_statuses: dict          # { subtask_id → "pending"|"current"|"done"|"stale" }
-                                    # 执行进度的**主真值源**
+    subtask_statuses: dict          # { subtask_id → "pending"|"current"|"done"|"stale"|"failed" }
+                                    # 执行进度的**主真值源**（H7 改进：增加 failed 状态）
 
     # ── 数据 ──
     subtask_outputs: dict           # { subtask_id → output JSON dict }
-                                    # 特殊 key "__initial_input__" 存储初始输入
+    initial_input: dict | None      # bp_start 时传入的初始输入数据
+                                    # 替代原 subtask_outputs["__initial_input__"] 魔法键
     # ── 上下文 ──
     context_summary: str            # 挂起时 LLM 压缩的上下文摘要
                                     # 恢复时作为 [上下文恢复] 注入
-    master_messages_snapshot: list[dict] | None  # 挂起时 MasterAgent.Context.messages 副本
-                                    # 可选，用于精确恢复（与技术设计 §3.2 对齐）
 
     # ── 配置引用 ──
-    bp_config: BestPracticeConfig   # 关联的模板配置（运行时引用）
+    bp_config: BestPracticeConfig | None = None
+                                    # 关联的模板配置（运行时引用）
+                                    # 仅在反序列化恢复的瞬间为 None，
+                                    # 恢复完成后由 BPEngine.restore_session 关联。
+                                    # 所有正常路径中 bp_config 非空。
 ```
 
 ### 3.4 数据生命周期对照
@@ -442,7 +447,7 @@ class BPInstanceSnapshot:
 |------|---------|---------|-------------|
 | **Session** | 用户首次对话 | 每次活动 touch() | 超时 30min 后标记 EXPIRED |
 | **SessionContext.messages** | 随 Session 创建 | 每条消息追加 | 超过 max_history 时截断 + 摘要 |
-| **BPInstanceSnapshot** | `bp_start` 工具调用时 | 每个子任务完成 / 编辑 / 挂起 / 恢复 | 会话结束时随 BPStateManager 释放 |
+| **BPInstanceSnapshot** | `bp_start` 工具调用时 | 每个子任务完成 / 编辑 / 挂起 / 恢复 | 会话结束时释放；通过 Session.metadata 持久化，进程重启后可恢复 |
 | **subtask_outputs** | 子任务首次完成时写入 | Chat-to-Edit 修改时更新 | 随 BPInstanceSnapshot 释放 |
 | **context_summary** | 任务挂起时生成 | 每次挂起重新生成 | 恢复后消费（注入上下文），但保留在快照中 |
 | **sub_agent_records** | SubAgent 返回结果时 | 不更新（追加写入） | 会话序列化时持久化，上限 50 条 |
@@ -629,32 +634,75 @@ BP 操作涉及多个存储位置的更新，需要保证顺序：
 
 | 故障场景 | 影响 | 恢复策略 |
 |---------|------|---------|
-| 子任务执行中进程崩溃 | BPInstanceSnapshot 在内存中丢失 | 当前无持久化，需用户重新启动 BP。**后续可扩展**：将 BPStateManager 序列化到 sessions.json |
+| 子任务执行中进程崩溃 | BPInstanceSnapshot 在内存中丢失 | 从 Session.metadata (`sessions.json`) 恢复。`BPEngine.restore_session()` 在 session 加载后自动调用，从 `session.metadata["_bp_state"]` 重建所有实例快照，并重新关联 `bp_config` |
 | 子任务超时 | SubAgent 被 kill | AgentOrchestrator 返回 timeout 错误，BPEngine 可重试或通知用户 |
 | 上下文压缩失败 | contextSummary 为空 | 使用 subtask_outputs 作为最小恢复信息，提示用户可能丢失部分上下文 |
 | SSE 连接断开 | 前端错过 bp_* 事件 | 前端重连后发送 `bp_get_status` 请求全量状态同步 |
 
-### 5.3 BP 持久化扩展方案（预留）
+### 5.3 BP 持久化方案（V1 已实现）
 
-当前 `BPStateManager` 是纯内存存储。后续如需跨进程恢复，可扩展为：
+`BPStateManager` 通过 `Session.metadata` 实现持久化，BP 状态随 Session 一起写入 `sessions.json`（复用 SessionManager 的 5s 防抖机制），无需新增存储文件。
 
 ```python
 class BPStateManager:
-    def _serialize_to_session(self, session: Session) -> None:
-        """将所有实例快照序列化到 session.metadata['_bp_instances']"""
-        session.set_metadata("_bp_instances", {
-            iid: asdict(snap) for iid, snap in self._instances.items()
-            if snap.session_id == session.id
-        })
+    async def persist(self, session: Session) -> None:
+        """将当前 session 的所有实例快照序列化到 session.metadata['_bp_state']。
+        H1 改进：使用 _serialize_snapshot 方法，排除 bp_config（运行时引用），
+        枚举字段序列化为 .value，避免 asdict() 的递归序列化问题。"""
+        async with self._lock:
+            instance_ids = self._session_index.get(session.id, [])
+            snapshots = {}
+            for iid in instance_ids:
+                snap = self._instances.get(iid)
+                if snap:
+                    snapshots[iid] = self._serialize_snapshot(snap)
+            session.set_metadata("_bp_state", {
+                "instances": snapshots,
+                "active_id": self._active_map.get(session.id),
+                "cooldown": self._cooldowns.get(session.id, 0),
+                "version": 1,
+            })
+            # 触发 SessionManager 的 5s 防抖写入
 
-    def _restore_from_session(self, session: Session) -> None:
-        """从 session.metadata 恢复实例状态"""
-        saved = session.get_metadata("_bp_instances", {})
-        for iid, data in saved.items():
-            self._instances[iid] = BPInstanceSnapshot(**data)
+    def restore_from_session(self, session: Session) -> int:
+        """从 session.metadata 恢复实例状态，返回恢复的实例数。
+        H1 改进：使用 _deserialize_snapshot 方法，正确恢复枚举字段。
+        bp_config 为 None，由 BPEngine.restore_session 关联。"""
+        saved = session.get_metadata("_bp_state", {})
+        if not saved or saved.get("version") != 1:
+            return 0
+        count = 0
+        for iid, data in saved.get("instances", {}).items():
+            try:
+                snap = self._deserialize_snapshot(data, session.id)
+                if snap:
+                    self._instances[iid] = snap
+                    self._session_index.setdefault(session.id, []).append(iid)
+                    count += 1
+            except Exception as e:
+                logger.warning(f"Failed to restore BP instance {iid}: {e}")
+        if active_id := saved.get("active_id"):
+            if active_id in self._instances:
+                self._active_map[session.id] = active_id
+        cooldown = saved.get("cooldown", 0)
+        if cooldown > 0:
+            self._cooldowns[session.id] = cooldown
+        return count
+
+    # _serialize_snapshot / _deserialize_snapshot 完整实现见技术设计 §4.1
 ```
 
-这样 BP 状态随 Session 一起持久化到 `sessions.json`，无需新增存储文件。
+#### 需要调用 `persist()` 的时机
+
+| 操作 | 调用位置 |
+|------|---------|
+| 子任务完成 | `engine.execute_subtask` 最后 |
+| 任务挂起 | `context_bridge.execute_pending_switch` 中 |
+| 任务恢复 | `context_bridge.execute_pending_switch` 中 |
+| 任务完成 | `engine.execute_subtask` 中 complete 分支 |
+| 任务取消 | `handler._bp_cancel` 最后（H5 改进） |
+| 编辑输出 | `handler._bp_edit_output` 最后 |
+| 模式切换 | 通过前端 REST API `PUT /api/bp/run-mode`（H4 改进） |
 
 ---
 
@@ -662,10 +710,10 @@ class BPStateManager:
 
 各模块对各数据实体的读写权限：
 
-| 数据实体 | BPEngine | BPToolHandler | MasterAgent | SubAgent | SeeCrabAdapter | Frontend |
+| 数据实体 | BPEngine | BPToolHandler | MasterAgent | SubAgent | SeeCrabAdapter | Frontend (API) |
 |---------|:--------:|:------------:|:-----------:|:--------:|:-------------:|:--------:|
-| **BPInstanceSnapshot** | R/W | R | — | — | — | — |
-| **BPStateManager** | R/W | R/W | — | — | — | — |
+| **BPInstanceSnapshot** | R/W | R | — | — | — | R/W (run-mode API, H4) |
+| **BPStateManager** | R/W | R/W | — | — | — | R (status API) / W (run-mode API) |
 | **SessionContext.messages** | — | W (标签) | R/W | R (共享引用) | R (序列化) | — |
 | **sub_agent_records** | — | — | — | — | R (展示) | R |
 | **Brain.Context (Master)** | — | W (切换时替换) | R/W | — | — | — |

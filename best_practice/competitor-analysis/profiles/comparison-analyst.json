@@ -2,13 +2,13 @@
   "id": "comparison-analyst",
   "name": "对比分析专家",
   "description": "基于收集到的竞品数据进行多维度对比分析，构建评分矩阵并识别差异化要素",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@xlsx",
     "seeagent/skills@pretty-mermaid",
     "seeagent/skills@canvas-design"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/comparison-analyst.md",
   "icon": "⚖️",

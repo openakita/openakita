@@ -2,13 +2,13 @@
   "id": "data-analyst",
   "name": "数据分析师",
   "description": "数据分析专家，擅长对收集到的市场调研数据进行深度分析，提取关键洞察和趋势。",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@xlsx",
     "seeagent/skills@pretty-mermaid",
     "seeagent/skills@canvas-design"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/data-analyst.md",
   "icon": "\ud83d\udcca",

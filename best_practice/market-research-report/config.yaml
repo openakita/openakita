@@ -1,82 +1,81 @@
-best_practice:
-  id: "market-research-report"
-  name: "市场调研报告"
-  description: "从市场调研到数据分析再到报告生成的完整流程"
-  default_run_mode: manual
+id: "market-research-report"
+name: "市场调研报告"
+description: "从市场调研到数据分析再到报告生成的完整流程"
+default_run_mode: manual
 
-  final_output_schema:
-    type: object
-    properties:
-      title: { type: string }
-      executive_summary: { type: string }
-      report_content: { type: string }
-      key_findings:
-        type: array
-        items: { type: string }
-    required: [title, executive_summary, report_content]
+final_output_schema:
+  type: object
+  properties:
+    title: { type: string }
+    executive_summary: { type: string }
+    report_content: { type: string }
+    key_findings:
+      type: array
+      items: { type: string }
+  required: [title, executive_summary, report_content]
 
-  triggers:
-    - type: command
-      pattern: "执行市场调研"
-    - type: context
-      conditions: ["市场", "调研", "行业分析"]
+triggers:
+  - type: command
+    pattern: "执行市场调研"
+  - type: context
+    conditions: ["市场", "调研", "行业分析"]
 
-  subtasks:
-    - id: "research"
-      name: "市场调研"
-      description: "收集目标市场的关键数据、趋势和竞争格局"
-      agent_profile: "market-researcher"
-      input_schema:
-        type: object
-        properties:
-          topic:
-            type: string
-            description: "调研主题"
-          scope:
-            type: string
-            description: "调研范围，如地域、时间段"
-          focus_areas:
-            type: array
-            items: { type: string }
-            description: "重点关注领域"
-        required: [topic]
+subtasks:
+  - id: "research"
+    name: "市场调研"
+    description: "收集目标市场的关键数据、趋势和竞争格局"
+    agent_profile: "market-researcher"
+    input_schema:
+      type: object
+      properties:
+        topic:
+          type: string
+          description: "调研主题"
+        scope:
+          type: string
+          description: "调研范围，如地域、时间段"
+        focus_areas:
+          type: array
+          items: { type: string }
+          description: "重点关注领域"
+      required: [topic]
 
-    - id: "analysis"
-      name: "数据分析"
-      description: "对调研数据进行结构化分析，提炼趋势和洞察"
-      agent_profile: "data-analyst"
-      input_schema:
-        type: object
-        properties:
-          findings:
-            type: array
-            items: { type: object }
-            description: "调研发现列表"
-          raw_data:
-            type: object
-            description: "原始数据汇总"
-          summary:
-            type: string
-            description: "调研摘要"
-        required: [findings]
+  - id: "analysis"
+    name: "数据分析"
+    description: "对调研数据进行结构化分析，提炼趋势和洞察"
+    agent_profile: "data-analyst"
+    input_schema:
+      type: object
+      properties:
+        findings:
+          type: array
+          items: { type: object }
+          description: "调研发现列表"
+        raw_data:
+          type: object
+          description: "原始数据汇总"
+        summary:
+          type: string
+          description: "调研摘要"
+      required: [findings]
 
-    - id: "report"
-      name: "报告生成"
-      description: "将分析结果整理为结构化的调研报告"
-      agent_profile: "report-writer"
-      input_schema:
-        type: object
-        properties:
-          insights:
-            type: array
-            items: { type: object }
-            description: "分析洞察"
-          trends:
-            type: array
-            items: { type: string }
-            description: "市场趋势"
-          recommendations:
-            type: array
-            items: { type: string }
-            description: "建议"
-        required: [insights]
+  - id: "report"
+    name: "报告生成"
+    description: "将分析结果整理为结构化的调研报告"
+    agent_profile: "report-writer"
+    input_schema:
+      type: object
+      properties:
+        insights:
+          type: array
+          items: { type: object }
+          description: "分析洞察"
+        trends:
+          type: array
+          items: { type: string }
+          description: "市场趋势"
+        recommendations:
+          type: array
+          items: { type: string }
+          description: "建议"
+      required: [insights]

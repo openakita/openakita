@@ -2,14 +2,14 @@
   "id": "web-researcher",
   "name": "网络调研员",
   "description": "通用网络信息收集和调研 Agent，可被多个最佳实践复用",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@content-research-writer",
     "seeagent/skills@apify-scraper",
     "seeagent/skills@summarizer",
     "jimliu/baoyu-skills@baoyu-url-to-markdown"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/web-researcher.md",
   "icon": "🌐",

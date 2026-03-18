@@ -2,14 +2,14 @@
   "id": "report-writer",
   "name": "报告撰写员",
   "description": "专业报告撰写专家，能够将调研数据和分析洞察整合为结构清晰、内容专业的市场研究报告。",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@docx",
     "jimliu/baoyu-skills@baoyu-format-markdown",
     "seeagent/skills@summarizer",
     "jimliu/baoyu-skills@baoyu-infographic"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/report-writer.md",
   "icon": "\ud83d\udcdd",

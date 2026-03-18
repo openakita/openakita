@@ -2,13 +2,13 @@
   "id": "market-researcher",
   "name": "市场调研员",
   "description": "专业市场调研分析师，能够通过网络搜索、网页浏览和数据收集来获取全面的市场信息和行业洞察。",
-  "type": "CUSTOM",
+  "type": "custom",
   "skills": [
     "seeagent/skills@content-research-writer",
     "seeagent/skills@summarizer",
     "seeagent/skills@apify-scraper"
   ],
-  "skills_mode": "INCLUSIVE",
+  "skills_mode": "inclusive",
   "custom_prompt": "",
   "prompt_file": "prompts/market-researcher.md",
   "icon": "\ud83d\udd0d",
