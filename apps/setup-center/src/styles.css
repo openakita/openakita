@@ -113,8 +113,10 @@
 }
 
 html,
-body {
+body,
+#root {
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -144,9 +146,14 @@ a:hover {
 .appShell {
   display: grid;
   grid-template-columns: 260px 1fr;
+  grid-template-rows: 1fr;
   gap: 12px;
   height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
   padding: 14px;
+  overflow: hidden;
   transition: grid-template-columns 0.2s ease;
 }
 .appShellCollapsed {
