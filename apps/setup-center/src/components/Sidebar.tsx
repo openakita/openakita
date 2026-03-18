@@ -7,7 +7,7 @@ import {
   IconZap, IconPlug, IconCalendar,
   IconBug, IconBrain, IconGitHub, IconGitee, IconUsers, IconBot,
   IconGear, IconBook, IconStorefront, IconPuzzle, IconFingerprint, IconLayoutGrid,
-  IconShield,
+  IconShield, IconRadar,
 } from "../icons";
 import logoUrl from "../assets/logo.png";
 
@@ -53,26 +53,31 @@ const BETA_SUP = <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fo
 
 function NavGroupHeader({
   collapsed: sidebarCollapsed,
+  icon,
   label,
   expanded,
   onToggle,
 }: {
   collapsed: boolean;
+  icon: React.ReactNode;
   label: string;
   expanded: boolean;
   onToggle: () => void;
 }) {
   return (
-    <div className="navGroupHeader" onClick={onToggle} role="button" tabIndex={0}>
+    <div className="navGroupHeader" onClick={onToggle} role="button" tabIndex={0} title={sidebarCollapsed ? label : undefined}>
       {!sidebarCollapsed ? (
         <>
-          <span className="navGroupLabel">{label}</span>
+          <span className="navGroupLabelWrap">
+            <span className="navGroupIcon">{icon}</span>
+            <span className="navGroupLabel">{label}</span>
+          </span>
           <span className="navGroupChevron">
             {expanded ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
           </span>
         </>
       ) : (
-        <span className="navGroupDot" title={label} />
+        <span className="navGroupIcon navGroupIconCollapsed">{icon}</span>
       )}
     </div>
   );
@@ -152,7 +157,7 @@ export function Sidebar({
         </div>
 
         {/* ── Group: Capabilities ── */}
-        <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupCapabilities")} expanded={capExpanded} onToggle={() => toggleGroup("capabilities")} />
+        <NavGroupHeader collapsed={collapsed} icon={<IconPuzzle size={14} />} label={t("sidebar.groupCapabilities")} expanded={capExpanded} onToggle={() => toggleGroup("capabilities")} />
         {(collapsed || capExpanded) && (
           <div className="navGroupItems">
             {!disabledViews.includes("skills") && (
@@ -175,7 +180,7 @@ export function Sidebar({
         )}
 
         {/* ── Group: Monitor ── */}
-        <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupMonitor")} expanded={monExpanded} onToggle={() => toggleGroup("monitor")} />
+        <NavGroupHeader collapsed={collapsed} icon={<IconRadar size={14} />} label={t("sidebar.groupMonitor")} expanded={monExpanded} onToggle={() => toggleGroup("monitor")} />
         {(collapsed || monExpanded) && (
           <div className="navGroupItems">
             <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
@@ -190,7 +195,7 @@ export function Sidebar({
         {/* ── Group: Multi-Agent ── */}
         {multiAgentEnabled && (
           <>
-            <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
+            <NavGroupHeader collapsed={collapsed} icon={<IconBot size={14} />} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
             {(collapsed || maExpanded) && (
               <div className="navGroupItems">
                 <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
@@ -210,7 +215,7 @@ export function Sidebar({
         {/* ── Group: Store ── */}
         {storeVisible && (
           <>
-            <NavGroupHeader collapsed={collapsed} label={t("sidebar.groupStore")} expanded={stExpanded} onToggle={() => toggleGroup("store")} />
+            <NavGroupHeader collapsed={collapsed} icon={<IconStorefront size={14} />} label={t("sidebar.groupStore")} expanded={stExpanded} onToggle={() => toggleGroup("store")} />
             {(collapsed || stExpanded) && (
               <div className="navGroupItems">
                 <div className={`navItem ${view === "agent_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_store")} role="button" tabIndex={0} title={t("sidebar.agentStore")}>

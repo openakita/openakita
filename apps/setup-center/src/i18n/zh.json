@@ -24,9 +24,9 @@
     "expand": "展开侧栏",
     "docs": "文档",
     "security": "安全",
-    "groupCapabilities": "能力扩展",
-    "groupMonitor": "监控统计",
-    "groupMultiAgent": "多 Agent",
+    "groupCapabilities": "能力",
+    "groupMonitor": "监控",
+    "groupMultiAgent": "Agents",
     "groupStore": "市场"
   },
   "topbar": {

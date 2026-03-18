@@ -25,8 +25,8 @@
     "docs": "Docs",
     "security": "Security",
     "groupCapabilities": "Capabilities",
-    "groupMonitor": "Monitoring",
-    "groupMultiAgent": "Multi-Agent",
+    "groupMonitor": "Monitor",
+    "groupMultiAgent": "Agents",
     "groupStore": "Store"
   },
   "topbar": {
