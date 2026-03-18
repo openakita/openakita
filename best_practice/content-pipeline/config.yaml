@@ -1,0 +1,98 @@
+best_practice:
+  id: "content-pipeline"
+  name: "内容创作流水线"
+  description: "从选题调研到内容发布的完整创作流程"
+  default_run_mode: manual
+
+  final_output_schema:
+    type: object
+    properties:
+      title: { type: string }
+      content: { type: string }
+      platform: { type: string }
+      seo_keywords:
+        type: array
+        items: { type: string }
+      review_notes: { type: string }
+    required: [title, content]
+
+  triggers:
+    - type: command
+      pattern: "创建内容"
+    - type: context
+      conditions: ["写文章", "内容创作", "公众号", "小红书"]
+
+  subtasks:
+    - id: "topic-research"
+      name: "选题调研"
+      description: "基于目标平台和领域，调研热点话题和受众需求"
+      agent_profile: "topic-researcher"
+      input_schema:
+        type: object
+        properties:
+          domain:
+            type: string
+            description: "内容领域（如科技、商业、生活）"
+          platform:
+            type: string
+            description: "发布平台（公众号、小红书、知乎等）"
+          audience:
+            type: string
+            description: "目标受众描述"
+        required: [domain]
+
+    - id: "outline"
+      name: "大纲编写"
+      description: "根据选题和调研结果，规划文章结构和核心论点"
+      agent_profile: "outline-planner"
+      input_schema:
+        type: object
+        properties:
+          selected_topic:
+            type: object
+            description: "选定话题及理由"
+          reference_materials:
+            type: array
+            items: { type: object }
+            description: "参考素材"
+          target_word_count:
+            type: integer
+            description: "目标字数"
+        required: [selected_topic]
+
+    - id: "writing"
+      name: "内容创作"
+      description: "按大纲撰写完整内容，匹配平台风格"
+      agent_profile: "content-writer"
+      input_schema:
+        type: object
+        properties:
+          outline:
+            type: object
+            description: "文章大纲"
+          style_guide:
+            type: object
+            description: "风格指南（语气、格式、平台规范）"
+          key_points:
+            type: array
+            items: { type: string }
+            description: "核心论点"
+        required: [outline]
+
+    - id: "review"
+      name: "审核优化"
+      description: "校对内容质量、SEO 优化、平台规范检查"
+      agent_profile: "content-reviewer"
+      input_schema:
+        type: object
+        properties:
+          draft_content:
+            type: string
+            description: "初稿内容"
+          platform:
+            type: string
+            description: "目标平台"
+          seo_requirements:
+            type: object
+            description: "SEO 要求"
+        required: [draft_content]

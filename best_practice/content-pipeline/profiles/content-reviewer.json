@@ -1,0 +1,20 @@
+{
+  "id": "content-reviewer",
+  "name": "内容审核专家",
+  "description": "负责内容质量把控，从SEO优化、平台合规性、事实准确性等多维度审核内容",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@chinese-writing",
+    "jimliu/baoyu-skills@baoyu-format-markdown",
+    "seeagent/skills@summarizer"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/content-reviewer.md",
+  "icon": "\u2705",
+  "color": "#607D8B",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

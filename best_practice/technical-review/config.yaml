@@ -1,0 +1,97 @@
+best_practice:
+  id: "technical-review"
+  name: "技术方案评审"
+  description: "从需求分析到架构设计、风险评估再到评审报告的完整流程"
+  default_run_mode: manual
+
+  final_output_schema:
+    type: object
+    properties:
+      project_name: { type: string }
+      architecture_summary: { type: string }
+      risk_level:
+        type: string
+        enum: [low, medium, high, critical]
+      review_verdict:
+        type: string
+        enum: [approved, conditional, rejected]
+      action_items:
+        type: array
+        items: { type: object }
+    required: [project_name, review_verdict, action_items]
+
+  triggers:
+    - type: command
+      pattern: "技术评审"
+    - type: context
+      conditions: ["技术方案", "架构评审", "技术选型"]
+
+  subtasks:
+    - id: "requirements"
+      name: "需求分析"
+      description: "梳理功能需求、非功能需求和约束条件"
+      agent_profile: "requirements-analyst"
+      input_schema:
+        type: object
+        properties:
+          project_name:
+            type: string
+            description: "项目名称"
+          project_description:
+            type: string
+            description: "项目描述"
+          stakeholders:
+            type: array
+            items: { type: string }
+            description: "利益相关方"
+          constraints:
+            type: object
+            description: "约束（预算、时间、技术栈限制）"
+        required: [project_name, project_description]
+
+    - id: "architecture"
+      name: "架构设计"
+      description: "基于需求提出技术架构方案，含技术选型和组件设计"
+      agent_profile: "architecture-designer"
+      input_schema:
+        type: object
+        properties:
+          functional_requirements:
+            type: array
+            items: { type: object }
+          non_functional_requirements: { type: object }
+          constraints: { type: object }
+          existing_infrastructure:
+            type: object
+            description: "现有基础设施"
+        required: [functional_requirements]
+
+    - id: "risk-assessment"
+      name: "风险评估"
+      description: "识别技术风险、安全风险和实施风险，制定缓解措施"
+      agent_profile: "risk-assessor"
+      input_schema:
+        type: object
+        properties:
+          architecture_proposal:
+            type: object
+            description: "架构方案"
+          tech_stack:
+            type: array
+            items: { type: string }
+          timeline:
+            type: object
+            description: "项目时间线"
+        required: [architecture_proposal]
+
+    - id: "review-report"
+      name: "评审报告"
+      description: "综合所有分析，输出评审结论和行动项"
+      agent_profile: "review-reporter"
+      input_schema:
+        type: object
+        properties:
+          requirements_analysis: { type: object }
+          architecture_design: { type: object }
+          risk_assessment: { type: object }
+        required: [requirements_analysis, architecture_design, risk_assessment]

@@ -1,0 +1,20 @@
+{
+  "id": "requirements-analyst",
+  "name": "需求分析专家",
+  "description": "负责需求挖掘、干系人分析、约束识别与用例建模，输出结构化的需求分析文档",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@content-research-writer",
+    "seeagent/skills@docx",
+    "seeagent/skills@summarizer"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/requirements-analyst.md",
+  "icon": "📐",
+  "color": "#F44336",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

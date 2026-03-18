@@ -1,0 +1,21 @@
+{
+  "id": "insight-summarizer",
+  "name": "战略洞察专家",
+  "description": "从竞品对比分析中提炼关键洞察，输出可执行的战略建议和行动方案",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@docx",
+    "jimliu/baoyu-skills@baoyu-format-markdown",
+    "seeagent/skills@summarizer",
+    "jimliu/baoyu-skills@baoyu-infographic"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/insight-summarizer.md",
+  "icon": "💡",
+  "color": "#FFC107",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

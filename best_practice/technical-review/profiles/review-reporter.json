@@ -1,0 +1,21 @@
+{
+  "id": "review-reporter",
+  "name": "技术评审报告专家",
+  "description": "负责综合各方分析结论，形成评审报告，给出明确评审结论与优先行动项",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@docx",
+    "seeagent/skills@pptx",
+    "jimliu/baoyu-skills@baoyu-format-markdown",
+    "seeagent/skills@pretty-mermaid"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/review-reporter.md",
+  "icon": "📑",
+  "color": "#4CAF50",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

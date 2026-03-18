@@ -1,0 +1,19 @@
+{
+  "id": "risk-assessor",
+  "name": "技术风险评估专家",
+  "description": "负责风险识别、影响分析、缓解方案制定与安全评估，输出风险登记表及应对策略",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@content-research-writer",
+    "seeagent/skills@summarizer"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/risk-assessor.md",
+  "icon": "⚠️",
+  "color": "#FF5722",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

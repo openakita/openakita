@@ -1,0 +1,20 @@
+{
+  "id": "architecture-designer",
+  "name": "系统架构师",
+  "description": "负责技术选型、组件设计、扩展性规划与集成模式设计，输出架构方案与技术栈论证",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@pretty-mermaid",
+    "seeagent/skills@content-research-writer",
+    "seeagent/skills@code-review"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/architecture-designer.md",
+  "icon": "🏗️",
+  "color": "#2196F3",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

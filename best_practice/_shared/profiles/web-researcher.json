@@ -1,0 +1,21 @@
+{
+  "id": "web-researcher",
+  "name": "网络调研员",
+  "description": "通用网络信息收集和调研 Agent，可被多个最佳实践复用",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@content-research-writer",
+    "seeagent/skills@apify-scraper",
+    "seeagent/skills@summarizer",
+    "jimliu/baoyu-skills@baoyu-url-to-markdown"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/web-researcher.md",
+  "icon": "🌐",
+  "color": "#00BCD4",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

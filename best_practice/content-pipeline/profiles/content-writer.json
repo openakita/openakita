@@ -1,0 +1,22 @@
+{
+  "id": "content-writer",
+  "name": "内容创作者",
+  "description": "专业内容写作专家，擅长根据不同平台特性创作高质量、有吸引力的内容",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@chinese-writing",
+    "seeagent/skills@content-research-writer",
+    "jimliu/baoyu-skills@baoyu-format-markdown",
+    "seeagent/skills@xiaohongshu-creator",
+    "seeagent/skills@wechat-article"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/content-writer.md",
+  "icon": "\u270d\ufe0f",
+  "color": "#795548",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}

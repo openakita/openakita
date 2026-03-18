@@ -1,0 +1,20 @@
+{
+  "id": "competitor-researcher",
+  "name": "竞品情报研究员",
+  "description": "负责系统性收集竞争对手的产品、技术、市场和运营等公开情报，建立结构化的竞品档案",
+  "type": "CUSTOM",
+  "skills": [
+    "seeagent/skills@content-research-writer",
+    "seeagent/skills@apify-scraper",
+    "seeagent/skills@summarizer"
+  ],
+  "skills_mode": "INCLUSIVE",
+  "custom_prompt": "",
+  "prompt_file": "prompts/competitor-researcher.md",
+  "icon": "🕵️",
+  "color": "#673AB7",
+  "category": "bestpractice",
+  "fallback_profile_id": "default",
+  "preferred_endpoint": null,
+  "created_by": "bestpractice"
+}
