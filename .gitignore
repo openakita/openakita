@@ -80,6 +80,7 @@ target/
 # Apps (keep sources, ignore build outputs)
 apps/**/node_modules/
 apps/**/dist/
+apps/**/dist-web/
 apps/**/.vite/
 apps/**/src-tauri/target/
 apps/**/tsconfig.tsbuildinfo
