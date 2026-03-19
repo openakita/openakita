@@ -491,6 +491,10 @@ class Agent:
         self._custom_prompt_suffix: str = ""
         self._preferred_endpoint: str | None = None
 
+        # Plan mode exit pending — keyed by conversation_id
+        # Set by exit_plan_mode tool, consumed by chat_with_session_stream
+        self._plan_exit_pending: dict[str, dict] = {}
+
         # Handler Registry（模块化工具执行）
         self.handler_registry = SystemHandlerRegistry()
         self._init_handlers()
@@ -562,7 +566,9 @@ class Agent:
     _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
         "System",       # ask_user, enable_thinking, get_tool_info, etc.
         "Memory",       # search_memory, add_memory — context recall
-        "Plan",         # create_todo, update_todo_step — task orchestration
+        "Todo",         # create_todo, update_todo_step — task execution tracking
+        "Plan",         # create_plan_file, exit_plan_mode — plan mode tools
+        "File System",  # read_file, write_file, list_directory — fundamental I/O
         "Skills",       # list_skills, run_skill_script — capability discovery
         "Skill Store",  # search/install skills from store
         "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
@@ -3016,11 +3022,11 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         if exit_reason != "ask_user" and not is_sub_agent:
             conversation_id = getattr(self, "_current_conversation_id", "") or session_id
             try:
-                from ..tools.handlers.plan import auto_close_plan
-                if auto_close_plan(conversation_id):
-                    logger.info(f"[Session:{session_id}] Plan auto-closed at finalize")
+                from ..tools.handlers.plan import auto_close_todo
+                if auto_close_todo(conversation_id):
+                    logger.info(f"[Session:{session_id}] Todo auto-closed at finalize")
             except Exception as e:
-                logger.debug(f"[Plan] auto_close_plan failed: {e}")
+                logger.debug(f"[Todo] auto_close_todo failed: {e}")
 
             # 及时结束 memory session，触发记忆提取
             try:
@@ -3419,6 +3425,13 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
             base_system_prompt = system_prompt
 
+            # === Plan mode handoff: consume _plan_exit_pending ===
+            system_prompt, mode = self._handle_plan_exit_pending(
+                system_prompt, mode, conversation_id, message,
+            )
+            # Update plan_mode flag to match potentially changed mode
+            plan_mode = (mode == "plan")
+
             # === 从 session metadata 读取 thinking 偏好（IM 通道使用） ===
             _thinking_mode = thinking_mode
             _thinking_depth = thinking_depth
@@ -3558,6 +3571,85 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             yield {"type": "done"}
         finally:
             self._cleanup_session_state(im_tokens)
+
+    def _handle_plan_exit_pending(
+        self,
+        system_prompt: str,
+        mode: str,
+        conversation_id: str,
+        user_message: str,
+    ) -> tuple[str, str]:
+        """Handle Plan mode exit pending state when user sends the next message.
+
+        Flow:
+        - Plan mode → LLM calls create_plan_file → exit_plan_mode → pending flag set
+        - User sends next message:
+          a) mode="agent" → user approved the plan → inject plan content, switch to Agent
+          b) mode="plan" → user wants refinements → inject plan awareness, stay in Plan
+          c) No pending → pass through unchanged
+
+        Returns:
+            (updated_system_prompt, effective_mode)
+        """
+        pending_map = getattr(self, "_plan_exit_pending", {})
+        if not isinstance(pending_map, dict) or not pending_map:
+            return system_prompt, mode
+
+        pending = pending_map.pop(conversation_id, None)
+        if not pending:
+            return system_prompt, mode
+
+        plan_file = pending.get("plan_file", "")
+        plan_summary = pending.get("summary", "")
+        plan_content = ""
+
+        if plan_file:
+            try:
+                plan_content = Path(plan_file).read_text(encoding="utf-8")
+            except Exception:
+                logger.warning(f"[Plan] Could not read plan file: {plan_file}")
+
+        if mode == "agent":
+            # User approved → switch to Agent mode with plan context
+            logger.info(
+                f"[Plan→Agent] User approved plan, injecting plan content "
+                f"(conv={conversation_id}, file={plan_file})"
+            )
+            if plan_content:
+                system_prompt += (
+                    "\n\n## Plan to Execute\n\n"
+                    "The user has reviewed and approved this plan from Plan mode. "
+                    "Execute the steps described below. Use create_todo to track "
+                    "progress, then execute each step.\n\n"
+                    f"Plan file: {plan_file}\n\n"
+                    f"{plan_content}\n"
+                )
+            elif plan_summary:
+                system_prompt += (
+                    f"\n\n## Plan to Execute\n\n"
+                    f"The user approved a plan: {plan_summary}\n"
+                    f"Plan file: {plan_file}\n"
+                    f"Read the plan file and execute the steps.\n"
+                )
+        elif mode == "plan":
+            # User wants refinements → stay in Plan mode
+            logger.info(
+                f"[Plan] User wants refinements, keeping Plan mode "
+                f"(conv={conversation_id}, file={plan_file})"
+            )
+            if plan_file:
+                system_prompt += (
+                    "\n\n## Existing Plan (Needs Refinement)\n\n"
+                    f"A plan file was already created at: {plan_file}\n"
+                    "The user wants to refine it. Read the current plan file "
+                    "and modify it based on the user's feedback.\n"
+                    "Use write_file to update the plan file (only data/plans/*.md "
+                    "paths are allowed in Plan mode).\n"
+                    "After updating, call exit_plan_mode again to present the "
+                    "revised plan for approval.\n"
+                )
+
+        return system_prompt, mode
 
     def _resolve_conversation_id(self, session: Any, session_id: str) -> str:
         """从 session 中解析稳定的 conversation_id。"""
@@ -4101,13 +4193,13 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             return False
 
         # === Plan 步骤检查：如果有活跃 Plan 且有未完成步骤，强制继续执行 ===
-        from ..tools.handlers.plan import get_plan_handler_for_session, has_active_todo
+        from ..tools.handlers.plan import get_todo_handler_for_session, has_active_todo
 
         conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
             self, "_current_session_id", None
         )
         if conversation_id and has_active_todo(conversation_id):
-            handler = get_plan_handler_for_session(conversation_id)
+            handler = get_todo_handler_for_session(conversation_id)
             plan = handler.get_plan_for(conversation_id) if handler else None
             if plan:
                 steps = plan.get("steps", [])
@@ -4528,14 +4620,14 @@ NEXT: 建议的下一步（如有）"""
 
         def _build_effective_system_prompt() -> str:
             """在 base_system_prompt 基础上动态追加活跃 Plan 段落（每轮刷新最新状态）"""
-            from ..tools.handlers.plan import get_active_plan_prompt
+            from ..tools.handlers.plan import get_active_todo_prompt
 
             _cid = getattr(self, "_current_conversation_id", None) or getattr(
                 self, "_current_session_id", None
             )
             prompt = base_system_prompt
             if _cid:
-                plan_section = get_active_plan_prompt(_cid)
+                plan_section = get_active_todo_prompt(_cid)
                 if plan_section:
                     prompt += f"\n\n{plan_section}\n"
             return prompt
@@ -5017,14 +5109,14 @@ NEXT: 建议的下一步（如有）"""
                             has_active_todo_pending = False
                             try:
                                 from ..tools.handlers.plan import (
-                                    get_plan_handler_for_session,
+                                    get_todo_handler_for_session,
                                     has_active_todo,
                                 )
                                 conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
                                     self, "_current_session_id", None
                                 )
                                 if conversation_id and has_active_todo(conversation_id):
-                                    handler = get_plan_handler_for_session(conversation_id)
+                                    handler = get_todo_handler_for_session(conversation_id)
                                     _plan = handler.get_plan_for(conversation_id) if handler else None
                                     if _plan:
                                         steps = _plan.get("steps", [])
@@ -5303,7 +5395,7 @@ NEXT: 建议的下一步（如有）"""
                 # 检查是否有活跃 Plan：有的话用更温和的提示，避免打断正常执行
                 _self_check_has_plan = False
                 try:
-                    from ..tools.handlers.plan import get_plan_handler_for_session
+                    from ..tools.handlers.plan import get_todo_handler_for_session
                     from ..tools.handlers.plan import has_active_todo as _has_active_todo
                     _sc_conv_id = getattr(self, "_current_conversation_id", None) or getattr(
                         self, "_current_session_id", None
@@ -5436,17 +5528,17 @@ NEXT: 建议的下一步（如有）"""
             self.agent_state.cancel_task(reason)
 
         try:
-            from ..tools.handlers.plan import cancel_plan
+            from ..tools.handlers.plan import cancel_todo
             if session_id:
-                if cancel_plan(session_id):
-                    logger.info(f"[StopTask] Cancelled active plan for session {session_id}")
+                if cancel_todo(session_id):
+                    logger.info(f"[StopTask] Cancelled active todo for session {session_id}")
             else:
                 from ..tools.handlers.plan import _session_active_todos
                 for sid in list(_session_active_todos.keys()):
-                    if cancel_plan(sid):
-                        logger.info(f"[StopTask] Cancelled active plan for session {sid}")
+                    if cancel_todo(sid):
+                        logger.info(f"[StopTask] Cancelled active todo for session {sid}")
         except Exception as e:
-            logger.warning(f"[StopTask] Failed to cancel plan: {e}")
+            logger.warning(f"[StopTask] Failed to cancel todo: {e}")
 
         logger.info(f"[StopTask] Task cancellation completed: {reason}")
 
@@ -5583,14 +5675,14 @@ NEXT: 建议的下一步（如有）"""
 
         def _build_effective_system_prompt_cli() -> str:
             """在基础提示词上动态追加活跃 Plan 段落（CLI 路径）"""
-            from ..tools.handlers.plan import get_active_plan_prompt
+            from ..tools.handlers.plan import get_active_todo_prompt
 
             _cid = getattr(self, "_current_conversation_id", None) or getattr(
                 self, "_current_session_id", None
             )
             prompt = _base_system_prompt_cli
             if _cid:
-                plan_section = get_active_plan_prompt(_cid)
+                plan_section = get_active_todo_prompt(_cid)
                 if plan_section:
                     prompt += f"\n\n{plan_section}\n"
             return prompt
@@ -5762,9 +5854,9 @@ NEXT: 建议的下一步（如有）"""
         # Plan 强制检查（仅 Agent 模式下的 todo 跟踪）
         # ============================================
         # Plan/Ask 模式的控制工具始终放行，避免死锁
-        _plan_exempt = ("create_todo", "create_plan_file", "exit_plan_mode",
+        _todo_exempt = ("create_todo", "create_plan_file", "exit_plan_mode",
                         "get_todo_status", "ask_user")
-        if tool_name not in _plan_exempt:
+        if tool_name not in _todo_exempt:
             from ..tools.handlers.plan import has_active_todo, is_todo_required
 
             session_id = getattr(self, "_current_session_id", None)
@@ -5886,10 +5978,10 @@ NEXT: 建议的下一步（如有）"""
 
         def _build_effective_system_prompt_task() -> str:
             """在基础提示词上动态追加活跃 Plan 段落（Task 路径）"""
-            from ..tools.handlers.plan import get_active_plan_prompt
+            from ..tools.handlers.plan import get_active_todo_prompt
 
             prompt = _base_system_prompt_task
-            plan_section = get_active_plan_prompt(_task_conversation_id)
+            plan_section = get_active_todo_prompt(_task_conversation_id)
             if plan_section:
                 prompt += f"\n\n{plan_section}\n"
             return prompt

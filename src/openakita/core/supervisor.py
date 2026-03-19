@@ -211,7 +211,7 @@ class RuntimeSupervisor:
         self,
         iteration: int,
         *,
-        has_active_plan: bool = False,
+        has_active_todo: bool = False,
         plan_current_step: str = "",
     ) -> Intervention | None:
         """
@@ -250,7 +250,7 @@ class RuntimeSupervisor:
             interventions.append(extreme_intervention)
 
         selfcheck_intervention = self._check_self_check_interval(
-            iteration, has_active_plan, plan_current_step,
+            iteration, has_active_todo, plan_current_step,
         )
         if selfcheck_intervention:
             interventions.append(selfcheck_intervention)
@@ -455,7 +455,7 @@ class RuntimeSupervisor:
     def _check_self_check_interval(
         self,
         iteration: int,
-        has_active_plan: bool,
+        has_active_todo: bool,
         plan_current_step: str,
     ) -> Intervention | None:
         """定期自检提醒"""
@@ -466,7 +466,7 @@ class RuntimeSupervisor:
 
         rounds = self._consecutive_tool_rounds
 
-        if has_active_plan:
+        if has_active_todo:
             msg = (
                 f"[系统提示] 已连续执行 {rounds} 轮，Plan 仍有未完成步骤。"
                 "如果遇到困难，请换一种方法继续推进。"

@@ -16,7 +16,7 @@ import type {
   ChatConversation,
   ConversationStatus,
   ChatToolCall,
-  ChatPlan,
+  ChatTodo,
   ChatTodoStep,
   ChatAskUser,
   ChatAskQuestion,
@@ -272,7 +272,7 @@ type StreamEvent =
   | { type: "text"; content?: string; text?: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
   | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean }
-  | { type: "todo_created"; plan: ChatPlan }
+  | { type: "todo_created"; plan: ChatTodo }
   | { type: "todo_step_updated"; stepId?: string; stepIdx?: number; status: string }
   | { type: "todo_completed" }
   | { type: "todo_cancelled" }
@@ -655,7 +655,7 @@ function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
 }
 
 /** 浮动 Plan 进度条 —— 贴在输入框上方，默认折叠只显示当前步骤 */
-function FloatingPlanBar({ plan }: { plan: ChatPlan }) {
+function FloatingPlanBar({ plan }: { plan: ChatTodo }) {
   const [expanded, setExpanded] = useState(false);
   const completed = plan.steps.filter((s) => s.status === "completed").length;
   const total = plan.steps.length;
@@ -3241,7 +3241,7 @@ export function ChatView({
       let currentThinking = "";
       let isThinking = false;
       let currentToolCalls: ChatToolCall[] = [];
-      let currentPlan: ChatPlan | null = null;
+      let currentPlan: ChatTodo | null = null;
       let currentAsk: ChatAskUser | null = null;
       let currentAgent: string | null = null;
       let currentArtifacts: ChatArtifact[] = [];
@@ -3580,8 +3580,8 @@ export function ChatView({
               case "todo_created":
                 currentPlan = event.plan;
                 updateMessages((prev) => prev.map((m) =>
-                  m.plan && m.plan.status !== "completed" && m.plan.status !== "failed" && m.plan.status !== "cancelled"
-                    ? { ...m, plan: { ...m.plan, status: "completed" as const } }
+                  m.todo && m.todo.status !== "completed" && m.todo.status !== "failed" && m.todo.status !== "cancelled"
+                    ? { ...m, todo: { ...m.todo, status: "completed" as const } }
                     : m
                 ));
                 break;
@@ -3594,17 +3594,17 @@ export function ChatView({
                     return matched ? { ...s, status: event.status as ChatTodoStep["status"] } : s;
                   });
                   const allDone = newSteps.every((s) => s.status === "completed" || s.status === "skipped" || s.status === "failed");
-                  currentPlan = { ...currentPlan, steps: newSteps, ...(allDone ? { status: "completed" as const } : {}) } as ChatPlan;
+                  currentPlan = { ...currentPlan, steps: newSteps, ...(allDone ? { status: "completed" as const } : {}) } as ChatTodo;
                 }
                 break;
               case "todo_completed":
                 if (currentPlan) {
-                  currentPlan = { ...currentPlan, status: "completed" } as ChatPlan;
+                  currentPlan = { ...currentPlan, status: "completed" } as ChatTodo;
                 }
                 break;
               case "todo_cancelled":
                 if (currentPlan) {
-                  currentPlan = { ...currentPlan, status: "cancelled" } as ChatPlan;
+                  currentPlan = { ...currentPlan, status: "cancelled" } as ChatTodo;
                 }
                 break;
               case "security_confirm": {
@@ -3680,7 +3680,7 @@ export function ChatView({
                     thinking: currentThinking || null,
                     agentName: event.agentName,
                     toolCalls: currentToolCalls.length > 0 ? currentToolCalls : null,
-                    plan: currentPlan,
+                    todo: currentPlan,
                     askUser: currentAsk,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
@@ -3700,14 +3700,14 @@ export function ChatView({
                 }
                 // 任务结束时，如果当前 Plan 仍在进行中，自动标记为 completed
                 if (currentPlan && currentPlan.status === "in_progress") {
-                  currentPlan = { ...(currentPlan as ChatPlan), status: "completed" as const };
+                  currentPlan = { ...(currentPlan as ChatTodo), status: "completed" as const };
                 }
                 updateMessages((prev) => {
-                  const hasStaleplan = prev.some((m) => m.id !== assistantMsg.id && m.plan && m.plan.status !== "completed" && m.plan.status !== "failed" && m.plan.status !== "cancelled");
-                  if (!hasStaleplan) return prev;
+                  const hasStaleTodo = prev.some((m) => m.id !== assistantMsg.id && m.todo && m.todo.status !== "completed" && m.todo.status !== "failed" && m.todo.status !== "cancelled");
+                  if (!hasStaleTodo) return prev;
                   return prev.map((m) =>
-                    m.id !== assistantMsg.id && m.plan && m.plan.status !== "completed" && m.plan.status !== "failed" && m.plan.status !== "cancelled"
-                      ? { ...m, plan: { ...m.plan, status: "completed" as const } }
+                    m.id !== assistantMsg.id && m.todo && m.todo.status !== "completed" && m.todo.status !== "failed" && m.todo.status !== "cancelled"
+                      ? { ...m, todo: { ...m.todo, status: "completed" as const } }
                       : m
                   );
                 });
@@ -3723,7 +3723,7 @@ export function ChatView({
                     thinking: currentThinking || null,
                     agentName: currentAgent,
                     toolCalls: currentToolCalls.length > 0 ? [...currentToolCalls] : null,
-                    plan: currentPlan ? { ...currentPlan } : null,
+                    todo: currentPlan ? { ...currentPlan } : null,
                     askUser: currentAsk,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
@@ -4673,7 +4673,7 @@ export function ChatView({
 
         {/* 浮动 Plan 进度条 —— 贴在输入框上方，仅显示进行中的 plan */}
         {(() => {
-          const activePlan = [...messages].reverse().find((m) => m.plan && m.plan.status !== "completed" && m.plan.status !== "failed" && m.plan.status !== "cancelled")?.plan;
+          const activePlan = [...messages].reverse().find((m) => m.todo && m.todo.status !== "completed" && m.todo.status !== "failed" && m.todo.status !== "cancelled")?.todo;
           return activePlan ? <FloatingPlanBar plan={activePlan} /> : null;
         })()}
 

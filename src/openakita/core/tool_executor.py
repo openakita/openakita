@@ -134,6 +134,9 @@ class ToolExecutor:
         # When the agent retries after ask_user, we auto-mark as confirmed.
         self._pending_confirms: dict[str, dict] = {}  # cache_key → params
 
+        # Current mode for permission checks (set by ReasoningEngine before tool loop)
+        self._current_mode: str = "agent"
+
     # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
     # 值为 0 表示不设硬超时（由工具自身的进度监控负责，如 Orchestrator 的 idle-timeout）
     _TOOL_HARD_TIMEOUT: int = 120
@@ -259,10 +262,14 @@ class ToolExecutor:
             )
             return err_msg
 
-        # Plan 模式强制检查
-        plan_block = self._check_todo_required(tool_name, session_id)
-        if plan_block:
-            return plan_block
+        todo_block = self._check_todo_required(tool_name, session_id)
+        if todo_block:
+            return todo_block
+
+        # Runtime permission check: enforce path-level restrictions
+        perm_block = self._check_permission(tool_name, tool_input)
+        if perm_block:
+            return perm_block
 
         # 导入日志缓存
         from ..logging import get_session_log_buffer
@@ -723,4 +730,57 @@ class ToolExecutor:
         except Exception:
             pass
 
+        return None
+
+    def _check_permission(self, tool_name: str, tool_input: dict) -> str | None:
+        """Runtime permission check — enforce path-level restrictions.
+
+        In Plan/Ask mode, write operations are checked against the permission
+        ruleset. If the target path is denied, returns a DeniedError message
+        for the LLM to learn from (same pattern as OpenCode).
+
+        Returns:
+            Error message string if denied, or None if allowed.
+        """
+        if self._current_mode == "agent":
+            return None
+
+        from .permission import (
+            EDIT_TOOLS,
+            evaluate,
+            PLAN_MODE_RULESET,
+            ASK_MODE_RULESET,
+        )
+
+        if tool_name not in EDIT_TOOLS:
+            return None
+
+        if self._current_mode == "plan":
+            ruleset = PLAN_MODE_RULESET
+        elif self._current_mode == "ask":
+            ruleset = ASK_MODE_RULESET
+        else:
+            return None
+
+        file_path = tool_input.get("path", tool_input.get("file_path", ""))
+        if not file_path:
+            file_path = tool_input.get("target", "*")
+
+        rule = evaluate("edit", str(file_path), ruleset)
+        if rule.action == "deny":
+            logger.warning(
+                f"[Permission] DENIED {tool_name} on {file_path!r} "
+                f"in {self._current_mode} mode"
+            )
+            return (
+                f"Permission denied: cannot use {tool_name} on '{file_path}' "
+                f"in {self._current_mode} mode. "
+                f"The current mode restricts write operations. "
+                + (
+                    "In Plan mode, you can only write to data/plans/*.md files. "
+                    "Use create_plan_file to create a plan document instead."
+                    if self._current_mode == "plan"
+                    else "Ask mode is read-only. No write operations are allowed."
+                )
+            )
         return None

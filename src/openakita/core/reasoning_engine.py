@@ -54,59 +54,57 @@ _SSE_RESULT_PREVIEW_CHARS = 32000
 # Mode-based tool filtering
 # ---------------------------------------------------------------------------
 
-# Ask mode: only allow read-only + information-gathering tools
-_ASK_MODE_WHITELIST = {
-    # File System (read-only)
-    "read_file", "list_directory", "grep", "glob", "run_shell",
-    # Memory (read + write allowed — adding memory is safe)
-    "search_memory", "add_memory", "get_memory_stats",
-    "list_recent_tasks", "trace_memory", "search_conversation_traces",
-    # Tool / Skill / MCP discovery (read-only)
-    "get_tool_info", "get_skill_info", "list_skills",
-    "list_mcp_servers", "get_mcp_instructions",
-    # Plan (read-only)
-    "get_todo_status",
-    # System (read-only + interaction)
-    "ask_user", "get_workspace_map", "get_session_logs",
-    # Web search (read-only, useful for research)
-    "web_search", "news_search",
-    # Browser (read-only observation)
-    "browser_screenshot", "view_image",
-    # Scheduled tasks (read-only)
-    "list_scheduled_tasks",
-    # Profile / Persona (read-only)
-    "get_user_profile", "get_persona_profile",
-}
+from .permission import (
+    disabled as permission_disabled,
+    PLAN_MODE_RULESET,
+    ASK_MODE_RULESET,
+    DEFAULT_RULESET,
+    Ruleset as PermissionRuleset,
+)
 
-# Plan mode: read-only + plan document tools (NOT the old create_todo/update_todo_step execution tools)
-_PLAN_MODE_WHITELIST = _ASK_MODE_WHITELIST | {
-    "create_plan_file", "exit_plan_mode", "get_todo_status",
-}
+
+def _get_mode_ruleset(mode: str) -> PermissionRuleset:
+    """Get the permission ruleset for the given mode."""
+    if mode == "plan":
+        return PLAN_MODE_RULESET
+    elif mode == "ask":
+        return ASK_MODE_RULESET
+    return DEFAULT_RULESET
 
 
 def _filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
-    """Filter tool list based on the active mode.
+    """Filter tool list based on the active mode using the permission system.
 
-    - ask: only read-only tools (whitelist)
-    - plan: read-only + plan tools (whitelist)
-    - agent: all tools (no filter)
+    Uses PermissionRuleset.disabled() to determine which tools to remove.
+    - agent: DEFAULT_RULESET (all tools allowed)
+    - ask: ASK_MODE_RULESET (write tools removed)
+    - plan: PLAN_MODE_RULESET (write tools visible but path-restricted at runtime)
     """
     if mode == "agent" or not tools:
         return tools
 
-    whitelist = _PLAN_MODE_WHITELIST if mode == "plan" else _ASK_MODE_WHITELIST
+    ruleset = _get_mode_ruleset(mode)
 
-    filtered = []
+    tool_names = []
     for tool in tools:
         name = tool.get("name", "")
         if not name:
-            # tool schema format may vary
             fn = tool.get("function", {})
             name = fn.get("name", "")
-        if name in whitelist:
+        tool_names.append(name)
+
+    disabled_set = permission_disabled(tool_names, ruleset)
+
+    filtered = []
+    for tool, name in zip(tools, tool_names):
+        if name not in disabled_set:
             filtered.append(tool)
 
-    logger.info(f"[ToolFilter] mode={mode}: {len(tools)} -> {len(filtered)} tools")
+    if disabled_set:
+        logger.info(
+            f"[ToolFilter] mode={mode}: {len(tools)} -> {len(filtered)} tools "
+            f"(disabled: {sorted(disabled_set)})"
+        )
     return filtered
 
 
@@ -752,11 +750,11 @@ class ReasoningEngine:
         def _build_effective_system_prompt() -> str:
             """动态追加活跃 Plan"""
             try:
-                from ..tools.handlers.plan import get_active_plan_prompt
+                from ..tools.handlers.plan import get_active_todo_prompt
                 _cid = conversation_id
                 prompt = base_system_prompt or system_prompt
                 if _cid:
-                    plan_section = get_active_plan_prompt(_cid)
+                    plan_section = get_active_todo_prompt(_cid)
                     if plan_section:
                         prompt += f"\n\n{plan_section}\n"
                 return prompt
@@ -786,6 +784,7 @@ class ReasoningEngine:
         # Mode-based tool filtering (same as reason_stream)
         tools = _filter_tools_by_mode(tools, mode)
         _allowed_tool_names = {t.get("name", "") for t in tools} if mode != "agent" else None
+        self._tool_executor._current_mode = mode
 
         # ==================== 主循环 ====================
         logger.info(f"[ReAct] === Loop started (max_iterations={max_iterations}, model={current_model}) ===")
@@ -878,9 +877,9 @@ class ReasoningEngine:
                     # Context Rewriting: 压缩后注入方向提示
                     _plan_sec = ""
                     try:
-                        from ..tools.handlers.plan import get_active_plan_prompt
+                        from ..tools.handlers.plan import get_active_todo_prompt
                         if conversation_id:
-                            _plan_sec = get_active_plan_prompt(conversation_id) or ""
+                            _plan_sec = get_active_todo_prompt(conversation_id) or ""
                     except Exception:
                         pass
                     _scratchpad = ""
@@ -1388,6 +1387,24 @@ class ReasoningEngine:
                 if _mode_blocked_results:
                     tool_results.extend(_mode_blocked_results)
 
+                # exit_plan_mode: stop the loop in non-streaming path too
+                if "exit_plan_mode" in (executed or []):
+                    logger.info(
+                        "[ReAct] exit_plan_mode called — ending turn, "
+                        "waiting for user review"
+                    )
+                    working_messages.append({"role": "user", "content": tool_results})
+                    react_trace.append(_iter_trace)
+                    self._save_react_trace(
+                        react_trace, conversation_id, session_type,
+                        "plan_exit", _trace_started_at,
+                    )
+                    return (
+                        "Plan completed and waiting for user review. "
+                        "The user can approve the plan to switch to Agent mode, "
+                        "or request changes to continue refining."
+                    )
+
                 # ==================== OBSERVE 阶段 ====================
                 logger.info(
                     f"[ReAct] Iter {iteration+1} — OBSERVE: "
@@ -1523,19 +1540,19 @@ class ReasoningEngine:
                 self._supervisor.record_tool_signature(round_sig_str)
 
                 # Supervisor 综合评估
-                _has_plan = self._has_active_plan_pending(conversation_id)
-                _plan_step = ""
+                _has_todo = self._has_active_todo_pending(conversation_id)
+                _todo_step = ""
                 try:
-                    from ..tools.handlers.plan import get_active_plan_prompt
+                    from ..tools.handlers.plan import get_active_todo_prompt
                     if conversation_id:
-                        _plan_step = get_active_plan_prompt(conversation_id) or ""
+                        _todo_step = get_active_todo_prompt(conversation_id) or ""
                 except Exception:
                     pass
 
                 intervention = self._supervisor.evaluate(
                     iteration,
-                    has_active_plan=_has_plan,
-                    plan_current_step=_plan_step,
+                    has_active_todo=_has_todo,
+                    plan_current_step=_todo_step,
                 )
 
                 if intervention:
@@ -1676,10 +1693,10 @@ class ReasoningEngine:
 
             def _build_effective_prompt() -> str:
                 try:
-                    from ..tools.handlers.plan import get_active_plan_prompt
+                    from ..tools.handlers.plan import get_active_todo_prompt
                     prompt = _base_sp
                     if conversation_id:
-                        plan_section = get_active_plan_prompt(conversation_id)
+                        plan_section = get_active_todo_prompt(conversation_id)
                         if plan_section:
                             prompt += f"\n\n{plan_section}\n"
                     return prompt
@@ -1710,6 +1727,7 @@ class ReasoningEngine:
             _allowed_tool_names = (
                 {t.get("name", "") for t in tools} if _effective_mode != "agent" else None
             )
+            self._tool_executor._current_mode = _effective_mode
 
             # === 端点覆盖 ===
             _endpoint_switched = False
@@ -1885,9 +1903,9 @@ class ReasoningEngine:
                     if _after_tokens < _before_tokens:
                         _plan_sec = ""
                         try:
-                            from ..tools.handlers.plan import get_active_plan_prompt
+                            from ..tools.handlers.plan import get_active_todo_prompt
                             if conversation_id:
-                                _plan_sec = get_active_plan_prompt(conversation_id) or ""
+                                _plan_sec = get_active_todo_prompt(conversation_id) or ""
                         except Exception:
                             pass
                         _scratchpad = ""
@@ -2504,6 +2522,31 @@ class ReasoningEngine:
                             "content": result_text,
                         })
 
+                        # exit_plan_mode: stop the loop after this tool
+                        if tool_name == "exit_plan_mode" and not _tool_is_error:
+                            _plan_exit_stop = True
+                            break
+
+                    # exit_plan_mode was called → end the turn
+                    if locals().get("_plan_exit_stop"):
+                        logger.info(
+                            "[ReAct-Stream] exit_plan_mode called — ending turn, "
+                            "waiting for user review"
+                        )
+                        working_messages.append({"role": "user", "content": tool_results_for_msg})
+                        _summary_text = (
+                            "Plan completed and waiting for user review. "
+                            "The user can approve the plan to switch to Agent mode, "
+                            "or request changes to continue refining."
+                        )
+                        yield {"type": "text_delta", "content": _summary_text}
+                        self._save_react_trace(
+                            react_trace, conversation_id, session_type,
+                            "plan_exit", _trace_started_at,
+                        )
+                        yield {"type": "done"}
+                        return
+
                     if decision.tool_calls:
                         # _non_denied_tool_names 在工具循环中构建，
                         # 仅含通过策略检查的工具（与 run() 的 executed 语义一致）
@@ -2622,17 +2665,17 @@ class ReasoningEngine:
                     round_sig_str = "+".join(sorted(round_signatures))
                     self._supervisor.record_tool_signature(round_sig_str)
 
-                    _has_plan_s = self._has_active_plan_pending(conversation_id)
-                    _plan_step_s = ""
+                    _has_todo_s = self._has_active_todo_pending(conversation_id)
+                    _todo_step_s = ""
                     try:
-                        from ..tools.handlers.plan import get_active_plan_prompt
+                        from ..tools.handlers.plan import get_active_todo_prompt
                         if conversation_id:
-                            _plan_step_s = get_active_plan_prompt(conversation_id) or ""
+                            _todo_step_s = get_active_todo_prompt(conversation_id) or ""
                     except Exception:
                         pass
                     intervention = self._supervisor.evaluate(
-                        _iteration, has_active_plan=_has_plan_s,
-                        plan_current_step=_plan_step_s,
+                        _iteration, has_active_todo=_has_todo_s,
+                        plan_current_step=_todo_step_s,
                     )
 
                     if intervention:
@@ -3403,8 +3446,8 @@ class ReasoningEngine:
                 verify_incomplete_count += 1
 
                 # 检查活跃 Plan
-                has_plan_pending = self._has_active_plan_pending(conversation_id)
-                effective_max = max_verify_retries * 2 if has_plan_pending else max_verify_retries
+                has_todo_pending = self._has_active_todo_pending(conversation_id)
+                effective_max = max_verify_retries * 2 if has_todo_pending else max_verify_retries
 
                 if verify_incomplete_count >= effective_max:
                     return cleaned_text
@@ -3416,7 +3459,7 @@ class ReasoningEngine:
                     "reasoning_content": decision.thinking_content or None,
                 })
 
-                if has_plan_pending:
+                if has_todo_pending:
                     working_messages.append({
                         "role": "user",
                         "content": (
@@ -3866,12 +3909,12 @@ class ReasoningEngine:
         return max(0, int(retries))
 
     @staticmethod
-    def _has_active_plan_pending(conversation_id: str | None) -> bool:
+    def _has_active_todo_pending(conversation_id: str | None) -> bool:
         """检查是否有活跃 Plan 且有未完成步骤"""
         try:
-            from ..tools.handlers.plan import get_plan_handler_for_session, has_active_todo
+            from ..tools.handlers.plan import get_todo_handler_for_session, has_active_todo
             if conversation_id and has_active_todo(conversation_id):
-                handler = get_plan_handler_for_session(conversation_id)
+                handler = get_todo_handler_for_session(conversation_id)
                 plan = handler.get_plan_for(conversation_id) if handler else None
                 if plan:
                     steps = plan.get("steps", [])

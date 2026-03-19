@@ -1,19 +1,21 @@
 """
-Plan 模式工具定义
+Todo & Plan 工具定义
 
-包含任务计划管理相关的工具：
-- create_todo: 创建任务执行计划（Agent 模式）
+Todo 工具（Agent 模式下的任务执行跟踪）：
+- create_todo: 创建任务执行计划
 - update_todo_step: 更新步骤状态
 - get_todo_status: 获取计划执行状态
 - complete_todo: 完成计划
-- create_plan_file: 创建结构化 Plan 文件（Plan 模式）
+
+Plan 模式工具：
+- create_plan_file: 创建结构化 Plan 文件
 - exit_plan_mode: 退出 Plan 模式
 """
 
 PLAN_TOOLS = [
     {
         "name": "create_todo",
-        "category": "Plan",
+        "category": "Todo",
         "description": "⚠️ MUST CALL FIRST for multi-step tasks! If user request needs 2+ tool calls (like 'open + search + screenshot'), call create_todo BEFORE any other tool. Examples: '打开百度搜索天气截图' → create_todo first!",
         "detail": """创建任务执行计划。
 
@@ -67,7 +69,7 @@ PLAN_TOOLS = [
     },
     {
         "name": "update_todo_step",
-        "category": "Plan",
+        "category": "Todo",
         "description": "Update the status of a todo step. MUST call after completing each step to track progress.",
         "detail": """更新计划中某个步骤的状态。
 
@@ -99,7 +101,7 @@ PLAN_TOOLS = [
     },
     {
         "name": "get_todo_status",
-        "category": "Plan",
+        "category": "Todo",
         "description": "Get the current todo execution status. Shows all steps and their completion status.",
         "detail": """获取当前计划的执行状态。
 
@@ -112,7 +114,7 @@ PLAN_TOOLS = [
     },
     {
         "name": "complete_todo",
-        "category": "Plan",
+        "category": "Todo",
         "description": "Mark the todo as completed and generate a summary report. Call when ALL steps are done.",
         "detail": """标记计划完成，生成最终报告。
 

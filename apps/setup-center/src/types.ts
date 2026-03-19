@@ -159,7 +159,7 @@ export type ChatMessage = {
   thinking?: string | null;
   agentName?: string | null;
   toolCalls?: ChatToolCall[] | null;
-  plan?: ChatPlan | null;
+  todo?: ChatTodo | null;
   askUser?: ChatAskUser | null;
   attachments?: ChatAttachment[] | null;
   artifacts?: ChatArtifact[] | null;
@@ -218,12 +218,15 @@ export type ChatToolCall = {
   status: "pending" | "running" | "done" | "error";
 };
 
-export type ChatPlan = {
+export type ChatTodo = {
   id: string;
   taskSummary: string;
   steps: ChatTodoStep[];
   status: "in_progress" | "completed" | "failed" | "cancelled";
 };
+
+/** @deprecated Use ChatTodo instead */
+export type ChatPlan = ChatTodo;
 
 export type ChatTodoStep = {
   id?: string;

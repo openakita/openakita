@@ -1,11 +1,15 @@
 """
-Plan 模式处理器
+Todo & Plan 工具处理器
 
-处理任务计划相关的工具：
+Todo 工具（Agent 模式下的任务执行跟踪）：
 - create_todo: 创建任务执行计划
 - update_todo_step: 更新步骤状态
 - get_todo_status: 获取计划执行状态
 - complete_todo: 完成计划
+
+Plan 模式工具（Plan 模式下的规划）：
+- create_plan_file: 创建 .plan.md 计划文件
+- exit_plan_mode: 退出 Plan 模式
 """
 
 import json
@@ -21,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ============================================
-# Session Plan 状态管理（模块级别）
+# Session Todo 状态管理（模块级别）
 # ============================================
 
 # 记录哪些 session 被标记为需要 Todo（compound 任务）
@@ -53,11 +57,11 @@ def register_active_todo(session_id: str, plan_id: str) -> None:
     logger.info(f"[Plan] Registered active todo {plan_id} for session {session_id}")
 
 
-def unregister_active_plan(session_id: str) -> None:
-    """注销活跃的 Plan"""
+def unregister_active_todo(session_id: str) -> None:
+    """注销活跃的 Todo"""
     if session_id in _session_active_todos:
-        plan_id = _session_active_todos.pop(session_id)
-        logger.info(f"[Plan] Unregistered plan {plan_id} for session {session_id}")
+        todo_id = _session_active_todos.pop(session_id)
+        logger.info(f"[Todo] Unregistered todo {todo_id} for session {session_id}")
     # 同时清除 todo_required 标记和 handler
     if session_id in _session_todo_required:
         del _session_todo_required[session_id]
@@ -65,8 +69,8 @@ def unregister_active_plan(session_id: str) -> None:
         del _session_handlers[session_id]
 
 
-def clear_session_plan_state(session_id: str) -> None:
-    """清除 session 的所有 Plan 状态（会话结束时调用）"""
+def clear_session_todo_state(session_id: str) -> None:
+    """清除 session 的所有 Todo 状态（会话结束时调用）"""
     _session_todo_required.pop(session_id, None)
     _session_active_todos.pop(session_id, None)
     _session_handlers.pop(session_id, None)
@@ -76,26 +80,26 @@ def clear_session_plan_state(session_id: str) -> None:
 _session_handlers: dict[str, "PlanHandler"] = {}
 
 
-def auto_close_plan(session_id: str) -> bool:
+def auto_close_todo(session_id: str) -> bool:
     """
-    自动关闭指定 session 的活跃 Plan（任务结束时调用）。
+    自动关闭指定 session 的活跃 Todo（任务结束时调用）。
 
     当一轮 ReAct 循环结束但 LLM 未显式调用 complete_todo 时，
-    此函数确保 Plan 被正确收尾：
-    - in_progress 步骤 → completed（已开始执行，视为完成）
-    - pending 步骤 → skipped（未执行到）
-    - Plan 状态设为 completed，保存并注销
+    此函数确保 Todo 被正确收尾：
+    - in_progress 步骤 -> completed（已开始执行，视为完成）
+    - pending 步骤 -> skipped（未执行到）
+    - Todo 状态设为 completed，保存并注销
 
     Returns:
-        True 如果有 Plan 被关闭，False 如果没有活跃 Plan
+        True 如果有 Todo 被关闭，False 如果没有活跃 Todo
     """
     if not has_active_todo(session_id):
         return False
 
-    handler = get_plan_handler_for_session(session_id)
+    handler = get_todo_handler_for_session(session_id)
     plan = handler.get_plan_for(session_id) if handler else None
     if not handler or not plan:
-        unregister_active_plan(session_id)
+        unregister_active_todo(session_id)
         return True
 
     steps = plan.get("steps", [])
@@ -118,37 +122,37 @@ def auto_close_plan(session_id: str) -> bool:
     if not plan.get("summary"):
         plan["summary"] = "任务结束，计划自动关闭"
 
-    handler._add_log("计划自动关闭（任务结束时未显式 complete_plan）", plan=plan)
+    handler._add_log("计划自动关闭（任务结束时未显式 complete_todo）", plan=plan)
     handler._save_plan_markdown(plan=plan)
-    handler._plans_by_session.pop(session_id, None)
-    if handler.current_plan is plan:
-        handler.current_plan = None
+    handler._todos_by_session.pop(session_id, None)
+    if handler.current_todo is plan:
+        handler.current_todo = None
 
     logger.info(
-        f"[Plan] Auto-closed plan for session {session_id}, "
+        f"[Todo] Auto-closed todo for session {session_id}, "
         f"auto_updated {auto_closed_count} steps"
     )
 
-    unregister_active_plan(session_id)
+    unregister_active_todo(session_id)
     return True
 
 
-def cancel_plan(session_id: str) -> bool:
+def cancel_todo(session_id: str) -> bool:
     """
-    用户主动取消时关闭活跃 Plan。
+    用户主动取消时关闭活跃 Todo。
 
-    与 auto_close_plan 不同，此函数将计划和未完成步骤标记为 cancelled。
+    与 auto_close_todo 不同，此函数将计划和未完成步骤标记为 cancelled。
 
     Returns:
-        True 如果有 Plan 被取消，False 如果没有活跃 Plan
+        True 如果有 Todo 被取消，False 如果没有活跃 Todo
     """
     if not has_active_todo(session_id):
         return False
 
-    handler = get_plan_handler_for_session(session_id)
+    handler = get_todo_handler_for_session(session_id)
     plan = handler.get_plan_for(session_id) if handler else None
     if not handler or not plan:
-        unregister_active_plan(session_id)
+        unregister_active_todo(session_id)
         return True
 
     steps = plan.get("steps", [])
@@ -167,12 +171,12 @@ def cancel_plan(session_id: str) -> bool:
 
     handler._add_log("计划被用户取消", plan=plan)
     handler._save_plan_markdown(plan=plan)
-    handler._plans_by_session.pop(session_id, None)
-    if handler.current_plan is plan:
-        handler.current_plan = None
+    handler._todos_by_session.pop(session_id, None)
+    if handler.current_todo is plan:
+        handler.current_todo = None
 
-    logger.info(f"[Plan] Cancelled plan for session {session_id}")
-    unregister_active_plan(session_id)
+    logger.info(f"[Todo] Cancelled todo for session {session_id}")
+    unregister_active_todo(session_id)
     return True
 
 
@@ -182,22 +186,33 @@ def register_plan_handler(session_id: str, handler: "PlanHandler") -> None:
     logger.debug(f"[Plan] Registered handler for session {session_id}")
 
 
-def get_plan_handler_for_session(session_id: str) -> Optional["PlanHandler"]:
+def get_todo_handler_for_session(session_id: str) -> Optional["PlanHandler"]:
     """获取 session 对应的 PlanHandler 实例"""
     return _session_handlers.get(session_id)
 
 
-def get_active_plan_prompt(session_id: str) -> str:
+def get_active_todo_prompt(session_id: str) -> str:
     """
-    获取 session 对应的活跃 Plan 提示词段落（注入 system_prompt 用）。
+    获取 session 对应的活跃 Todo 提示词段落（注入 system_prompt 用）。
 
     返回紧凑格式的计划摘要，包含所有步骤及其当前状态。
-    如果没有活跃 Plan 或 Plan 已完成，返回空字符串。
+    如果没有活跃 Todo 或 Todo 已完成，返回空字符串。
     """
-    handler = get_plan_handler_for_session(session_id)
+    handler = get_todo_handler_for_session(session_id)
     if handler:
         return handler.get_plan_prompt_section(conversation_id=session_id)
     return ""
+
+
+# Backward-compatible aliases (deprecated — use the *_todo variants)
+unregister_active_plan = unregister_active_todo
+clear_session_plan_state = clear_session_todo_state
+auto_close_plan = auto_close_todo
+cancel_plan = cancel_todo
+get_plan_handler_for_session = get_todo_handler_for_session
+get_active_plan_prompt = get_active_todo_prompt
+has_active_plan = has_active_todo
+register_active_plan = register_active_todo
 
 
 def should_require_todo(user_message: str) -> bool:
@@ -283,8 +298,8 @@ class PlanHandler:
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
-        self.current_plan: dict | None = None
-        self._plans_by_session: dict[str, dict] = {}
+        self.current_todo: dict | None = None
+        self._todos_by_session: dict[str, dict] = {}
         self.plan_dir = Path("data/plans")
         self.plan_dir.mkdir(parents=True, exist_ok=True)
 
@@ -295,29 +310,29 @@ class PlanHandler:
             or ""
         )
 
-    def _get_current_plan(self) -> dict | None:
-        """获取当前会话的 Plan（会话隔离）"""
+    def _get_current_todo(self) -> dict | None:
+        """获取当前会话的 Todo（会话隔离）"""
         cid = self._get_conversation_id()
         if cid:
-            return self._plans_by_session.get(cid)
-        return self.current_plan
+            return self._todos_by_session.get(cid)
+        return self.current_todo
 
-    def _set_current_plan(self, plan: dict | None) -> None:
-        """设置当前会话的 Plan（会话隔离）"""
+    def _set_current_todo(self, plan: dict | None) -> None:
+        """设置当前会话的 Todo（会话隔离）"""
         cid = self._get_conversation_id()
         if cid:
             if plan is not None:
-                self._plans_by_session[cid] = plan
+                self._todos_by_session[cid] = plan
             else:
-                self._plans_by_session.pop(cid, None)
+                self._todos_by_session.pop(cid, None)
         else:
-            self.current_plan = plan
+            self.current_todo = plan
 
     def get_plan_for(self, conversation_id: str) -> dict | None:
-        """按 conversation_id 获取 Plan（不依赖 agent state，供外部调用）"""
+        """按 conversation_id 获取 Todo（不依赖 agent state，供外部调用）"""
         if conversation_id:
-            return self._plans_by_session.get(conversation_id)
-        return self.current_plan
+            return self._todos_by_session.get(conversation_id)
+        return self.current_todo
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
@@ -338,7 +353,7 @@ class PlanHandler:
 
     async def _create_todo(self, params: dict) -> str:
         """创建任务计划"""
-        _plan = self._get_current_plan()
+        _plan = self._get_current_todo()
         if _plan and _plan.get("status") == "in_progress":
             plan_id = _plan["id"]
             status = self._get_status()
@@ -384,7 +399,7 @@ class PlanHandler:
             "completed_at": None,
             "logs": [],
         }
-        self._set_current_plan(_new_plan)
+        self._set_current_todo(_new_plan)
 
         conversation_id = self._get_conversation_id()
         if conversation_id:
@@ -423,7 +438,7 @@ class PlanHandler:
 
     async def _update_step(self, params: dict) -> str:
         """更新步骤状态"""
-        _plan = self._get_current_plan()
+        _plan = self._get_current_todo()
         if not _plan:
             return "❌ 当前没有活动的计划，请先调用 create_todo"
 
@@ -505,7 +520,7 @@ class PlanHandler:
 
     def _get_status(self) -> str:
         """获取计划状态"""
-        plan = self._get_current_plan()
+        plan = self._get_current_todo()
         if not plan:
             return "当前没有活动的计划"
         steps = plan["steps"]
@@ -545,7 +560,7 @@ class PlanHandler:
 
     async def _complete_todo(self, params: dict) -> str:
         """完成计划"""
-        _plan = self._get_current_plan()
+        _plan = self._get_current_todo()
         if not _plan:
             return "❌ 当前没有活动的计划"
 
@@ -588,11 +603,11 @@ class PlanHandler:
             logger.warning(f"Failed to emit complete progress: {e}")
 
         plan_id = _plan["id"]
-        self._set_current_plan(None)
+        self._set_current_todo(None)
 
         conversation_id = self._get_conversation_id()
         if conversation_id:
-            unregister_active_plan(conversation_id)
+            unregister_active_todo(conversation_id)
 
         return f"✅ 计划 {plan_id} 已完成\n\n{complete_message}"
 
@@ -667,7 +682,7 @@ class PlanHandler:
             "logs": [],
             "plan_file": str(plan_file),
         }
-        self._set_current_plan(_new_plan)
+        self._set_current_todo(_new_plan)
 
         conversation_id = self._get_conversation_id()
         if conversation_id:
@@ -684,9 +699,11 @@ class PlanHandler:
         )
 
     async def _exit_plan_mode(self, params: dict) -> str:
-        """退出 Plan 模式，通知系统规划已完成。
+        """Exit Plan mode — OpenCode-style mode switch.
 
-        这是一个信号工具：触发前端展示 Plan 审批 UI。
+        1. Emit SSE events to notify the frontend
+        2. Set a flag on the agent to signal mode switch to "agent"
+        3. Return a message asking the user to approve the plan
         """
         summary = params.get("summary", "规划完成")
 
@@ -705,27 +722,64 @@ class PlanHandler:
         except Exception as e:
             logger.warning(f"Failed to emit exit_plan_mode event: {e}")
 
-        # Emit SSE event for frontend
+        # Emit SSE event for frontend (plan approval UI)
+        conversation_id = self._get_conversation_id()
+        plan_id = ""
+        plan_file_path = ""
+        current = self._get_current_todo()
+        if current:
+            plan_id = current.get("id", "")
+            plan_file_path = current.get("plan_file", "")
+
         try:
             from ...api.routes.websocket import broadcast_event
-            conversation_id = self._get_conversation_id()
             await broadcast_event("plan:ready_for_approval", {
                 "conversation_id": conversation_id,
                 "summary": summary,
-                "plan_id": self._get_current_plan().get("id", "") if self._get_current_plan() else "",
+                "plan_id": plan_id,
+                "plan_file": plan_file_path,
             })
         except Exception:
             pass
 
+        # Signal the agent that Plan mode is done — next user message
+        # should switch to agent mode (OpenCode synthetic message pattern)
+        try:
+            pending_dict = getattr(self.agent, "_plan_exit_pending", None)
+            if isinstance(pending_dict, dict):
+                pending_dict[conversation_id] = {
+                    "summary": summary,
+                    "plan_id": plan_id,
+                    "plan_file": plan_file_path,
+                    "conversation_id": conversation_id,
+                }
+            else:
+                self.agent._plan_exit_pending = {
+                    conversation_id: {
+                        "summary": summary,
+                        "plan_id": plan_id,
+                        "plan_file": plan_file_path,
+                        "conversation_id": conversation_id,
+                    }
+                }
+            logger.info(
+                f"[Plan] exit_plan_mode: flagged for mode switch "
+                f"(conv={conversation_id}, plan_file={plan_file_path})"
+            )
+        except Exception as e:
+            logger.warning(f"[Plan] Failed to set _plan_exit_pending: {e}")
+
         return (
-            f"✅ Plan 模式已完成。\n\n"
+            f"✅ Plan completed.\n\n"
             f"{summary}\n\n"
-            f"请用户查看计划并决定是否执行。"
+            f"The plan is ready for user review. "
+            f"STOP HERE — do NOT attempt to execute the plan. "
+            f"Wait for user to approve or request changes."
         )
 
     def _format_plan_message(self) -> str:
         """格式化计划展示消息"""
-        plan = self._get_current_plan()
+        plan = self._get_current_todo()
         if not plan:
             return ""
         steps = plan["steps"]
@@ -758,7 +812,7 @@ class PlanHandler:
         Returns:
             紧凑格式的计划段落字符串；无活跃 Plan 或 Plan 已完成时返回空字符串。
         """
-        plan = self.get_plan_for(conversation_id) if conversation_id else self._get_current_plan()
+        plan = self.get_plan_for(conversation_id) if conversation_id else self._get_current_todo()
         if not plan or plan.get("status") == "completed":
             return ""
         steps = plan["steps"]
@@ -788,18 +842,30 @@ class PlanHandler:
                 result_hint = f" => FAIL: {step['result'][:300]}"
             lines.append(f"  [{icon}] {num}. {desc}{result_hint}")
 
+        plan_file = plan.get("plan_file", "")
+        if plan_file:
+            lines.append(f"Plan file: {plan_file}")
+
         lines.append("")
-        lines.append(
-            "IMPORTANT: This plan already exists. Do NOT call create_todo again. "
-            "Continue from the current step using update_todo_step."
-        )
+        if plan_file:
+            lines.append(
+                "IMPORTANT: This plan already exists as a plan file. "
+                "In Plan mode, you can modify the plan file using write_file. "
+                "In Agent mode, use update_todo_step to track execution progress. "
+                "Do NOT call create_todo or create_plan_file again."
+            )
+        else:
+            lines.append(
+                "IMPORTANT: This plan already exists. Do NOT call create_todo again. "
+                "Continue from the current step using update_todo_step."
+            )
 
         return "\n".join(lines)
 
     def _save_plan_markdown(self, plan: dict | None = None) -> None:
         """保存计划到 Markdown 文件（可传入显式 plan 引用避免依赖 agent state）"""
         if plan is None:
-            plan = self._get_current_plan()
+            plan = self._get_current_todo()
         if not plan:
             return
         plan_file = self.plan_dir / f"{plan['id']}.md"
@@ -847,7 +913,7 @@ class PlanHandler:
     def _add_log(self, message: str, plan: dict | None = None) -> None:
         """添加日志（可传入显式 plan 引用避免依赖 agent state）"""
         if plan is None:
-            plan = self._get_current_plan()
+            plan = self._get_current_todo()
         if plan:
             timestamp = datetime.now().strftime("%H:%M:%S")
             plan.setdefault("logs", []).append(f"[{timestamp}] {message}")

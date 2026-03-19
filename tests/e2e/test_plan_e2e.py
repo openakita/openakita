@@ -9,14 +9,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "fixtures"))
 from mock_llm import MockLLMClient, MockBrain
 
 from openakita.tools.handlers.plan import (
-    has_active_plan,
-    register_active_plan,
-    unregister_active_plan,
-    clear_session_plan_state,
-    cancel_plan,
+    has_active_todo,
+    register_active_todo,
+    unregister_active_todo,
+    clear_session_todo_state,
+    cancel_todo,
     register_plan_handler,
-    get_plan_handler_for_session,
-    get_active_plan_prompt,
+    get_todo_handler_for_session,
+    get_active_todo_prompt,
     should_require_todo,
 )
 
@@ -36,24 +36,23 @@ class TestPlanLifecycle:
 
     def test_create_todo_registers(self):
         sid = "lifecycle-1"
-        clear_session_plan_state(sid)
-        register_active_plan(sid, "plan-lc-1")
-        assert has_active_plan(sid) is True
+        clear_session_todo_state(sid)
+        register_active_todo(sid, "plan-lc-1")
+        assert has_active_todo(sid) is True
 
     def test_complete_todo_unregisters(self):
         sid = "lifecycle-2"
-        clear_session_plan_state(sid)
-        register_active_plan(sid, "plan-lc-2")
-        unregister_active_plan(sid)
-        assert has_active_plan(sid) is False
+        clear_session_todo_state(sid)
+        register_active_todo(sid, "plan-lc-2")
+        unregister_active_todo(sid)
+        assert has_active_todo(sid) is False
 
-    def test_cancel_active_plan(self):
+    def test_cancel_active_todo(self):
         sid = "lifecycle-3"
-        clear_session_plan_state(sid)
-        register_active_plan(sid, "plan-lc-3")
-        cancel_plan(sid)
-        # After cancel, plan should be inactive
-        assert has_active_plan(sid) is False
+        clear_session_todo_state(sid)
+        register_active_todo(sid, "plan-lc-3")
+        cancel_todo(sid)
+        assert has_active_todo(sid) is False
 
 
 class TestPlanWithHandler:
@@ -62,18 +61,18 @@ class TestPlanWithHandler:
     def test_register_and_retrieve_handler(self):
         from openakita.tools.handlers.plan import PlanHandler
         sid = "handler-test-1"
-        clear_session_plan_state(sid)
+        clear_session_todo_state(sid)
         agent = _make_mock_agent()
         handler = PlanHandler(agent)
         register_plan_handler(sid, handler)
-        retrieved = get_plan_handler_for_session(sid)
+        retrieved = get_todo_handler_for_session(sid)
         assert retrieved is handler
-        clear_session_plan_state(sid)
+        clear_session_todo_state(sid)
 
-    def test_plan_prompt_when_no_plan(self):
+    def test_todo_prompt_when_no_todo(self):
         sid = "prompt-test-1"
-        clear_session_plan_state(sid)
-        prompt = get_active_plan_prompt(sid)
+        clear_session_todo_state(sid)
+        prompt = get_active_todo_prompt(sid)
         assert isinstance(prompt, str)
 
 
@@ -96,20 +95,20 @@ class TestMultiSessionPlanIsolation:
 
     def test_two_sessions_independent(self):
         s1, s2 = "iso-session-1", "iso-session-2"
-        clear_session_plan_state(s1)
-        clear_session_plan_state(s2)
+        clear_session_todo_state(s1)
+        clear_session_todo_state(s2)
 
-        register_active_plan(s1, "plan-s1")
-        assert has_active_plan(s1) is True
-        assert has_active_plan(s2) is False
+        register_active_todo(s1, "plan-s1")
+        assert has_active_todo(s1) is True
+        assert has_active_todo(s2) is False
 
-        register_active_plan(s2, "plan-s2")
-        assert has_active_plan(s1) is True
-        assert has_active_plan(s2) is True
+        register_active_todo(s2, "plan-s2")
+        assert has_active_todo(s1) is True
+        assert has_active_todo(s2) is True
 
-        cancel_plan(s1)
-        assert has_active_plan(s1) is False
-        assert has_active_plan(s2) is True
+        cancel_todo(s1)
+        assert has_active_todo(s1) is False
+        assert has_active_todo(s2) is True
 
-        clear_session_plan_state(s1)
-        clear_session_plan_state(s2)
+        clear_session_todo_state(s1)
+        clear_session_todo_state(s2)

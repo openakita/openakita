@@ -108,16 +108,16 @@ class PlanValidator(BaseValidator):
 
     def validate(self, context: ValidationContext) -> ValidatorOutput:
         try:
-            from ..tools.handlers.plan import get_plan_handler_for_session, has_active_todo
+            from ..tools.handlers.plan import get_todo_handler_for_session, has_active_todo
 
             if not context.conversation_id or not has_active_todo(context.conversation_id):
                 return ValidatorOutput(
                     name=self.name,
                     result=ValidationResult.SKIP,
-                    reason="No active plan",
+                    reason="No active todo",
                 )
 
-            handler = get_plan_handler_for_session(context.conversation_id)
+            handler = get_todo_handler_for_session(context.conversation_id)
             plan = handler.get_plan_for(context.conversation_id) if handler else None
             if not plan:
                 return ValidatorOutput(

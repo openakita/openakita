@@ -75,6 +75,10 @@ class AgentProfile:
     # 首选 LLM 端点（为 None 或空字符串时使用全局优先级，不可用时自动回退）
     preferred_endpoint: str | None = None
 
+    # 权限规则集 (OpenCode 风格，空列表 = 全部允许)
+    # 格式: [{"permission": "edit", "pattern": "*", "action": "deny"}, ...]
+    permission_rules: list[dict[str, str]] = field(default_factory=list)
+
     # 元数据
     created_by: str = "system"
     created_at: str = ""
