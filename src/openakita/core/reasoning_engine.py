@@ -131,6 +131,20 @@ _SHELL_WRITE_PATTERNS = re.compile(
     r'|\bpip\s+install'
     r'|\bnpm\s+install'
     r'|\bgit\s+(?:commit|push|checkout|merge|rebase|reset)'
+    r'|\bOut-File\b'
+    r'|\bSet-Content\b'
+    r'|\bAdd-Content\b'
+    r'|\bNew-Item\b'
+    r'|\bRemove-Item\b'
+    r'|\bMove-Item\b'
+    r'|\bCopy-Item\b'
+    r'|\bRename-Item\b'
+    r'|\bInvoke-WebRequest\b.*-OutFile'
+    r'|\bdel\s'
+    r'|\bcopy\s'
+    r'|\bmove\s'
+    r'|\bren\s'
+    r'|\btype\s.*>'
     r')',
     re.IGNORECASE,
 )
