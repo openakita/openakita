@@ -368,7 +368,6 @@ async def list_channels(request: Request):
                     pair = (ch, cid)
                     if pair in seen:
                         continue
-                    seen.add(pair)
                     _add_or_merge({
                         "channel_id": ch,
                         "chat_id": cid,

@@ -57,7 +57,7 @@ export function Topbar({
   onCreateWorkspace,
   serviceRunning, endpointCount, dataMode, busy,
   onDisconnect, onConnect, onStart, onRefreshAll,
-  toggleTheme, themePrefState, isWeb, onLogout, webAccessUrl, apiBaseUrl,
+  onSetTheme, themePrefState, isWeb, onLogout, webAccessUrl, apiBaseUrl,
   onToggleMobileSidebar, serverName, onServerManager,
 }: TopbarProps) {
   const { t, i18n } = useTranslation();

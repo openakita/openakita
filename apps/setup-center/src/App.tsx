@@ -34,7 +34,7 @@ import type {
 import {
   IconCheckCircle, IconXCircle, IconInfo,
 } from "./icons";
-import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -97,8 +97,6 @@ interface EnvFieldCtx {
 }
 
 const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
-
-type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "modules" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "docs";
 
 const _HASH_TO_VIEW: Record<string, ViewId> = {
   "chat": "chat", "im": "im", "skills": "skills", "mcp": "mcp",
@@ -302,7 +300,6 @@ export function App() {
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const [multiAgentEnabled, setMultiAgentEnabled] = useState(false);
   const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
-
   // ── Hash-based deep link routing ──
   useEffect(() => {
     const onHashChange = () => {
@@ -954,25 +951,6 @@ export function App() {
     };
   }, []);
 
-  // module install progress events → feed into detail log
-  useEffect(() => {
-    let unlisten: null | (() => void) = null;
-    (async () => {
-      unlisten = await listen("module-install-progress", (ev) => {
-        const p = ev.payload as any;
-        if (!p || typeof p !== "object") return;
-        const msg = String(p.message || "");
-        const status = String(p.status || "");
-        const moduleId = String(p.moduleId || "");
-        if (msg) {
-          const prefix = status === "retrying" ? "🔄" : status === "error" ? "❌" : status === "done" ? "✅" : status === "warning" ? "⚠️" : status === "restart-hint" ? "🔁" : "📦";
-          setObDetailLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${prefix} [${moduleId}] ${msg}`]);
-        }
-      });
-    })();
-    return () => { if (unlisten) unlisten(); };
-  }, []);
-
   // tray quit failed: service still running
   useEffect(() => {
     let unlisten: null | (() => void) = null;
@@ -1006,14 +984,6 @@ export function App() {
         } else if (p.kind === "line") {
           const text = String(p.text || "");
           if (text) setInstallLiveLog((prev) => { const n = prev + text; return n.length > 80_000 ? n.slice(n.length - 80_000) : n; });
-        }
-      } else if (event === "module-install-progress") {
-        const msg = String(p.message || "");
-        const status = String(p.status || "");
-        const moduleId = String(p.moduleId || "");
-        if (msg) {
-          const prefix = status === "retrying" ? "🔄" : status === "error" ? "❌" : status === "done" ? "✅" : status === "warning" ? "⚠️" : status === "restart-hint" ? "🔁" : "📦";
-          setObDetailLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${prefix} [${moduleId}] ${msg}`]);
         }
       } else if (
         event === "service_status_changed" || event === "skills:changed" ||
@@ -2962,7 +2932,7 @@ export function App() {
           {/* ── Hallucination Guard ── */}
           <details className="group/hguard rounded-lg border border-border mt-2">
             <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/hguard:rotate-180 text-muted-foreground" />
+              <ChevronDown className="size-4 shrink-0 transition-transform group-open/hguard:rotate-180 text-muted-foreground" />
               {t("config.toolsHallucinationGuard")}
             </summary>
             <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
@@ -3014,7 +2984,6 @@ export function App() {
   }
 
   function renderAdvanced() {
-    return (
     return (
       <AdvancedView
         envDraft={envDraft}
@@ -4858,137 +4827,6 @@ export function App() {
             style={{ flex: 1, border: "none", width: "100%", height: "100%", borderRadius: 8, background: "var(--bg, #fff)" }}
             title={t("sidebar.docs")}
           />
-        </div>
-      );
-    }
-    if (view === "modules") {
-      return (
-        <div>
-          {_disableToggle("modules", "模块管理")}
-          {disabledViews.includes("modules") ? (
-            <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
-              <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，点击上方开关启用</p>
-            </div>
-          ) : (
-        <div className="card">
-          <h2 className="cardTitle">{t("modules.title")}</h2>
-          <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>{t("modules.desc")}</p>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16, padding: "10px 14px", background: "var(--warn-bg, #fffbeb)", borderRadius: 8, border: "1px solid var(--warn-border, #fde68a)", fontSize: 13, color: "var(--warn, #92400e)", lineHeight: 1.6 }}>
-            <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>⚠️</span>
-            <span>{t("modules.legacyNotice")}</span>
-          </div>
-          {moduleUninstallPending && currentWorkspaceId && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "10px 12px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>
-              <span style={{ flex: 1, fontSize: 13 }}>{t("modules.uninstallFailInUse")}</span>
-              <button
-                type="button"
-                className="btnPrimary btnSmall"
-                disabled={!!busy}
-                onClick={async () => {
-                  const { id, name } = moduleUninstallPending;
-                  if (!IS_TAURI) { notifyError("模块管理仅限桌面端"); return; }
-                  const _b = notifyLoading(t("status.stopping"));
-                  try {
-                    const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_stop", { workspaceId: currentWorkspaceId });
-                    setServiceStatus(ss);
-                    await new Promise((r) => setTimeout(r, 1500));
-                    await invoke("uninstall_module", { moduleId: id });
-                    notifySuccess(t("modules.uninstalled", { name }));
-                    setModuleUninstallPending(null);
-                    obLoadModules();
-                  } catch (e) {
-                    notifyError(String(e));
-                  } finally {
-                    dismissLoading(_b);
-                  }
-                }}
-              >
-                {t("modules.stopAndUninstall")}
-              </button>
-              <button type="button" className="btnSmall" onClick={() => { setModuleUninstallPending(null); }}>{t("common.cancel")}</button>
-            </div>
-          )}
-          <div className="obModuleList">
-            {obModules.map((m) => (
-              <div key={m.id} className={`obModuleItem ${m.installed || m.bundled ? "obModuleInstalled" : ""}`}>
-                <div className="obModuleInfo" style={{ flex: 1 }}>
-                  <strong>{m.name}</strong>
-                  <span className="obModuleDesc">{m.description}</span>
-                  <span className="obModuleSize">~{m.sizeMb} MB</span>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {(m.installed || m.bundled) ? (
-                    <>
-                      <span className="obModuleBadge">{t("modules.installed")}</span>
-                      <button
-                        className="btnSmall"
-                        style={{ color: "#ef4444" }}
-                        onClick={async () => {
-                          if (!IS_TAURI) return;
-                          const doUninstall = async () => {
-                            await invoke("uninstall_module", { moduleId: m.id });
-                            notifySuccess(t("modules.uninstalled", { name: m.name }));
-                            obLoadModules();
-                            if (serviceStatus?.running) {
-                              setModuleRestartPrompt(m.name);
-                            }
-                          };
-                          const _b = notifyLoading(t("modules.uninstalling", { name: m.name }));
-                          try {
-                            await doUninstall();
-                          } catch (e) {
-                            const msg = String(e);
-                            const isAccessDenied = /拒绝访问|Access denied|os error 5/i.test(msg);
-                            if (isAccessDenied && serviceStatus?.running && currentWorkspaceId) {
-                              notifyError(t("modules.uninstallFailInUse"));
-                              setModuleUninstallPending({ id: m.id, name: m.name });
-                              return;
-                            }
-                            notifyError(msg);
-                          } finally {
-                            dismissLoading(_b);
-                          }
-                        }}
-                        disabled={m.bundled || !!busy}
-                        title={m.bundled ? t("modules.bundledCannotUninstall") : t("modules.uninstall")}
-                      >
-                        {t("modules.uninstall")}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="btnPrimary btnSmall"
-                      onClick={async () => {
-                        if (!IS_TAURI) return;
-                        const _b = notifyLoading(t("modules.installing", { name: m.name }));
-                        try {
-                          await invoke("install_module", { moduleId: m.id, mirror: null });
-                          notifySuccess(t("modules.installSuccess", { name: m.name }));
-                          obLoadModules();
-                          if (serviceStatus?.running) {
-                            setModuleRestartPrompt(m.name);
-                          }
-                        } catch (e) {
-                          notifyError(String(e));
-                        } finally {
-                          dismissLoading(_b);
-                        }
-                      }}
-                      disabled={!!busy}
-                    >
-                      {t("modules.install")}
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-            {obModules.length === 0 && <p style={{ color: "#94a3b8" }}>{t("modules.loading")}</p>}
-          </div>
-          <button className="btnSmall" style={{ marginTop: 16 }} onClick={obLoadModules} disabled={!!busy}>
-            {t("modules.refresh")}
-          </button>
-        </div>
-          )}
         </div>
       );
     }
