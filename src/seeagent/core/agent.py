@@ -62,6 +62,7 @@ from ..tools.handlers.sticker import create_handler as create_sticker_handler
 from ..tools.handlers.system import create_handler as create_system_handler
 from ..tools.handlers.agent import create_handler as create_agent_tool_handler
 from ..tools.handlers.agent_hub import create_handler as create_agent_hub_handler
+from ..bestpractice.facade import init_bp_system, get_bp_handler
 from ..tools.handlers.agent_package import create_handler as create_agent_package_handler
 from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
@@ -1081,6 +1082,25 @@ class Agent:
                 create_agent_tool_handler(self),
                 ["delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent"],
             )
+
+        # Best Practice tools (conditional: only if best_practice/ directory exists)
+        try:
+            if init_bp_system():
+                bp_handler = get_bp_handler()
+                if bp_handler:
+                    from ..bestpractice.tool_definitions import get_bp_tool_names
+                    agent_ref = self
+
+                    async def _bp_handle(tool_name: str, params: dict) -> str:
+                        return await bp_handler.handle(tool_name, params, agent_ref)
+
+                    self.handler_registry.register(
+                        "bestpractice",
+                        _bp_handle,
+                        get_bp_tool_names(),
+                    )
+        except Exception as e:
+            logger.debug(f"[BP] Best Practice handler not loaded: {e}")
 
         logger.info(
             f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools"

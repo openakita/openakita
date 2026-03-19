@@ -112,6 +112,9 @@ class PromptAssembler:
         # 核心原则
         core_principles = self._build_core_principles()
 
+        # Best Practice 状态注入
+        bp_section = self._build_bp_section(task_description)
+
         return f"""{base_prompt}
 
 {system_info}
@@ -125,6 +128,7 @@ class PromptAssembler:
 {tools_guide}
 
 {core_principles}
+{bp_section}
 {profile_prompt}"""
 
     async def build_system_prompt_compiled(
@@ -413,3 +417,22 @@ class PromptAssembler:
 ### 记忆使用原则
 **上下文优先**：当前对话内容永远优先于记忆中的信息。不要让记忆主导对话。
 """
+
+    def _build_bp_section(self, task_description: str = "") -> str:
+        """构建 Best Practice 系统提示词段（静态 + 动态）。"""
+        try:
+            from ..bestpractice.facade import get_static_prompt_section, get_dynamic_prompt_section
+            static = get_static_prompt_section()
+            if not static:
+                return ""
+            # 动态段需要 session_id — 从 brain 获取
+            session_id = ""
+            if hasattr(self, "_brain") and self._brain:
+                session_id = getattr(self._brain, "_current_session_id", "")
+            dynamic = get_dynamic_prompt_section(session_id) if session_id else ""
+            parts = [static]
+            if dynamic:
+                parts.append(dynamic)
+            return "\n\n".join(parts)
+        except Exception:
+            return ""
