@@ -196,31 +196,14 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str = Field(default="", description="GitHub Token")
 
-    # === 备用 LLM 端点配置 ===
-    # Kimi (月之暗面 Moonshot AI) - 备用端点 1
-    kimi_api_key: str = Field(default="", description="Kimi API Key")
-    kimi_base_url: str = Field(default="https://api.moonshot.cn/v1", description="Kimi API URL")
-    kimi_model: str = Field(default="kimi-k2-0711-preview", description="Kimi 模型")
-
-    # DashScope (阿里云通义) - 备用端点 2
+    # DashScope API Key (used by image generation tool)
     dashscope_api_key: str = Field(default="", description="DashScope API Key")
-    dashscope_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="DashScope API URL"
-    )
-    dashscope_model: str = Field(default="qwen3-max", description="DashScope 模型")
 
     # DashScope 图像生成 (Qwen-Image) - 同一 Key，不同接口
     dashscope_image_api_url: str = Field(
         default="https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
         description="DashScope Qwen-Image 同步接口 URL（默认北京地域）",
     )
-
-    # MiniMax - 备用端点 3
-    minimax_api_key: str = Field(default="", description="MiniMax API Key")
-    minimax_base_url: str = Field(
-        default="https://api.minimaxi.com/v1", description="MiniMax API URL（OpenAI 兼容）"
-    )
-    minimax_model: str = Field(default="MiniMax-M2.1", description="MiniMax 模型")
 
     # === MCP 配置 ===
     mcp_enabled: bool = Field(default=True, description="是否启用 MCP (Model Context Protocol)")
