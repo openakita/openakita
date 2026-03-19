@@ -290,6 +290,7 @@ def build_system_prompt(
         mcp_catalog=mcp_catalog,
         budget_tokens=budget_config.catalogs_budget,
         include_tools_guide=include_tools_guide,
+        mode=mode,
     )
     if catalogs_section:
         tool_parts.append(catalogs_section)
@@ -896,6 +897,7 @@ def _build_catalogs_section(
     mcp_catalog: Optional["MCPCatalog"],
     budget_tokens: int,
     include_tools_guide: bool = False,
+    mode: str = "agent",
 ) -> str:
     """构建 Catalogs 层（工具/技能/MCP 清单）"""
     parts = []
@@ -905,6 +907,14 @@ def _build_catalogs_section(
     # LLM tools 参数直接注入完整 schema，文本清单默认排除以节省 token
     if tool_catalog:
         tools_text = tool_catalog.get_catalog()  # exclude_high_freq=True by default
+        # Plan/Ask 模式下，给工具清单加"仅供参考"标注，避免 LLM 误调不可用工具
+        if mode in ("plan", "ask"):
+            mode_note = (
+                "\n> ⚠️ **当前为 {} 模式** — 以下工具清单仅供规划参考。\n"
+                "> 你只能调用工具列表（tools）中实际提供给你的工具。\n"
+                "> 如果某个工具不在你的可调用列表中，不要尝试调用它。\n"
+            ).format("Plan" if mode == "plan" else "Ask")
+            tools_text = mode_note + tools_text
         tools_result = apply_budget(tools_text, budget_tokens // 3, "tools")
         parts.append(tools_result.content)
 
