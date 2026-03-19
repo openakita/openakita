@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from .models import TriggerType
+
 if TYPE_CHECKING:
     from .config_loader import BPConfigLoader
     from .context_bridge import ContextBridge
@@ -167,9 +169,9 @@ def get_static_prompt_section() -> str:
     for bp_id, config in configs.items():
         triggers_desc = ""
         for t in config.triggers:
-            if t.type.value == "command":
+            if t.type == TriggerType.COMMAND:
                 triggers_desc += f" (命令: \"{t.pattern}\")"
-            elif t.type.value == "context":
+            elif t.type == TriggerType.CONTEXT:
                 triggers_desc += f" (关键词: {', '.join(t.conditions)})"
 
         subtask_names = " → ".join(s.name for s in config.subtasks)
