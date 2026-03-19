@@ -24,6 +24,7 @@ import { AgentSystemView } from "./views/AgentSystemView";
 import { AgentStoreView } from "./views/AgentStoreView";
 import { SkillStoreView } from "./views/SkillStoreView";
 import SecurityView from "./views/SecurityView";
+import { PetView } from "./views/PetView";
 import type {
   EndpointSummary as EndpointSummaryType,
   PlatformInfo, WorkspaceSummary, ProviderInfo, ListedModel,
@@ -152,6 +153,10 @@ function _viewToHash(view: string, stepId?: string): string {
 }
 
 export function App() {
+  if (window.location.pathname === '/pet') {
+    return <PetView />;
+  }
+
   const { t, i18n } = useTranslation();
 
   // ── Web / Capacitor auth gate ──
@@ -5929,6 +5934,16 @@ export function App() {
               {FB({ k: "DESKTOP_NOTIFY_ENABLED", label: t("config.agentDesktopNotifyEnable"), help: t("config.agentDesktopNotifyEnableHelp") })}
               {FB({ k: "DESKTOP_NOTIFY_SOUND", label: t("config.agentDesktopNotifySound"), help: t("config.agentDesktopNotifySoundHelp") })}
             </div>
+            {/* Desktop pet feature hidden - needs proper Live2D model
+            <div style={{ marginTop: 12 }}>
+              <Button variant="outline" size="sm" onClick={() => invoke("toggle_pet_window", { show: true }).catch(e => notifyError(String(e)))}>
+                显示桌面宠物
+              </Button>
+              <Button variant="outline" size="sm" style={{ marginLeft: 8 }} onClick={() => invoke("toggle_pet_window", { show: false }).catch(e => notifyError(String(e)))}>
+                隐藏桌面宠物
+              </Button>
+            </div>
+            */}
           </Section>
 
           <Section title={t("config.agentSessionSection")} className="mt-2">

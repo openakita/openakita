@@ -62,6 +62,23 @@ fn get_platform_info() -> PlatformInfo {
     }
 }
 
+#[tauri::command]
+fn toggle_pet_window(app_handle: tauri::AppHandle, show: bool) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("pet_window") {
+        if show {
+            window.show().map_err(|e| e.to_string())?;
+        } else {
+            window.hide().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn start_dragging(window: tauri::Window) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceSummary {
@@ -2677,6 +2694,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_platform_info,
+            toggle_pet_window,
             get_root_dir_info,
             set_custom_root_dir,
             preflight_migrate_root,
@@ -2749,7 +2767,8 @@ fn main() {
             save_log_export,
             register_cli,
             unregister_cli,
-            get_cli_status
+            get_cli_status,
+            start_dragging
         ])
         .build(tauri::generate_context!())
     {

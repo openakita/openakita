@@ -343,7 +343,7 @@ class Organization:
     scaling_approval: str = "user"
 
     # Notifications
-    notify_enabled: bool = False
+    notify_enabled: bool = True
     notify_channel: str | None = None
     notify_webhook_url: str | None = None
     notify_im_channel: str | None = None

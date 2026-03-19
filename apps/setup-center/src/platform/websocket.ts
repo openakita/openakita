@@ -1,5 +1,5 @@
 // ─── WebSocket Event Client ───
-// Replaces Tauri listen() events in web mode.
+// Works in both Web and Tauri modes.
 // Auto-reconnects on disconnect with exponential backoff.
 
 import { IS_TAURI, IS_CAPACITOR } from "./detect";
@@ -28,6 +28,9 @@ function getWsUrl(): string {
     const url = new URL(server.url);
     host = url.host;
     proto = url.protocol === "https:" ? "wss:" : "ws:";
+  } else if (IS_TAURI) {
+    host = "127.0.0.1:8000";
+    proto = "ws:";
   } else {
     const loc = window.location;
     host = loc.host;
@@ -108,11 +111,9 @@ function _scheduleReconnect(): void {
 
 /**
  * Subscribe to all WebSocket events. Returns unsubscribe function.
- * In Tauri mode this is a no-op (Tauri events are used instead).
+ * Works in both Web and Tauri modes.
  */
 export function onWsEvent(handler: WsEventHandler): () => void {
-  if (IS_TAURI) return () => {};
-
   _handlers.push(handler);
   // Ensure connection is started
   if (!_ws && !_reconnectTimer) {
@@ -147,7 +148,6 @@ export function disconnectWs(): void {
  * Resets backoff and attempts counter. No-op if no handlers are registered.
  */
 export function reconnectWsNow(): void {
-  if (IS_TAURI) return;
   _intentionallyClosed = false;
   if (_reconnectTimer) {
     clearTimeout(_reconnectTimer);

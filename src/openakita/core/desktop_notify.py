@@ -29,7 +29,22 @@ def _notify_windows(title: str, body: str, sound: bool = True) -> bool:
     safe_title = title.replace('"', '`"').replace("'", "''")
     safe_body = body.replace('"', '`"').replace("'", "''")
 
+    # 获取 Logo 路径
+    logo_xml = ""
+    try:
+        from ..config import settings
+        logo_path = settings.project_root / "docs" / "assets" / "logo.png"
+        if logo_path.exists():
+            logo_uri = f"file:///{logo_path.as_posix()}"
+            logo_xml = f'<image placement="appLogoOverride" src="{logo_uri}"/>'
+    except Exception:
+        pass
+
     ps_script = f"""
+$aumid = 'com.openakita.setupcenter'
+$rp = "HKCU:\\SOFTWARE\\Classes\\AppUserModelId\\$aumid"
+if (!(Test-Path $rp)) {{ New-Item $rp -Force | Out-Null; Set-ItemProperty $rp -Name DisplayName -Value 'OpenAkita Desktop' }}
+
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
 
@@ -39,6 +54,7 @@ $template = @"
     <binding template="ToastGeneric">
       <text>{safe_title}</text>
       <text>{safe_body}</text>
+      {logo_xml}
     </binding>
   </visual>
   {sound_xml}
@@ -48,7 +64,7 @@ $template = @"
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
 $xml.LoadXml($template)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("OpenAkita").Show($toast)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($toast)
 """
     try:
         result = subprocess.run(

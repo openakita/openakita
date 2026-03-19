@@ -59,6 +59,20 @@
         "minWidth": 800,
         "minHeight": 600,
         "resizable": true
+      },
+      {
+        "label": "pet_window",
+        "title": "OpenAkita Pet",
+        "url": "/pet",
+        "width": 200,
+        "height": 250,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "closable": false
       }
     ]
   }

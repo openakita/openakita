@@ -20,6 +20,7 @@ import "./i18n";
 import "./globals.css";
 import "./styles.css";
 import { App } from "./App";
+import { PetView } from "./views/PetView";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initTheme } from "./theme";
 import { logger } from "./platform/logger";
@@ -340,9 +341,13 @@ if ("serviceWorker" in navigator && __BUILD_TARGET__ === "web") {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
-      <TooltipProvider>
-        <App />
-      </TooltipProvider>
+      {window.location.pathname === "/pet" ? (
+        <PetView />
+      ) : (
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
+      )}
     </GlobalErrorBoundary>
   </React.StrictMode>,
 );
