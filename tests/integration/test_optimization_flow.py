@@ -171,7 +171,7 @@ risks_or_ambiguities: []
 tool_hints: [File System, Shell, Web Search]
 memory_keywords: []"""
         result = _parse_intent_output(raw, "帮我做一个完整的项目")
-        assert result.plan_required is True
+        assert result.todo_required is True
         assert len(result.tool_hints) == 3
 
     def test_parse_empty_output_fallback(self):
@@ -613,7 +613,7 @@ class TestEndToEndIntentToPompt:
         assert force_tool_retries == 0
 
     async def test_compound_task_requires_plan(self):
-        """Compound tasks should trigger plan_required."""
+        """Compound tasks should trigger todo_required."""
         raw = """intent: task
 task_type: compound
 goal: 多步骤项目
@@ -626,7 +626,7 @@ risks_or_ambiguities: []
 tool_hints: [File System, Shell, Web Search]
 memory_keywords: []"""
         result = _parse_intent_output(raw, "帮我做个完整项目")
-        assert result.plan_required is True
+        assert result.todo_required is True
         assert result.intent == IntentType.TASK
         assert len(result.tool_hints) == 3
 

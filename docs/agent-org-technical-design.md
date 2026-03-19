@@ -169,7 +169,7 @@ DORMANT ──start──> ACTIVE <──complete── RUNNING
 | research | web_search, deep_research, web_browse |
 | browser | browser_navigate, browser_screenshot, browser_input, browser_scroll |
 | code | execute_code |
-| planning | create_plan, update_plan_step, complete_plan, get_plan_status |
+| planning | create_todo, update_todo_step, complete_todo, get_todo_status |
 | memory | search_memory, save_to_memory |
 | mcp | call_mcp_tool, list_mcp_tools |
 | file | read_file, write_file, list_files |

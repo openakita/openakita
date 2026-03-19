@@ -65,7 +65,7 @@ _ASK_MODE_WHITELIST = {
     "get_tool_info", "get_skill_info", "list_skills",
     "list_mcp_servers", "get_mcp_instructions",
     # Plan (read-only)
-    "get_plan_status",
+    "get_todo_status",
     # System (read-only + interaction)
     "ask_user", "get_workspace_map", "get_session_logs",
     # Web search (read-only, useful for research)
@@ -78,9 +78,9 @@ _ASK_MODE_WHITELIST = {
     "get_user_profile", "get_persona_profile",
 }
 
-# Plan mode: read-only + plan document tools (NOT the old create_plan/update_plan_step execution tools)
+# Plan mode: read-only + plan document tools (NOT the old create_todo/update_todo_step execution tools)
 _PLAN_MODE_WHITELIST = _ASK_MODE_WHITELIST | {
-    "create_plan_file", "exit_plan_mode", "get_plan_status",
+    "create_plan_file", "exit_plan_mode", "get_todo_status",
 }
 
 
@@ -1632,7 +1632,7 @@ class ReasoningEngine:
         - {"type": "thinking_start"} / {"type": "thinking_delta"} / {"type": "thinking_end"}
         - {"type": "text_delta", "content": "..."}
         - {"type": "tool_call_start"} / {"type": "tool_call_end"}
-        - {"type": "plan_created"} / {"type": "plan_step_updated"}
+        - {"type": "todo_created"} / {"type": "todo_step_updated"}
         - {"type": "ask_user", "question": "..."}
         - {"type": "error", "message": "..."}
         - {"type": "done"}
@@ -2474,7 +2474,7 @@ class ReasoningEngine:
                                 pass
 
                         # Plan 事件
-                        if tool_name == "create_plan" and isinstance(tool_args, dict):
+                        if tool_name == "create_todo" and isinstance(tool_args, dict):
                             raw_steps = tool_args.get("steps", [])
                             plan_steps = []
                             for idx, s in enumerate(raw_steps):
@@ -2486,17 +2486,17 @@ class ReasoningEngine:
                                     })
                                 else:
                                     plan_steps.append({"id": f"step_{idx + 1}", "description": str(s), "status": "pending"})
-                            yield {"type": "plan_created", "plan": {
+                            yield {"type": "todo_created", "plan": {
                                 "id": str(uuid.uuid4()),
                                 "taskSummary": tool_args.get("task_summary", ""),
                                 "steps": plan_steps,
                                 "status": "in_progress",
                             }}
-                        elif tool_name == "update_plan_step" and isinstance(tool_args, dict):
+                        elif tool_name == "update_todo_step" and isinstance(tool_args, dict):
                             step_id = tool_args.get("step_id", "")
-                            yield {"type": "plan_step_updated", "stepId": step_id, "status": tool_args.get("status", "completed")}
-                        elif tool_name == "complete_plan":
-                            yield {"type": "plan_completed"}
+                            yield {"type": "todo_step_updated", "stepId": step_id, "status": tool_args.get("status", "completed")}
+                        elif tool_name == "complete_todo":
+                            yield {"type": "todo_completed"}
 
                         tool_results_for_msg.append({
                             "type": "tool_result",
@@ -2744,10 +2744,10 @@ class ReasoningEngine:
                 return f"访问 {url}..."
             case "browser_screenshot":
                 return "截取页面截图..."
-            case "create_plan":
+            case "create_todo":
                 summary = str(args.get("task_summary") or "")[:40]
                 return f"制定计划: {summary}..."
-            case "update_plan_step":
+            case "update_todo_step":
                 idx = args.get("step_index", "")
                 status = args.get("status", "")
                 return f"更新计划步骤 {idx} → {status}"
@@ -3858,8 +3858,8 @@ class ReasoningEngine:
         """计算有效 ForceToolCall 重试次数"""
         retries = base_retries
         try:
-            from ..tools.handlers.plan import has_active_plan, is_plan_required
-            if conversation_id and (has_active_plan(conversation_id) or is_plan_required(conversation_id)):
+            from ..tools.handlers.plan import has_active_todo, is_todo_required
+            if conversation_id and (has_active_todo(conversation_id) or is_todo_required(conversation_id)):
                 retries = max(retries, 1)
         except Exception:
             pass
@@ -3869,8 +3869,8 @@ class ReasoningEngine:
     def _has_active_plan_pending(conversation_id: str | None) -> bool:
         """检查是否有活跃 Plan 且有未完成步骤"""
         try:
-            from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan
-            if conversation_id and has_active_plan(conversation_id):
+            from ..tools.handlers.plan import get_plan_handler_for_session, has_active_todo
+            if conversation_id and has_active_todo(conversation_id):
                 handler = get_plan_handler_for_session(conversation_id)
                 plan = handler.get_plan_for(conversation_id) if handler else None
                 if plan:

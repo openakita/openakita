@@ -1893,9 +1893,9 @@ button.btnApplyRestart:hover {
   color: var(--text);
 }
 
-/* ─── Floating Plan Bar (above input) ─── */
+/* ─── Floating Todo Bar (above input) ─── */
 
-.floatingPlanBar {
+.floatingTodoBar {
   margin: 0 16px;
   border: 1px solid var(--nav-active-border);
   border-bottom: none;
@@ -1905,7 +1905,7 @@ button.btnApplyRestart:hover {
   transition: all 0.2s;
 }
 
-.floatingPlanHeader {
+.floatingTodoHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1915,11 +1915,11 @@ button.btnApplyRestart:hover {
   transition: background 0.15s;
 }
 
-.floatingPlanHeader:hover {
+.floatingTodoHeader:hover {
   background: var(--nav-active);
 }
 
-.floatingPlanHeaderLeft {
+.floatingTodoHeaderLeft {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1927,7 +1927,7 @@ button.btnApplyRestart:hover {
   flex: 1;
 }
 
-.floatingPlanTitle {
+.floatingTodoTitle {
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
@@ -1935,40 +1935,40 @@ button.btnApplyRestart:hover {
   text-overflow: ellipsis;
 }
 
-.floatingPlanHeaderRight {
+.floatingTodoHeaderRight {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
 }
 
-.floatingPlanProgress {
+.floatingTodoProgress {
   font-size: 11px;
   font-weight: 600;
   opacity: 0.5;
 }
 
-.floatingPlanChevron {
+.floatingTodoChevron {
   display: inline-flex;
   align-items: center;
   opacity: 0.4;
   transition: transform 0.2s;
 }
 
-.floatingPlanProgressBar {
+.floatingTodoProgressBar {
   height: 3px;
   background: rgba(37, 99, 235, 0.1);
   overflow: hidden;
 }
 
-.floatingPlanProgressFill {
+.floatingTodoProgressFill {
   height: 100%;
   background: var(--brand);
   border-radius: 2px;
   transition: width 0.4s ease;
 }
 
-.floatingPlanActive {
+.floatingTodoActive {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1977,27 +1977,27 @@ button.btnApplyRestart:hover {
   color: var(--brand);
 }
 
-.floatingPlanActiveIcon {
+.floatingTodoActiveIcon {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
 }
 
-.floatingPlanActiveText {
+.floatingTodoActiveText {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.floatingPlanDone {
+.floatingTodoDone {
   color: rgba(16, 185, 129, 1);
 }
 
-.floatingPlanSteps {
+.floatingTodoSteps {
   padding: 4px 12px 8px;
 }
 
-.floatingPlanStepRow {
+.floatingTodoStepRow {
   display: flex;
   align-items: flex-start;
   gap: 6px;
@@ -2007,12 +2007,12 @@ button.btnApplyRestart:hover {
   border-radius: 4px;
 }
 
-.floatingPlanStepActive {
+.floatingTodoStepActive {
   color: var(--brand);
   font-weight: 600;
 }
 
-.floatingPlanStepIcon {
+.floatingTodoStepIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2021,12 +2021,12 @@ button.btnApplyRestart:hover {
   padding-top: 1px;
 }
 
-.floatingPlanStepContent {
+.floatingTodoStepContent {
   flex: 1;
   min-width: 0;
 }
 
-.floatingPlanStepResult {
+.floatingTodoStepResult {
   font-size: 11px;
   opacity: 0.5;
   margin-top: 1px;

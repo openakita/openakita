@@ -221,11 +221,11 @@ export type ChatToolCall = {
 export type ChatPlan = {
   id: string;
   taskSummary: string;
-  steps: ChatPlanStep[];
+  steps: ChatTodoStep[];
   status: "in_progress" | "completed" | "failed" | "cancelled";
 };
 
-export type ChatPlanStep = {
+export type ChatTodoStep = {
   id?: string;
   description: string;
   status: "pending" | "in_progress" | "completed" | "skipped" | "failed" | "cancelled";

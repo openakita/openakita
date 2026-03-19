@@ -1,7 +1,7 @@
 interface:
-  display_name: Complete Plan
+  display_name: Complete Todo
   short_description: Mark the plan as completed and generate a summary report
-  default_prompt: Use $complete-plan
+  default_prompt: Use $complete-todo
 i18n:
   zh:
     name: 完成计划

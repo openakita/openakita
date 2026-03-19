@@ -17,7 +17,7 @@ import type {
   ConversationStatus,
   ChatToolCall,
   ChatPlan,
-  ChatPlanStep,
+  ChatTodoStep,
   ChatAskUser,
   ChatAskQuestion,
   ChatAttachment,
@@ -272,10 +272,10 @@ type StreamEvent =
   | { type: "text"; content?: string; text?: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
   | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean }
-  | { type: "plan_created"; plan: ChatPlan }
-  | { type: "plan_step_updated"; stepId?: string; stepIdx?: number; status: string }
-  | { type: "plan_completed" }
-  | { type: "plan_cancelled" }
+  | { type: "todo_created"; plan: ChatPlan }
+  | { type: "todo_step_updated"; stepId?: string; stepIdx?: number; status: string }
+  | { type: "todo_completed" }
+  | { type: "todo_cancelled" }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "user_insert"; content: string }
   | { type: "agent_switch"; agentName: string; reason: string }
@@ -305,10 +305,10 @@ function formatToolDescription(tool: string, args: Record<string, unknown>): str
       return `Searched: "${String(args.query || "").slice(0, 50)}"`;
     case "execute_code": case "run_code":
       return "Executed code";
-    case "create_plan":
-      return `Created plan: ${String(args.task_summary || "").slice(0, 40)}`;
-    case "update_plan_step":
-      return `Updated plan step ${args.step_index ?? ""}`;
+    case "create_todo":
+      return `Created todo: ${String(args.task_summary || "").slice(0, 40)}`;
+    case "update_todo_step":
+      return `Updated todo step ${args.step_index ?? ""}`;
     case "write_file":
       return `Wrote ${basename(String(args.path || ""))}`;
     case "edit_file":
@@ -671,47 +671,47 @@ function FloatingPlanBar({ plan }: { plan: ChatPlan }) {
     : null;
 
   return (
-    <div className="floatingPlanBar">
+    <div className="floatingTodoBar">
       {/* 折叠头部：可点击展开 */}
-      <div className="floatingPlanHeader" onClick={() => setExpanded((v) => !v)}>
-        <div className="floatingPlanHeaderLeft">
+      <div className="floatingTodoHeader" onClick={() => setExpanded((v) => !v)}>
+        <div className="floatingTodoHeaderLeft">
           <IconClipboard size={14} style={{ opacity: 0.6 }} />
-          <span className="floatingPlanTitle">
+          <span className="floatingTodoTitle">
             {typeof plan.taskSummary === "string" ? plan.taskSummary : JSON.stringify(plan.taskSummary)}
           </span>
         </div>
-        <div className="floatingPlanHeaderRight">
-          <span className="floatingPlanProgress">{completed}/{total}</span>
-          <span className="floatingPlanChevron" style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>
+        <div className="floatingTodoHeaderRight">
+          <span className="floatingTodoProgress">{completed}/{total}</span>
+          <span className="floatingTodoChevron" style={{ transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}>
             <IconChevronDown size={14} />
           </span>
         </div>
       </div>
 
       {/* 进度条 */}
-      <div className="floatingPlanProgressBar">
-        <div className="floatingPlanProgressFill" style={{ width: `${pct}%` }} />
+      <div className="floatingTodoProgressBar">
+        <div className="floatingTodoProgressFill" style={{ width: `${pct}%` }} />
       </div>
 
       {/* 折叠态：只显示当前活跃步骤 */}
       {!expanded && activeStep && !allDone && (
-        <div className="floatingPlanActive">
-          <span className="floatingPlanActiveIcon"><IconPlay size={11} /></span>
-          <span className="floatingPlanActiveText">{activeIdx + 1}/{total} {activeDesc}</span>
+        <div className="floatingTodoActive">
+          <span className="floatingTodoActiveIcon"><IconPlay size={11} /></span>
+          <span className="floatingTodoActiveText">{activeIdx + 1}/{total} {activeDesc}</span>
         </div>
       )}
       {!expanded && allDone && (
-        <div className="floatingPlanActive floatingPlanDone">
-          <span className="floatingPlanActiveIcon"><IconCheck size={12} /></span>
-          <span className="floatingPlanActiveText">全部完成</span>
+        <div className="floatingTodoActive floatingTodoDone">
+          <span className="floatingTodoActiveIcon"><IconCheck size={12} /></span>
+          <span className="floatingTodoActiveText">全部完成</span>
         </div>
       )}
 
       {/* 展开态：完整步骤列表 */}
       {expanded && (
-        <div className="floatingPlanSteps">
+        <div className="floatingTodoSteps">
           {plan.steps.map((step, idx) => (
-            <FloatingPlanStepItem key={step.id || idx} step={step} idx={idx} />
+            <FloatingTodoStepItem key={step.id || idx} step={step} idx={idx} />
           ))}
         </div>
       )}
@@ -719,7 +719,7 @@ function FloatingPlanBar({ plan }: { plan: ChatPlan }) {
   );
 }
 
-function FloatingPlanStepItem({ step, idx }: { step: ChatPlanStep; idx: number }) {
+function FloatingTodoStepItem({ step, idx }: { step: ChatTodoStep; idx: number }) {
   const icon =
     step.status === "completed" ? <IconCheck size={13} /> :
     step.status === "in_progress" ? <IconPlay size={11} /> :
@@ -738,11 +738,11 @@ function FloatingPlanStepItem({ step, idx }: { step: ChatPlanStep; idx: number }
     ? (typeof step.result === "string" ? step.result : JSON.stringify(step.result))
     : null;
   return (
-    <div className={`floatingPlanStepRow ${step.status === "in_progress" ? "floatingPlanStepActive" : ""}`}>
-      <span className="floatingPlanStepIcon" style={{ color }}>{icon}</span>
-      <div className="floatingPlanStepContent">
+    <div className={`floatingTodoStepRow ${step.status === "in_progress" ? "floatingTodoStepActive" : ""}`}>
+      <span className="floatingTodoStepIcon" style={{ color }}>{icon}</span>
+      <div className="floatingTodoStepContent">
         <span style={{ opacity: step.status === "skipped" || step.status === "cancelled" ? 0.5 : 1 }}>{idx + 1}. {descText}</span>
-        {resultText && <div className="floatingPlanStepResult">{resultText}</div>}
+        {resultText && <div className="floatingTodoStepResult">{resultText}</div>}
       </div>
     </div>
   );
@@ -3577,7 +3577,7 @@ export function ChatView({
                 }
                 break;
               }
-              case "plan_created":
+              case "todo_created":
                 currentPlan = event.plan;
                 updateMessages((prev) => prev.map((m) =>
                   m.plan && m.plan.status !== "completed" && m.plan.status !== "failed" && m.plan.status !== "cancelled"
@@ -3585,26 +3585,24 @@ export function ChatView({
                     : m
                 ));
                 break;
-              case "plan_step_updated":
+              case "todo_step_updated":
                 if (currentPlan) {
-                  const newSteps: ChatPlanStep[] = currentPlan.steps.map((s) => {
-                    // 优先按 stepId 匹配，兼容旧版 stepIdx
+                  const newSteps: ChatTodoStep[] = currentPlan.steps.map((s) => {
                     const matched = event.stepId
                       ? s.id === event.stepId
                       : event.stepIdx != null && currentPlan!.steps.indexOf(s) === event.stepIdx;
-                    return matched ? { ...s, status: event.status as ChatPlanStep["status"] } : s;
+                    return matched ? { ...s, status: event.status as ChatTodoStep["status"] } : s;
                   });
-                  // 如果所有步骤都结束了，自动标记 plan 为 completed
                   const allDone = newSteps.every((s) => s.status === "completed" || s.status === "skipped" || s.status === "failed");
                   currentPlan = { ...currentPlan, steps: newSteps, ...(allDone ? { status: "completed" as const } : {}) } as ChatPlan;
                 }
                 break;
-              case "plan_completed":
+              case "todo_completed":
                 if (currentPlan) {
                   currentPlan = { ...currentPlan, status: "completed" } as ChatPlan;
                 }
                 break;
-              case "plan_cancelled":
+              case "todo_cancelled":
                 if (currentPlan) {
                   currentPlan = { ...currentPlan, status: "cancelled" } as ChatPlan;
                 }

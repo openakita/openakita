@@ -112,7 +112,7 @@ async def run_test():
             tool_hints = intent.tool_hints if intent else []
             mem_kw = intent.memory_keywords if intent else []
             force_tool = intent.force_tool if intent else None
-            plan_req = intent.plan_required if intent else None
+            plan_req = intent.todo_required if intent else None
 
             # Check how many tools were available
             eff_tools = agent._effective_tools

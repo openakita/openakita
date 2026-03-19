@@ -2,17 +2,19 @@
 Plan 模式工具定义
 
 包含任务计划管理相关的工具：
-- create_plan: 创建任务执行计划
-- update_plan_step: 更新步骤状态
-- get_plan_status: 获取计划执行状态
-- complete_plan: 完成计划
+- create_todo: 创建任务执行计划（Agent 模式）
+- update_todo_step: 更新步骤状态
+- get_todo_status: 获取计划执行状态
+- complete_todo: 完成计划
+- create_plan_file: 创建结构化 Plan 文件（Plan 模式）
+- exit_plan_mode: 退出 Plan 模式
 """
 
 PLAN_TOOLS = [
     {
-        "name": "create_plan",
+        "name": "create_todo",
         "category": "Plan",
-        "description": "⚠️ MUST CALL FIRST for multi-step tasks! If user request needs 2+ tool calls (like 'open + search + screenshot'), call create_plan BEFORE any other tool. Examples: '打开百度搜索天气截图' → create_plan first!",
+        "description": "⚠️ MUST CALL FIRST for multi-step tasks! If user request needs 2+ tool calls (like 'open + search + screenshot'), call create_todo BEFORE any other tool. Examples: '打开百度搜索天气截图' → create_todo first!",
         "detail": """创建任务执行计划。
 
 **何时使用**：
@@ -21,7 +23,7 @@ PLAN_TOOLS = [
 - 涉及多个工具协作
 
 **使用流程**：
-1. create_plan → 2. 执行步骤 → 3. update_plan_step → 4. ... → 5. complete_plan
+1. create_todo → 2. 执行步骤 → 3. update_todo_step → 4. ... → 5. complete_todo
 
 **步骤字段说明**：
 - `id` + `description`: 必填
@@ -31,7 +33,7 @@ PLAN_TOOLS = [
 
 **示例**：
 用户："打开百度搜索天气并截图发我"
-→ create_plan(steps=[打开百度, 输入关键词, 点击搜索, 截图, 发送])""",
+→ create_todo(steps=[打开百度, 输入关键词, 点击搜索, 截图, 发送])""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -64,9 +66,9 @@ PLAN_TOOLS = [
         },
     },
     {
-        "name": "update_plan_step",
+        "name": "update_todo_step",
         "category": "Plan",
-        "description": "Update the status of a plan step. MUST call after completing each step to track progress.",
+        "description": "Update the status of a todo step. MUST call after completing each step to track progress.",
         "detail": """更新计划中某个步骤的状态。
 
 **每完成一步必须调用此工具！**
@@ -80,7 +82,7 @@ PLAN_TOOLS = [
 
 **示例**：
 执行完 browser_navigate 后：
-→ update_plan_step(step_id="step_1", status="completed", result="已打开百度首页")""",
+→ update_todo_step(step_id="step_1", status="completed", result="已打开百度首页")""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -96,9 +98,9 @@ PLAN_TOOLS = [
         },
     },
     {
-        "name": "get_plan_status",
+        "name": "get_todo_status",
         "category": "Plan",
-        "description": "Get the current plan execution status. Shows all steps and their completion status.",
+        "description": "Get the current todo execution status. Shows all steps and their completion status.",
         "detail": """获取当前计划的执行状态。
 
 返回信息包括：
@@ -109,9 +111,9 @@ PLAN_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "complete_plan",
+        "name": "complete_todo",
         "category": "Plan",
-        "description": "Mark the plan as completed and generate a summary report. Call when ALL steps are done.",
+        "description": "Mark the todo as completed and generate a summary report. Call when ALL steps are done.",
         "detail": """标记计划完成，生成最终报告。
 
 **在所有步骤完成后调用**
@@ -124,6 +126,80 @@ PLAN_TOOLS = [
             "type": "object",
             "properties": {"summary": {"type": "string", "description": "完成总结"}},
             "required": ["summary"],
+        },
+    },
+    {
+        "name": "create_plan_file",
+        "category": "Plan",
+        "description": "Create a structured plan file (.plan.md) with YAML frontmatter and detailed Markdown body. Used in Plan mode to produce a reviewable plan document.",
+        "detail": """创建结构化 Plan 文件（YAML frontmatter + Markdown body）。
+
+**用于 Plan 模式**：生成一个用户可审阅的计划文件。
+
+**文件格式**：
+```yaml
+---
+name: Plan Name
+overview: 简要描述
+todos:
+  - id: step_1
+    content: "步骤描述"
+    status: pending
+isProject: true
+---
+```
+
+后面跟详细的 Markdown 内容（方案分析、文件列表、风险评估等）。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "计划名称"},
+                "overview": {"type": "string", "description": "计划概要（1-2 句话）"},
+                "todos": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "步骤 ID"},
+                            "content": {"type": "string", "description": "步骤描述"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                                "description": "初始状态（通常为 pending）",
+                            },
+                        },
+                        "required": ["id", "content"],
+                    },
+                    "description": "步骤列表",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Markdown 格式的详细计划内容（方案分析、文件列表、风险评估等）",
+                },
+            },
+            "required": ["name", "todos"],
+        },
+    },
+    {
+        "name": "exit_plan_mode",
+        "category": "Plan",
+        "description": "Signal that planning is complete. Triggers the approval UI for the user to review and approve the plan before execution.",
+        "detail": """退出 Plan 模式，通知系统规划已完成。
+
+**在完成 create_plan_file 后调用此工具**。
+
+调用后系统会：
+1. 通知前端展示 Plan 审批界面
+2. 等待用户审批
+3. 用户批准后自动切换到 Agent 模式执行""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "规划完成的简要说明",
+                },
+            },
         },
     },
 ]

@@ -1,13 +1,13 @@
 ---
-name: create-plan
-description: "MUST CALL FIRST for multi-step tasks! If user request needs 2+ tool calls (like 'open + search + screenshot'), call create_plan BEFORE any other tool."
+name: create-todo
+description: "MUST CALL FIRST for multi-step tasks! If user request needs 2+ tool calls (like 'open + search + screenshot'), call create_todo BEFORE any other tool."
 system: true
 handler: plan
-tool-name: create_plan
+tool-name: create_todo
 category: Plan
 ---
 
-# Create Plan
+# Create Todo
 
 创建任务执行计划。多步骤任务必须先创建计划再执行。
 
@@ -19,7 +19,7 @@ category: Plan
 
 ## Workflow
 
-1. `create-plan` → 2. 执行步骤 → 3. `update-plan-step` → 4. ... → 5. `complete-plan`
+1. `create-todo` → 2. 执行步骤 → 3. `update-todo-step` → 4. ... → 5. `complete-todo`
 
 ## Parameters
 
@@ -55,6 +55,6 @@ category: Plan
 
 ## Related Skills
 
-- `update-plan-step`: 更新步骤状态
-- `get-plan-status`: 查看计划状态
-- `complete-plan`: 完成计划
+- `update-todo-step`: 更新步骤状态
+- `get-todo-status`: 查看计划状态
+- `complete-todo`: 完成计划

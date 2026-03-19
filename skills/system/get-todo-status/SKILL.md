@@ -1,13 +1,13 @@
 ---
-name: get-plan-status
+name: get-todo-status
 description: Get the current plan execution status. Shows all steps and their completion status. Use to check progress during multi-step task execution.
 system: true
 handler: plan
-tool-name: get_plan_status
+tool-name: get_todo_status
 category: Plan
 ---
 
-# Get Plan Status
+# Get Todo Status
 
 获取当前计划的执行状态。
 
@@ -24,6 +24,6 @@ category: Plan
 
 ## Related Skills
 
-- `create-plan`: 创建计划
-- `update-plan-step`: 更新步骤状态
-- `complete-plan`: 完成计划
+- `create-todo`: 创建计划
+- `update-todo-step`: 更新步骤状态
+- `complete-todo`: 完成计划

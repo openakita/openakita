@@ -199,7 +199,7 @@ class OrgHeartbeat:
             if has_external:
                 action_guidance += (
                     "4. **执行**：使用 org_delegate_task 分配任务给下属，"
-                    "或自己使用 create_plan 制定计划、web_search 搜索信息\n"
+                    "或自己使用 create_todo 制定计划、web_search 搜索信息\n"
                 )
             else:
                 action_guidance += (

@@ -40,5 +40,5 @@ category: System
 
 ## Related Skills
 
-- `create-plan`: 创建任务计划
+- `create-todo`: 创建任务计划
 - `enable-thinking`: 启用深度思考

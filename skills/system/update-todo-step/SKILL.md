@@ -1,13 +1,13 @@
 ---
-name: update-plan-step
+name: update-todo-step
 description: Update the status of a plan step. MUST call after completing each step to track progress. Status values - pending, in_progress, completed, failed, skipped.
 system: true
 handler: plan
-tool-name: update_plan_step
+tool-name: update_todo_step
 category: Plan
 ---
 
-# Update Plan Step
+# Update Todo Step
 
 更新计划中某个步骤的状态。每完成一步必须调用。
 
@@ -41,6 +41,6 @@ category: Plan
 
 ## Related Skills
 
-- `create-plan`: 创建计划
-- `get-plan-status`: 查看计划状态
-- `complete-plan`: 完成计划
+- `create-todo`: 创建计划
+- `get-todo-status`: 查看计划状态
+- `complete-todo`: 完成计划

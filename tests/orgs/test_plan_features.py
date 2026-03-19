@@ -676,7 +676,7 @@ class TestPlanToolsInKeep:
         except Exception:
             pass
 
-        plan_tools = ["create_plan", "update_plan_step", "get_plan_status", "complete_plan"]
+        plan_tools = ["create_todo", "update_todo_step", "get_todo_status", "complete_todo"]
         for tool in plan_tools:
             assert tool in source_text, f"{tool} not found in _create_node_agent"
 

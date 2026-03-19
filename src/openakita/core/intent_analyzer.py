@@ -29,6 +29,30 @@ class IntentType(Enum):
 
 
 @dataclass
+class ComplexitySignal:
+    """复杂任务信号，用于判断是否建议切换到 Plan 模式"""
+    multi_file_change: bool = False
+    cross_module: bool = False
+    ambiguous_scope: bool = False
+    destructive_potential: bool = False
+    multi_step_required: bool = False
+
+    @property
+    def score(self) -> int:
+        return sum([
+            self.multi_file_change,
+            self.cross_module,
+            self.ambiguous_scope * 2,
+            self.destructive_potential * 2,
+            self.multi_step_required,
+        ])
+
+    @property
+    def should_suggest_plan(self) -> bool:
+        return self.score >= 3
+
+
+@dataclass
 class IntentResult:
     intent: IntentType
     confidence: float = 1.0
@@ -37,7 +61,9 @@ class IntentResult:
     tool_hints: list[str] = field(default_factory=list)
     memory_keywords: list[str] = field(default_factory=list)
     force_tool: bool = False
-    plan_required: bool = False
+    todo_required: bool = False
+    suggest_plan: bool = False
+    complexity: ComplexitySignal = field(default_factory=ComplexitySignal)
     raw_output: str = ""
 
 
@@ -184,7 +210,7 @@ def _make_default(message: str) -> IntentResult:
         tool_hints=[],
         memory_keywords=[],
         force_tool=True,
-        plan_required=False,
+        todo_required=False,
         raw_output="",
     )
 
@@ -236,9 +262,9 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
     memory_keywords = _parse_list(extracted.get("memory_keywords", ""))
 
     force_tool = intent in (IntentType.TASK,) and task_type not in ("question", "other")
-    plan_required = task_type == "compound"
+    todo_required = task_type == "compound"
 
-    return IntentResult(
+    result = IntentResult(
         intent=intent,
         confidence=1.0,
         task_definition=task_definition or goal or message[:200],
@@ -246,9 +272,21 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         tool_hints=tool_hints,
         memory_keywords=memory_keywords,
         force_tool=force_tool,
-        plan_required=plan_required,
+        todo_required=todo_required,
         raw_output=raw_output,
     )
+
+    # Complexity analysis for plan mode suggestion
+    if intent in (IntentType.TASK,):
+        result.complexity = _analyze_complexity(message, result)
+        result.suggest_plan = result.complexity.should_suggest_plan
+        if result.suggest_plan:
+            logger.info(
+                f"[IntentAnalyzer] Complex task detected (score={result.complexity.score}), "
+                f"suggesting Plan mode"
+            )
+
+    return result
 
 
 def _build_task_definition(extracted: dict[str, str], max_chars: int = 600) -> str:
@@ -284,3 +322,64 @@ def _parse_list(value: str) -> list[str]:
         elif line and line not in ("[]",):
             items.append(line.strip("'\""))
     return items
+
+
+# ---------------------------------------------------------------------------
+# Complex task detection
+# ---------------------------------------------------------------------------
+
+_REFACTOR_KEYWORDS = [
+    "重构", "refactor", "redesign", "改造", "迁移", "migration", "migrate",
+    "重写", "rewrite",
+]
+_GLOBAL_KEYWORDS = [
+    "全部", "所有", "整个项目", "across the codebase", "entire", "all files",
+    "批量", "全局",
+]
+_ARCHITECTURE_KEYWORDS = [
+    "架构", "设计方案", "技术选型", "architecture", "design",
+    "系统设计", "system design",
+]
+_RESEARCH_KEYWORDS = [
+    "调研", "分析", "对比", "evaluate", "compare", "research", "review",
+    "评估", "综合分析",
+]
+_MULTI_FILE_KEYWORDS = [
+    "多个文件", "multiple files", "所有文件", "每个文件",
+    "across files", "跨文件",
+]
+
+
+def _analyze_complexity(message: str, intent_result: "IntentResult") -> ComplexitySignal:
+    """Analyze message complexity to determine if Plan mode should be suggested."""
+    msg = message.lower()
+    signal = ComplexitySignal()
+
+    # Multi-file change detection
+    if any(kw in msg for kw in _MULTI_FILE_KEYWORDS):
+        signal.multi_file_change = True
+    elif any(kw in msg for kw in _GLOBAL_KEYWORDS):
+        signal.multi_file_change = True
+
+    # Cross-module detection
+    if any(kw in msg for kw in _ARCHITECTURE_KEYWORDS):
+        signal.cross_module = True
+
+    # Ambiguous scope detection
+    if any(kw in msg for kw in _REFACTOR_KEYWORDS):
+        signal.ambiguous_scope = True
+    if any(kw in msg for kw in _RESEARCH_KEYWORDS):
+        signal.ambiguous_scope = True
+
+    # Destructive potential
+    destructive_words = ["删除", "清空", "重置", "drop", "delete all", "remove all", "清除"]
+    if any(kw in msg for kw in destructive_words):
+        signal.destructive_potential = True
+
+    # Multi-step required (from intent analysis)
+    if intent_result.task_type == "compound":
+        signal.multi_step_required = True
+    elif len(message) > 200:
+        signal.multi_step_required = True
+
+    return signal

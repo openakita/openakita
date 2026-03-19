@@ -42,7 +42,7 @@ class TestToolCategories:
     def test_expand_multiple_categories(self):
         result = expand_tool_categories(["research", "planning"])
         assert "web_search" in result
-        assert "create_plan" in result
+        assert "create_todo" in result
 
     def test_expand_mixed_category_and_tool(self):
         result = expand_tool_categories(["research", "run_shell"])

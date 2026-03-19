@@ -151,7 +151,7 @@ category: Web Search
 | 桌面自动化 | desktop-click, desktop-type, desktop-screenshot | 桌面 GUI 操作 |
 | 文件系统 | read-file, write-file, list-directory, run-shell | 文件和命令行操作 |
 | 记忆系统 | add-memory, search-memory, get-memory-stats | 长期记忆管理 |
-| 计划管理 | create-plan, update-plan-step, get-plan-status, complete-plan | 多步骤任务规划 |
+| 计划管理 | create-todo, update-todo-step, get-todo-status, complete-todo | 多步骤任务规划 |
 | 定时任务 | schedule-task, list-scheduled-tasks, cancel-scheduled-task | 定时和周期任务 |
 | MCP 集成 | call-mcp-tool, list-mcp-servers, get-mcp-instructions | MCP 服务器工具调用 |
 | 用户档案 | update-user-profile, get-user-profile | 用户偏好管理 |
@@ -291,10 +291,10 @@ Agent> [自动生成 SKILL.md + scripts → 加载 → 可用]
 
 | 技能名 | 工具名 | 说明 |
 |--------|--------|------|
-| create-plan | create_plan | 创建执行计划 |
-| update-plan-step | update_plan_step | 更新步骤状态 |
-| get-plan-status | get_plan_status | 查看计划状态 |
-| complete-plan | complete_plan | 完成计划 |
+| create-todo | create_todo | 创建执行计划 |
+| update-todo-step | update_todo_step | 更新步骤状态 |
+| get-todo-status | get_todo_status | 查看计划状态 |
+| complete-todo | complete_todo | 完成计划 |
 | set-task-timeout | set_task_timeout | 设置任务超时 |
 
 ### 记忆系统（3 个）
@@ -457,7 +457,7 @@ Cursor 中的 Agent Skills 可以从以下位置加载：
 ### 技能使用
 
 - **查看已有技能**：使用前先 `list_skills` 了解可用能力
-- **善用计划**：复杂任务先 `create_plan` 再执行
+- **善用计划**：复杂任务先 `create_todo` 再执行
 - **组合使用**：多个技能可以串联组合完成复杂流程
 - **安装第三方**：从技能市场安装成熟的社区技能
 

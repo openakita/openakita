@@ -1,7 +1,7 @@
 interface:
-  display_name: Update Plan Step
+  display_name: Update Todo Step
   short_description: Update the status of a plan step
-  default_prompt: Use $update-plan-step
+  default_prompt: Use $update-todo-step
 i18n:
   zh:
     name: 更新计划步骤

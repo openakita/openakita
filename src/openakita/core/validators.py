@@ -108,9 +108,9 @@ class PlanValidator(BaseValidator):
 
     def validate(self, context: ValidationContext) -> ValidatorOutput:
         try:
-            from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan
+            from ..tools.handlers.plan import get_plan_handler_for_session, has_active_todo
 
-            if not context.conversation_id or not has_active_plan(context.conversation_id):
+            if not context.conversation_id or not has_active_todo(context.conversation_id):
                 return ValidatorOutput(
                     name=self.name,
                     result=ValidationResult.SKIP,
@@ -234,27 +234,27 @@ class ToolSuccessValidator(BaseValidator):
 
 
 class CompletePlanValidator(BaseValidator):
-    """验证 complete_plan 工具是否被调用"""
+    """验证 complete_todo 工具是否被调用"""
 
     @property
     def name(self) -> str:
         return "CompletePlanValidator"
 
     def validate(self, context: ValidationContext) -> ValidatorOutput:
-        if "complete_plan" in context.executed_tools:
-            return ValidatorOutput(
-                name=self.name,
-                result=ValidationResult.PASS,
-                reason="complete_plan was called",
-            )
+        if "complete_todo" in context.executed_tools:
+                return ValidatorOutput(
+                    name=self.name,
+                    result=ValidationResult.PASS,
+                    reason="complete_todo was called",
+                )
 
         try:
-            from ..tools.handlers.plan import has_active_plan
-            if context.conversation_id and has_active_plan(context.conversation_id):
+            from ..tools.handlers.plan import has_active_todo
+            if context.conversation_id and has_active_todo(context.conversation_id):
                 return ValidatorOutput(
                     name=self.name,
                     result=ValidationResult.FAIL,
-                    reason="Active plan exists but complete_plan not called",
+                    reason="Active plan exists but complete_todo not called",
                 )
         except Exception:
             pass

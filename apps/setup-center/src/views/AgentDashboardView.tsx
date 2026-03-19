@@ -113,7 +113,7 @@ const TOOL_ICONS: Record<string, string> = {
   file_read: "📄", read_file: "📄", file_write: "✏️", write_file: "✏️",
   execute_command: "⚡", create_agent: "🤖", delegate_to_agent: "🔗",
   list_skills: "📋", memory_read: "🧠", memory_write: "💾",
-  create_plan: "📝", mcp_call: "🔌", send_message: "💬",
+  create_todo: "📝", mcp_call: "🔌", send_message: "💬",
   desktop_click: "🖱️", desktop_type: "⌨️", desktop_action: "🖥️",
 };
 function toolIcon(name: string): string {

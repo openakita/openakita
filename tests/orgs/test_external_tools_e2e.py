@@ -99,7 +99,7 @@ class TestToolFilteringE2E:
 
         agent = await runtime._create_node_agent(org, org.get_node("boss"))
 
-        _PLAN_TOOLS = {"create_plan", "update_plan_step", "get_plan_status", "complete_plan"}
+        _PLAN_TOOLS = {"create_todo", "update_todo_step", "get_todo_status", "complete_todo"}
         tool_names = {t["name"] for t in agent._tools}
         for name in tool_names:
             assert name.startswith("org_") or name == "get_tool_info" or name in _PLAN_TOOLS, \
@@ -119,7 +119,7 @@ class TestToolFilteringE2E:
         tool_names = {t["name"] for t in agent._tools}
         assert "web_search" in tool_names or "news_search" in tool_names, \
             f"research tools missing, got: {tool_names}"
-        _PLAN_TOOLS = {"create_plan", "update_plan_step", "get_plan_status", "complete_plan"}
+        _PLAN_TOOLS = {"create_todo", "update_todo_step", "get_todo_status", "complete_todo"}
         for name in tool_names:
             assert (
                 name.startswith("org_")
@@ -195,7 +195,7 @@ class TestPromptInjectionE2E:
 
         prompt = agent._context.system if hasattr(agent, "_context") else ""
         assert "org_" in prompt
-        assert "create_plan" in prompt
+        assert "create_todo" in prompt
 
     async def test_prompt_mentions_tool_request(self, runtime_env):
         """Both prompt variants should mention org_request_tools."""
@@ -531,7 +531,7 @@ class TestHeartbeatWithExternalTools:
             else getattr(m, "content", "")
             for m in user_messages
         )
-        assert "create_plan" in all_text or "web_search" in all_text, \
+        assert "create_todo" in all_text or "web_search" in all_text, \
             "Heartbeat prompt should mention external execution tools"
 
 

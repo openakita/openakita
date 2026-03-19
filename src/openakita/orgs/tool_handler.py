@@ -254,7 +254,7 @@ class OrgToolHandler:
             if not existing:
                 return
 
-            if tool_name == "create_plan":
+            if tool_name == "create_todo":
                 steps = tool_input.get("steps", [])
                 if isinstance(steps, str):
                     try:
@@ -275,7 +275,7 @@ class OrgToolHandler:
                     f"计划创建: {tool_input.get('task_summary', '')[:80]}",
                     node_id,
                 )
-            elif tool_name == "update_plan_step":
+            elif tool_name == "update_todo_step":
                 step_id = tool_input.get("step_id", "")
                 status = tool_input.get("status", "")
                 result_text = tool_input.get("result", "")
@@ -294,7 +294,7 @@ class OrgToolHandler:
                     f"步骤 {step_id}: {status} - {result_text[:80]}",
                     node_id,
                 )
-            elif tool_name == "complete_plan":
+            elif tool_name == "complete_todo":
                 summary = tool_input.get("summary", "")
                 store.update_task(existing.project_id, existing.id, {
                     "status": TaskStatus.ACCEPTED,

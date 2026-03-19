@@ -1,7 +1,7 @@
 interface:
-  display_name: Get Plan Status
+  display_name: Get Todo Status
   short_description: Get the current plan execution status
-  default_prompt: Use $get-plan-status
+  default_prompt: Use $get-todo-status
 i18n:
   zh:
     name: 查看计划进度

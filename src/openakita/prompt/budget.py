@@ -4,15 +4,15 @@ Prompt Budget - Token 预算裁剪模块
 控制各部分的 token 预算，确保系统提示词不超出限制。
 
 预算分配:
-- identity_budget: 6000 tokens (SOUL 全文 + agent.core + policies)
-  - SOUL.md 全文注入（~3600, 60%）：保留哲学基调和情感共鸣
-  - agent.core（~1200, 20%）：核心执行原则 + 禁止敷衍行为
-  - policies（~1200, 20%）：系统策略 + 用户策略
+- identity_budget: 3000 tokens (SOUL.md ~60% + agent.core ~25% + user_policies ~15%)
+  - SOUL.md 已精简为 ~60 行行为约束（~500 tokens）
+  - agent.core 编译后约 ~600 tokens
+  - 用户自定义策略（可选）
 - catalogs_budget: 12000 tokens (tools 33% + skills 55% + mcp 10%)
 - user_budget: 300 tokens (user.summary + runtime_facts)
 - memory_budget: 2500 tokens (retriever 输出)
 
-默认总预算约 ~20800 tokens，占 128k 上下文约 16.3%。
+默认总预算约 ~18000 tokens。
 对于小上下文窗口模型，使用 BudgetConfig.for_context_window(ctx) 自适应缩放。
 """
 
@@ -30,13 +30,13 @@ class BudgetConfig:
     """Token 预算配置"""
 
     # 各部分预算（tokens）
-    identity_budget: int = 6000   # SOUL全文 + agent.core + policies
+    identity_budget: int = 3000   # SOUL.md(60%) + agent.core(25%) + user_policies(15%)
     catalogs_budget: int = 12000  # tools(33%) + skills(55%) + mcp(10%) 全量注入
     user_budget: int = 300        # user.summary + runtime_facts
     memory_budget: int = 2500     # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
 
     # 总预算（作为硬限制）
-    total_budget: int = 21000
+    total_budget: int = 18000
 
     # 裁剪优先级（数字越小越先被裁剪）
     # 高优先级的内容会在预算不足时保留
@@ -65,31 +65,31 @@ class BudgetConfig:
 
         if context_window > 32000:
             return cls(
-                identity_budget=5000,
+                identity_budget=2500,
                 catalogs_budget=10000,
                 user_budget=300,
                 memory_budget=2000,
-                total_budget=min(prompt_budget, 18000),
+                total_budget=min(prompt_budget, 15000),
             )
         elif context_window >= 16000:
             return cls(
-                identity_budget=4000,
+                identity_budget=2000,
                 catalogs_budget=6000,
                 user_budget=250,
                 memory_budget=1500,
-                total_budget=min(prompt_budget, 12000),
+                total_budget=min(prompt_budget, 10000),
             )
         elif context_window >= 8000:
             return cls(
-                identity_budget=2500,
+                identity_budget=1500,
                 catalogs_budget=4000,
                 user_budget=200,
                 memory_budget=1000,
-                total_budget=min(prompt_budget, 8000),
+                total_budget=min(prompt_budget, 7000),
             )
         else:
             return cls(
-                identity_budget=800,
+                identity_budget=600,
                 catalogs_budget=800,
                 user_budget=100,
                 memory_budget=300,
@@ -292,8 +292,8 @@ def apply_budget_to_sections(
     # 按区域分配预算
     budget_map = {
         "soul": config.identity_budget * 60 // 100,
-        "agent_core": config.identity_budget * 20 // 100,
-        "policies": config.identity_budget * 20 // 100,
+        "agent_core": config.identity_budget * 25 // 100,
+        "user_policies": config.identity_budget * 15 // 100,
         "tools": config.catalogs_budget // 3,            # 33%
         "skills": config.catalogs_budget * 55 // 100,    # 55%
         "mcp": config.catalogs_budget // 10,             # 10%

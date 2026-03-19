@@ -28,7 +28,7 @@ _REAP_INTERVAL_SECONDS = 60  # 每分钟检查一次
 # 只有浏览器、桌面控制、MCP、定时任务等专用工具需在 profile.skills 显式列出。
 ESSENTIAL_SYSTEM_SKILLS: frozenset[str] = frozenset({
     # 规划（多步任务的核心）
-    "create-plan", "update-plan-step", "get-plan-status", "complete-plan",
+    "create-todo", "update-todo-step", "get-todo-status", "complete-todo",
     # 技能发现（渐进式披露入口 — 外部技能必须先 get_skill_info 读指令）
     "get-skill-info", "list-skills",
     # 文件系统（外部技能执行的基础 — 读指令→写代码→run-shell 执行）

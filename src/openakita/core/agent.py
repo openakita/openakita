@@ -57,7 +57,7 @@ from ..tools.handlers.im_channel import create_handler as create_im_channel_hand
 from ..tools.handlers.mcp import create_handler as create_mcp_handler
 from ..tools.handlers.memory import create_handler as create_memory_handler
 from ..tools.handlers.persona import create_handler as create_persona_handler
-from ..tools.handlers.plan import create_plan_handler
+from ..tools.handlers.plan import create_todo_handler
 from ..tools.handlers.profile import create_handler as create_profile_handler
 from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
@@ -562,7 +562,7 @@ class Agent:
     _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
         "System",       # ask_user, enable_thinking, get_tool_info, etc.
         "Memory",       # search_memory, add_memory — context recall
-        "Plan",         # create_plan, update_plan_step — task orchestration
+        "Plan",         # create_todo, update_todo_step — task orchestration
         "Skills",       # list_skills, run_skill_script — capability discovery
         "Skill Store",  # search/install skills from store
         "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
@@ -1014,8 +1014,8 @@ class Agent:
         # Plan 模式
         self.handler_registry.register(
             "plan",
-            create_plan_handler(self),
-            ["create_plan", "update_plan_step", "get_plan_status", "complete_plan",
+            create_todo_handler(self),
+            ["create_todo", "update_todo_step", "get_todo_status", "complete_todo",
              "create_plan_file", "exit_plan_mode"],
         )
 
@@ -2606,7 +2606,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 tool_hints=[],
                 memory_keywords=[],
                 force_tool=True,
-                plan_required=False,
+                todo_required=False,
             )
             logger.info(f"[Session:{session_id}] Sub-agent: skipping IntentAnalyzer, forced TASK intent")
         else:
@@ -2633,11 +2633,11 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         )
 
         # 8. Plan mode detection (仅 Agent 模式 — Plan/Ask 模式由提示词和工具过滤控制)
-        if intent_result.plan_required and mode == "agent":
-            from ..tools.handlers.plan import require_plan_for_session, should_require_plan
-            has_multi_actions = should_require_plan(message)
-            if intent_result.plan_required or has_multi_actions:
-                require_plan_for_session(conversation_id, True)
+        if intent_result.todo_required and mode == "agent":
+            from ..tools.handlers.plan import require_todo_for_session, should_require_todo
+            has_multi_actions = should_require_todo(message)
+            if intent_result.todo_required or has_multi_actions:
+                require_todo_for_session(conversation_id, True)
                 logger.info(
                     f"[Session:{session_id}] Multi-step task detected, Plan required"
                 )
@@ -3006,7 +3006,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             logger.info(f"[Session:{session_id}] Agent: (response logged, {len(response_text)} chars)")
 
         # 4. 自动关闭未完成的 Plan
-        # 如果 LLM 未显式调用 complete_plan，此处兜底：
+        # 如果 LLM 未显式调用 complete_todo，此处兜底：
         # - 标记剩余步骤状态（in_progress→completed, pending→skipped）
         # - 保存并注销 Plan
         # 注意：ask_user 退出时不关闭 Plan（用户回复后需继续执行）
@@ -3317,7 +3317,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
             self.cancel_current_task(f"用户发送停止指令: {message}", session_id=session_id)
             logger.info(f"[StopTask] User requested to stop (session={session_id}): {message}")
-            yield {"type": "plan_cancelled"}
+            yield {"type": "todo_cancelled"}
             yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？"}
             yield {"type": "done"}
             return
@@ -4087,8 +4087,8 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 return True
 
         # Plan 明确完成：允许快速完成（避免卡在 verify）
-        if "complete_plan" in (executed_tools or []):
-            logger.info("[TaskVerify] complete_plan executed, marking as completed")
+        if "complete_todo" in (executed_tools or []):
+            logger.info("[TaskVerify] complete_todo executed, marking as completed")
             return True
 
         # 如果响应宣称“已发送/已交付”，但没有任何交付证据，默认判定未完成（避免空口刷屏）
@@ -4101,12 +4101,12 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             return False
 
         # === Plan 步骤检查：如果有活跃 Plan 且有未完成步骤，强制继续执行 ===
-        from ..tools.handlers.plan import get_plan_handler_for_session, has_active_plan
+        from ..tools.handlers.plan import get_plan_handler_for_session, has_active_todo
 
         conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
             self, "_current_session_id", None
         )
-        if conversation_id and has_active_plan(conversation_id):
+        if conversation_id and has_active_todo(conversation_id):
             handler = get_plan_handler_for_session(conversation_id)
             plan = handler.get_plan_for(conversation_id) if handler else None
             if plan:
@@ -4562,12 +4562,12 @@ NEXT: 建议的下一步（如有）"""
             """
             retries = base_force_retries
             try:
-                from ..tools.handlers.plan import has_active_plan, is_plan_required
+                from ..tools.handlers.plan import has_active_todo, is_todo_required
 
                 sid = getattr(self, "_current_conversation_id", None) or getattr(
                     self, "_current_session_id", None
                 )
-                if sid and (has_active_plan(sid) or is_plan_required(sid)):
+                if sid and (has_active_todo(sid) or is_todo_required(sid)):
                     retries = max(retries, 1)
             except Exception:
                 pass
@@ -5014,23 +5014,23 @@ NEXT: 建议的下一步（如有）"""
 
                             # 检查是否有活跃 Plan 且仍有 pending steps
                             # 使用与 _verify_task_completion 相同的方式访问 PlanHandler
-                            has_active_plan_pending = False
+                            has_active_todo_pending = False
                             try:
                                 from ..tools.handlers.plan import (
                                     get_plan_handler_for_session,
-                                    has_active_plan,
+                                    has_active_todo,
                                 )
                                 conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
                                     self, "_current_session_id", None
                                 )
-                                if conversation_id and has_active_plan(conversation_id):
+                                if conversation_id and has_active_todo(conversation_id):
                                     handler = get_plan_handler_for_session(conversation_id)
                                     _plan = handler.get_plan_for(conversation_id) if handler else None
                                     if _plan:
                                         steps = _plan.get("steps", [])
                                         pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
                                         if pending:
-                                            has_active_plan_pending = True
+                                            has_active_todo_pending = True
                                             logger.info(
                                                 f"[ForceToolCall] Active plan has {len(pending)} pending steps, "
                                                 f"increasing verify tolerance"
@@ -5039,12 +5039,12 @@ NEXT: 建议的下一步（如有）"""
                                 logger.debug(f"[ForceToolCall] Plan check failed: {e}")
 
                             # 有活跃 Plan 时，提高容忍度（Plan 本身就是多步骤任务，不应过早放弃）
-                            effective_max_retries = max_verify_retries * 2 if has_active_plan_pending else max_verify_retries
+                            effective_max_retries = max_verify_retries * 2 if has_active_todo_pending else max_verify_retries
 
                             if verify_incomplete_count >= effective_max_retries:
                                 logger.warning(
                                     f"[ForceToolCall] TaskVerify returned incomplete {verify_incomplete_count} times "
-                                    f"(max={effective_max_retries}, plan_pending={has_active_plan_pending}); "
+                                    f"(max={effective_max_retries}, todo_pending={has_active_todo_pending}); "
                                     f"stopping without claiming completion"
                                 )
                                 return cleaned_text
@@ -5060,7 +5060,7 @@ NEXT: 建议的下一步（如有）"""
                             )
 
                             # 有活跃 Plan 时，给更明确的继续指令
-                            if has_active_plan_pending:
+                            if has_active_todo_pending:
                                 working_messages.append(
                                     {
                                         "role": "user",
@@ -5304,11 +5304,11 @@ NEXT: 建议的下一步（如有）"""
                 _self_check_has_plan = False
                 try:
                     from ..tools.handlers.plan import get_plan_handler_for_session
-                    from ..tools.handlers.plan import has_active_plan as _has_active_plan
+                    from ..tools.handlers.plan import has_active_todo as _has_active_todo
                     _sc_conv_id = getattr(self, "_current_conversation_id", None) or getattr(
                         self, "_current_session_id", None
                     )
-                    if _sc_conv_id and _has_active_plan(_sc_conv_id):
+                    if _sc_conv_id and _has_active_todo(_sc_conv_id):
                         _self_check_has_plan = True
                 except Exception:
                     pass
@@ -5441,8 +5441,8 @@ NEXT: 建议的下一步（如有）"""
                 if cancel_plan(session_id):
                     logger.info(f"[StopTask] Cancelled active plan for session {session_id}")
             else:
-                from ..tools.handlers.plan import _session_active_plans
-                for sid in list(_session_active_plans.keys()):
+                from ..tools.handlers.plan import _session_active_todos
+                for sid in list(_session_active_todos.keys()):
                     if cancel_plan(sid):
                         logger.info(f"[StopTask] Cancelled active plan for session {sid}")
         except Exception as e:
@@ -5762,19 +5762,19 @@ NEXT: 建议的下一步（如有）"""
         # Plan 强制检查（仅 Agent 模式下的 todo 跟踪）
         # ============================================
         # Plan/Ask 模式的控制工具始终放行，避免死锁
-        _plan_exempt = ("create_plan", "create_plan_file", "exit_plan_mode",
-                        "get_plan_status", "ask_user")
+        _plan_exempt = ("create_todo", "create_plan_file", "exit_plan_mode",
+                        "get_todo_status", "ask_user")
         if tool_name not in _plan_exempt:
-            from ..tools.handlers.plan import has_active_plan, is_plan_required
+            from ..tools.handlers.plan import has_active_todo, is_todo_required
 
             session_id = getattr(self, "_current_session_id", None)
-            if session_id and is_plan_required(session_id) and not has_active_plan(session_id):
+            if session_id and is_todo_required(session_id) and not has_active_todo(session_id):
                 return (
-                    "⚠️ **这是一个多步骤任务，建议先创建计划！**\n\n"
-                    "请先调用 `create_plan` 工具创建任务计划，然后再执行具体操作。\n\n"
+                    "⚠️ **这是一个多步骤任务，建议先创建 Todo！**\n\n"
+                    "请先调用 `create_todo` 工具创建任务计划，然后再执行具体操作。\n\n"
                     "示例：\n"
                     "```\n"
-                    "create_plan(\n"
+                    "create_todo(\n"
                     "  task_summary='写脚本获取时间并显示',\n"
                     "  steps=[\n"
                     "    {id: 'step1', description: '创建Python脚本', tool: 'write_file'},\n"

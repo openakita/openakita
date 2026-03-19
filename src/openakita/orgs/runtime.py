@@ -682,10 +682,10 @@ class OrgRuntime:
 
         _KEEP = frozenset({
             "get_tool_info",
-            "create_plan",
-            "update_plan_step",
-            "get_plan_status",
-            "complete_plan",
+            "create_todo",
+            "update_todo_step",
+            "get_todo_status",
+            "complete_todo",
         })
 
         # Free-form delegation tools conflict with org_delegate_task
@@ -1587,7 +1587,7 @@ class OrgRuntime:
             if tool_name.startswith("org_"):
                 return await tool_handler.handle(tool_name, tool_input, org_id, node_id)
             result = await original_execute(tool_name, tool_input, **kwargs)
-            if tool_name in ("create_plan", "update_plan_step", "complete_plan"):
+            if tool_name in ("create_todo", "update_todo_step", "complete_todo"):
                 chain_id = getattr(agent, "_org_context", {}).get("current_chain_id") or ""
                 if chain_id:
                     tool_handler._bridge_plan_to_task(

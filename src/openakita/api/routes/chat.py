@@ -315,13 +315,19 @@ async def _stream_chat(
         _disconnect_watcher_task = asyncio.create_task(_disconnect_watcher())
 
         # --- 委托给 Agent 统一流水线 ---
+        # Resolve effective mode (backward compat)
+        _effective_mode = chat_request.mode
+        if chat_request.plan_mode and _effective_mode == "agent":
+            _effective_mode = "plan"
+
         async for event in actual_agent.chat_with_session_stream(
             message=chat_request.message or "",
             session_messages=session_messages_history,
             session_id=conversation_id,
             session=session,
-            gateway=None,  # Desktop Chat 没有 IM gateway
-            plan_mode=chat_request.plan_mode,
+            gateway=None,
+            plan_mode=_effective_mode == "plan",
+            mode=_effective_mode,
             endpoint_override=chat_request.endpoint,
             attachments=chat_request.attachments,
             thinking_mode=chat_request.thinking_mode,
@@ -619,13 +625,18 @@ async def chat(request: Request, body: ChatRequest):
             await _clear_busy(conversation_id)
         raise
 
+    # Resolve effective mode: backward compat plan_mode=true -> mode="plan"
+    effective_mode = body.mode
+    if body.plan_mode and effective_mode == "agent":
+        effective_mode = "plan"
+
     msg_preview = (body.message or "")[:100]
     att_count = len(body.attachments) if body.attachments else 0
     logger.info(
         f"[Chat API] 收到消息: \"{msg_preview}\""
         + (f" (+{att_count}个附件)" if att_count else "")
         + (f" | endpoint={body.endpoint}" if body.endpoint else "")
-        + (" | plan_mode" if body.plan_mode else "")
+        + (f" | mode={effective_mode}" if effective_mode != "agent" else "")
         + (f" | thinking={body.thinking_mode}" if body.thinking_mode else "")
         + (f" | depth={body.thinking_depth}" if body.thinking_depth else "")
         + (f" | conv={conversation_id}")

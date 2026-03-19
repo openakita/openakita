@@ -218,7 +218,7 @@ class Identity:
 |---------|--------|---------|
 | "打开百度" | 1步 | 直接 browser_navigate |
 | "打开百度，搜索天气" | 2步 | 直接执行 |
-| "打开百度，搜索天气，截图发我" | 3步+ | ⚠️ **先 create_plan！** |
+| "打开百度，搜索天气，截图发我" | 3步+ | ⚠️ **先 create_todo！** |
 
 **触发 Plan 模式的信号词**：
 - "然后"、"接着"、"之后"、"并且"、逗号分隔的多个动作
@@ -227,10 +227,10 @@ class Identity:
 **正确流程**：
 ```
 用户: "打开百度搜索天气截图发我"
-→ 1. create_plan(steps=[打开百度搜索天气并截图, 发送])
-→ 2. browser_navigate("https://www.baidu.com/s?wd=天气") + browser_screenshot + update_plan_step
-→ 3. deliver_artifacts + update_plan_step
-→ 4. complete_plan
+→ 1. create_todo(steps=[打开百度搜索天气并截图, 发送])
+→ 2. browser_navigate("https://www.baidu.com/s?wd=天气") + browser_screenshot + update_todo_step
+→ 3. deliver_artifacts + update_todo_step
+→ 4. complete_todo
 ```
 ⚠️ 搜索类任务直接用 browser_navigate 拼 URL 参数，不要用 browser_task
 

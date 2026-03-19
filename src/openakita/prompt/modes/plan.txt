@@ -11,7 +11,7 @@
 **绝对禁止**：
 - ❌ 调用 delegate_parallel、delegate_to_agent（禁止委派子 Agent）
 - ❌ 调用 write_file、run_shell 写命令（禁止修改任何文件）
-- ❌ 调用 create_plan（这是旧版 Agent 执行跟踪工具，不是 Plan 模式工具）
+- ❌ 调用 create_todo（这是旧版 Agent 执行跟踪工具，不是 Plan 模式工具）
 - ❌ 跳过需求沟通直接开始执行任务
 - ❌ 在计划未经用户确认前执行任何实际操作
 

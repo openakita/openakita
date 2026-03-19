@@ -122,7 +122,7 @@ CATEGORY_PREFIXES = {
     "System": ("enable_thinking", "get_session_logs", "get_tool_info", "generate_image", "set_task_timeout"),
     "MCP": ("call_mcp_tool", "list_mcp_servers", "get_mcp_instructions"),
     "File System": ("run_shell", "write_file", "read_file", "list_directory"),
-    "Plan": ("create_plan", "update_plan_step", "get_plan_status", "complete_plan"),
+    "Plan": ("create_todo", "update_todo_step", "get_todo_status", "complete_todo"),
     "Web Search": ("web_search", "news_search"),
     "Config": ("system_config",),
 }

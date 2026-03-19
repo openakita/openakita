@@ -184,8 +184,8 @@ class TestDelegationGuidance:
 # ---------------------------------------------------------------------------
 
 _KEEP_TOOLS = frozenset({
-    "get_tool_info", "create_plan", "update_plan_step",
-    "get_plan_status", "complete_plan",
+    "get_tool_info", "create_todo", "update_todo_step",
+    "get_todo_status", "complete_todo",
 })
 
 _ORG_CONFLICT_TOOLS = frozenset({
@@ -207,8 +207,8 @@ class TestToolCarryingRules:
     def test_keep_tools_are_minimal(self):
         """_KEEP set should be small and focused on planning/discovery."""
         assert _KEEP_TOOLS == {
-            "get_tool_info", "create_plan", "update_plan_step",
-            "get_plan_status", "complete_plan",
+            "get_tool_info", "create_todo", "update_todo_step",
+            "get_todo_status", "complete_todo",
         }
 
     def test_no_external_tools_means_empty_allowed(self):

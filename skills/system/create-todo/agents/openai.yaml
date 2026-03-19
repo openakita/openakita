@@ -1,7 +1,7 @@
 interface:
-  display_name: Create Plan
+  display_name: Create Todo
   short_description: MUST CALL FIRST for multi-step tasks! If user request needs 2...
-  default_prompt: Use $create-plan
+  default_prompt: Use $create-todo
 i18n:
   zh:
     name: 创建计划

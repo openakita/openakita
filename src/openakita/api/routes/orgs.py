@@ -721,8 +721,8 @@ async def preview_node_prompt(request: Request, org_id: str, node_id: str):
     from openakita.orgs.tool_categories import expand_tool_categories
     _ORG_CONFLICT = {"delegate_to_agent", "spawn_agent",
                      "delegate_parallel", "create_agent"}
-    _KEEP = {"get_tool_info", "create_plan", "update_plan_step",
-             "get_plan_status", "complete_plan"}
+    _KEEP = {"get_tool_info", "create_todo", "update_todo_step",
+             "get_todo_status", "complete_todo"}
     allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT
 
     tool_summary = {

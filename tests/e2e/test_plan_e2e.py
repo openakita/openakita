@@ -17,7 +17,7 @@ from openakita.tools.handlers.plan import (
     register_plan_handler,
     get_plan_handler_for_session,
     get_active_plan_prompt,
-    should_require_plan,
+    should_require_todo,
 )
 
 
@@ -34,13 +34,13 @@ def _make_mock_agent():
 class TestPlanLifecycle:
     """Test full plan lifecycle: create → update steps → complete."""
 
-    def test_create_plan_registers(self):
+    def test_create_todo_registers(self):
         sid = "lifecycle-1"
         clear_session_plan_state(sid)
         register_active_plan(sid, "plan-lc-1")
         assert has_active_plan(sid) is True
 
-    def test_complete_plan_unregisters(self):
+    def test_complete_todo_unregisters(self):
         sid = "lifecycle-2"
         clear_session_plan_state(sid)
         register_active_plan(sid, "plan-lc-2")
@@ -86,8 +86,8 @@ class TestPlanDetection:
         ("查一下天气", bool),
         ("1. 创建数据库 2. 写API 3. 加认证 4. 写文档 5. 部署", bool),
     ])
-    def test_should_require_plan(self, msg, expected_type):
-        result = should_require_plan(msg)
+    def test_should_require_todo(self, msg, expected_type):
+        result = should_require_todo(msg)
         assert isinstance(result, expected_type)
 
 

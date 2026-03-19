@@ -188,11 +188,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "name": "取消定时任务",
         "description": "永久删除指定的定时任务。",
     },
-    "complete-plan": {
+    "complete-todo": {
         "name": "完成计划",
         "description": "标记计划为已完成并生成执行总结报告，在所有步骤完成后调用。",
     },
-    "create-plan": {
+    "create-todo": {
         "name": "创建计划",
         "description": "为多步骤任务创建执行计划，在需要 2 个以上工具调用时必须首先创建计划。",
     },
@@ -264,7 +264,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "name": "记忆统计",
         "description": "获取记忆系统统计信息，包括记忆总数和按类型的分布。",
     },
-    "get-plan-status": {
+    "get-todo-status": {
         "name": "查看计划进度",
         "description": "获取当前计划的执行状态，显示所有步骤及其完成情况。",
     },
@@ -368,7 +368,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "name": "立即触发任务",
         "description": "立即执行定时任务，无需等待预定时间，用于测试或提前运行。",
     },
-    "update-plan-step": {
+    "update-todo-step": {
         "name": "更新计划步骤",
         "description": "更新计划中某个步骤的状态，每完成一步后必须调用以跟踪进度。",
     },

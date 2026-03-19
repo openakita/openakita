@@ -80,7 +80,7 @@ async def run_e2e_test():
             print(f"    → intent={result.intent.value}, task_type={result.task_type}")
             print(f"      tool_hints={result.tool_hints}")
             print(f"      memory_keywords={result.memory_keywords}")
-            print(f"      force_tool={result.force_tool}, plan_required={result.plan_required}")
+            print(f"      force_tool={result.force_tool}, todo_required={result.todo_required}")
             print(f"      confidence={result.confidence}")
             if result.task_definition:
                 print(f"      task_def={result.task_definition[:100]}...")

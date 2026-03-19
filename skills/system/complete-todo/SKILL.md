@@ -1,13 +1,13 @@
 ---
-name: complete-plan
+name: complete-todo
 description: Mark the plan as completed and generate a summary report. Call when ALL steps are done. Returns execution summary with success/failure statistics.
 system: true
 handler: plan
-tool-name: complete_plan
+tool-name: complete_todo
 category: Plan
 ---
 
-# Complete Plan
+# Complete Todo
 
 标记计划完成，生成最终报告。在所有步骤完成后调用。
 
@@ -33,6 +33,6 @@ category: Plan
 
 ## Related Skills
 
-- `create-plan`: 创建计划
-- `update-plan-step`: 更新步骤状态
-- `get-plan-status`: 查看计划状态
+- `create-todo`: 创建计划
+- `update-todo-step`: 更新步骤状态
+- `get-todo-status`: 查看计划状态
