@@ -3985,7 +3985,7 @@ export function App() {
 
 
 
-  function renderStatus() {
+  const renderStatusContent = useMemo(() => {
     const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
     const ws = workspaces.find((w) => w.id === effectiveWsId) || workspaces[0] || null;
     const im = [
@@ -4458,7 +4458,7 @@ export function App() {
         )}
       </>
     );
-  }
+  }, [envDraft, serviceStatus, heartbeatState, workspaces, currentWorkspaceId, t, IS_TAURI, busy, backendVersion, venvDir, selectedPythonIdx, pythonCandidates]);
 
   // ── Add endpoint dialog state ──
   const [addEpDialogOpen, setAddEpDialogOpen] = useState(false);
@@ -4491,7 +4491,7 @@ export function App() {
     setAddEpDialogOpen(true);
   }
 
-  function renderLLM() {
+  const renderLLMContent = useMemo(() => {
     return (
       <>
         {/* ── Main endpoint list ── */}
@@ -5385,7 +5385,7 @@ export function App() {
         </Dialog>
       </>
     );
-  }
+  }, [savedEndpoints, envDraft, t, busy, providers, selectedProvider, baseUrl, baseUrlExpanded, endpointName, endpointNameTouched, apiKeyValue, apiKeyEnv, apiKeyEnvTouched, addEpMaxTokens, addEpContextWindow, addEpTimeout, addEpRpmLimit, endpointPriority, codingPlanMode, isEditingEndpoint, editDraft, connTestResult, compilerEndpointName, sttEndpointName]);
 
   // FieldText/FieldBool/FieldSelect/FieldCombo/TelegramPairingCodeHint -> ./components/EnvFields.tsx
   // Wrapper closures that pass envDraft/onEnvChange automatically to extracted field components
@@ -7722,7 +7722,7 @@ export function App() {
             <div className="obContent">
               <h2 className="obStepTitle">{t("onboarding.llm.title")}</h2>
               <p className="obStepDesc">{t("onboarding.llm.desc")}</p>
-              <div className="obFormArea">{renderLLM()}</div>
+              <div className="obFormArea">{renderLLMContent}</div>
               <p className="obSkipHint">{t("onboarding.skipHint")}</p>
             </div>
             <div className="obFooter">
@@ -7992,7 +7992,7 @@ export function App() {
 
   function renderStepContent() {
     if (!info) return <div className="card">加载中...</div>;
-    if (view === "status") return renderStatus();
+    if (view === "status") return renderStatusContent;
     if (view === "chat") return null;  // ChatView 始终挂载，不在此渲染
 
     const _disableToggle = (viewKey: string, label: string) => (
@@ -8286,7 +8286,7 @@ export function App() {
     }
     switch (stepId) {
       case "llm":
-        return renderLLM();
+        return renderLLMContent;
       case "im":
         return renderIM();
       case "tools":
@@ -8296,7 +8296,7 @@ export function App() {
       case "advanced":
         return renderAdvanced();
       default:
-        return renderLLM();
+        return renderLLMContent;
     }
   }
 

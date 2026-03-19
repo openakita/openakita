@@ -287,6 +287,7 @@ class TelegramAdapter(ChannelAdapter):
         pairing_code: str | None = None,
         require_pairing: bool = True,
         proxy: str | None = None,
+        mention_only: bool = False,
         *,
         channel_name: str | None = None,
         bot_id: str | None = None,
@@ -320,6 +321,7 @@ class TelegramAdapter(ChannelAdapter):
 
         # 配对管理
         self.require_pairing = require_pairing
+        self.mention_only = mention_only  # 群聊 mention-only 模式
         self.pairing_manager = TelegramPairingManager(
             data_dir=Path("data/telegram/pairing"),
             pairing_code=pairing_code,
@@ -642,6 +644,36 @@ class TelegramAdapter(ChannelAdapter):
                         return
 
             # 已配对，正常处理消息
+
+            # mention-only 模式检查（仅群聊生效）
+            chat_type = message.chat.type if message.chat else "private"
+            is_group = chat_type in ("group", "supergroup")
+
+            if is_group and self.mention_only:
+                # 检查是否被@mention
+                bot_username = getattr(self._bot, "username", None) if self._bot else None
+                is_mentioned = False
+                if bot_username:
+                    for entities, text_source in [
+                        (message.entities, message.text),
+                        (message.caption_entities, message.caption),
+                    ]:
+                        if not entities or not text_source:
+                            continue
+                        for entity in entities:
+                            if entity.type == "mention":
+                                mention = text_source[entity.offset : entity.offset + entity.length]
+                                if mention.lower() == f"@{bot_username.lower()}":
+                                    is_mentioned = True
+                                    break
+                        if is_mentioned:
+                            break
+
+                if not is_mentioned:
+                    # 群聊 mention-only 模式且未被@，忽略此消息
+                    logger.debug(f"Group {chat_id} mention-only mode: message not mentioned, skipping")
+                    return
+
             # 转换为统一消息格式
             unified = await self._convert_message(message)
 

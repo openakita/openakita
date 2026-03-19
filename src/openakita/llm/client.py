@@ -1004,7 +1004,7 @@ class LLMClient:
                     # 区分配额耗尽和真正的认证错误
                     from .providers.base import LLMProvider as _BaseProvider
                     error_cat = _BaseProvider._classify_error(error_str)
-                    
+
                     # ── Issue #21: 403 错误指数退避重试 ──
                     # 对于 403 认证错误（非配额耗尽），先重试 3 次再切换端点
                     # 重试间隔：1s, 2s, 4s（指数退避）
@@ -1012,7 +1012,7 @@ class LLMClient:
                         # 从配置读取重试次数和基础间隔
                         auth_retry_count = self._settings.get("auth_retry_count", 3)
                         auth_retry_base_delay = self._settings.get("auth_retry_base_delay", 1)
-                        
+
                         for retry_attempt in range(auth_retry_count):
                             if retry_attempt > 0:
                                 # 指数退避：1s, 2s, 4s, 8s...
@@ -1022,7 +1022,7 @@ class LLMClient:
                                     f"wait={wait_time}s (exponential backoff)"
                                 )
                                 await asyncio.sleep(wait_time)
-                            
+
                             try:
                                 response = await provider.chat(request)
                                 # 重试成功
@@ -1064,7 +1064,7 @@ class LLMClient:
                                     f"error={retry_e}"
                                 )
                                 continue
-                        
+
                         # 所有重试都失败，标记不健康并切换到下一个端点
                         if error_cat == "auth":
                             logger.error(f"[LLM] endpoint={provider.name} auth_error after {auth_retry_count} retries: {e}")
