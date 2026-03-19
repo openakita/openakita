@@ -1188,7 +1188,6 @@ class Agent:
         """动态更新 shell 工具描述，包含当前操作系统信息"""
         import platform
 
-        # 获取操作系统信息
         if os.name == "nt":
             os_info = f"Windows {platform.release()} (使用 PowerShell/cmd 命令，如: dir, type, tasklist, Get-Process, findstr)"
         else:
@@ -3905,6 +3904,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 agent_profile_id=_agent_profile_id,
                 session=session,
                 force_tool_retries=_force_tool_retries,
+                is_sub_agent=getattr(self, "_is_sub_agent_call", False),
             ):
                 # 收集回复文本（用于 session 保存 & memory）
                 if event.get("type") == "text_delta":
@@ -4697,43 +4697,62 @@ NEXT: 建议的下一步（如有）"""
         except Exception as e:
             logger.warning(f"[StopTask] Failed to persist cancel to context: {e}")
 
+    _LIGHTWEIGHT_EMPTY_MAX_RETRIES = 2
+
     async def _chat_lightweight(
         self,
         messages: list[dict],
         session_type: str = "cli",
         endpoint_override: str | None = None,
     ) -> str:
-        """Lightweight path for CHAT intent: no tools, slim system prompt."""
+        """Lightweight path for CHAT intent: no tools, slim system prompt.
+
+        Retries up to _LIGHTWEIGHT_EMPTY_MAX_RETRIES times if the LLM returns
+        an empty content array (a known model-level glitch).
+        """
         system_prompt = await self._build_system_prompt_compiled(
             task_description="",
             session_type=session_type,
             tools_enabled=False,
         )
 
-        try:
-            response = await self.brain.messages_create_async(
-                system=system_prompt,
-                messages=messages,
-                tools=[],
-                max_tokens=self.brain.max_tokens,
-                endpoint_override=endpoint_override,
-            )
+        for attempt in range(1 + self._LIGHTWEIGHT_EMPTY_MAX_RETRIES):
+            try:
+                response = await self.brain.messages_create_async(
+                    system=system_prompt,
+                    messages=messages,
+                    tools=[],
+                    max_tokens=self.brain.max_tokens,
+                    endpoint_override=endpoint_override,
+                )
 
-            content = getattr(response, "content", None)
-            if isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if hasattr(block, "text"):
-                        text_parts.append(block.text)
-                    elif isinstance(block, dict) and "text" in block:
-                        text_parts.append(block["text"])
-                raw = "\n".join(text_parts) or ""
-            else:
-                raw = str(content or "")
-            return clean_llm_response(raw)
-        except Exception as e:
-            logger.error(f"[ChatLightweight] LLM call failed: {e}")
-            return "抱歉，暂时无法回复，请稍后再试。"
+                content = getattr(response, "content", None)
+                if isinstance(content, list):
+                    text_parts = []
+                    for block in content:
+                        if hasattr(block, "text"):
+                            text_parts.append(block.text)
+                        elif isinstance(block, dict) and "text" in block:
+                            text_parts.append(block["text"])
+                    raw = "\n".join(text_parts) or ""
+                else:
+                    raw = str(content or "")
+
+                cleaned = clean_llm_response(raw)
+                if cleaned:
+                    return cleaned
+
+                if attempt < self._LIGHTWEIGHT_EMPTY_MAX_RETRIES:
+                    logger.warning(
+                        f"[ChatLightweight] Empty content from LLM "
+                        f"(attempt {attempt + 1}), retrying..."
+                    )
+                    continue
+                return cleaned or "抱歉，模型暂时无法生成回复，请稍后再试。"
+            except Exception as e:
+                logger.error(f"[ChatLightweight] LLM call failed: {e}")
+                return "抱歉，暂时无法回复，请稍后再试。"
+        return "抱歉，模型暂时无法生成回复，请稍后再试。"
 
     async def _chat_with_tools_and_context(
         self,
@@ -4821,6 +4840,7 @@ NEXT: 建议的下一步（如有）"""
             agent_profile_id=_agent_profile_id,
             endpoint_override=endpoint_override,
             force_tool_retries=force_tool_retries,
+            is_sub_agent=getattr(self, "_is_sub_agent_call", False),
         )
 
         # ==================== 以下为旧代码（保留参考，后续完全清理） ====================

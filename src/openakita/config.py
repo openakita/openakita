@@ -426,7 +426,7 @@ class Settings(BaseSettings):
         description="全局上下文最大输入长度 (tokens)。实际生效时取 min(此值, 端点 context_window)。0=不限制，直接使用端点上限",
     )
     context_compression_ratio: float = Field(
-        default=0.15,
+        default=0.25,
         description="上下文压缩目标比例，早期对话压缩到原文的该百分比 (0.05~0.5)",
     )
     context_compression_threshold: float = Field(
@@ -434,11 +434,11 @@ class Settings(BaseSettings):
         description="触发压缩的软限比例——上下文 token 数超过硬上限的该比例时开始压缩 (0.5~0.95，越大越晚触发)",
     )
     context_boundary_compression_ratio: float = Field(
-        default=0.18,
+        default=0.25,
         description="跨话题边界压缩比例，旧话题压缩到该百分比 (0.05~0.5)",
     )
     context_min_recent_turns: int = Field(
-        default=8,
+        default=12,
         description="压缩时至少保留的最近对话组数 (4~20)",
     )
     context_enable_tool_compression: bool = Field(

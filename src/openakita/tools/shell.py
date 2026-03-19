@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import shutil
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -86,7 +87,7 @@ class ShellTool:
         self.default_cwd = default_cwd or os.getcwd()
         self.timeout = timeout
         self.shell = shell
-        self._is_windows = platform.system() == "Windows"
+        self._is_windows = sys.platform == "win32"
         self._oem_encoding: str | None = None
 
     # ------------------------------------------------------------------

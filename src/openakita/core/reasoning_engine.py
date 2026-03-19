@@ -43,6 +43,7 @@ from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_se
 from .supervisor import RuntimeSupervisor
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
+from ..api.routes.websocket import broadcast_event
 
 logger = logging.getLogger(__name__)
 
@@ -474,6 +475,7 @@ class ReasoningEngine:
         agent_profile_id: str = "default",
         endpoint_override: str | None = None,
         force_tool_retries: int | None = None,
+        is_sub_agent: bool = False,
     ) -> str:
         """
         主推理循环: Reason -> Act -> Observe。
@@ -534,6 +536,7 @@ class ReasoningEngine:
         })
 
         max_iterations = settings.max_iterations
+        self._empty_content_retries = 0
 
         # 进度回调辅助（安全调用，忽略异常）
         async def _emit_progress(text: str) -> None:
@@ -766,6 +769,7 @@ class ReasoningEngine:
                     working_messages, _build_effective_system_prompt(), current_model, state
                 )
             logger.info(f"[ReAct] Iter {iteration+1}/{max_iterations} — REASON (model={current_model})")
+            await broadcast_event("pet-status-update", {"status": "thinking"})
             if state.status != TaskStatus.REASONING:
                 try:
                     state.transition(TaskStatus.REASONING)
@@ -821,6 +825,7 @@ class ReasoningEngine:
                     no_confirmation_text_count = 0
                     continue
                 else:
+                    await broadcast_event("pet-status-update", {"status": "error"})
                     raise
 
             _thinking_duration_ms = int((time.time() - _thinking_t0) * 1000)
@@ -939,6 +944,7 @@ class ReasoningEngine:
                         "iterations": iteration + 1,
                         "tools_used": list(set(executed_tool_names)),
                     })
+                    await broadcast_event("pet-status-update", {"status": "success"})
                     return result
                 else:
                     # 需要继续循环（验证不通过）
@@ -962,6 +968,7 @@ class ReasoningEngine:
                 # ==================== ACT 阶段 ====================
                 tool_names = [tc.get("name", "?") for tc in decision.tool_calls]
                 logger.info(f"[ReAct] Iter {iteration+1} — ACT: {tool_names}")
+                await broadcast_event("pet-status-update", {"status": "tool_execution", "tool_name": ", ".join(tool_names)})
                 try:
                     state.transition(TaskStatus.ACTING)
                 except ValueError:
@@ -1046,6 +1053,8 @@ class ReasoningEngine:
                         state.transition(TaskStatus.WAITING_USER)
                     except ValueError:
                         pass
+
+                    await broadcast_event("pet-status-update", {"status": "idle"})
 
                     # ---- IM 模式：等待用户回复（超时 + 追问） ----
                     user_reply = await self._wait_for_user_reply(
@@ -1391,6 +1400,7 @@ class ReasoningEngine:
             task_description=task_description,
             task_id=state.task_id,
         )
+        await broadcast_event("pet-status-update", {"status": "error"})
         return "已达到最大工具调用次数，请重新描述您的需求。"
 
     # ==================== 流式输出 (SSE) ====================
@@ -1413,6 +1423,7 @@ class ReasoningEngine:
         agent_profile_id: str = "default",
         session: Any = None,
         force_tool_retries: int | None = None,
+        is_sub_agent: bool = False,
     ):
         """
         流式推理循环，为 HTTP API (SSE) 设计。
@@ -1522,6 +1533,7 @@ class ReasoningEngine:
                 msg for msg in messages if self._is_human_user_message(msg)
             ]
             max_iterations = settings.max_iterations
+            self._empty_content_retries = 0
             working_messages = list(messages)
 
             # ForceToolCall 配置
@@ -1702,6 +1714,7 @@ class ReasoningEngine:
                 # --- Reason phase ---
                 _thinking_t0 = time.time()
                 yield {"type": "thinking_start"}
+                await broadcast_event("pet-status-update", {"status": "thinking"})
 
                 try:
                     decision = None
@@ -1890,6 +1903,7 @@ class ReasoningEngine:
                         for i in range(0, len(result), chunk_size):
                             yield {"type": "text_delta", "content": result[i:i + chunk_size]}
                             await asyncio.sleep(0.01)
+                        await broadcast_event("pet-status-update", {"status": "success"})
                         yield {"type": "done"}
                         return
                     else:
@@ -1939,6 +1953,7 @@ class ReasoningEngine:
                             # chain_text: 工具描述
                             yield {"type": "chain_text", "content": self._describe_tool_call(t_name, t_args)}
                             yield {"type": "tool_call_start", "tool": t_name, "args": t_args, "id": t_id}
+                            await broadcast_event("pet-status-update", {"status": "tool_execution", "tool_name": t_name})
                             # PolicyEngine 检查
                             from .policy import PolicyDecision, get_policy_engine
                             _pe = get_policy_engine()
@@ -2016,6 +2031,8 @@ class ReasoningEngine:
                                 parsed_questions.append(pq)
                             if parsed_questions:
                                 event["questions"] = parsed_questions
+                        
+                        await broadcast_event("pet-status-update", {"status": "idle"})
                         yield event
                         react_trace.append(_iter_trace)
                         self._save_react_trace(
@@ -2050,6 +2067,7 @@ class ReasoningEngine:
                         yield {"type": "chain_text", "content": _tool_desc}
 
                         yield {"type": "tool_call_start", "tool": tool_name, "args": tool_args, "id": tool_id}
+                        await broadcast_event("pet-status-update", {"status": "tool_execution", "tool_name": tool_name})
 
                         # PolicyEngine 检查（与 execute_batch 一致）
                         from .policy import PolicyDecision, get_policy_engine
@@ -2431,6 +2449,7 @@ class ReasoningEngine:
                 f"error: {str(e)[:100]}", _trace_started_at,
             )
             yield {"type": "error", "message": str(e)[:500]}
+            await broadcast_event("pet-status-update", {"status": "error"})
             yield {"type": "done"}
 
         finally:
@@ -3207,6 +3226,29 @@ class ReasoningEngine:
             f"has_tool_calls=False, tools_executed_in_task=False, "
             f"text_preview=\"{(stripped_text or '')[:80].replace(chr(10), ' ')}\""
         )
+
+        # Model glitch: LLM returned empty content (content: []) but consumed
+        # output tokens on internal reasoning. Retry silently without counting
+        # against the ForceToolCall budget.
+        _empty_retry_attr = "_empty_content_retries"
+        empty_retries = getattr(self, _empty_retry_attr, 0)
+        if (
+            not stripped_text
+            and not decision.thinking_content
+            and intent is None
+            and empty_retries < 2
+        ):
+            setattr(self, _empty_retry_attr, empty_retries + 1)
+            logger.warning(
+                f"[EmptyContent] LLM returned empty content (attempt {empty_retries + 1}/2), "
+                f"silent retry without counting against ForceToolCall budget"
+            )
+            working_messages.append({
+                "role": "user",
+                "content": "[系统] 你的上一次回复为空。请直接回复用户的问题。",
+            })
+            return (working_messages, no_tool_call_count, verify_incomplete_count,
+                    no_confirmation_text_count, max_no_tool_retries)
 
         # [REPLY] / [ACTION] / 无标记 → 统一使用配置的重试次数
         max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)

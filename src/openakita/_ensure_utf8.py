@@ -50,12 +50,11 @@ if sys.platform == "win32":
     try:
         _wv = sys.getwindowsversion()
         _platform._uname_cache = _platform.uname_result(
-            system="Windows",
-            node=os.environ.get("COMPUTERNAME", ""),
-            release=str(_wv.major),
-            version=f"{_wv.major}.{_wv.minor}.{_wv.build}",
-            machine=os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
-            processor=os.environ.get("PROCESSOR_IDENTIFIER", ""),
+            "Windows",
+            os.environ.get("COMPUTERNAME", ""),
+            str(_wv.major),
+            f"{_wv.major}.{_wv.minor}.{_wv.build}",
+            os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64"),
         )
     except Exception:
         pass
