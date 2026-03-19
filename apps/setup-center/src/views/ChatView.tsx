@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { setThemePref } from "../theme";
 import type { Theme } from "../theme";
-import { invoke, downloadFile, openFileWithDefault, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, onWsEvent, logger } from "../platform";
+import { invoke, downloadFile, openFileWithDefault, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, onWsEvent, logger, getAssetUrl } from "../platform";
 import { getAccessToken } from "../platform/auth";
 import { safeFetch } from "../providers";
 import type {
@@ -1147,10 +1147,11 @@ function VoiceArtifact({ src, caption }: { src: string; caption?: string }) {
   );
 }
 
-function ArtifactItem({ art, fullUrl, onImagePreview }: {
+function ArtifactItem({ art, displayUrl, downloadUrl, onImagePreview }: {
   art: ChatArtifact;
-  fullUrl: string;
-  onImagePreview?: (url: string, name: string) => void;
+  displayUrl: string;
+  downloadUrl: string;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
 }) {
   const { t } = useTranslation();
 
@@ -1158,7 +1159,7 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
     return (
       <div style={{ marginBottom: 8, position: "relative", display: "inline-block" }}>
         <img
-          src={fullUrl}
+          src={displayUrl}
           alt={art.caption || art.name}
           style={{
             maxWidth: "100%",
@@ -1171,14 +1172,14 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
           onClick={() => {
             if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
             _artifactClickTimer = setTimeout(() => {
-              onImagePreview?.(fullUrl, art.name || "image");
+              onImagePreview?.(displayUrl, downloadUrl, art.name || "image");
             }, 250);
           }}
           onDoubleClick={() => {
             if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
             (async () => {
               try {
-                const savedPath = await downloadFile(fullUrl, art.name || `image-${Date.now()}.png`);
+                const savedPath = await downloadFile(downloadUrl, art.name || `image-${Date.now()}.png`);
                 await openFileWithDefault(savedPath);
               } catch (err) {
                 logger.error("Chat", "图片打开失败", { error: String(err) });
@@ -1200,7 +1201,7 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
           onClick={async (e) => {
             e.stopPropagation();
             try {
-              const savedPath = await downloadFile(fullUrl, art.name || `image-${Date.now()}.png`);
+              const savedPath = await downloadFile(downloadUrl, art.name || `image-${Date.now()}.png`);
               await showInFolder(savedPath);
             } catch (err) {
               logger.error("Chat", "图片下载失败", { error: String(err) });
@@ -1217,7 +1218,7 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
   }
 
   if (art.artifact_type === "voice") {
-    return <VoiceArtifact src={fullUrl} caption={art.caption} />;
+    return <VoiceArtifact src={displayUrl} caption={art.caption} />;
   }
 
   const FileIcon = getFileTypeIcon(art.name || "");
@@ -1236,7 +1237,7 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
         if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
         _artifactClickTimer = setTimeout(async () => {
           try {
-            const savedPath = await downloadFile(fullUrl, art.name || "file");
+            const savedPath = await downloadFile(downloadUrl, art.name || "file");
             await showInFolder(savedPath);
           } catch (err) {
             logger.error("Chat", "文件下载失败", { error: String(err) });
@@ -1247,7 +1248,7 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
         if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
         (async () => {
           try {
-            const savedPath = await downloadFile(fullUrl, art.name || "file");
+            const savedPath = await downloadFile(downloadUrl, art.name || "file");
             await openFileWithDefault(savedPath);
           } catch (err) {
             logger.error("Chat", "文件打开失败", { error: String(err) });
@@ -1272,16 +1273,19 @@ function ArtifactItem({ art, fullUrl, onImagePreview }: {
 function ArtifactList({ artifacts, apiBaseUrl, onImagePreview }: {
   artifacts: ChatArtifact[];
   apiBaseUrl?: string;
-  onImagePreview?: (url: string, name: string) => void;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
 }) {
   return (
     <div style={{ marginTop: 8 }}>
       {artifacts.map((art, i) => {
-        const rawUrl = art.file_url.startsWith("http")
-          ? art.file_url
-          : `${apiBaseUrl || ""}${art.file_url}`;
-        const fullUrl = appendAuthToken(rawUrl);
-        return <ArtifactItem key={i} art={art} fullUrl={fullUrl} onImagePreview={onImagePreview} />;
+        const httpUrl = (() => {
+          const rawUrl = art.file_url.startsWith("http")
+            ? art.file_url
+            : `${apiBaseUrl || ""}${art.file_url}`;
+          return appendAuthToken(rawUrl);
+        })();
+        const displayUrl = getAssetUrl(art.path) || httpUrl;
+        return <ArtifactItem key={i} art={art} displayUrl={displayUrl} downloadUrl={httpUrl} onImagePreview={onImagePreview} />;
       })}
     </div>
   );
@@ -1301,7 +1305,7 @@ const MessageBubble = memo(function MessageBubble({
   apiBaseUrl?: string;
   showChain?: boolean;
   onSkipStep?: () => void;
-  onImagePreview?: (url: string, name: string) => void;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   mdModules?: MdModules | null;
 }) {
   const { t } = useTranslation();
@@ -1412,7 +1416,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
   apiBaseUrl?: string;
   showChain?: boolean;
   onSkipStep?: () => void;
-  onImagePreview?: (url: string, name: string) => void;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   mdModules?: MdModules | null;
 }) {
   const { t } = useTranslation();
@@ -1715,7 +1719,7 @@ export function ChatView({
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
-  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [lightbox, setLightbox] = useState<{ url: string; downloadUrl: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
@@ -3505,8 +3509,8 @@ export function ChatView({
     }).catch(() => {});
   }, [apiBase, activeConvId]);
 
-  const handleImagePreview = useCallback((url: string, name: string) => {
-    setLightbox({ url, name });
+  const handleImagePreview = useCallback((displayUrl: string, downloadUrl: string, name: string) => {
+    setLightbox({ url: displayUrl, downloadUrl, name });
   }, []);
 
   const handleCancelTask = useCallback(() => {
@@ -4658,7 +4662,7 @@ export function ChatView({
               onClick={async (e) => {
                 e.stopPropagation();
                 try {
-                  const savedPath = await downloadFile(lightbox.url, lightbox.name || `image-${Date.now()}.png`);
+                  const savedPath = await downloadFile(lightbox.downloadUrl, lightbox.name || `image-${Date.now()}.png`);
                   await showInFolder(savedPath);
                 } catch (err) {
                   logger.error("Chat", "图片下载失败", { error: String(err) });
