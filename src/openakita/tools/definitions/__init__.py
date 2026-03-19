@@ -60,7 +60,7 @@ from .agent_package import AGENT_PACKAGE_TOOLS
 from .skill_store import SKILL_STORE_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
 
-# 合并所有工具定义
+# 合并所有工具定义（不含平台连接类工具，后者由 agent 根据 hub_enabled 动态加载）
 BASE_TOOLS = (
     FILESYSTEM_TOOLS
     + SKILLS_TOOLS
@@ -77,9 +77,10 @@ BASE_TOOLS = (
     + STICKER_TOOLS
     + CONFIG_TOOLS
     + AGENT_PACKAGE_TOOLS
-    + AGENT_HUB_TOOLS
-    + SKILL_STORE_TOOLS
 )
+
+# 平台连接工具（Agent Hub + Skill Store），仅在 hub_enabled=True 时注册
+HUB_TOOLS = AGENT_HUB_TOOLS + SKILL_STORE_TOOLS
 
 __all__ = [
     # 基础类型和工具
@@ -98,6 +99,7 @@ __all__ = [
     "filter_tools_by_category",
     # 工具列表
     "BASE_TOOLS",
+    "HUB_TOOLS",
     "AGENT_TOOLS",
     "ORG_SETUP_TOOLS",
     "AGENT_HUB_TOOLS",

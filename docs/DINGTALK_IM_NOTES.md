@@ -13,7 +13,7 @@
 | 功能 | 关键代码位置 | 说明 |
 |------|------------|------|
 | Stream 长连接 | `_start_stream()` | 基于 `dingtalk-stream` SDK 的 WebSocket 长连接，无需公网 IP |
-| 消息回调 | `_ChatbotHandler.process()` | 处理 `ChatbotMessage.TOPIC` 回调 |
+| 消息回调 | `_ChatbotHandler.process()` | ACK 先行：立即返回 ACK，异步处理消息 |
 | 消息解析 | `_handle_stream_message()` | 从 `callback.data` 原始字典手动解析基础字段 |
 | 内容解析 | `_parse_message_content()` | 支持 text/picture/richText/audio/video/file |
 | @检测 | `_handle_stream_message()` L287-297 | `isInAtList` 字段 + 遍历 `atUsers` 列表 |
@@ -29,10 +29,13 @@
 | 单聊 OpenAPI | `_send_via_api()` | `POST /v1.0/robot/oToMessages/batchSend` |
 | Markdown 发送 | `send_markdown()` | 单聊专用便捷方法 |
 | 卡片消息 | `send_action_card()` | 单聊专用便捷方法 |
-| Typing 提示 | `send_typing()` | 互动卡片 StandardCard，幂等（首次创建，后续跳过） |
+| Typing 提示 | `send_typing()` | 优先 AI Card (382e4302 模板)，降级 StandardCard |
 | Typing 清理 | `clear_typing()` | 更新残留卡片为"处理完成"，正常路径由 send_message 消费 |
-| 互动卡片发送 | `_send_interactive_card()` | `POST /v1.0/im/v1.0/robot/interactiveCards/send` |
-| 互动卡片更新 | `_update_interactive_card()` | `PUT /v1.0/im/robots/interactiveCards` |
+| AI Card 创建 | `_create_ai_card()` | `POST /v1.0/card/instances` + `POST /v1.0/card/instances/deliver` |
+| AI Card 流式更新 | `_stream_ai_card()` | `PUT /v1.0/card/streaming` (流式) / `PUT /v1.0/card/instances` (FINISHED) |
+| StandardCard 发送 | `_send_interactive_card()` | `POST /v1.0/im/v1.0/robot/interactiveCards/send` (降级方案) |
+| StandardCard 更新 | `_update_interactive_card()` | `PUT /v1.0/im/robots/interactiveCards` (降级方案) |
+| 文本分块 | `_chunk_markdown_text()` | 4000 字符限制，markdown-aware 分块 |
 | 图片发送 | `send_image()` | 上传 → OpenAPI → Webhook markdown 嵌入 → 文本降级 |
 | 文件发送 | `send_file()` | 上传 → OpenAPI → 文本降级 |
 | 语音发送 | `send_voice()` | 委托给 `send_file()`（Webhook 不支持语音） |
@@ -50,8 +53,9 @@
 |------|------|
 | `start()` | 导入 httpx/dingtalk_stream，创建 HTTP 客户端，刷新 token |
 | `_start_stream()` | 后台线程创建新事件循环，初始化 `DingTalkStreamClient` |
-| `client.start_forever()` | SDK 内部维护 WebSocket 连接和自动重连 |
+| `loop.run_until_complete(client.start())` | 在受控事件循环中运行 SDK（非 `start_forever`） |
 | 保存 `_main_loop` | 从 Stream 线程投递协程到主循环 |
+| 连接状态机 | `DingTalkStreamState`: IDLE → CONNECTING → RUNNING → RECONNECTING → STOPPED |
 
 ---
 
@@ -95,7 +99,7 @@
 | `sampleImageMsg` | `{"photoURL": "..."}` | 图片（URL 或 @mediaId） |
 | `sampleFile` | `{"mediaId": "@...", "fileName": "...", "fileType": "..."}` | 文件 |
 | `sampleAudio` | `{"mediaId": "@...", "duration": "3000"}` | 语音（duration 单位 ms） |
-| `sampleVideo` | `{"duration": "3", "videoMediaId": "...", "videoType": "mp4", "picMediaId": "..."}` | 视频 |
+| `sampleVideo` | `{"mediaId": "@...", "duration": "3000", "videoType": "mp4"}` | 视频（duration 单位 ms） |
 | `sampleActionCard` | `{"title", "text", "singleTitle", "singleURL"}` | 交互卡片 |
 
 ### SessionWebhook
@@ -209,11 +213,13 @@ Gateway 回复时 `outgoing_meta = dict(original.metadata)` 完整复制，
 - `senderId` 是加密 ID（`$:LWCP_v1:$...` 格式），**不能** 用于 API 调用
 - 当前实现：`senderStaffId || senderId`，若 `senderStaffId` 为空则 fallback 到加密 ID，此时 **单聊回复必定失败**
 
-### 约束 6：stop() 必须关闭旧连接
+### 约束 6：stop() 必须阻断 SDK 重连
 
-- 钉钉平台可能在新旧 WebSocket 连接间分发消息
-- 旧连接的 `_main_loop` 已失效，投递会静默失败
-- `stop()` 必须停止 Stream 线程事件循环，等待线程退出
+- SDK `start()` 内部是 `while True` 循环，catch 所有异常（含 CancelledError）并重试
+- 仅关闭 WebSocket 会触发 SDK 立即重连（`open_connection` → 新 ticket → 新连接）
+- 必须 monkey-patch `client.open_connection = lambda: None` 阻断重连
+- 同时将 `_main_loop = None` 防止僵尸线程投递到已关闭的事件循环
+- `_handle_stream_message` 检查 `_running` + `_main_loop.is_closed()` 双重防护
 
 ### 约束 7：Webhook 仅支持 text/markdown
 
@@ -279,18 +285,9 @@ if not audio_content or not isinstance(audio_content, dict):
 
 **引入风险**: 低。仅影响缓存管理。
 
-### 问题 4（中）：视频消息发送未实现
+### 问题 4（中）：视频消息发送未实现 — ✅ 已修复
 
-**现象**: 接收支持 video，但 `_build_msg_key_param()` 中无 `sampleVideo` 分支。收到视频类型 `OutgoingMessage` 时会降级到文本。
-
-**AstrBot 做法**: 完整实现 sampleVideo，含：
-- 非 mp4 格式转换
-- 视频封面提取 (`extract_video_cover`)
-- `videoMediaId` + `picMediaId` 双上传
-
-**修复建议**: 在 `_build_msg_key_param()` 中新增 `message.content.videos` 分支，实现 sampleVideo 发送。
-
-**引入风险**: 中。需要引入视频格式转换和封面提取依赖。可先实现基础版（仅 mp4，无封面）。
+**已实现**: `_build_msg_key_param()` 已支持 `sampleVideo` 分支，上传视频获取 mediaId 后发送原生视频消息。当前为基础版（仅 mp4，无封面提取）。
 
 ### 问题 5（中）：语音发送无格式转换
 
@@ -519,18 +516,31 @@ start()
   → _refresh_token() (新版 OAuth2)
   → _main_loop = asyncio.get_running_loop()
   → _start_stream()
+    → state: IDLE → CONNECTING
     → 后台 Thread: _run_stream_in_thread()
-      → asyncio.new_event_loop()
+      → loop = asyncio.new_event_loop()
       → DingTalkStreamClient(Credential)
       → register_callback_handler(ChatbotMessage.TOPIC)
-      → client.start_forever()
-        → SDK 内部: 建 WS → 注册回调 → 自动重连
+      → state: CONNECTING → RUNNING
+      → loop.run_until_complete(client.start())
+        → SDK 内部: 建 WS → 注册回调 → 接收消息
+    → 看门狗: _stream_watchdog_loop() 每 15s 检查
+      → 线程存活 + 运行 300s: 重置重连计数
+      → 线程退出: state → RECONNECTING, 指数退避重启
 
 stop()
-  → _running = False
-  → stream_loop.call_soon_threadsafe(stream_loop.stop)
-  → stream_thread.join(timeout=5)
+  → _running = False, _main_loop = None
+  → state: → STOPPED
+  → 取消看门狗
+  → monkey-patch client.open_connection = lambda: None  ← 阻断 SDK while True 重连
+  → 关闭 WebSocket (ws.close() via run_coroutine_threadsafe)
+  → 停止事件循环 (stream_loop.stop)
+  → 等待线程退出 (join 5s)
   → http_client.aclose()
+  → 输出 metrics (消息数, 重连数, 去重命中数)
+
+注意: SDK start() 内部是 while True 循环，捕获所有异常含 CancelledError 并重连。
+必须 patch open_connection 才能阻断重连，否则旧线程成为僵尸。
 ```
 
 ---
@@ -545,7 +555,7 @@ stop()
 | 线程模型 | 独立 Stream 线程 | 独立 WS 线程 | 主事件循环 | 主事件循环 |
 | Token 数量 | 2（新旧 API） | 1 | 0 (协议内认证) | 1 |
 | 消息加密 | 无 (WSS 传输层) | 无 (WSS 传输层) | 文件 AES-256-CBC | 无 |
-| Typing 提示 | 互动卡片 StandardCard (已实现) | 思考中卡片 (PATCH) | 无需（流式即反馈） | sendChatAction |
+| Typing 提示 | AI Card (382e4302) + StandardCard 降级 | 思考中卡片 (PATCH) | 无需（流式即反馈） | sendChatAction |
 | 流式回复 | 未实现 | 未实现 | 原生支持 | 无 |
 | Webhook 回退 | SessionWebhook → OpenAPI | 无 | response_url → WS | 无 |
 | 心跳/重连 | SDK 内置 | SDK 内置 | 自实现 30s心跳 | SDK 管理 |
@@ -564,7 +574,7 @@ stop()
 - [ ] media/upload 是否使用旧版 token？
 - [ ] 新增消息类型是否在 `_parse_message_content` 中处理？
 - [ ] 新增发送类型是否在 `_build_msg_key_param` 中处理？
-- [ ] `stop()` 是否完整关闭了 Stream 线程？
+- [ ] `stop()` 是否 patch 了 `open_connection` 并清除 `_main_loop`？
 - [ ] 缓存字典是否有容量保护？
 - [ ] `send_typing` 是否幂等（同一 chat_id 只发一次）？
 - [ ] `send_message` 是否检查并消费 `_thinking_cards`？
@@ -576,18 +586,36 @@ stop()
 
 ### 实现概述
 
-基于互动卡片普通版（`StandardCard`）实现"正在思考中..."提示，与飞书 thinking card 模式对齐。
+双层卡片策略：优先使用 **AI Card** (382e4302 官方 AI 模板)，失败时降级为 **StandardCard**。
+状态通过 `_CardState(card_id, is_ai_card)` 统一管理。
 
-### API 端点
+### AI Card（主方案） — 官方 AI 流式模板
+
+| 操作 | 方法 | URL | 说明 |
+|------|------|-----|------|
+| 创建实例 | POST | `/v1.0/card/instances` | `cardTemplateId="382e4302-551d-4880-bf29-a30acfab2e71.schema"` |
+| 投递卡片 | POST | `/v1.0/card/instances/deliver` | `openSpaceId="dtv1.card//IM_GROUP.{cid}"` 或 `"dtv1.card//IM_ROBOT.{uid}"` |
+| 流式更新 | PUT | `/v1.0/card/streaming` | `key="msgContent"`, `isFull=true`, 每次带新 `guid` |
+| 完成/更新状态 | PUT | `/v1.0/card/instances` | `flowStatus: "FINISHED"` |
+
+状态流转：`PROCESSING` → `INPUTING`（流式输出时） → `FINISHED`
+
+AI Card 优势：
+- 原生流式输出动画（INPUTING 状态自带光标效果）
+- 官方 streaming API，无需手动节流
+- 状态管理规范
+
+### StandardCard（降级方案）
 
 | 操作 | 方法 | URL | 说明 |
 |------|------|-----|------|
 | 发送卡片 | POST | `/v1.0/im/v1.0/robot/interactiveCards/send` | `cardTemplateId="StandardCard"` |
 | 更新卡片 | PUT | `/v1.0/im/robots/interactiveCards` | 通过 `cardBizId` 全量替换 `cardData` |
 
-两者均在 `api.dingtalk.com` 域名，使用新版 token（`x-acs-dingtalk-access-token`）。
+当 AI Card API 不可用（权限未开通、模板不存在等）时自动降级为 StandardCard。
+首次 AI Card 失败后 `_ai_card_available = False`，后续直接使用 StandardCard。
 
-### cardData 格式
+### cardData 格式 (StandardCard)
 
 `cardData` 参数类型为 **JSON 字符串**（不是对象），结构：
 
@@ -601,18 +629,17 @@ stop()
 }
 ```
 
-更新时发送完整的新 cardData，不支持增量更新。
-
 ### 群聊 vs 单聊路由
 
-- **群聊** (`conversationType == "2"`): `body["openConversationId"] = chat_id`
-- **单聊** (`conversationType == "1"`): `body["singleChatReceiver"] = json.dumps({"userId": staffId})`
+- **AI Card**: 群聊 `openSpaceId="dtv1.card//IM_GROUP.{cid}"`，单聊 `openSpaceId="dtv1.card//IM_ROBOT.{uid}"`
+- **StandardCard**: 群聊 `openConversationId=chat_id`，单聊 `singleChatReceiver=json({"userId": staffId})`
 - 两者**二选一**，通过 `_conversation_types` 缓存判断
 
 ### 状态管理
 
 ```
-_thinking_cards: dict[str, str]  # chat_id -> cardBizId
+_thinking_cards: dict[str, _CardState]  # session_key -> _CardState(card_id, is_ai_card)
+_ai_card_available: bool = True  # AI Card 可用性标记
 ```
 
 ### 关键时序
@@ -621,19 +648,28 @@ _thinking_cards: dict[str, str]  # chat_id -> cardBizId
 Gateway: _on_message()
   → typing_task = create_task(_keep_typing)
     → send_typing(chat_id)
-      → chat_id not in _thinking_cards → 创建 card, 存入 dict
-      → chat_id in _thinking_cards → 跳过 (幂等)
+      → sk not in _thinking_cards → _create_card(chat_id)
+        → AI Card: create_instance + deliver → _CardState(ai=True)
+        → AI Card 失败: fallback → _create_standard_card → _CardState(ai=False)
+      → sk in _thinking_cards → 跳过 (幂等)
   → Agent 处理...
+  → thinking_end → emit_progress_event("💭 preview")
+    → gateway._try_patch_progress_to_card → adapter._patch_card_content(card_state, text)
+      → AI Card: PUT streaming / StandardCard: PUT update → 思考内容写入卡片
+  → stream_token(chat_id, token)  [流式模式]
+    → AI Card: PUT /v1.0/card/streaming (无需节流)
+    → StandardCard: PUT update (800ms 节流)
+  → finalize_stream(chat_id, final_text)
+    → AI Card: PUT /v1.0/card/instances (FINISHED)
+    → StandardCard: PUT update (最终内容)
   → _send_response() → send_message(outgoing)
-    → pop _thinking_cards[chat_id]
-    → 纯文本: 更新卡片内容为最终回复, return
-    → 含媒体: 更新卡片为"处理完成", 继续走正常媒体发送
-    → 更新失败: fallthrough 到 webhook/OpenAPI 正常发送
+    → pop _thinking_cards[sk]
+    → 纯文本: _finish_card(card_state, text), return
+    → 含媒体: _finish_card(card_state, "处理完成"), 继续正常发送
+    → 更新失败: fallthrough 到 webhook/OpenAPI
   → finally:
     → typing_task.cancel()
-    → clear_typing(chat_id)
-      → dict 已空 → no-op (正常路径)
-      → dict 有残留 → 更新卡片为"处理完成" (异常路径)
+    → clear_typing(chat_id) → no-op (正常) / _finish_card (异常)
 ```
 
 ### 异常路径保障
@@ -641,19 +677,20 @@ Gateway: _on_message()
 | 场景 | 行为 |
 |------|------|
 | Agent 抛异常 | `_send_error` → `send_text` → `send_message` 消费卡片 |
-| Agent + _send_error 双重失败 | `clear_typing` 更新卡片为"处理完成" |
-| 卡片发送失败 (API/权限) | `send_typing` 回滚 dict, 后续无 typing 提示 |
+| Agent + _send_error 双重失败 | `clear_typing` → `_finish_card` 更新卡片为"处理完成" |
+| AI Card 创建失败 | 降级 StandardCard；StandardCard 也失败则跳过 |
+| AI Card 首次失败 | `_ai_card_available = False`，后续直接 StandardCard |
 | 卡片更新失败 | `send_message` fallthrough 到正常发送 |
 | 中断后 typing 重建 | 主响应消费旧卡, typing 重建新卡, 中断响应消费新卡 |
 | 单聊无 staffId | `send_typing` 静默跳过, 退化为无提示 |
 
 ### 约束与限制
 
-1. **API 调用量**: 标准版 1 万次/月, 每条消息消耗 2 次 (send + update)
-2. **权限**: 需开通「企业内机器人发送消息权限」
+1. **AI Card 权限**: 需要 AI Card 模板权限，未开通时自动降级
+2. **API 调用量**: AI Card 消耗 3 次 (create + deliver + finish)，StandardCard 消耗 2 次
 3. **普通版不支持 Stream 回调**: 按钮交互需改用高级版
-4. **`cardBizId` 唯一性**: 每次 `send_typing` 生成新 UUID, 确保幂等
-5. **加密 senderId 检测**: `$:LWCP` 前缀的 ID 不可用于 `singleChatReceiver`
+4. **`outTrackId`/`cardBizId` 唯一性**: 每次生成新 UUID, 确保幂等
+5. **加密 senderId 检测**: `$:LWCP` 前缀的 ID 不可用于卡片投递
 
 ---
 
@@ -671,3 +708,39 @@ Gateway: _on_message()
 - 互动卡片搭建平台: https://card.dingtalk.com/card-builder
 - 打字机模式教程: https://opensource.dingtalk.com/developerpedia/docs/explore/tutorials/stream/bot/go/send-streaming-card
 - AstrBot 钉钉适配器: https://github.com/Soulter/AstrBot (`astrbot/core/platform/sources/dingtalk/`)
+- AI Card 流式卡片 API: https://open.dingtalk.com/document/orgapp/create-an-instance-of-an-interactive-card
+- AI Card 流式更新 API: https://open.dingtalk.com/document/orgapp/streaming-update-of-interactive-cards
+- openclaw-china 参考实现: DingTalk IM extension (TypeScript/Stream mode)
+
+---
+
+## 十四、openclaw-china 对比改进记录
+
+> 基于与 openclaw-china-main 项目的对比分析，以下改进已实施。
+
+### 已实施改进
+
+| 改进项 | 描述 | 影响 |
+|--------|------|------|
+| **ACK 先行** | `process()` 立即返回 ACK，消息处理异步执行 | 避免大文件处理时 SDK 超时重发 |
+| **AI Card 流式卡片** | 升级为 382e4302 官方 AI 模板，支持 `/v1.0/card/streaming` | 原生流式输出动画，体验大幅提升 |
+| **StandardCard 降级** | AI Card 不可用时自动降级为 StandardCard | 向后兼容，零配置 |
+| **去重增强** | key 加 bot_id 前缀，60s TTL 过期清理，上限 5000 | 多实例安全，内存可控 |
+| **连接状态机** | `DingTalkStreamState` 枚举 + 状态转换日志 | 问题排查更直观 |
+| **运行指标** | `_StreamMetrics`: 消息数、重连数、去重命中数等 | stop() 时输出汇总 |
+| **stop() 改进** | monkey-patch `open_connection` 阻断 SDK 重连 + 清除 `_main_loop` | 彻底解决热重载后 Stream 僵尸线程问题 |
+| **事件循环对齐** | `loop.run_until_complete(client.start())` 替代 `start_forever()` | `_stream_loop` 指向实际运行循环 |
+| **消息投递防御** | `_handle_stream_message` 检查 `_running` + `_main_loop.is_closed()` | 避免 "Event loop is closed" 错误 |
+| **思考进度卡片** | 新增 `_patch_card_content`，思考内容写入卡片而非独立消息 | 解决思考预览显示在最终回复之后的时序问题 |
+| **视频消息发送** | `_build_msg_key_param` 新增 `sampleVideo` | 支持原生视频消息 |
+| **文本分块** | `_chunk_markdown_text()` 4000 字符 markdown-aware 分块 | 避免超长文本发送失败 |
+
+### 未实施（保留现状）
+
+| 项目 | 原因 |
+|------|------|
+| 自行管理 WebSocket 重连 | SDK 内置重连足够，自行管理增加复杂度 |
+| 连接/注册超时检测 | 当前看门狗机制已覆盖 |
+| 指数退避重连 (自定义) | 看门狗已有指数退避 |
+| 长任务文本降级通知 | 已有 thinking card，暂不需要 |
+| SessionWebhook 废弃 | OpenAkita 的 Webhook 优先策略是合理的性能优化 |

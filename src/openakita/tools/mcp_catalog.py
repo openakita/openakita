@@ -383,6 +383,20 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         """使缓存失效"""
         self._cached_catalog = None
 
+    def remove_server(self, identifier: str) -> bool:
+        """移除指定服务器并使缓存失效。返回是否找到并移除。"""
+        before = len(self._servers)
+        self._servers = [s for s in self._servers if s.identifier != identifier]
+        removed = len(self._servers) < before
+        if removed:
+            self._cached_catalog = None
+        return removed
+
+    def reset(self) -> None:
+        """清空所有服务器并使缓存失效（用于重载配置）"""
+        self._servers.clear()
+        self._cached_catalog = None
+
     @property
     def servers(self) -> list[MCPServerInfo]:
         """所有服务器信息（公共只读属性）"""

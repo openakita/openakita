@@ -35,6 +35,8 @@ from .routes import (
     config,
     feishu_onboard,
     files,
+    qqbot_onboard,
+    wecom_onboard,
     health,
     hub,
     identity,
@@ -318,6 +320,8 @@ def create_app(
     app.include_router(chat_models.router, tags=["模型"])
     app.include_router(config.router, tags=["配置"])
     app.include_router(feishu_onboard.router, tags=["飞书扫码"])
+    app.include_router(qqbot_onboard.router, tags=["QQ扫码"])
+    app.include_router(wecom_onboard.router, tags=["企微扫码"])
     app.include_router(files.router, tags=["文件"])
     app.include_router(health.router, tags=["健康检查"])
     app.include_router(im.router, tags=["即时通讯"])

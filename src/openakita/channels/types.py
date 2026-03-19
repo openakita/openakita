@@ -99,15 +99,15 @@ class MediaFile:
 
     @property
     def is_image(self) -> bool:
-        return self.mime_type.startswith("image/")
+        return (self.mime_type or "").startswith("image/")
 
     @property
     def is_audio(self) -> bool:
-        return self.mime_type.startswith("audio/")
+        return (self.mime_type or "").startswith("audio/")
 
     @property
     def is_video(self) -> bool:
-        return self.mime_type.startswith("video/")
+        return (self.mime_type or "").startswith("video/")
 
     @property
     def is_document(self) -> bool:
@@ -153,19 +153,24 @@ class MediaFile:
             "width": self.width,
             "height": self.height,
             "thumbnail_url": self.thumbnail_url,
+            "extra": self.extra,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "MediaFile":
+        try:
+            status = MediaStatus(data.get("status", "pending"))
+        except (ValueError, KeyError):
+            status = MediaStatus.PENDING
         return cls(
-            id=data["id"],
-            filename=data["filename"],
-            mime_type=data["mime_type"],
+            id=data.get("id", f"media_{__import__('uuid').uuid4().hex[:12]}"),
+            filename=data.get("filename", "unknown"),
+            mime_type=data.get("mime_type") or "application/octet-stream",
             size=data.get("size", 0),
             url=data.get("url"),
             file_id=data.get("file_id"),
             local_path=data.get("local_path"),
-            status=MediaStatus(data.get("status", "pending")),
+            status=status,
             transcription=data.get("transcription"),
             description=data.get("description"),
             extracted_text=data.get("extracted_text"),
@@ -173,6 +178,7 @@ class MediaFile:
             width=data.get("width"),
             height=data.get("height"),
             thumbnail_url=data.get("thumbnail_url"),
+            extra=data.get("extra", {}),
         )
 
 
@@ -439,6 +445,8 @@ class UnifiedMessage:
             "reply_to": self.reply_to,
             "forward_from": self.forward_from,
             "timestamp": self.timestamp.isoformat(),
+            "is_mentioned": self.is_mentioned,
+            "is_direct_message": self.is_direct_message,
             "raw": self.raw,
             "metadata": self.metadata,
         }
@@ -485,10 +493,13 @@ class OutgoingMessage:
         **kwargs,
     ) -> "OutgoingMessage":
         """创建图片消息"""
+        import mimetypes
+
         path = Path(image_path)
+        mime_type = mimetypes.guess_type(str(path))[0] or f"image/{path.suffix[1:]}"
         media = MediaFile.create(
             filename=path.name,
-            mime_type=f"image/{path.suffix[1:]}",
+            mime_type=mime_type,
         )
         media.local_path = str(path)
         media.status = MediaStatus.READY

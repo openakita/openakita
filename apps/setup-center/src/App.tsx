@@ -1,8 +1,8 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, logger, openExternalUrl } from "./platform";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, logger } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
-import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, logout, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
+import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
 import { ServerManagerView } from "./views/ServerManagerView";
 import { ChatView } from "./views/ChatView";
@@ -23,48 +23,34 @@ import { TYPE_TO_ENABLED_KEY } from "./views/im-shared";
 import { AgentSystemView } from "./views/AgentSystemView";
 import { AgentStoreView } from "./views/AgentStoreView";
 import { SkillStoreView } from "./views/SkillStoreView";
+import { LLMView } from "./views/LLMView";
+import { StatusView } from "./views/StatusView";
 import type {
   EndpointSummary as EndpointSummaryType,
-  PlatformInfo, WorkspaceSummary, ProviderInfo, ListedModel,
+  PlatformInfo, WorkspaceSummary, ProviderInfo,
   EndpointDraft, PythonCandidate, BundledPythonInstallResult, InstallSource,
-  EnvMap, StepId, Step,
+  EnvMap, StepId, Step, ViewId,
 } from "./types";
 import {
-  IconRefresh, IconCheck, IconCheckCircle, IconX, IconXCircle,
-  IconChevronDown, IconChevronRight, IconChevronUp, IconGlobe,
-  IconEdit, IconTrash, IconEye, IconEyeOff, IconInfo, IconClipboard, IconPower, IconCircle,
-  DotGreen, DotGray, DotYellow, DotRed,
-  LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ,
+  IconCheckCircle, IconXCircle, IconInfo,
 } from "./icons";
-import { ChevronDownIcon, ChevronRight, XIcon, Loader2, RefreshCw, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Activity, ArrowRight, Server, Download, Zap, Inbox, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
-import { cn } from "@/lib/utils";
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
 import { getThemePref, setThemePref, THEME_CHANGE_EVENT, type Theme } from "./theme";
 import { copyToClipboard } from "./utils/clipboard";
-import { BUILTIN_PROVIDERS, STT_RECOMMENDED_MODELS, PIP_INDEX_PRESETS } from "./constants";
+import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS } from "./constants";
+import { safeFetch } from "./providers";
 import {
-  isLocalProvider, localProviderPlaceholderKey, friendlyFetchError,
-  inferCapabilities, fetchModelsDirectly, safeFetch, proxyFetch,
-  isMiniMaxProvider, isVolcCodingPlanProvider, isDashScopeCodingPlanProvider,
-  isLongCatProvider, miniMaxFallbackModels, volcCodingPlanFallbackModels,
-  dashScopeCodingPlanFallbackModels, longCatFallbackModels,
-} from "./providers";
-import {
-  slugify, joinPath, toFileUrl, envKeyFromSlug, nextEnvKeyName,
-  suggestEndpointName, parseEnv, envGet, envSet,
+  slugify, joinPath, toFileUrl,
+  envGet, envSet,
 } from "./utils";
 // ═══════════════════════════════════════════════════════════════════════
 // 前后端交互路由原则（全局适用）：
@@ -79,22 +65,20 @@ import {
 //   1. Onboarding（打包模式）：NSIS → onboarding wizard → 写本地 → 启动服务 → HTTP API
 //   2. Wizard Full（开发者模式）：选工作区 → 装 venv → 配置端点(本地) → 启动服务 → HTTP API
 // ═══════════════════════════════════════════════════════════════════════
-import { SearchSelect } from "./components/SearchSelect";
-import { ProviderSearchSelect } from "./components/ProviderSearchSelect";
-import { TroubleshootPanel } from "./components/TroubleshootPanel";
 import { CliManager } from "./components/CliManager";
 import { WebPasswordManager } from "./components/WebPasswordManager";
 import { FieldText, FieldBool, FieldSelect, FieldCombo, FieldSlider, TelegramPairingCodeHint } from "./components/EnvFields";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ModalOverlay } from "./components/ModalOverlay";
-import { Section } from "./components/Section";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { useNotifications } from "./hooks/useNotifications";
 import { notifySuccess, notifyError, notifyLoading, dismissLoading } from "./utils/notify";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
-import { useVersionCheck, compareSemver } from "./hooks/useVersionCheck";
+import { useVersionCheck } from "./hooks/useVersionCheck";
+import { useEnvManager } from "./hooks/useEnvManager";
+import { AdvancedView } from "./views/AdvancedView";
 
 const THEME_I18N_KEYS: Record<Theme, string> = { system: "topbar.themeSystem", dark: "topbar.themeDark", light: "topbar.themeLight" };
 
@@ -230,14 +214,6 @@ export function App() {
     window.addEventListener(THEME_CHANGE_EVENT, handler);
     return () => window.removeEventListener(THEME_CHANGE_EVENT, handler);
   }, []);
-  const toggleTheme = useCallback(() => {
-    let next: Theme = "system";
-    if (themePrefState === "system") next = "dark";
-    else if (themePrefState === "dark") next = "light";
-    else next = "system";
-    setThemePref(next);
-    notifySuccess(t(THEME_I18N_KEYS[next]));
-  }, [themePrefState, t]);
   const [info, setInfo] = useState<PlatformInfo | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null);
@@ -248,8 +224,6 @@ export function App() {
   // ── Restart overlay state ──
   const [restartOverlay, setRestartOverlay] = useState<{ phase: "saving" | "restarting" | "waiting" | "done" | "fail" | "notRunning" } | null>(null);
 
-  // ── Module restart prompt ──
-  const [moduleRestartPrompt, setModuleRestartPrompt] = useState<string | null>(null);
 
   // ── Service conflict & version state ──
   const [conflictDialog, setConflictDialog] = useState<{ pid: number; version: string } | null>(null);
@@ -398,11 +372,7 @@ export function App() {
 
   // ── Onboarding Wizard (首次安装引导) ──
   type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-cli" | "ob-progress" | "ob-done";
-  type ModuleInfo = { id: string; name: string; description: string; installed: boolean; bundled: boolean; sizeMb: number; category: string };
   const [obStep, setObStep] = useState<OnboardingStep>("ob-welcome");
-  const [obModules, setObModules] = useState<ModuleInfo[]>([]);
-  /** 卸载因“拒绝访问”失败时，可先停止后端再卸载的待处理模块 */
-  const [moduleUninstallPending, setModuleUninstallPending] = useState<{ id: string; name: string } | null>(null);
   const [obInstallLog, setObInstallLog] = useState<string[]>([]);
   const [obInstalling, setObInstalling] = useState(false);
   const [obEnvCheck, setObEnvCheck] = useState<{
@@ -555,107 +525,12 @@ export function App() {
   const [pypiVersions, setPypiVersions] = useState<string[]>([]);
   const [pypiVersionsLoading, setPypiVersionsLoading] = useState(false);
   const [selectedPypiVersion, setSelectedPypiVersion] = useState<string>(""); // "" = 推荐同版本
-  // advanced panel state
-  const [advSysInfo, setAdvSysInfo] = useState<Record<string, string> | null>(null);
-  const [advLoading, setAdvLoading] = useState<Record<string, boolean>>({});
-  const [hubApiUrl, setHubApiUrl] = useState<string>("");
-  const advLoadedRef = useRef(false);
-
-  // backup state
-  const [backupHistory, setBackupHistory] = useState<Array<{ filename: string; path: string; size_bytes: number; created_at: string; manifest?: any }>>([]);
-  const [backupShowHistory, setBackupShowHistory] = useState(false);
-  const [factoryResetOpen, setFactoryResetOpen] = useState(false);
-  const [factoryResetConfirmText, setFactoryResetConfirmText] = useState("");
-
-  // workspace migration state
-  const [migrateTargetPath, setMigrateTargetPath] = useState("");
-  const [migratePreflight, setMigratePreflight] = useState<{
-    sourcePath: string; sourceSizeMb: number; targetPath: string; targetFreeMb: number;
-    entries: Array<{ name: string; sizeMb: number; existsAtTarget: boolean; isDir: boolean }>;
-    canMigrate: boolean; reason: string;
-  } | null>(null);
-  const [migrateBusy, setMigrateBusy] = useState(false);
-  const [migrateCurrentRoot, setMigrateCurrentRoot] = useState("");
-  const [migrateCustomRoot, setMigrateCustomRoot] = useState<string | null>(null);
 
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [providerSlug, setProviderSlug] = useState<string>("");
-  const selectedProvider = useMemo(
-    () => providers.find((p) => p.slug === providerSlug) || null,
-    [providers, providerSlug],
-  );
-  const [apiType, setApiType] = useState<"openai" | "openai_responses" | "anthropic">("openai");
-  const [baseUrl, setBaseUrl] = useState<string>("");
-  const [apiKeyEnv, setApiKeyEnv] = useState<string>("");
-  const [apiKeyValue, setApiKeyValue] = useState<string>("");
-  const [models, setModels] = useState<ListedModel[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState<string>("");
-  const [capSelected, setCapSelected] = useState<string[]>([]);
-  const [capTouched, setCapTouched] = useState(false);
-  const [endpointName, setEndpointName] = useState<string>("");
-  const [endpointPriority, setEndpointPriority] = useState<number>(1);
   const [savedEndpoints, setSavedEndpoints] = useState<EndpointDraft[]>([]);
   const [savedCompilerEndpoints, setSavedCompilerEndpoints] = useState<EndpointDraft[]>([]);
   const [savedSttEndpoints, setSavedSttEndpoints] = useState<EndpointDraft[]>([]);
-  const [apiKeyEnvTouched, setApiKeyEnvTouched] = useState(false);
-  const [endpointNameTouched, setEndpointNameTouched] = useState(false);
-  const [baseUrlTouched, setBaseUrlTouched] = useState(false);
-  const [llmAdvancedOpen, setLlmAdvancedOpen] = useState(false);
-  const [baseUrlExpanded, setBaseUrlExpanded] = useState(false);
-  const [editBaseUrlExpanded, setEditBaseUrlExpanded] = useState(false);
-  const [compBaseUrlExpanded, setCompBaseUrlExpanded] = useState(false);
-  const [sttBaseUrlExpanded, setSttBaseUrlExpanded] = useState(false);
-  const [addEpMaxTokens, setAddEpMaxTokens] = useState(0);
-  const [addEpContextWindow, setAddEpContextWindow] = useState(200000);
-  const [addEpTimeout, setAddEpTimeout] = useState(180);
-  const [addEpRpmLimit, setAddEpRpmLimit] = useState(0);
-  const [codingPlanMode, setCodingPlanMode] = useState(false);
-
-  // Compiler endpoint form state
-  const [compilerProviderSlug, setCompilerProviderSlug] = useState("");
-  const [compilerApiType, setCompilerApiType] = useState<"openai" | "anthropic">("openai");
-  const [compilerBaseUrl, setCompilerBaseUrl] = useState("");
-  const [compilerApiKeyEnv, setCompilerApiKeyEnv] = useState("");
-  const [compilerApiKeyValue, setCompilerApiKeyValue] = useState("");
-  const [compilerModel, setCompilerModel] = useState("");
-  const [compilerEndpointName, setCompilerEndpointName] = useState("");
-  const [compilerCodingPlan, setCompilerCodingPlan] = useState(false);
-  const [compilerModels, setCompilerModels] = useState<ListedModel[]>([]); // models fetched for compiler section
-
-  // STT endpoint form state（与 LLM/Compiler 完全独立，避免互相影响）
-  const [sttProviderSlug, setSttProviderSlug] = useState("");
-  const [sttApiType, setSttApiType] = useState<"openai" | "anthropic">("openai");
-  const [sttBaseUrl, setSttBaseUrl] = useState("");
-  const [sttApiKeyEnv, setSttApiKeyEnv] = useState("");
-  const [sttApiKeyValue, setSttApiKeyValue] = useState("");
-  const [sttModel, setSttModel] = useState("");
-  const [sttEndpointName, setSttEndpointName] = useState("");
-  const [sttModels, setSttModels] = useState<ListedModel[]>([]);
-
-  // Edit endpoint modal (do not reuse the "add" form)
-  const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const isEditingEndpoint = editModalOpen && editingOriginalName !== null;
-  const [llmNextModalOpen, setLlmNextModalOpen] = useState(false);
-  const [editDraft, setEditDraft] = useState<{
-    name: string;
-    priority: number;
-    providerSlug: string;
-    apiType: "openai" | "openai_responses" | "anthropic";
-    baseUrl: string;
-    apiKeyEnv: string;
-    apiKeyValue: string; // optional; blank means don't change
-    modelId: string;
-    caps: string[];
-    maxTokens: number;
-    contextWindow: number;
-    timeout: number;
-    rpmLimit: number;
-    pricingTiers: { max_input: number; input_price: number; output_price: number }[];
-  } | null>(null);
-  const dragNameRef = useRef<string | null>(null);
-  const [editModels, setEditModels] = useState<ListedModel[]>([]); // models fetched inside the edit modal
 
   // status panel data
   const [statusLoading, setStatusLoading] = useState(false);
@@ -669,7 +544,6 @@ export function App() {
   >(null);
   const [skillsSelection, setSkillsSelection] = useState<Record<string, boolean>>({});
   const [skillsTouched, setSkillsTouched] = useState(false);
-  const [secretShown, setSecretShown] = useState<Record<string, boolean>>({});
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean | null>(null);
   // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
@@ -687,9 +561,7 @@ export function App() {
   const [serviceLog, setServiceLog] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
   const [serviceLogError, setServiceLogError] = useState<string | null>(null);
   const serviceLogRef = useRef<HTMLPreElement>(null);
-  const [logLevelFilter, setLogLevelFilter] = useState<Set<string>>(new Set(["INFO", "WARN", "ERROR", "DEBUG"]));
   const logAtBottomRef = useRef(true);
-  const [logAtBottom, setLogAtBottom] = useState(true);
   const [appVersion, setAppVersion] = useState<string>("");
   const [openakitaVersion, setOpenakitaVersion] = useState<string>("");
 
@@ -701,18 +573,16 @@ export function App() {
   const [imHealth, setImHealth] = useState<Record<string, {
     status: string; error: string | null; lastCheckedAt: string | null;
   }>>({});
-  const [healthChecking, setHealthChecking] = useState<string | null>(null); // "all" | endpoint name
-  const [imChecking, setImChecking] = useState(false);
-
-  // ── 端点连接测试（弹窗内，前端直连服务商 API，不依赖后端） ──
-  const [connTesting, setConnTesting] = useState(false);
-  const [connTestResult, setConnTestResult] = useState<{
-    ok: boolean; latencyMs: number; error?: string; modelCount?: number;
-  } | null>(null);
-
-  // unified env draft (full coverage)
-  const [envDraft, setEnvDraft] = useState<EnvMap>({});
-  const envLoadedForWs = useRef<string | null>(null);
+  const {
+    envDraft, setEnvDraft,
+    secretShown, setSecretShown,
+    ensureEnvLoaded, saveEnvKeys,
+    resetEnvLoaded, markEnvLoaded,
+  } = useEnvManager({
+    currentWorkspaceId,
+    shouldUseHttpApi,
+    httpApiBase,
+  });
 
   const envFieldCtx = useMemo<EnvFieldCtx>(() => ({
     envDraft, setEnvDraft, secretShown, setSecretShown, busy, t,
@@ -899,25 +769,50 @@ export function App() {
   }, []);
 
   // ── 页面可见性监听（休眠/睡眠恢复感知）──
+  // Capacitor 环境下 visibilitychange 和 appStateChange 可能同时触发，
+  // 用 lastResumeRef 做 3 秒去重避免 WS 双重重连。
+  const lastResumeRef = useRef(0);
+  const handleAppResumed = useCallback(() => {
+    const now = Date.now();
+    if (now - lastResumeRef.current < 3000) return;
+    lastResumeRef.current = now;
+    visibilityGraceRef.current = true;
+    heartbeatFailCount.current = 0;
+    setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
+    reconnectWsNow();
+    window.dispatchEvent(new Event("openakita_app_resumed"));
+    logger.info("App", "Resumed from background");
+  }, []);
+
   useEffect(() => {
     const handler = () => {
       const visible = !document.hidden;
       setPageVisible(visible);
-      if (visible) {
-        // 从 hidden 恢复：给 10 秒宽限期，前 2 次心跳失败不计
-        visibilityGraceRef.current = true;
-        heartbeatFailCount.current = 0;
-        setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
-        // 立即重连 WebSocket（后台期间连接可能已断开）
-        reconnectWsNow();
-        // 通知 ChatView 等组件检查进行中的 SSE 流
-        window.dispatchEvent(new Event("openakita_app_resumed"));
-        logger.info("App", "Resumed from background");
-      }
+      if (visible) handleAppResumed();
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, []);
+  }, [handleAppResumed]);
+
+  // ── Capacitor: 原生 appStateChange 补充 ──
+  // iOS WKWebView 进入后台时可能被系统挂起，visibilitychange 不一定触发。
+  // @capacitor/app 提供原生级生命周期事件，100% 可靠。
+  useEffect(() => {
+    if (!IS_CAPACITOR) return;
+    let cancelled = false;
+    let removeListener: (() => void) | undefined;
+    import("@capacitor/app").then(({ App }) => {
+      if (cancelled) return;
+      App.addListener("appStateChange", ({ isActive }) => {
+        setPageVisible(isActive);
+        if (isActive) handleAppResumed();
+      }).then((handle) => {
+        if (cancelled) { handle.remove(); return; }
+        removeListener = () => handle.remove();
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; removeListener?.(); };
+  }, [handleAppResumed]);
 
   // ── 心跳轮询：三级状态机 + 防误判 ──
   useEffect(() => {
@@ -1160,42 +1055,6 @@ export function App() {
     if (venvStatus.includes("安装完成")) setOpenakitaInstalled(true);
   }, [venvStatus]);
 
-  async function ensureEnvLoaded(workspaceId: string): Promise<EnvMap> {
-    if (envLoadedForWs.current === workspaceId) return envDraft;
-    let parsed: EnvMap = {};
-
-    if (shouldUseHttpApi()) {
-      try {
-        const res = await safeFetch(`${httpApiBase()}/api/config/env`);
-        const data = await res.json();
-        parsed = data.env || {};
-      } catch {
-        if (IS_TAURI && workspaceId) {
-          try {
-            const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
-            parsed = parseEnv(content);
-          } catch { parsed = {}; }
-        }
-      }
-    } else if (IS_TAURI && workspaceId) {
-      try {
-        const content = await invoke<string>("workspace_read_file", { workspaceId, relativePath: ".env" });
-        parsed = parseEnv(content);
-      } catch { parsed = {}; }
-    }
-    // Set sensible defaults for first-time setup
-    const defaults: Record<string, string> = {
-      DESKTOP_ENABLED: "true",
-      MCP_ENABLED: "true",
-    };
-    for (const [dk, dv] of Object.entries(defaults)) {
-      if (!(dk in parsed)) parsed[dk] = dv;
-    }
-    setEnvDraft(parsed);
-    envLoadedForWs.current = workspaceId;
-    return parsed;
-  }
-
   async function doCreateWorkspace() {
     const _busyId = notifyLoading("创建工作区...");
     try {
@@ -1211,7 +1070,7 @@ export function App() {
         await refreshAll();
         setCurrentWorkspaceId(ws.id);
       }
-      envLoadedForWs.current = null;
+      resetEnvLoaded();
       notifySuccess(`已创建工作区：${newWsName.trim()}（${newWsId}）`);
     } finally {
       dismissLoading(_busyId);
@@ -1229,7 +1088,7 @@ export function App() {
         await invoke("set_current_workspace", { id });
       }
       await refreshAll();
-      envLoadedForWs.current = null;
+      resetEnvLoaded();
       if (wasRunning) {
         notifySuccess(t("topbar.switchWorkspaceDoneRestart", { id }));
       } else {
@@ -1483,8 +1342,6 @@ export function App() {
         .filter(Boolean) as ProviderInfo[];
       parsed = [...top, ...bottom];
       setProviders(parsed);
-      const defaultSlug = parsed.find(p => p.slug === "openai")?.slug ?? parsed[0]?.slug ?? "";
-      setProviderSlug((prev) => prev || defaultSlug);
 
       // 非关键：获取版本号（仅后端未运行时尝试 venv 方式）
       if (!shouldUseHttpApi()) {
@@ -1505,248 +1362,13 @@ export function App() {
           .filter(Boolean) as ProviderInfo[];
         const sorted = [...top2, ...bottom2];
         setProviders(sorted);
-        const defaultSlug2 = sorted.find(p => p.slug === "openai")?.slug ?? sorted[0]?.slug ?? "";
-        setProviderSlug((prev) => prev || defaultSlug2);
       }
     } finally {
       dismissLoading(_busyId);
     }
   }
 
-  useEffect(() => {
-    if (!selectedProvider) return;
-    // Coding Plan：根据 provider 的 coding_plan_api_type 切换协议与 URL
-    if (codingPlanMode && selectedProvider.coding_plan_base_url) {
-      setApiType((selectedProvider.coding_plan_api_type as "openai" | "anthropic") || "anthropic");
-      if (!baseUrlTouched) setBaseUrl(selectedProvider.coding_plan_base_url);
-      setAddEpContextWindow(200000);
-      setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 8192);
-    } else {
-      const t = (selectedProvider.api_type as "openai" | "anthropic") || "openai";
-      setApiType(t);
-      if (!baseUrlTouched) setBaseUrl(selectedProvider.default_base_url || "");
-      setAddEpContextWindow((selectedProvider as ProviderInfo).default_context_window ?? 200000);
-      setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 0);
-    }
-    const suggested = selectedProvider.api_key_env_suggestion || envKeyFromSlug(selectedProvider.slug);
-    const used = new Set(Object.keys(envDraft || {}));
-    for (const ep of savedEndpoints) {
-      if (ep.api_key_env) used.add(ep.api_key_env);
-    }
-    if (!apiKeyEnvTouched) {
-      setApiKeyEnv(nextEnvKeyName(suggested, used));
-    }
-    const autoName = suggestEndpointName(selectedProvider.slug, selectedModelId);
-    if (!endpointNameTouched) {
-      setEndpointName(autoName);
-    }
-    if (isLocalProvider(selectedProvider) && !apiKeyValue.trim()) {
-      setApiKeyValue(localProviderPlaceholderKey(selectedProvider));
-    }
-  }, [selectedProvider, selectedModelId, envDraft, savedEndpoints, apiKeyEnvTouched, endpointNameTouched, baseUrlTouched, codingPlanMode]);
-
-  // When user switches provider via dropdown, reset auto-naming to follow the new provider.
-  useEffect(() => {
-    if (!providerSlug) return;
-    if (editModalOpen) return;
-    setApiKeyEnvTouched(false);
-    setEndpointNameTouched(false);
-    setBaseUrlTouched(false);
-    setCodingPlanMode(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerSlug]);
-
-  // MiniMax / 火山 Coding Plan / DashScope Coding Plan / LongCat 不可靠提供 /models：进入时直接提供内置候选，并允许继续手填。
-  useEffect(() => {
-    if (!selectedProvider) return;
-    const effectiveBaseUrl = (codingPlanMode ? selectedProvider.coding_plan_base_url : selectedProvider.default_base_url) || "";
-    if (isVolcCodingPlanProvider(selectedProvider.slug, effectiveBaseUrl)) {
-      setModels(volcCodingPlanFallbackModels(selectedProvider.slug));
-      return;
-    }
-    if (isDashScopeCodingPlanProvider(selectedProvider.slug, effectiveBaseUrl)) {
-      setModels(dashScopeCodingPlanFallbackModels(selectedProvider.slug));
-      return;
-    }
-    if (isLongCatProvider(selectedProvider.slug, effectiveBaseUrl)) {
-      setModels(longCatFallbackModels(selectedProvider.slug));
-      return;
-    }
-    if (isMiniMaxProvider(selectedProvider.slug, effectiveBaseUrl)) {
-      setModels(miniMaxFallbackModels(selectedProvider.slug));
-      return;
-    }
-  }, [selectedProvider, codingPlanMode]);
-
-  async function doFetchModels() {
-    setModels([]);
-    setSelectedModelId(""); // clear search / selection
-    const _busyId = notifyLoading("拉取模型列表...");
-    try {
-      // 本地服务商自动使用 placeholder key
-      const effectiveKey = apiKeyValue.trim() || (isLocalProvider(selectedProvider) ? localProviderPlaceholderKey(selectedProvider) : "");
-      logger.debug("App", "doFetchModels", { apiType, baseUrl, slug: selectedProvider?.slug, keyLen: effectiveKey?.length, httpApi: shouldUseHttpApi(), isLocal: isLocalProvider(selectedProvider) });
-      const parsed = await fetchModelListUnified({
-        apiType,
-        baseUrl,
-        providerSlug: selectedProvider?.slug ?? null,
-        apiKey: effectiveKey,
-      });
-      setModels(parsed);
-      setSelectedModelId("");
-      if (parsed.length > 0) {
-        notifySuccess(t("llm.fetchSuccess", { count: parsed.length }));
-      } else {
-        notifyError(t("llm.fetchErrorEmpty"));
-      }
-      setCapTouched(false);
-    } catch (e: any) {
-      logger.error("App", "doFetchModels error", { error: String(e) });
-      const raw = String(e?.message || e);
-      notifyError(friendlyFetchError(raw, t, selectedProvider?.name));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  /**
-   * 测试端点连接（路由原则同上）：
-   *   后端运行中 → 走后端 /api/config/list-models，验证后端与配置参数的兼容性
-   *   后端未运行 → 前端直连服务商 /models API，仅验证 API Key 和地址有效性
-   */
-  async function doTestConnection(params: {
-    testApiType: string; testBaseUrl: string; testApiKey: string; testProviderSlug?: string | null;
-  }) {
-    setConnTesting(true);
-    setConnTestResult(null);
-    const t0 = performance.now();
-    try {
-      let modelCount = 0;
-      let httpApiFailed = false;
-      if (shouldUseHttpApi()) {
-        // ── 后端运行中 → 走后端 API（验证后端兼容性 + 热加载）──
-        try {
-          const base = httpApiBase();
-          const res = await safeFetch(`${base}/api/config/list-models`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              api_type: params.testApiType,
-              base_url: params.testBaseUrl,
-              provider_slug: params.testProviderSlug || null,
-              api_key: params.testApiKey,
-            }),
-            signal: AbortSignal.timeout(30_000),
-          });
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-          const models = Array.isArray(data.models) ? data.models : (Array.isArray(data) ? data : []);
-          modelCount = models.length;
-        } catch (httpErr) {
-          const msg = String(httpErr);
-          if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("AbortError")) {
-            logger.warn("App", "doTestConnection: HTTP API unreachable, falling back to direct", { error: String(httpErr) });
-            httpApiFailed = true;
-          } else {
-            throw httpErr;
-          }
-        }
-      }
-      if (!shouldUseHttpApi() || httpApiFailed) {
-        // ── 后端未运行 / 不可达 → 前端直连服务商 API ──
-        const result = await fetchModelsDirectly({
-          apiType: params.testApiType,
-          baseUrl: params.testBaseUrl,
-          providerSlug: params.testProviderSlug ?? null,
-          apiKey: params.testApiKey,
-        });
-        modelCount = result.length;
-      }
-      const latency = Math.round(performance.now() - t0);
-      setConnTestResult({ ok: true, latencyMs: latency, modelCount });
-    } catch (e) {
-      const latency = Math.round(performance.now() - t0);
-      const raw = String(e);
-      // 使用通用友好化函数，testProviderSlug 可用于定位本地服务名称
-      const provName = providers.find((p) => p.slug === params.testProviderSlug)?.name;
-      const errMsg = friendlyFetchError(raw, t, provName);
-      setConnTestResult({ ok: false, latencyMs: latency, error: errMsg });
-    } finally {
-      setConnTesting(false);
-    }
-  }
-
-  /**
-   * 通用模型列表拉取（路由原则同上）：
-   *   后端运行中 → 必须走后端 HTTP API（验证后端兼容性，capability 推断更精确）
-   *   后端未运行 → 本地回退链：Tauri invoke → 前端直连服务商 API
-   *
-   * ⚠ 维护提示：前端直连 fallback 使用 fetchModelsDirectly()，
-   *   其 capability 推断是 Python 端 infer_capabilities() 的简化版。
-   *   如需更精确的推断，服务启动后会自动走后端路径。
-   */
-  async function fetchModelListUnified(params: {
-    apiType: string; baseUrl: string; providerSlug: string | null; apiKey: string;
-  }): Promise<ListedModel[]> {
-    // ── 后端运行中 → HTTP API ──
-    logger.debug("App", "fetchModelListUnified", { shouldUseHttpApi: shouldUseHttpApi(), httpApiBase: httpApiBase() });
-    if (shouldUseHttpApi()) {
-      logger.debug("App", "fetchModelListUnified: using HTTP API");
-      try {
-        const res = await safeFetch(`${httpApiBase()}/api/config/list-models`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            api_type: params.apiType,
-            base_url: params.baseUrl,
-            provider_slug: params.providerSlug || null,
-            api_key: params.apiKey,
-          }),
-          signal: AbortSignal.timeout(30_000),
-        });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        return Array.isArray(data.models) ? data.models : data;
-      } catch (httpErr) {
-        // 后端 API 不可达（端口冲突、未完全启动等），回退到 Tauri/直连
-        const msg = String(httpErr);
-        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("AbortError")) {
-          logger.warn("App", "fetchModelListUnified: HTTP API unreachable, falling back", { error: String(httpErr) });
-        } else {
-          // 非网络错误（如后端返回业务错误），直接抛出
-          throw httpErr;
-        }
-      }
-    }
-    // ── 后端未运行 / 后端不可达 → 本地回退 ──
-    // 回退 1：Tauri invoke → Python bridge（开发模式 / 有 venv 时）
-    try {
-      const raw = await invoke<string>("openakita_list_models", {
-        venvDir,
-        apiType: params.apiType,
-        baseUrl: params.baseUrl,
-        providerSlug: params.providerSlug,
-        apiKey: params.apiKey,
-      });
-      return JSON.parse(raw) as ListedModel[];
-    } catch (e) {
-      logger.warn("App", "openakita_list_models via Python bridge failed, using direct fetch", { error: String(e) });
-    }
-    // 回退 2：前端直连服务商 API（打包模式，无 venv，onboarding 阶段）
-    return fetchModelsDirectly(params);
-  }
-
-  // When selected model changes, default capabilities from fetched model unless user manually edited.
-  useEffect(() => {
-    if (capTouched) return;
-    const caps = models.find((m) => m.id === selectedModelId)?.capabilities ?? {};
-    const list = Object.entries(caps)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
-    setCapSelected(list.length ? list : ["text"]);
-  }, [selectedModelId, models, capTouched]);
-
-  async function loadSavedEndpoints(skipAutoFix = false) {
+  async function loadSavedEndpoints() {
     if (!currentWorkspaceId && dataMode !== "remote") {
       setSavedEndpoints([]);
       setSavedCompilerEndpoints([]);
@@ -1781,13 +1403,6 @@ export function App() {
         .filter((e: any) => e.name);
       list.sort((a, b) => a.priority - b.priority);
       setSavedEndpoints(list);
-
-      const maxP = list.reduce((m, e) => Math.max(m, Number.isFinite(e.priority) ? e.priority : 0), 0);
-      // 用户希望“从主模型开始”：当没有端点时默认 priority=1；否则默认填最后一个+1。
-      // 并且删除端点后应立刻回收/重算，不要沿用删除前的累加值。
-      if (!isEditingEndpoint) {
-        setEndpointPriority(list.length === 0 ? 1 : maxP + 1);
-      }
 
       // Load compiler endpoints
       const compilerEps: EndpointDraft[] = (Array.isArray(parsed?.compiler_endpoints) ? parsed.compiler_endpoints : [])
@@ -1830,78 +1445,6 @@ export function App() {
         }))
         .sort((a: EndpointDraft, b: EndpointDraft) => a.priority - b.priority);
       setSavedSttEndpoints(sttEps);
-
-      // Auto-fix: detect endpoints sharing the same api_key_env.
-      // When two endpoints share one env var, editing either one overwrites the
-      // other's API key.  Rename duplicates to unique names and persist.
-      // IMPORTANT: operate on the RAW parsed JSON arrays to preserve all fields
-      // (extra_params, pricing_tiers, etc.) that EndpointDraft doesn't carry.
-      // skipAutoFix prevents infinite recursion when the recursive reload follows a fix.
-      if (skipAutoFix) return;
-      const rawLists = [
-        Array.isArray(parsed?.endpoints) ? parsed.endpoints : [],
-        Array.isArray(parsed?.compiler_endpoints) ? parsed.compiler_endpoints : [],
-        Array.isArray(parsed?.stt_endpoints) ? parsed.stt_endpoints : [],
-      ];
-      const usedKeys = new Set<string>();
-      let envFixNeeded = false;
-      const envCopies: Record<string, string> = {};
-      for (const rawArr of rawLists) {
-        for (const rawEp of rawArr) {
-          const key = String(rawEp?.api_key_env || "");
-          if (!key) continue;
-          if (usedKeys.has(key)) {
-            const newKey = nextEnvKeyName(key, usedKeys);
-            envCopies[newKey] = key;
-            rawEp.api_key_env = newKey;
-            envFixNeeded = true;
-          }
-          usedKeys.add(rawEp.api_key_env);
-        }
-      }
-
-      if (envFixNeeded) {
-        // Persist the renamed config — writes raw JSON so all fields are preserved
-        try {
-          await writeWorkspaceFile("data/llm_endpoints.json", JSON.stringify(parsed, null, 2) + "\n");
-        } catch { /* best-effort */ }
-
-        // Copy env values from the original key to the new key so the endpoint
-        // keeps working with whichever value was last written.
-        const freshEnv = await ensureEnvLoaded(currentWorkspaceId || "__remote__");
-        const copyEntries: Record<string, string> = {};
-        for (const [newKey, origKey] of Object.entries(envCopies)) {
-          const val = envGet(freshEnv, origKey) || "";
-          if (val) {
-            copyEntries[newKey] = val;
-            setEnvDraft((e) => envSet(e, newKey, val));
-          }
-        }
-        if (Object.keys(copyEntries).length > 0) {
-          try {
-            if (shouldUseHttpApi()) {
-              await safeFetch(`${httpApiBase()}/api/config/env`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ entries: copyEntries }),
-              });
-            } else if (IS_TAURI && currentWorkspaceId) {
-              await invoke("workspace_update_env", {
-                workspaceId: currentWorkspaceId,
-                entries: Object.entries(copyEntries).map(([key, value]) => ({ key, value })),
-              });
-            }
-          } catch { /* best-effort */ }
-        }
-
-        // Reload to reflect the fixed env key names in EndpointDraft state
-        await loadSavedEndpoints(/* skipAutoFix */ true);
-
-        notifyError(
-          "检测到多个端点共用相同的 API Key 环境变量名，已自动修复。"
-          + "如果两个端点使用不同的 API Key，请编辑端点重新填写。",
-        );
-      }
     } catch {
       setSavedEndpoints([]);
       setSavedCompilerEndpoints([]);
@@ -2242,857 +1785,6 @@ export function App() {
     await restartService();
   }
 
-  function normalizePriority(n: any, fallback: number) {
-    const x = Number(n);
-    if (!Number.isFinite(x) || x <= 0) return fallback;
-    return Math.floor(x);
-  }
-
-  async function doFetchCompilerModels() {
-    const compilerSelectedProvider = providers.find((p) => p.slug === compilerProviderSlug) || null;
-    const isCompilerLocal = isLocalProvider(compilerSelectedProvider);
-    if (!compilerApiKeyValue.trim() && !isCompilerLocal) {
-      notifyError("请先填写编译端点的 API Key 值");
-      return;
-    }
-    if (!compilerBaseUrl.trim()) {
-      notifyError("请先填写编译端点的 Base URL");
-      return;
-    }
-    setCompilerModels([]);
-    const _busyId = notifyLoading("拉取编译端点模型列表...");
-    try {
-      const effectiveCompilerKey = compilerApiKeyValue.trim() || (isCompilerLocal ? localProviderPlaceholderKey(compilerSelectedProvider) : "");
-      const parsed = await fetchModelListUnified({
-        apiType: compilerApiType,
-        baseUrl: compilerBaseUrl,
-        providerSlug: compilerProviderSlug || null,
-        apiKey: effectiveCompilerKey,
-      });
-      setCompilerModels(parsed);
-      setCompilerModel("");
-      if (parsed.length > 0) {
-        notifySuccess(t("llm.fetchSuccess", { count: parsed.length }));
-      } else {
-        notifyError(t("llm.fetchErrorEmpty"));
-      }
-    } catch (e: any) {
-      const raw = String(e?.message || e);
-      const cprov = providers.find((p) => p.slug === compilerProviderSlug);
-      notifyError(friendlyFetchError(raw, t, cprov?.name));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doFetchSttModels() {
-    const sttSelectedProvider = providers.find((p) => p.slug === sttProviderSlug) || null;
-    const isSttLocal = isLocalProvider(sttSelectedProvider);
-    if (!sttApiKeyValue.trim() && !isSttLocal) {
-      notifyError("请先填写 STT 端点的 API Key 值");
-      return;
-    }
-    if (!sttBaseUrl.trim()) {
-      notifyError("请先填写 STT 端点的 Base URL");
-      return;
-    }
-    setSttModels([]);
-    const _busyId = notifyLoading("拉取 STT 端点模型列表...");
-    try {
-      const effectiveKey = sttApiKeyValue.trim() || (isSttLocal ? localProviderPlaceholderKey(sttSelectedProvider) : "");
-      const parsed = await fetchModelListUnified({
-        apiType: sttApiType,
-        baseUrl: sttBaseUrl,
-        providerSlug: sttProviderSlug || null,
-        apiKey: effectiveKey,
-      });
-      setSttModels(parsed);
-      setSttModel("");
-      if (parsed.length > 0) {
-        notifySuccess(t("llm.fetchSuccess", { count: parsed.length }));
-      } else {
-        notifyError(t("llm.fetchErrorEmpty"));
-      }
-    } catch (e: any) {
-      const raw = String(e?.message || e);
-      const sprov = providers.find((p) => p.slug === sttProviderSlug);
-      notifyError(friendlyFetchError(raw, t, sprov?.name));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doSaveCompilerEndpoint(): Promise<boolean> {
-    if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先创建/选择一个当前工作区");
-      return false;
-    }
-    if (!compilerModel.trim()) {
-      notifyError("请填写编译模型名称");
-      return false;
-    }
-    if (!compilerBaseUrl.trim()) {
-      notifyError("请填写编译端点的 Base URL");
-      return false;
-    }
-    if (!/^https?:\/\//i.test(compilerBaseUrl.trim())) {
-      notifyError("编译端点 Base URL 必须以 http:// 或 https:// 开头");
-      return false;
-    }
-    const compilerSelectedProvider = providers.find((p) => p.slug === compilerProviderSlug) || null;
-    const isCompilerLocal = isLocalProvider(compilerSelectedProvider);
-    const rawCompApiKeyEnv = compilerApiKeyEnv.trim()
-      || compilerSelectedProvider?.api_key_env_suggestion
-      || envKeyFromSlug(compilerProviderSlug || "custom");
-    const effectiveCompApiKeyEnv = nextEnvKeyName(
-      rawCompApiKeyEnv,
-      new Set([...savedEndpoints, ...savedCompilerEndpoints].map((e) => e.api_key_env).filter(Boolean)),
-    );
-    const effectiveCompApiKeyValue = compilerApiKeyValue.trim() || (isCompilerLocal ? localProviderPlaceholderKey(compilerSelectedProvider) : "");
-    if (!isCompilerLocal && !effectiveCompApiKeyValue) {
-      notifyError("请填写编译端点的 API Key 值");
-      return false;
-    }
-    const _busyId = notifyLoading("写入编译端点...");
-    try {
-      // Write API key to .env — 遵循路由原则
-      const compilerEnvPayload = { entries: { [effectiveCompApiKeyEnv]: effectiveCompApiKeyValue } };
-      if (shouldUseHttpApi()) {
-        try {
-          await safeFetch(`${httpApiBase()}/api/config/env`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(compilerEnvPayload),
-          });
-        } catch {
-          if (IS_TAURI && currentWorkspaceId) {
-            await invoke("workspace_update_env", {
-              workspaceId: currentWorkspaceId,
-              entries: [{ key: effectiveCompApiKeyEnv, value: effectiveCompApiKeyValue }],
-            });
-          }
-        }
-      } else if (IS_TAURI && currentWorkspaceId) {
-        await invoke("workspace_update_env", {
-          workspaceId: currentWorkspaceId,
-          entries: [{ key: effectiveCompApiKeyEnv, value: effectiveCompApiKeyValue }],
-        });
-      }
-      setEnvDraft((e) => envSet(e, effectiveCompApiKeyEnv, effectiveCompApiKeyValue));
-
-      // Read existing JSON
-      let currentJson = "";
-      try {
-        currentJson = await readWorkspaceFile("data/llm_endpoints.json");
-      } catch { currentJson = ""; }
-      const base = currentJson ? JSON.parse(currentJson) : { endpoints: [], settings: {} };
-      base.compiler_endpoints = Array.isArray(base.compiler_endpoints) ? base.compiler_endpoints : [];
-
-      const baseName = (compilerEndpointName.trim() || `compiler-${compilerProviderSlug || "provider"}-${compilerModel.trim()}`).slice(0, 64);
-      const usedNames = new Set(base.compiler_endpoints.map((e: any) => String(e?.name || "")).filter(Boolean));
-      let name = baseName;
-      if (usedNames.has(name)) {
-        for (let i = 2; i < 10; i++) {
-          const n = `${baseName}-${i}`.slice(0, 64);
-          if (!usedNames.has(n)) { name = n; break; }
-        }
-      }
-
-      const endpoint = {
-        name,
-        provider: compilerProviderSlug || "custom",
-        api_type: compilerApiType,
-        base_url: compilerBaseUrl.trim(),
-        api_key_env: effectiveCompApiKeyEnv,
-        model: compilerModel.trim(),
-        priority: base.compiler_endpoints.length + 1,
-        max_tokens: 2048,
-        context_window: 200000,
-        timeout: 30,
-        capabilities: ["text"],
-      };
-      base.compiler_endpoints.push(endpoint);
-      base.compiler_endpoints.sort((a: any, b: any) => (Number(a?.priority) || 999) - (Number(b?.priority) || 999));
-
-      await writeWorkspaceFile("data/llm_endpoints.json", JSON.stringify(base, null, 2) + "\n");
-
-      // Reset form
-      setCompilerModel("");
-      setCompilerApiKeyValue("");
-      setCompilerEndpointName("");
-      setCompilerBaseUrl("");
-      notifySuccess(`编译端点 ${name} 已保存`);
-      await loadSavedEndpoints();
-      return true;
-    } catch (e) {
-      notifyError(String(e));
-      return false;
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doDeleteCompilerEndpoint(epName: string) {
-    if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除编译端点...");
-    try {
-      let currentJson = "";
-      try {
-        currentJson = await readWorkspaceFile("data/llm_endpoints.json");
-      } catch { currentJson = ""; }
-      const base = currentJson ? JSON.parse(currentJson) : { endpoints: [], settings: {} };
-      base.compiler_endpoints = Array.isArray(base.compiler_endpoints) ? base.compiler_endpoints : [];
-      base.compiler_endpoints = base.compiler_endpoints
-        .filter((e: any) => String(e?.name || "") !== epName)
-        .map((e: any, i: number) => ({ ...e, priority: i + 1 }));
-
-      await writeWorkspaceFile("data/llm_endpoints.json", JSON.stringify(base, null, 2) + "\n");
-
-      // Immediately update local state (don't rely solely on re-read which may be stale in remote mode)
-      setSavedCompilerEndpoints((prev) => prev.filter((e) => e.name !== epName));
-      notifySuccess(`编译端点 ${epName} 已删除`);
-
-      // Also re-read to sync fully (background)
-      loadSavedEndpoints().catch(() => {});
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doSaveSttEndpoint(): Promise<boolean> {
-    if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先创建/选择一个当前工作区");
-      return false;
-    }
-    if (!sttModel.trim()) {
-      notifyError("请填写 STT 模型名称");
-      return false;
-    }
-    if (!sttBaseUrl.trim()) {
-      notifyError("请填写 STT 端点的 Base URL");
-      return false;
-    }
-    if (!/^https?:\/\//i.test(sttBaseUrl.trim())) {
-      notifyError("STT 端点 Base URL 必须以 http:// 或 https:// 开头");
-      return false;
-    }
-    const sttSelectedProvider = providers.find((p) => p.slug === sttProviderSlug) || null;
-    const isSttLocal = isLocalProvider(sttSelectedProvider);
-    const rawSttApiKeyEnv = sttApiKeyEnv.trim()
-      || sttSelectedProvider?.api_key_env_suggestion
-      || envKeyFromSlug(sttProviderSlug || "custom");
-    const effectiveSttApiKeyEnv = nextEnvKeyName(
-      rawSttApiKeyEnv,
-      new Set([...savedEndpoints, ...savedCompilerEndpoints, ...savedSttEndpoints].map((e) => e.api_key_env).filter(Boolean)),
-    );
-    const effectiveSttApiKeyValue = sttApiKeyValue.trim() || (isSttLocal ? localProviderPlaceholderKey(sttSelectedProvider) : "");
-    if (!isSttLocal && !effectiveSttApiKeyValue) {
-      notifyError("请填写 STT 端点的 API Key 值");
-      return false;
-    }
-    const _busyId = notifyLoading("保存 STT 端点...");
-    try {
-      const sttEnvPayload = { entries: { [effectiveSttApiKeyEnv]: effectiveSttApiKeyValue } };
-      if (shouldUseHttpApi()) {
-        try {
-          await safeFetch(`${httpApiBase()}/api/config/env`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(sttEnvPayload),
-          });
-        } catch {
-          if (IS_TAURI && currentWorkspaceId) {
-            await invoke("workspace_update_env", {
-              workspaceId: currentWorkspaceId,
-              entries: [{ key: effectiveSttApiKeyEnv, value: effectiveSttApiKeyValue }],
-            });
-          }
-        }
-      } else if (IS_TAURI && currentWorkspaceId) {
-        await invoke("workspace_update_env", {
-          workspaceId: currentWorkspaceId,
-          entries: [{ key: effectiveSttApiKeyEnv, value: effectiveSttApiKeyValue }],
-        });
-      }
-      setEnvDraft((e) => envSet(e, effectiveSttApiKeyEnv, effectiveSttApiKeyValue));
-
-      let currentJson = "";
-      try {
-        currentJson = await readWorkspaceFile("data/llm_endpoints.json");
-      } catch { currentJson = ""; }
-      const base = currentJson ? JSON.parse(currentJson) : { endpoints: [], settings: {} };
-      base.stt_endpoints = Array.isArray(base.stt_endpoints) ? base.stt_endpoints : [];
-
-      const baseName = (sttEndpointName.trim() || `stt-${sttProviderSlug || "provider"}-${sttModel.trim()}`).slice(0, 64);
-      const usedNames = new Set(base.stt_endpoints.map((e: any) => String(e?.name || "")).filter(Boolean));
-      let name = baseName;
-      if (usedNames.has(name)) {
-        for (let i = 2; i < 10; i++) {
-          const candidate = `${baseName}-${i}`.slice(0, 64);
-          if (!usedNames.has(candidate)) { name = candidate; break; }
-        }
-      }
-
-      const endpoint = {
-        name,
-        provider: sttProviderSlug || "custom",
-        api_type: sttApiType,
-        base_url: sttBaseUrl.trim(),
-        api_key_env: effectiveSttApiKeyEnv,
-        model: sttModel.trim(),
-        priority: base.stt_endpoints.length + 1,
-        max_tokens: 0,
-        context_window: 0,
-        timeout: 60,
-        capabilities: ["text"],
-      };
-      base.stt_endpoints.push(endpoint);
-      base.stt_endpoints.sort((a: any, b: any) => (Number(a?.priority) || 999) - (Number(b?.priority) || 999));
-
-      await writeWorkspaceFile("data/llm_endpoints.json", JSON.stringify(base, null, 2) + "\n");
-
-      setSttModel("");
-      setSttApiKeyValue("");
-      setSttEndpointName("");
-      setSttBaseUrl("");
-      setSttModels([]);
-      notifySuccess(`STT 端点 ${name} 已保存`);
-      await loadSavedEndpoints();
-      return true;
-    } catch (e) {
-      notifyError(String(e));
-      return false;
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doDeleteSttEndpoint(epName: string) {
-    if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除 STT 端点...");
-    try {
-      let currentJson = "";
-      try {
-        currentJson = await readWorkspaceFile("data/llm_endpoints.json");
-      } catch { currentJson = ""; }
-      const base = currentJson ? JSON.parse(currentJson) : { endpoints: [], settings: {} };
-      base.stt_endpoints = Array.isArray(base.stt_endpoints) ? base.stt_endpoints : [];
-      base.stt_endpoints = base.stt_endpoints
-        .filter((e: any) => String(e?.name || "") !== epName)
-        .map((e: any, i: number) => ({ ...e, priority: i + 1 }));
-
-      await writeWorkspaceFile("data/llm_endpoints.json", JSON.stringify(base, null, 2) + "\n");
-
-      setSavedSttEndpoints((prev) => prev.filter((e) => e.name !== epName));
-      notifySuccess(`STT 端点 ${epName} 已删除`);
-
-      loadSavedEndpoints().catch(() => {});
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doReorderByNames(orderedNames: string[]) {
-    if (!currentWorkspaceId) return;
-    const _busyId = notifyLoading("保存排序...");
-    try {
-      const { endpoints, settings } = await readEndpointsJson();
-      const map = new Map<string, any>();
-      for (const e of endpoints) {
-        const name = String(e?.name || "");
-        if (name) map.set(name, e);
-      }
-      const nextEndpoints: any[] = [];
-      let p = 1;
-      for (const name of orderedNames) {
-        const e = map.get(name);
-        if (!e) continue;
-        e.priority = p++;
-        nextEndpoints.push(e);
-        map.delete(name);
-      }
-      // append leftovers (if any) preserving original order, after the explicit list
-      for (const e of endpoints) {
-        const name = String(e?.name || "");
-        if (!name) continue;
-        if (map.has(name)) {
-          const ee = map.get(name);
-          ee.priority = p++;
-          nextEndpoints.push(ee);
-          map.delete(name);
-        }
-      }
-      await writeEndpointsJson(nextEndpoints, settings);
-      notifySuccess("已保存端点顺序（priority 已更新）");
-      await loadSavedEndpoints();
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doSetPrimaryEndpoint(name: string) {
-    const names = savedEndpoints.map((e) => e.name);
-    const idx = names.indexOf(name);
-    if (idx < 0) return;
-    const next = [name, ...names.filter((n) => n !== name)];
-    await doReorderByNames(next);
-  }
-
-  async function doStartEditEndpoint(name: string) {
-    const ep = savedEndpoints.find((e) => e.name === name);
-    if (!ep) return;
-    // Ensure env variables are loaded so API Key values are available in the edit modal
-    if (currentWorkspaceId) {
-      await ensureEnvLoaded(currentWorkspaceId);
-    } else if (dataMode === "remote") {
-      await ensureEnvLoaded("__remote__");
-    }
-    setEditingOriginalName(name);
-    setEditDraft({
-      name: ep.name,
-      priority: normalizePriority(ep.priority, 1),
-      providerSlug: ep.provider || "",
-      apiType: (ep.api_type as any) || "openai",
-      baseUrl: ep.base_url || "",
-      apiKeyEnv: ep.api_key_env || "",
-      apiKeyValue: envDraft[ep.api_key_env || ""] || "",
-      modelId: ep.model || "",
-      caps: Array.isArray(ep.capabilities) && ep.capabilities.length ? ep.capabilities : ["text"],
-      maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
-      contextWindow: typeof ep.context_window === "number" ? ep.context_window : 200000,
-      timeout: typeof ep.timeout === "number" ? ep.timeout : 180,
-      rpmLimit: typeof ep.rpm_limit === "number" ? ep.rpm_limit : 0,
-      pricingTiers: Array.isArray(ep.pricing_tiers) ? ep.pricing_tiers.map((t: any) => ({
-        max_input: Number.isFinite(Number(t?.max_input)) ? Number(t.max_input) : 0,
-        input_price: Number.isFinite(Number(t?.input_price)) ? Number(t.input_price) : 0,
-        output_price: Number.isFinite(Number(t?.output_price)) ? Number(t.output_price) : 0,
-      })) : [],
-    });
-    setEditModalOpen(true);
-    setConnTestResult(null);
-  }
-
-  function resetEndpointEditor() {
-    setEditingOriginalName(null);
-    setEditDraft(null);
-    setEditModalOpen(false);
-    setEditModels([]);
-    setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: false }));
-    setCodingPlanMode(false);
-  }
-
-  async function doFetchEditModels() {
-    if (!editDraft) return;
-    const editProvider = providers.find((p) => p.slug === editDraft.providerSlug);
-    const isEditLocal = isLocalProvider(editProvider);
-    const key = editDraft.apiKeyValue.trim() || envGet(envDraft, editDraft.apiKeyEnv) || (isEditLocal ? localProviderPlaceholderKey(editProvider) : "");
-    if (!isEditLocal && !key) {
-      notifyError("请先填写 API Key 值（或确保对应环境变量已有值）");
-      return;
-    }
-    if (!editDraft.baseUrl.trim()) {
-      notifyError("请先填写 Base URL");
-      return;
-    }
-    const _busyId = notifyLoading("拉取模型列表...");
-    try {
-      const parsed = await fetchModelListUnified({
-        apiType: editDraft.apiType,
-        baseUrl: editDraft.baseUrl,
-        providerSlug: editDraft.providerSlug || null,
-        apiKey: key || "local",
-      });
-      setEditModels(parsed);
-      if (parsed.length > 0) {
-        notifySuccess(t("llm.fetchSuccess", { count: parsed.length }));
-      } else {
-        notifyError(t("llm.fetchErrorEmpty"));
-      }
-    } catch (e: any) {
-      const raw = String(e?.message || e);
-      const eprov = providers.find((p) => p.slug === (editDraft?.providerSlug || ""));
-      notifyError(friendlyFetchError(raw, t, eprov?.name));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doSaveEditedEndpoint() {
-    if (!currentWorkspaceId) {
-      notifyError("请先创建/选择一个当前工作区");
-      return;
-    }
-    if (!editDraft || !editingOriginalName) return;
-    if (!editDraft.name.trim()) {
-      notifyError("端点名称不能为空");
-      return;
-    }
-    if (!editDraft.modelId.trim()) {
-      notifyError("模型不能为空");
-      return;
-    }
-    if (!editDraft.apiKeyEnv.trim()) {
-      notifyError("API Key 环境变量名不能为空");
-      return;
-    }
-    if (!editDraft.baseUrl.trim()) {
-      notifyError("请填写 Base URL");
-      return;
-    }
-    if (!/^https?:\/\//i.test(editDraft.baseUrl.trim())) {
-      notifyError("Base URL 必须以 http:// 或 https:// 开头");
-      return;
-    }
-    const _busyId = notifyLoading("保存修改...");
-    try {
-      // Update env only if user provided a value (avoid accidental overwrite)
-      if (editDraft.apiKeyValue.trim()) {
-        await ensureEnvLoaded(currentWorkspaceId);
-        setEnvDraft((e) => envSet(e, editDraft.apiKeyEnv.trim(), editDraft.apiKeyValue.trim()));
-        const envPayload = { entries: { [editDraft.apiKeyEnv.trim()]: editDraft.apiKeyValue.trim() } };
-        if (shouldUseHttpApi()) {
-          try {
-            await safeFetch(`${httpApiBase()}/api/config/env`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(envPayload),
-            });
-          } catch {
-            if (IS_TAURI && currentWorkspaceId) {
-              await invoke("workspace_update_env", {
-                workspaceId: currentWorkspaceId,
-                entries: [{ key: editDraft.apiKeyEnv.trim(), value: editDraft.apiKeyValue.trim() }],
-              });
-            }
-          }
-        } else if (IS_TAURI && currentWorkspaceId) {
-          await invoke("workspace_update_env", {
-            workspaceId: currentWorkspaceId,
-            entries: [{ key: editDraft.apiKeyEnv.trim(), value: editDraft.apiKeyValue.trim() }],
-          });
-        }
-      }
-
-      const { endpoints, settings } = await readEndpointsJson();
-      const used = new Set(endpoints.map((e: any) => String(e?.name || "")).filter(Boolean));
-      if (editDraft.name.trim() !== editingOriginalName && used.has(editDraft.name.trim())) {
-        throw new Error(`端点名称已存在：${editDraft.name.trim()}（请换一个）`);
-      }
-      const idx = endpoints.findIndex((e: any) => String(e?.name || "") === editingOriginalName);
-      const validTiers = (editDraft.pricingTiers || []).filter(
-        (t) => t.input_price > 0 || t.output_price > 0
-      );
-      const next: Record<string, any> = {
-        name: editDraft.name.trim().slice(0, 64),
-        provider: editDraft.providerSlug || "custom",
-        api_type: editDraft.apiType,
-        base_url: editDraft.baseUrl.trim(),
-        api_key_env: editDraft.apiKeyEnv.trim(),
-        model: editDraft.modelId.trim(),
-        priority: normalizePriority(editDraft.priority, 1),
-        max_tokens: editDraft.maxTokens ?? 0,
-        context_window: editDraft.contextWindow ?? 200000,
-        timeout: editDraft.timeout ?? 180,
-        rpm_limit: editDraft.rpmLimit ?? 0,
-        capabilities: editDraft.caps?.length ? editDraft.caps : ["text"],
-        extra_params:
-          (editDraft.caps || []).includes("thinking") && editDraft.providerSlug === "dashscope"
-            ? { enable_thinking: true }
-            : undefined,
-      };
-      next.pricing_tiers = validTiers.length > 0 ? validTiers : undefined;
-      if (idx >= 0) {
-        const prev = endpoints[idx] || {};
-        const merged = { ...prev, ...next };
-        if (!next.pricing_tiers) delete merged.pricing_tiers;
-        endpoints[idx] = merged;
-      } else {
-        endpoints.push(next);
-      }
-      endpoints.sort((a: any, b: any) => (Number(a?.priority) || 999) - (Number(b?.priority) || 999));
-      await writeEndpointsJson(endpoints, settings);
-      notifySuccess("端点已更新");
-      setEditModalOpen(false);
-      await loadSavedEndpoints();
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  useEffect(() => {
-    if (stepId !== "llm") return;
-    loadSavedEndpoints().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepId, currentWorkspaceId, dataMode]);
-
-  async function doSaveEndpoint(): Promise<boolean> {
-    if (!currentWorkspaceId) {
-      notifyError("请先创建/选择一个当前工作区");
-      return false;
-    }
-    if (!selectedModelId) {
-      notifyError("请先选择模型");
-      return false;
-    }
-    if (!baseUrl.trim()) {
-      notifyError("请填写 Base URL");
-      return false;
-    }
-    if (!/^https?:\/\//i.test(baseUrl.trim())) {
-      notifyError("Base URL 必须以 http:// 或 https:// 开头");
-      return false;
-    }
-    const isLocal = isLocalProvider(selectedProvider);
-    // 本地服务商允许空 API Key（自动填入 placeholder）
-    const effectiveApiKeyValue = apiKeyValue.trim() || (isLocal ? localProviderPlaceholderKey(selectedProvider) : "");
-    // apiKeyEnv 兜底：即使 useEffect 未触发也能生成合理的环境变量名
-    // When creating (not editing), deduplicate against existing endpoints to avoid
-    // two endpoints sharing the same env var (which causes key overwrite on save).
-    const rawApiKeyEnv = apiKeyEnv.trim()
-      || selectedProvider?.api_key_env_suggestion
-      || envKeyFromSlug(selectedProvider?.slug || providerSlug || "custom");
-    const effectiveApiKeyEnv = isEditingEndpoint
-      ? rawApiKeyEnv
-      : nextEnvKeyName(rawApiKeyEnv, new Set(savedEndpoints.map((e) => e.api_key_env).filter(Boolean)));
-    if (!isLocal && !effectiveApiKeyValue) {
-      notifyError("请填写 API Key 值（会写入工作区 .env）");
-      return false;
-    }
-    const _busyId = notifyLoading(isEditingEndpoint ? "更新端点配置..." : "写入端点配置...");
-
-    try {
-      await ensureEnvLoaded(currentWorkspaceId);
-      setEnvDraft((e) => envSet(e, effectiveApiKeyEnv, effectiveApiKeyValue));
-      const envPayload = { entries: { [effectiveApiKeyEnv]: effectiveApiKeyValue } };
-
-      if (shouldUseHttpApi()) {
-        try {
-          await safeFetch(`${httpApiBase()}/api/config/env`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(envPayload),
-          });
-        } catch {
-          if (IS_TAURI && currentWorkspaceId) {
-            await invoke("workspace_update_env", {
-              workspaceId: currentWorkspaceId,
-              entries: [{ key: effectiveApiKeyEnv, value: effectiveApiKeyValue }],
-            });
-          }
-        }
-      } else if (IS_TAURI && currentWorkspaceId) {
-        await invoke("workspace_update_env", {
-          workspaceId: currentWorkspaceId,
-          entries: [{ key: effectiveApiKeyEnv, value: effectiveApiKeyValue }],
-        });
-      }
-
-      // 读取现有 llm_endpoints.json
-      let currentJson = "";
-      try {
-        currentJson = await readWorkspaceFile("data/llm_endpoints.json");
-      } catch {
-        currentJson = "";
-      }
-
-      const next = (() => {
-        const base = currentJson ? JSON.parse(currentJson) : { endpoints: [], settings: {} };
-        base.endpoints = Array.isArray(base.endpoints) ? base.endpoints : [];
-        const usedNames = new Set(base.endpoints.map((e: any) => String(e?.name || "")).filter(Boolean));
-        const baseName = (endpointName.trim() || `${providerSlug || selectedProvider?.slug || "provider"}-${selectedModelId}`).slice(0, 64);
-        const name = (() => {
-          if (isEditingEndpoint) {
-            // allow keeping the same name; prevent collision with other endpoints
-            const original = editingOriginalName || "";
-            if (baseName !== original && usedNames.has(baseName)) {
-              throw new Error(`端点名称已存在：${baseName}（请换一个）`);
-            }
-            return baseName || original;
-          }
-          if (!usedNames.has(baseName)) return baseName;
-          for (let i = 2; i < 100; i++) {
-            const n = `${baseName}-${i}`.slice(0, 64);
-            if (!usedNames.has(n)) return n;
-          }
-          return `${baseName}-${Date.now()}`.slice(0, 64);
-        })();
-        const capList = Array.isArray(capSelected) && capSelected.length ? capSelected : ["text"];
-
-        const endpoint = {
-          name,
-          provider: providerSlug || (selectedProvider?.slug ?? "custom"),
-          api_type: apiType,
-          base_url: baseUrl.trim(),
-          api_key_env: effectiveApiKeyEnv,
-          model: selectedModelId,
-          priority: normalizePriority(endpointPriority, 1),
-          max_tokens: addEpMaxTokens,
-          context_window: addEpContextWindow,
-          timeout: addEpTimeout,
-          rpm_limit: addEpRpmLimit,
-          capabilities: capList,
-          // DashScope 思考模式：OpenAkita 的 OpenAI provider 会识别 enable_thinking
-          extra_params:
-            capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope"
-              ? { enable_thinking: true }
-              : undefined,
-        };
-
-        if (isEditingEndpoint) {
-          const original = editingOriginalName || name;
-          const idx = base.endpoints.findIndex((e: any) => String(e?.name || "") === original);
-          if (idx < 0) {
-            base.endpoints.push(endpoint);
-          } else {
-            const prev = base.endpoints[idx] || {};
-            base.endpoints[idx] = { ...prev, ...endpoint };
-          }
-        } else {
-          // 默认行为：不覆盖同名端点；自动改名后直接追加，实现“主端点 + 备份端点”
-          base.endpoints.push(endpoint);
-        }
-        // 重新按 priority 排序（越小越优先）
-        base.endpoints.sort((a: any, b: any) => (Number(a?.priority) || 999) - (Number(b?.priority) || 999));
-
-        return JSON.stringify(base, null, 2) + "\n";
-      })();
-
-      await writeWorkspaceFile("data/llm_endpoints.json", next);
-
-      notifySuccess(
-        isEditingEndpoint
-          ? "端点已更新：data/llm_endpoints.json（同时已写入 API Key 到 .env）。"
-          : "端点已追加写入：data/llm_endpoints.json（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
-      );
-      if (isEditingEndpoint) resetEndpointEditor();
-      await loadSavedEndpoints();
-      return true;
-    } catch (e) {
-      notifyError(String(e));
-      return false;
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doDeleteEndpoint(name: string) {
-    if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除端点...");
-    try {
-      const raw = await readWorkspaceFile("data/llm_endpoints.json");
-      const base = raw ? JSON.parse(raw) : { endpoints: [], settings: {} };
-      const eps = Array.isArray(base.endpoints) ? base.endpoints : [];
-      base.endpoints = eps.filter((e: any) => String(e?.name || "") !== name);
-      const next = JSON.stringify(base, null, 2) + "\n";
-      await writeWorkspaceFile("data/llm_endpoints.json", next);
-
-      // Immediately update local state
-      setSavedEndpoints((prev) => prev.filter((e) => e.name !== name));
-      notifySuccess(`已删除端点：${name}`);
-
-      // Background re-read to fully sync
-      loadSavedEndpoints().catch(() => {});
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doToggleEndpointEnabled(name: string, endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints") {
-    if (!currentWorkspaceId && dataMode !== "remote") return;
-    try {
-      const raw = await readWorkspaceFile("data/llm_endpoints.json");
-      const base = raw ? JSON.parse(raw) : { endpoints: [], settings: {} };
-      const eps = Array.isArray(base[endpointType]) ? base[endpointType] : [];
-      for (const ep of eps) {
-        if (String(ep?.name || "") === name) {
-          ep.enabled = ep.enabled === false ? true : false;
-          break;
-        }
-      }
-      base[endpointType] = eps;
-      await writeWorkspaceFile("data/llm_endpoints.json", JSON.stringify(base, null, 2) + "\n");
-      loadSavedEndpoints().catch(() => {});
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  async function saveEnvKeys(keys: string[]) {
-    const entries: Record<string, string> = {};
-    for (const k of keys) {
-      if (Object.prototype.hasOwnProperty.call(envDraft, k)) {
-        const v = envDraft[k];
-        if (typeof v === "string" && v.length > 0) {
-          entries[k] = v;
-        }
-      }
-    }
-    if (!Object.keys(entries).length) return;
-
-    if (shouldUseHttpApi()) {
-      // ── 后端运行中 → 优先 HTTP API（后端写入 .env 并热加载）──
-      try {
-        await safeFetch(`${httpApiBase()}/api/config/env`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entries }),
-        });
-        return; // HTTP 成功，无需本地写入
-      } catch {
-        // HTTP 暂时不可用，回退到本地写入
-        logger.warn("App", "saveEnvKeys: HTTP failed, falling back to Tauri");
-      }
-    }
-    if (IS_TAURI && currentWorkspaceId) {
-      await ensureEnvLoaded(currentWorkspaceId);
-      const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
-      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
-    }
-  }
-
-  const PROVIDER_APPLY_URLS: Record<string, string> = {
-    openai: "https://platform.openai.com/api-keys",
-    anthropic: "https://console.anthropic.com/settings/keys",
-    moonshot: "https://platform.moonshot.cn/console",
-    kimi: "https://platform.moonshot.cn/console",
-    "kimi-cn": "https://platform.moonshot.cn/console",
-    "kimi-int": "https://platform.moonshot.ai/console/api-keys",
-    dashscope: "https://dashscope.console.aliyun.com/",
-    minimax: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
-    "minimax-cn": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
-    "minimax-int": "https://platform.minimax.io/user-center/basic-information/interface-key",
-    deepseek: "https://platform.deepseek.com/",
-    openrouter: "https://openrouter.ai/",
-    siliconflow: "https://siliconflow.cn/",
-    volcengine: "https://console.volcengine.com/ark/",
-    zhipu: "https://open.bigmodel.cn/",
-    "zhipu-cn": "https://open.bigmodel.cn/usercenter/apikeys",
-    "zhipu-int": "https://z.ai/manage-apikey/apikey-list",
-    yunwu: "https://yunwu.zeabur.app/",
-    ollama: "https://ollama.com/library",
-    lmstudio: "https://lmstudio.ai/",
-  };
-  function getProviderApplyUrl(slug: string): string {
-    return PROVIDER_APPLY_URLS[slug.toLowerCase()] || "";
-  }
-  async function openApplyUrl(url: string) {
-    try { await openExternalUrl(url); } catch {
-      const ok = await copyToClipboard(url);
-      if (ok) notifySuccess("链接已复制到剪贴板：" + url);
-      else notifyError("无法打开链接，请手动访问：" + url);
-    }
-  }
-  const providerApplyUrl = useMemo(() => getProviderApplyUrl(selectedProvider?.slug || ""), [selectedProvider?.slug]);
 
   const step = steps[currentStepIdx] || steps[0];
 
@@ -3142,6 +1834,7 @@ export function App() {
         ];
       case "advanced":
         return [
+          "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FORCE_IPV4",
           "DATABASE_PATH", "LOG_LEVEL",
           "LOG_DIR", "LOG_FILE_PREFIX", "LOG_MAX_SIZE_MB", "LOG_BACKUP_COUNT",
           "LOG_RETENTION_DAYS", "LOG_FORMAT", "LOG_TO_CONSOLE", "LOG_TO_FILE",
@@ -3163,9 +1856,7 @@ export function App() {
   function getFooterSaveConfig(): { keys: string[]; savedMsg: string } | null {
     switch (stepId) {
       case "llm":
-        // API keys are already written individually by each endpoint save;
-        // bulk-writing them here risks overwriting valid keys with stale envDraft values.
-        return { keys: [], savedMsg: t("config.llmSaved") };
+        return null;
 
       case "im":
         return { keys: getAutoSaveKeysForStep("im"), savedMsg: t("config.imSaved") };
@@ -3181,48 +1872,6 @@ export function App() {
   }
 
 
-  // auto-load all advanced panel data when entering the page
-  useEffect(() => {
-    if (stepId !== "advanced") { advLoadedRef.current = false; return; }
-    if (advLoadedRef.current) return;
-    advLoadedRef.current = true;
-
-    const apiUrl = shouldUseHttpApi() ? httpApiBase() : null;
-
-    if (apiUrl) {
-      // System info
-      setAdvLoading((p) => ({ ...p, sysinfo: true }));
-      safeFetch(`${apiUrl}/api/system-info`, { signal: AbortSignal.timeout(8_000) })
-        .then((r) => r.json())
-        .then((data) => {
-          const info: Record<string, string> = {};
-          if (data.os) info["OS"] = data.os;
-          if (data.openakita_version) info["Backend"] = data.openakita_version;
-          setAdvSysInfo(info);
-        })
-        .catch(() => {})
-        .finally(() => setAdvLoading((p) => ({ ...p, sysinfo: false })));
-
-      // Load current HUB_API_URL from .env
-      safeFetch(`${apiUrl}/api/config/env`, { signal: AbortSignal.timeout(5_000) })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.env?.HUB_API_URL) setHubApiUrl(data.env.HUB_API_URL);
-        })
-        .catch(() => {});
-    }
-
-    // Load migration info (Tauri only)
-    if (IS_TAURI) {
-      invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>("get_root_dir_info")
-        .then((info) => {
-          setMigrateCurrentRoot(info.currentRoot);
-          setMigrateCustomRoot(info.customRoot);
-        })
-        .catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepId]);
 
   // keep env draft in sync when workspace changes
   useEffect(() => {
@@ -3320,21 +1969,38 @@ export function App() {
       if (useHttpApi) {
         // ── Try HTTP API, fall back to Tauri on failure ──
         let endpointSummaryResolved = false;
+        let envAlreadyLoaded = false;
+        let httpEnv: EnvMap = {};
         try {
           // Try new config API (may not exist in older service versions)
           const envRes = await safeFetch(`${effectiveApiBaseUrl}/api/config/env`);
           const envData = await envRes.json();
-          const env = envData.env || {};
-          setEnvDraft((prev) => ({ ...prev, ...env }));
-          envLoadedForWs.current = "__remote__";
+          httpEnv = envData.env || {};
+          setEnvDraft((prev) => ({ ...prev, ...httpEnv }));
+          markEnvLoaded(currentWorkspaceId || "__remote__");
+          envAlreadyLoaded = true;
 
           const epRes = await safeFetch(`${effectiveApiBaseUrl}/api/config/endpoints`);
           const epData = await epRes.json();
           const eps = Array.isArray(epData?.endpoints) ? epData.endpoints : [];
+
+          let statusMap: Record<string, boolean> = {};
+          try {
+            const statusRes = await safeFetch(`${effectiveApiBaseUrl}/api/config/endpoint-status`);
+            const statusData = await statusRes.json();
+            const statusList = Array.isArray(statusData?.endpoints) ? statusData.endpoints : [];
+            for (const s of statusList) {
+              if (s?.name) statusMap[String(s.name)] = !!s.key_present;
+            }
+          } catch { /* endpoint-status API not available, fall back to env */ }
+
           const list = eps
             .map((e: any) => {
               const keyEnv = String(e?.api_key_env || "");
-              const keyPresent = !!(keyEnv && (env[keyEnv] ?? "").trim());
+              const epName = String(e?.name || "");
+              const keyPresent = epName in statusMap
+                ? statusMap[epName]
+                : !!(keyEnv && (httpEnv[keyEnv] ?? "").trim());
               return {
                 name: String(e?.name || ""),
                 provider: String(e?.provider || ""),
@@ -3389,7 +2055,7 @@ export function App() {
         // Fall back to Tauri local file system if HTTP API completely failed
         if (!endpointSummaryResolved && currentWorkspaceId) {
           try {
-            const env = await ensureEnvLoaded(currentWorkspaceId);
+            const env = envAlreadyLoaded ? httpEnv : await ensureEnvLoaded(currentWorkspaceId);
             const raw = await readWorkspaceFile("data/llm_endpoints.json");
             const parsed = JSON.parse(raw);
             const eps = Array.isArray(parsed?.endpoints) ? parsed.endpoints : [];
@@ -3981,1404 +2647,71 @@ export function App() {
 
 
   function renderStatus() {
-    const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
-    const ws = workspaces.find((w) => w.id === effectiveWsId) || workspaces[0] || null;
-    const im = [
-      { k: "TELEGRAM_ENABLED", name: "Telegram", required: ["TELEGRAM_BOT_TOKEN"] },
-      { k: "FEISHU_ENABLED", name: t("status.feishu"), required: ["FEISHU_APP_ID", "FEISHU_APP_SECRET"] },
-      { k: "WEWORK_ENABLED", name: t("status.wework"), required: ["WEWORK_CORP_ID", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"] },
-      { k: "WEWORK_WS_ENABLED", name: t("status.weworkWs"), required: ["WEWORK_WS_BOT_ID", "WEWORK_WS_SECRET"] },
-      { k: "DINGTALK_ENABLED", name: t("status.dingtalk"), required: ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"] },
-      { k: "ONEBOT_ENABLED", name: "OneBot", required: [] },
-      { k: "QQBOT_ENABLED", name: "QQ 机器人", required: ["QQBOT_APP_ID", "QQBOT_APP_SECRET"] },
-    ];
-    const imStatus = im.map((c) => {
-      const enabled = envGet(envDraft, c.k, "false").toLowerCase() === "true";
-      const missing = c.required.filter((rk) => !(envGet(envDraft, rk) || "").trim());
-      return { ...c, enabled, ok: enabled ? missing.length === 0 : true, missing };
-    });
-
     return (
-      <>
-        {/* Banner: backend not running (hide during initial probe; hide in web mode — backend is always running) */}
-        {IS_TAURI && !serviceStatus?.running && serviceStatus !== null && effectiveWsId && (
-          <div style={{
-            marginBottom: 16, padding: "16px 20px", borderRadius: 10,
-            background: "rgba(245, 158, 11, 0.15)",
-            border: "1px solid rgba(245, 158, 11, 0.4)",
-            display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
-          }}>
-            <div style={{ fontSize: 28, lineHeight: 1, color: "var(--warning)" }}>&#9888;</div>
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "var(--warning)", marginBottom: 4 }}>
-                {t("status.backendNotRunning")}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--warning)", opacity: 0.85 }}>
-                {t("status.backendNotRunningHint")}
-              </div>
-            </div>
-            <Button
-              size="sm"
-              onClick={async () => { await startLocalServiceWithConflictCheck(effectiveWsId); }}
-              disabled={!!busy}
-            >
-              {busy ? <><Loader2 className="animate-spin mr-1" size={14} />{busy}</> : <><Play size={14} className="mr-1" />{t("topbar.start")}</>}
-            </Button>
-          </div>
-        )}
-        {/* Banner: auto-starting backend (shown while serviceStatus is null and busy with auto-start) */}
-        {IS_TAURI && serviceStatus === null && !!busy && effectiveWsId && (
-          <div style={{
-            marginBottom: 16, padding: "16px 20px", borderRadius: 10,
-            background: "rgba(37, 99, 235, 0.15)",
-            border: "1px solid rgba(37, 99, 235, 0.4)",
-            display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
-          }}>
-            <div className="spinner" style={{ width: 22, height: 22, flexShrink: 0, color: "var(--brand)" }} />
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "var(--brand)", marginBottom: 4 }}>
-                {busy}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--brand)", opacity: 0.85 }}>
-                {t("status.backendNotRunningHint")}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Top: Unified status panel */}
-        <div className="statusPanel">
-          {/* Service row */}
-          <div className="statusPanelRow statusPanelRowService">
-            <div className="statusPanelIcon">
-              <Server size={18} />
-            </div>
-            <div className="statusPanelInfo">
-              <div className="statusPanelTitle">
-                {t("status.service")}
-                <Badge variant={
-                  serviceStatus === null ? "secondary"
-                  : heartbeatState === "alive" ? "default"
-                  : heartbeatState === "degraded" || heartbeatState === "suspect" ? "secondary"
-                  : serviceStatus?.running ? "default"
-                  : "outline"
-                } className={`statusBadgeInline ${
-                  serviceStatus === null ? "statusBadgeWarn"
-                  : heartbeatState === "alive" ? "statusBadgeOk"
-                  : heartbeatState === "degraded" || heartbeatState === "suspect" ? "statusBadgeWarn"
-                  : serviceStatus?.running ? "statusBadgeOk"
-                  : "statusBadgeOff"
-                }`}>
-                  {serviceStatus === null ? (busy || t("topbar.starting"))
-                  : heartbeatState === "degraded" ? t("status.unresponsive")
-                  : serviceStatus?.running ? t("topbar.running")
-                  : t("topbar.stopped")}
-                </Badge>
-              </div>
-              <div className="statusPanelDesc">
-                {serviceStatus?.pid ? `PID ${serviceStatus.pid}` : ""}
-              </div>
-            </div>
-            {IS_TAURI && (
-            <div className="statusPanelActions">
-              {!serviceStatus?.running && serviceStatus !== null && effectiveWsId && (
-                <Button size="sm" className="statusBtn" onClick={async () => {
-                  await startLocalServiceWithConflictCheck(effectiveWsId);
-                }} disabled={!!busy}>{busy ? <><Loader2 className="animate-spin" size={13} />{busy}</> : <><Play size={13} />{t("topbar.start")}</>}</Button>
-              )}
-              {serviceStatus?.running && effectiveWsId && (<>
-                <Button size="sm" variant="destructive" className="statusBtn" onClick={async () => {
-                  const _b = notifyLoading(t("status.stopping"));
-                  try {
-                    await doStopService(effectiveWsId);
-                  } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
-                }} disabled={!!busy}><Square size={13} />{t("status.stop")}</Button>
-                <Button size="sm" variant="outline" className="statusBtn" onClick={async () => {
-                  const _b = notifyLoading(t("status.restarting"));
-                  try {
-                    await doStopService(effectiveWsId);
-                    await waitForServiceDown("http://127.0.0.1:18900", 15000);
-                    dismissLoading(_b);
-                    await doStartLocalService(effectiveWsId);
-                  } catch (e) { notifyError(String(e)); dismissLoading(_b); }
-                }} disabled={!!busy}><RotateCcw size={13} />{t("status.restart")}</Button>
-              </>)}
-            </div>
-            )}
-          </div>
-          {/* Multi-process warning */}
-          {IS_TAURI && detectedProcesses.length > 1 && (
-            <div className="statusPanelAlert">
-              <span style={{ fontWeight: 600 }}>⚠ 检测到 {detectedProcesses.length} 个 OpenAkita 进程正在运行</span>
-              <span style={{ fontSize: 11, opacity: 0.8 }}>
-                ({detectedProcesses.map(p => `PID ${p.pid}`).join(", ")})
-              </span>
-              <Button size="sm" variant="destructive" style={{ marginLeft: "auto" }} onClick={async () => {
-                const _b = notifyLoading("正在停止所有进程...");
-                try {
-                  const stopped = await invoke<number[]>("openakita_stop_all_processes");
-                  setDetectedProcesses([]);
-                  notifySuccess(`已停止 ${stopped.length} 个进程`);
-                  await refreshStatus();
-                } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
-              }} disabled={!!busy}><Square size={12} className="mr-1" />全部停止</Button>
-            </div>
-          )}
-          {/* Degraded hint */}
-          {heartbeatState === "degraded" && (
-            <div className="statusPanelAlert">
-              <DotYellow size={8} />
-              <span>
-                {t("status.degradedHint")}
-                <br />
-                <span style={{ fontSize: 11, opacity: 0.8 }}>{t("status.degradedAutoClean")}</span>
-              </span>
-            </div>
-          )}
-          {/* Troubleshooting panel */}
-          {(heartbeatState === "dead" && !serviceStatus?.running) && (
-            <TroubleshootPanel t={t} />
-          )}
-
-          {/* Auto-update row — desktop only */}
-          {IS_TAURI && (
-          <div className="statusPanelRow">
-            <div className="statusPanelIcon">
-              <Download size={18} />
-            </div>
-            <div className="statusPanelInfo">
-              <div className="statusPanelTitle">
-                {t("status.autoUpdate")}
-                <Badge variant={autoUpdateEnabled ? "default" : "outline"} className={`statusBadgeInline ${autoUpdateEnabled ? "statusBadgeOk" : "statusBadgeOff"}`}>
-                  {autoUpdateEnabled ? t("status.on") : t("status.off")}
-                </Badge>
-              </div>
-              <div className="statusPanelDesc">{t("status.autoUpdateHint")}</div>
-            </div>
-            <div className="statusPanelActions">
-              <Button size="sm" variant="outline" className={cn(
-                "h-7 text-xs px-2.5",
-                autoUpdateEnabled
-                  ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 hover:text-amber-700 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900"
-                  : "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 hover:text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900",
-              )} onClick={async () => {
-                const _b = notifyLoading(t("common.loading"));
-                try {
-                  const next = !autoUpdateEnabled;
-                  await invoke("set_auto_update", { enabled: next });
-                  setAutoUpdateEnabled(next);
-                  if (!next) { setNewRelease(null); setUpdateAvailable(null); setUpdateProgress({ status: "idle" }); }
-                } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
-              }} disabled={autoUpdateEnabled === null || !!busy}>{autoUpdateEnabled ? <PowerOff size={12} /> : <Power size={12} />}{autoUpdateEnabled ? t("status.off") : t("status.on")}</Button>
-            </div>
-          </div>
-          )}
-
-          {/* Autostart row — desktop only */}
-          {IS_TAURI && (
-          <div className="statusPanelRow">
-            <div className="statusPanelIcon">
-              <Zap size={18} />
-            </div>
-            <div className="statusPanelInfo">
-              <div className="statusPanelTitle">
-                {t("status.autostart")}
-                <Badge variant={autostartEnabled ? "default" : "outline"} className={`statusBadgeInline ${autostartEnabled ? "statusBadgeOk" : "statusBadgeOff"}`}>
-                  {autostartEnabled ? t("status.on") : t("status.off")}
-                </Badge>
-              </div>
-              <div className="statusPanelDesc">{t("status.autostartHint")}</div>
-            </div>
-            <div className="statusPanelActions">
-              <Button size="sm" variant="outline" className={cn(
-                "h-7 text-xs px-2.5",
-                autostartEnabled
-                  ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 hover:text-amber-700 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900"
-                  : "bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 hover:text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900",
-              )} onClick={async () => {
-                const _b = notifyLoading(t("common.loading"));
-                try { const next = !autostartEnabled; await invoke("autostart_set_enabled", { enabled: next }); setAutostartEnabled(next); } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
-              }} disabled={autostartEnabled === null || !!busy}>{autostartEnabled ? <PowerOff size={12} /> : <Power size={12} />}{autostartEnabled ? t("status.off") : t("status.on")}</Button>
-            </div>
-          </div>
-          )}
-
-          {/* Workspace row */}
-          <div className="statusPanelRow statusPanelRowWs">
-            <div className="statusPanelIcon">
-              <FolderOpen size={18} />
-            </div>
-            <div className="statusPanelInfo" style={{ flex: 1, minWidth: 0 }}>
-              <div className="statusPanelTitle">{t("config.step.workspace")}</div>
-              <div className="statusPanelDesc" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ fontWeight: 600, color: "var(--fg)" }}>{currentWorkspaceId || "—"}</span>
-                <span style={{ opacity: 0.5 }}>·</span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{ws?.path || ""}</span>
-              </div>
-            </div>
-            {ws?.path && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0"
-                title={t("status.openFolder")}
-                onClick={async () => {
-                  const { openFileWithDefault } = await import("./platform");
-                  try { await openFileWithDefault(ws.path); } catch (e) { logger.error("App", "openFileWithDefault failed", { error: String(e) }); }
-                }}
-              >
-                <FolderOpen size={14} />
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* LLM Endpoints compact table */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span className="statusCardLabel">{t("status.llmEndpoints")} ({endpointSummary.length})</span>
-            <Button size="sm" variant="outline" onClick={async () => {
-              setHealthChecking("all");
-              try {
-                let results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }>;
-                const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
-                if (healthUrl) {
-                  const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}), signal: AbortSignal.timeout(60_000) });
-                  const data = await res.json();
-                  results = data.results || [];
-                } else {
-                  notifyError(t("status.needServiceRunning"));
-                  setHealthChecking(null);
-                  return;
-                }
-                const h: typeof endpointHealth = {};
-                for (const r of results) { h[r.name] = { status: r.status, latencyMs: r.latency_ms, error: r.error, errorCategory: r.error_category, consecutiveFailures: r.consecutive_failures, cooldownRemaining: r.cooldown_remaining, isExtendedCooldown: r.is_extended_cooldown, lastCheckedAt: r.last_checked_at }; }
-                setEndpointHealth(h);
-              } catch (e) { notifyError(String(e)); } finally { setHealthChecking(null); }
-            }} disabled={!!healthChecking || !!busy}>
-              {healthChecking === "all" ? <><Loader2 className="animate-spin mr-1" size={14} />{t("status.checking")}</> : <><Activity size={14} className="mr-1" />{t("status.checkAll")}</>}
-            </Button>
-          </div>
-          {endpointSummary.length === 0 ? (
-            <div className="cardHint">{t("status.noEndpoints")}</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="h-9 text-xs">{t("status.endpoint")}</TableHead>
-                  <TableHead className="h-9 text-xs">{t("status.model")}</TableHead>
-                  <TableHead className="h-9 text-xs w-[50px]">Key</TableHead>
-                  <TableHead className="h-9 text-xs">{t("sidebar.status")}</TableHead>
-                  <TableHead className="h-9 text-xs w-[70px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-              {endpointSummary.map((e) => {
-                const h = endpointHealth[e.name];
-                const dotClass = h ? (h.status === "healthy" ? "healthy" : h.status === "degraded" ? "degraded" : "unhealthy") : e.keyPresent ? "unknown" : "unhealthy";
-                const fullError = h && h.status !== "healthy" ? (h.error || "") : "";
-                const label = h
-                  ? h.status === "healthy" ? (h.latencyMs != null ? h.latencyMs + "ms" : "OK") : fullError.slice(0, 30) + (fullError.length > 30 ? "…" : "")
-                  : e.keyPresent ? "—" : t("status.keyMissing");
-                return (
-                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : ""}>
-                    <TableCell className="py-2.5 font-semibold">
-                      {e.name}
-                      {e.enabled === false && <span className="ml-1.5 text-muted-foreground text-[10px] font-bold">{t("llm.disabled")}</span>}
-                    </TableCell>
-                    <TableCell className="py-2.5 text-muted-foreground text-xs">{e.model}</TableCell>
-                    <TableCell className="py-2.5">{e.keyPresent ? <DotGreen /> : <DotGray />}</TableCell>
-                    <TableCell className="py-2.5">
-                      <span
-                        className="inline-flex items-center gap-1 text-xs"
-                        title={fullError ? (t("status.clickToCopy", "点击复制") + ": " + fullError) : undefined}
-                      >
-                        <span className={"healthDot " + dotClass} />
-                        <span
-                          className={fullError ? "cursor-pointer" : ""}
-                          onClick={fullError ? async (ev) => { ev.stopPropagation(); const ok = await copyToClipboard(fullError); if (ok) notifySuccess(t("version.copied")); } : undefined}
-                          role={fullError ? "button" : undefined}
-                        >
-                          {label}
-                        </span>
-                      </span>
-                    </TableCell>
-                    <TableCell className="py-2.5 text-right">
-                      <Button size="sm" variant="outline" className="h-7 text-xs px-2.5" onClick={async () => {
-                        setHealthChecking(e.name);
-                        try {
-                          let r: any[];
-                          const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
-                          if (healthUrl) {
-                            const res = await safeFetch(`${healthUrl}/api/health/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint_name: e.name }), signal: AbortSignal.timeout(60_000) });
-                            const data = await res.json();
-                            r = data.results || [];
-                          } else {
-                            notifyError(t("status.needServiceRunning"));
-                            setHealthChecking(null);
-                            return;
-                          }
-                          if (r[0]) setEndpointHealth((prev: any) => ({ ...prev, [r[0].name]: { status: r[0].status, latencyMs: r[0].latency_ms, error: r[0].error, errorCategory: r[0].error_category, consecutiveFailures: r[0].consecutive_failures, cooldownRemaining: r[0].cooldown_remaining, isExtendedCooldown: r[0].is_extended_cooldown, lastCheckedAt: r[0].last_checked_at } }));
-                        } catch (err) { notifyError(String(err)); } finally { setHealthChecking(null); }
-                      }} disabled={!!healthChecking || !!busy}>{healthChecking === e.name ? <Loader2 className="animate-spin" size={14} /> : t("status.check")}</Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-
-        {/* IM Channels + Skills side by side */}
-        <div className="statusGrid2" style={{ marginTop: 12 }}>
-          <div className="card" style={{ marginTop: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <span className="statusCardLabel">{t("status.imChannels")}</span>
-              <Button size="sm" variant="outline" onClick={async () => {
-                setImChecking(true);
-                try {
-                  const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
-                  if (healthUrl) {
-                    const res = await safeFetch(`${healthUrl}/api/im/channels`);
-                    const data = await res.json();
-                    const channels = data.channels || [];
-                    const h: typeof imHealth = {};
-                    for (const c of channels) {
-                      const key = c.channel || c.name;
-                      const val = { status: c.status || "unknown", error: c.error || null, lastCheckedAt: c.last_checked_at || null };
-                      h[key] = val;
-                      const ctype = c.channel_type || key;
-                      if (ctype !== key) {
-                        if (!h[ctype] || (val.status === "online" && h[ctype]?.status !== "online")) {
-                          h[ctype] = val;
-                        }
-                      }
-                    }
-                    setImHealth(h);
-                  } else {
-                    notifyError(t("status.needServiceRunning"));
-                  }
-                } catch (err) { notifyError(String(err)); } finally { setImChecking(false); }
-              }} disabled={imChecking || !!busy}>
-                {imChecking ? <><Loader2 className="animate-spin mr-1" size={14} />{t("status.checking")}</> : <><Activity size={14} className="mr-1" />{t("status.checkAll")}</>}
-              </Button>
-            </div>
-            {imStatus.map((c) => {
-              const channelId = c.k.replace("_ENABLED", "").toLowerCase();
-              const ih = imHealth[channelId];
-              const isOnline = ih && (ih.status === "healthy" || ih.status === "online");
-              // If imHealth has data for this channel, trust it over envDraft (handles remote mode)
-              const effectiveEnabled = ih ? true : c.enabled;
-              const dot = !effectiveEnabled ? "disabled" : ih ? (isOnline ? "healthy" : "unhealthy") : c.ok ? "unknown" : "degraded";
-              return (
-                <div key={c.k} className="imStatusRow">
-                  <span className={"healthDot " + dot} />
-                  <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{c.name}</span>
-                  <span className="imStatusLabel">{!effectiveEnabled ? t("status.disabled") : ih ? (isOnline ? t("status.online") : t("status.offline")) : c.ok ? t("status.configured") : t("status.keyMissing")}</span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="card" style={{ marginTop: 0 }}>
-            <span className="statusCardLabel">Skills</span>
-            {skillSummary ? (
-              <div style={{ marginTop: 8 }}>
-                <div className="statusMetric"><span>{t("status.total")}</span><b>{skillSummary.count}</b></div>
-                <div className="statusMetric"><span>{t("skills.system")}</span><b>{skillSummary.systemCount}</b></div>
-                <div className="statusMetric"><span>{t("skills.external")}</span><b>{skillSummary.externalCount}</b></div>
-              </div>
-            ) : <div className="cardHint" style={{ marginTop: 8 }}>{t("status.skillsNA")}</div>}
-            <Button size="sm" variant="outline" className="w-full mt-2.5" onClick={() => setView("skills")}>{t("status.manageSkills")} <ArrowRight size={14} className="ml-1" /></Button>
-          </div>
-        </div>
-
-        {/* Service log */}
-        {serviceStatus?.running && (
-          <div className="card" style={{ marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <span className="statusCardLabel">{t("status.log")}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                {(["ERROR", "WARN", "INFO", "DEBUG"] as const).map((level) => {
-                  const active = logLevelFilter.has(level);
-                  return (
-                    <span
-                      key={level}
-                      className={`logFilterBadge logFilterBadge--${level}${active ? " logFilterBadge--active" : ""}`}
-                      onClick={() => setLogLevelFilter((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(level)) next.delete(level); else next.add(level);
-                        return next;
-                      })}
-                    >{level}</span>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ position: "relative" }}>
-              <div ref={serviceLogRef as any} className="logPre" onScroll={(e) => {
-                const el = e.currentTarget;
-                const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-                logAtBottomRef.current = atBottom;
-                setLogAtBottom(atBottom);
-              }}>{(() => {
-                const raw = (serviceLog?.content || "").trim();
-                if (!raw) return <span className="logMuted">{t("status.noLog")}</span>;
-                return raw.split("\n").filter((line) => {
-                  if (/\b(ERROR|CRITICAL|FATAL)\b/.test(line)) return logLevelFilter.has("ERROR");
-                  if (/\bWARN(ING)?\b/.test(line)) return logLevelFilter.has("WARN");
-                  if (/\bDEBUG\b/.test(line)) return logLevelFilter.has("DEBUG");
-                  return logLevelFilter.has("INFO");
-                }).map((line, i) => {
-                  const isError = /\b(ERROR|CRITICAL|FATAL)\b/.test(line);
-                  const isWarn = /\bWARN(ING)?\b/.test(line);
-                  const isDebug = /\bDEBUG\b/.test(line);
-                  const cls = isError ? "logLineError" : isWarn ? "logLineWarn" : isDebug ? "logLineDebug" : "logLineInfo";
-                  const highlighted = line
-                    .replace(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d+)/, '<span class="logTimestamp">$1</span>')
-                    .replace(/\b(INFO|ERROR|WARN(?:ING)?|DEBUG|CRITICAL|FATAL)\b/, '<span class="logLevel logLevel--$1">$1</span>')
-                    .replace(/([\w.]+(?:\.[\w]+)+)\s+-\s+/, '<span class="logModule">$1</span> - ')
-                    .replace(/\[([^\]]+)\]/, '[<span class="logTag">$1</span>]');
-                  return <div key={i} className={`logLine ${cls}`} dangerouslySetInnerHTML={{ __html: highlighted }} />;
-                });
-              })()}</div>
-              {!logAtBottom && (
-                <button className="logScrollBtn" onClick={() => {
-                  const el = serviceLogRef.current;
-                  if (el) { el.scrollTop = el.scrollHeight; logAtBottomRef.current = true; setLogAtBottom(true); }
-                }}>↓</button>
-              )}
-            </div>
-          </div>
-        )}
-      </>
+      <StatusView
+        currentWorkspaceId={currentWorkspaceId}
+        workspaces={workspaces}
+        envDraft={envDraft}
+        serviceStatus={serviceStatus}
+        heartbeatState={heartbeatState}
+        busy={busy}
+        autostartEnabled={autostartEnabled}
+        autoUpdateEnabled={autoUpdateEnabled}
+        setAutostartEnabled={setAutostartEnabled}
+        setAutoUpdateEnabled={setAutoUpdateEnabled}
+        endpointSummary={endpointSummary}
+        endpointHealth={endpointHealth}
+        setEndpointHealth={setEndpointHealth}
+        imHealth={imHealth}
+        setImHealth={setImHealth}
+        skillSummary={skillSummary}
+        serviceLog={serviceLog}
+        serviceLogRef={serviceLogRef}
+        logAtBottomRef={logAtBottomRef}
+        detectedProcesses={detectedProcesses}
+        setDetectedProcesses={setDetectedProcesses}
+        setNewRelease={setNewRelease}
+        setUpdateAvailable={setUpdateAvailable}
+        setUpdateProgress={setUpdateProgress}
+        shouldUseHttpApi={shouldUseHttpApi}
+        httpApiBase={httpApiBase}
+        startLocalServiceWithConflictCheck={startLocalServiceWithConflictCheck}
+        refreshStatus={refreshStatus}
+        doStopService={doStopService}
+        waitForServiceDown={waitForServiceDown}
+        doStartLocalService={doStartLocalService}
+        setView={setView}
+      />
     );
-  }
-
-  // ── Add endpoint dialog state ──
-  const [addEpDialogOpen, setAddEpDialogOpen] = useState(false);
-  const [addCompDialogOpen, setAddCompDialogOpen] = useState(false);
-  const [addSttDialogOpen, setAddSttDialogOpen] = useState(false);
-
-  function openAddEpDialog() {
-    resetEndpointEditor();
-    setConnTestResult(null);
-    setProviderSlug(providers.find(p => p.slug === "openai")?.slug ?? providers[0]?.slug ?? "");
-    setApiType("openai");
-    setBaseUrl("");
-    setBaseUrlTouched(false);
-    setApiKeyEnv("");
-    setApiKeyEnvTouched(false);
-    setApiKeyValue("");
-    setModels([]);
-    setSelectedModelId("");
-    setEndpointName("");
-    setEndpointNameTouched(false);
-    setCapSelected([]);
-    setCapTouched(false);
-    setEndpointPriority(1);
-    setCodingPlanMode(false);
-    setAddEpMaxTokens(0);
-    setAddEpContextWindow(200000);
-    setAddEpTimeout(180);
-    setAddEpRpmLimit(0);
-    if (providers.length === 0) doLoadProviders();
-    setAddEpDialogOpen(true);
   }
 
   function renderLLM() {
     return (
-      <>
-        {/* ── Main endpoint list ── */}
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div>
-              <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.title")}</div>
-              <div className="cardHint">{t("llm.subtitle")}</div>
-            </div>
-            <Button size="sm" onClick={openAddEpDialog} disabled={!!busy}>
-              + {t("llm.addEndpoint")}
-            </Button>
-          </div>
-
-          {savedEndpoints.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-              <Inbox size={32} strokeWidth={1.5} className="mb-2 opacity-40" />
-              <p className="text-sm">{t("llm.noEndpoints")}</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>{t("status.endpoint")}</TableHead>
-                  <TableHead>{t("status.model")}</TableHead>
-                  <TableHead className="w-[50px]">Key</TableHead>
-                  <TableHead className="w-[80px]">Priority</TableHead>
-                  <TableHead className="w-[140px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {savedEndpoints.map((e) => (
-                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
-                    <TableCell className="font-semibold">
-                      {e.name}
-                      {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span className="ml-1.5 text-[10px] font-extrabold text-primary">{t("llm.primary")}</span>}
-                      {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{e.model}</TableCell>
-                    <TableCell>{(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}</TableCell>
-                    <TableCell>{e.priority}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 justify-end">
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doSetPrimaryEndpoint(e.name)} disabled={!!busy} title={t("llm.setPrimary")}><IconChevronUp size={14} /></Button>
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-
-        {/* ── Compiler endpoints ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div>
-              <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.compiler")}</div>
-              <div className="cardHint">{t("llm.compilerHint")}</div>
-            </div>
-            <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyEnv(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={!!busy}>
-              + {t("llm.addEndpoint")}
-            </Button>
-          </div>
-          {savedCompilerEndpoints.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-              <Inbox size={32} strokeWidth={1.5} className="mb-2 opacity-40" />
-              <p className="text-sm">{t("llm.noEndpoints")}</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>{t("status.endpoint")}</TableHead>
-                  <TableHead>{t("status.model")}</TableHead>
-                  <TableHead className="w-[80px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {savedCompilerEndpoints.map((e) => (
-                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
-                    <TableCell className="font-semibold">
-                      {e.name}
-                      {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{e.model}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 justify-end">
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "compiler_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteCompilerEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-
-        {/* ── STT endpoints ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div>
-              <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.stt")}</div>
-              <div className="cardHint">{t("llm.sttHint")}</div>
-            </div>
-            <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyEnv(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={!!busy}>
-              + {t("llm.addEndpoint")}
-            </Button>
-          </div>
-          {savedSttEndpoints.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-              <Inbox size={32} strokeWidth={1.5} className="mb-2 opacity-40" />
-              <p className="text-sm">{t("llm.noEndpoints")}</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>{t("status.endpoint")}</TableHead>
-                  <TableHead>{t("status.model")}</TableHead>
-                  <TableHead className="w-[80px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {savedSttEndpoints.map((e) => (
-                  <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
-                    <TableCell className="font-semibold">
-                      {e.name}
-                      {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{e.model}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 justify-end">
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "stt_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteSttEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-
-        {/* ── Add endpoint dialog ── */}
-        <Dialog open={addEpDialogOpen} onOpenChange={(open) => { if (!open) setAddEpDialogOpen(false); }}>
-          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { resetEndpointEditor(); setConnTestResult(null); }}>
-            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
-              <DialogTitle>{isEditingEndpoint ? t("llm.editEndpoint") : t("llm.addEndpoint")}</DialogTitle>
-              <DialogDescription className="sr-only">{t("llm.addEndpoint")}</DialogDescription>
-            </DialogHeader>
-
-            <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
-              {/* Provider */}
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1">{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(providerSlug) && <span className="inline-flex items-center gap-0.5 text-[11px] font-normal text-muted-foreground/70 min-w-0"><span className="shrink-0">API 地址：</span><span className="inline-block max-w-[200px] overflow-x-auto whitespace-nowrap align-middle" style={{ scrollbarWidth: "thin" }}>{baseUrl || selectedProvider?.default_base_url || "—"}</span> <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] shrink-0" onClick={() => setBaseUrlExpanded(v => !v)}>{baseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
-                <ProviderSearchSelect
-                  value={providerSlug}
-                  onChange={(v) => { setProviderSlug(v); setBaseUrlExpanded(false); }}
-                  options={providers.map((p) => ({ value: p.slug, label: p.name }))}
-                  placeholder={providers.length === 0 ? t("common.loading") : undefined}
-                  disabled={providers.length === 0}
-                />
-              </div>
-
-              {/* Coding Plan toggle */}
-              {selectedProvider?.coding_plan_base_url && (
-                <label htmlFor="coding-plan-add" className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 cursor-pointer select-none hover:bg-accent/50 transition-colors">
-                  <div className="space-y-0.5">
-                    <div className="text-sm font-medium">{t("llm.codingPlan")}</div>
-                    <div className="text-xs text-muted-foreground">{t("llm.codingPlanHint")}</div>
-                  </div>
-                  <Switch id="coding-plan-add" checked={codingPlanMode} onCheckedChange={(v) => { setCodingPlanMode(v); setBaseUrlTouched(false); }} />
-                </label>
-              )}
-
-              {/* Base URL */}
-              {["custom", "ollama", "lmstudio"].includes(providerSlug) ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setBaseUrlTouched(true); }} placeholder={selectedProvider?.default_base_url || "https://api.example.com/v1"} />
-              </div>
-              ) : baseUrlExpanded ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setBaseUrlTouched(true); }} placeholder={selectedProvider?.default_base_url || "https://api.example.com/v1"} />
-              </div>
-              ) : null}
-
-              {/* API Key */}
-              <div className="space-y-1.5">
-                <Label className="inline-flex items-center gap-2">
-                  API Key {isLocalProvider(selectedProvider) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}
-                  {providerApplyUrl && !isLocalProvider(selectedProvider) && (
-                    <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(providerApplyUrl)}>获取 API Key</Button>
-                  )}
-                </Label>
-                <Input value={apiKeyValue} onChange={(e) => setApiKeyValue(e.target.value)} placeholder={isLocalProvider(selectedProvider) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} type={(secretShown.__LLM_API_KEY && !IS_WEB) ? "text" : "password"} />
-                {isLocalProvider(selectedProvider) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.selectModel")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchModels} disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{models.length > 0 && <span className="text-muted-foreground/50">（已拉取 {models.length} 个）</span>}</span></Label>
-                <SearchSelect
-                  value={selectedModelId}
-                  onChange={(v) => setSelectedModelId(v)}
-                  options={models.map((m) => m.id)}
-                  placeholder={models.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")}
-                  disabled={!!busy}
-                />
-              </div>
-
-              {/* Endpoint Name */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.endpointName")}</Label>
-                <Input value={endpointName} onChange={(e) => { setEndpointNameTouched(true); setEndpointName(e.target.value); }} placeholder="dashscope-qwen3-max" />
-              </div>
-
-              {/* Capabilities */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.capabilities")}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { k: "text", name: t("llm.capText") },
-                    { k: "thinking", name: t("llm.capThinking") },
-                    { k: "vision", name: t("llm.capVision") },
-                    { k: "video", name: t("llm.capVideo") },
-                    { k: "tools", name: t("llm.capTools") },
-                  ].map((c) => {
-                    const on = capSelected.includes(c.k);
-                    return (
-                      <button key={c.k} data-slot="cap-chip" type="button"
-                        className={cn(
-                          "inline-flex items-center justify-center h-8 px-3.5 rounded-md border text-sm font-medium cursor-pointer transition-colors",
-                          on
-                            ? "border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
-                            : "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                        )}
-                        onClick={() => { setCapTouched(true); setCapSelected((prev) => { const set = new Set(prev); if (set.has(c.k)) set.delete(c.k); else set.add(c.k); const out = Array.from(set); return out.length ? out : ["text"]; }); }}
-                      >{c.name}</button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Advanced (collapsed) */}
-              <details className="group rounded-lg border border-border">
-                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
-                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" />
-                  {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
-                </summary>
-                <div className="border-t border-border px-4 py-3 space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label>{t("llm.advApiType")}</Label>
-                      <Select value={apiType} onValueChange={(v) => setApiType(v as any)}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="openai">openai</SelectItem>
-                          <SelectItem value="openai_responses">openai_responses</SelectItem>
-                          <SelectItem value="anthropic">anthropic</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>{t("llm.advPriority")}</Label>
-                      <Input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advKeyEnv")}</Label>
-                    <Input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
-                    <Input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advContextWindow")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advContextWindowHint")}</span></Label>
-                    <Input type="number" min={1024} value={addEpContextWindow} onChange={(e) => setAddEpContextWindow(Math.max(1024, parseInt(e.target.value) || 200000))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advTimeout")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advTimeoutHint")}</span></Label>
-                    <Input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advRpmLimit")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advRpmLimitHint")}</span></Label>
-                    <Input type="number" min={0} value={addEpRpmLimit} onChange={(e) => setAddEpRpmLimit(Math.max(0, parseInt(e.target.value) || 0))} />
-                  </div>
-                </div>
-              </details>
-            </div>
-
-            {connTestResult && (
-              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
-                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
-              )}>
-                {connTestResult.ok
-                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-              </div>
-            )}
-
-            <DialogFooter className="px-6 py-2.5 shrink-0 flex-col sm:flex-col gap-1.5">
-              <div className="flex items-center justify-between w-full">
-                <Button variant="ghost" onClick={() => setAddEpDialogOpen(false)}>{t("common.cancel")}</Button>
-                <div className="flex gap-2 items-center">
-                  <Button variant="secondary"
-                    disabled={(!apiKeyValue.trim() && !isLocalProvider(selectedProvider)) || !baseUrl.trim() || connTesting}
-                    onClick={() => doTestConnection({ testApiType: apiType, testBaseUrl: baseUrl, testApiKey: apiKeyValue.trim() || (isLocalProvider(selectedProvider) ? localProviderPlaceholderKey(selectedProvider) : ""), testProviderSlug: selectedProvider?.slug })}
-                  >
-                    {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </Button>
-                  {(() => {
-                    const _isLocal = isLocalProvider(selectedProvider);
-                    const missing: string[] = [];
-                    if (!baseUrl.trim()) missing.push("Base URL");
-                    if (!_isLocal && !apiKeyValue.trim()) missing.push("API Key");
-                    if (!selectedModelId.trim()) missing.push(t("status.model"));
-                    if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
-                    const btnDisabled = missing.length > 0 || !!busy;
-                    return (
-                      <Button onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
-                        {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
-                      </Button>
-                    );
-                  })()}
-                </div>
-              </div>
-              {(() => {
-                const _isLocal = isLocalProvider(selectedProvider);
-                const missing: string[] = [];
-                if (!baseUrl.trim()) missing.push("Base URL");
-                if (!_isLocal && !apiKeyValue.trim()) missing.push("API Key");
-                if (!selectedModelId.trim()) missing.push(t("status.model"));
-                if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
-                const show = missing.length > 0 && !busy;
-                return (
-                  <div className={cn("text-[10px] text-muted-foreground text-right w-full", !show && "invisible")}>{t("common.missingFields") || "缺少"}: {missing.join(", ") || "—"}</div>
-                );
-              })()}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ── Edit endpoint modal ── */}
-        <Dialog open={editModalOpen && !!editDraft} onOpenChange={(open) => { if (!open) setEditModalOpen(false); }}>
-          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { resetEndpointEditor(); setConnTestResult(null); }}>
-            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
-              <DialogTitle>{t("llm.editEndpoint")}: {editDraft?.name}</DialogTitle>
-              <DialogDescription className="sr-only">{t("llm.editEndpoint")}</DialogDescription>
-            </DialogHeader>
-
-            {editDraft && <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
-              {/* Provider (read-only) */}
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1 flex-wrap">{t("llm.provider")} <span className="text-[11px] font-normal text-muted-foreground/70">服务商在创建时确定，不可更改</span> {!["custom", "ollama", "lmstudio"].includes(editDraft.providerSlug) && <span className="inline-flex items-center gap-0.5 text-[11px] font-normal text-muted-foreground/70 min-w-0"><span className="shrink-0">API 地址：</span><span className="inline-block max-w-[200px] overflow-x-auto whitespace-nowrap align-middle" style={{ scrollbarWidth: "thin" }}>{editDraft.baseUrl || "—"}</span> <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] shrink-0" onClick={() => setEditBaseUrlExpanded(v => !v)}>{editBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
-                <Input value={(() => { const p = providers.find((x) => x.slug === editDraft.providerSlug); return p ? p.name : (editDraft.providerSlug || "custom"); })()} disabled className="opacity-70" />
-              </div>
-
-              {/* Base URL */}
-              {["custom", "ollama", "lmstudio"].includes(editDraft.providerSlug) ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="请输入" />
-              </div>
-              ) : editBaseUrlExpanded ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="请输入" />
-              </div>
-              ) : null}
-
-              {/* API Key */}
-              <div className="space-y-1.5">
-                <Label className="inline-flex items-center gap-2">
-                  API Key {isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}
-                  {(() => { const url = getProviderApplyUrl(editDraft.providerSlug); const ep = providers.find((p) => p.slug === editDraft.providerSlug); return url && !isLocalProvider(ep) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>获取 API Key</Button> : null; })()}
-                </Label>
-                <div className="relative">
-                  <Input value={editDraft.apiKeyValue} onChange={(e) => { setEditDraft((d) => d ? { ...d, apiKeyValue: e.target.value } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} />
-                  {!IS_WEB && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1.5 top-1/2 -translate-y-1/2" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? "隐藏" : "显示"}>
-                    {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                  </Button>}
-                </div>
-                {isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5">
-                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchEditModels} disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) && !(editDraft.apiKeyValue || "").trim()) || !(editDraft.baseUrl || "").trim() || !!busy}>拉取模型列表</Button>并选择{editModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {editModels.length} 个）</span>}</span></Label>
-                <SearchSelect
-                  value={editDraft.modelId || ""}
-                  onChange={(v) => setEditDraft({ ...editDraft, modelId: v })}
-                  options={editModels.length > 0 ? editModels.map(m => m.id) : [editDraft.modelId || ""].filter(Boolean)}
-                  placeholder={editModels.length > 0 ? t("llm.searchModel") : (editDraft.modelId || t("llm.modelPlaceholder"))}
-                  disabled={!!busy}
-                />
-              </div>
-
-              {/* Capabilities */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.capabilities")}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { k: "text", name: t("llm.capText") },
-                    { k: "thinking", name: t("llm.capThinking") },
-                    { k: "vision", name: t("llm.capVision") },
-                    { k: "video", name: t("llm.capVideo") },
-                    { k: "tools", name: t("llm.capTools") },
-                  ].map((c) => {
-                    const on = (editDraft.caps || []).includes(c.k);
-                    return (
-                      <button key={c.k} data-slot="cap-chip" type="button"
-                        className={cn(
-                          "inline-flex items-center justify-center h-8 px-3.5 rounded-md border text-sm font-medium cursor-pointer transition-colors",
-                          on
-                            ? "border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
-                            : "border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                        )}
-                        onClick={() => setEditDraft((d) => {
-                          if (!d) return d;
-                          const set = new Set(d.caps || []);
-                          if (set.has(c.k)) set.delete(c.k); else set.add(c.k);
-                          const out = Array.from(set);
-                          return { ...d, caps: out.length ? out : ["text"] };
-                        })}
-                      >{c.name}</button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Advanced (collapsed) */}
-              <details className="group rounded-lg border border-border">
-                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
-                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" />
-                  {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
-                </summary>
-                <div className="border-t border-border px-4 py-3 space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label>{t("llm.advApiType")}</Label>
-                      <Select value={editDraft.apiType} onValueChange={(v) => setEditDraft({ ...editDraft, apiType: v as any })}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="openai">openai</SelectItem>
-                          <SelectItem value="openai_responses">openai_responses</SelectItem>
-                          <SelectItem value="anthropic">anthropic</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>{t("llm.advPriority")}</Label>
-                      <Input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advKeyEnv")}</Label>
-                    <Input value={editDraft.apiKeyEnv} onChange={(e) => setEditDraft({ ...editDraft, apiKeyEnv: e.target.value })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
-                    <Input type="number" min={0} value={editDraft.maxTokens} onChange={(e) => setEditDraft({ ...editDraft, maxTokens: Math.max(0, parseInt(e.target.value) || 0) })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advContextWindow")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advContextWindowHint")}</span></Label>
-                    <Input type="number" min={1024} value={editDraft.contextWindow} onChange={(e) => setEditDraft({ ...editDraft, contextWindow: Math.max(1024, parseInt(e.target.value) || 200000) })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advTimeout")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advTimeoutHint")}</span></Label>
-                    <Input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advRpmLimit")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advRpmLimitHint")}</span></Label>
-                    <Input type="number" min={0} value={editDraft.rpmLimit} onChange={(e) => setEditDraft({ ...editDraft, rpmLimit: Math.max(0, parseInt(e.target.value) || 0) })} />
-                  </div>
-                </div>
-              </details>
-
-              {/* 阶梯定价配置 */}
-              <details className="group rounded-lg border border-border">
-                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
-                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180" />
-                  定价配置 <span className="text-[11px] font-normal text-muted-foreground/70">（可选，用于费用估算）</span>
-                </summary>
-                <div className="border-t border-border px-4 py-3 space-y-2.5">
-                  {(editDraft.pricingTiers || []).length > 0 && (
-                    <div className="grid grid-cols-[1fr_1fr_1fr_28px] gap-1.5 text-[11px] text-muted-foreground">
-                      <span>最大输入 tokens</span>
-                      <span>输入价格/M</span>
-                      <span>输出价格/M</span>
-                      <span />
-                    </div>
-                  )}
-                  {(editDraft.pricingTiers || []).map((tier, idx) => (
-                    <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_28px] gap-1.5 items-center">
-                      <Input type="number" min={0} placeholder="128000" value={tier.max_input || ""} onChange={(e) => {
-                        const tiers = [...(editDraft.pricingTiers || [])];
-                        tiers[idx] = { ...tiers[idx], max_input: parseInt(e.target.value) || 0 };
-                        setEditDraft({ ...editDraft, pricingTiers: tiers });
-                      }} className="h-8 text-xs" />
-                      <Input type="number" min={0} step={0.01} placeholder="1.2" value={tier.input_price || ""} onChange={(e) => {
-                        const tiers = [...(editDraft.pricingTiers || [])];
-                        tiers[idx] = { ...tiers[idx], input_price: parseFloat(e.target.value) || 0 };
-                        setEditDraft({ ...editDraft, pricingTiers: tiers });
-                      }} className="h-8 text-xs" />
-                      <Input type="number" min={0} step={0.01} placeholder="7.2" value={tier.output_price || ""} onChange={(e) => {
-                        const tiers = [...(editDraft.pricingTiers || [])];
-                        tiers[idx] = { ...tiers[idx], output_price: parseFloat(e.target.value) || 0 };
-                        setEditDraft({ ...editDraft, pricingTiers: tiers });
-                      }} className="h-8 text-xs" />
-                      <Button data-slot="pricing-btn" variant="ghost" size="icon-xs" className="text-muted-foreground/50 hover:text-destructive" onClick={() => {
-                        const tiers = (editDraft.pricingTiers || []).filter((_, i) => i !== idx);
-                        setEditDraft({ ...editDraft, pricingTiers: tiers });
-                      }}><XIcon className="size-3.5" /></Button>
-                    </div>
-                  ))}
-                  <Button data-slot="pricing-btn" variant="outline" size="sm" className="w-full border-dashed text-muted-foreground text-xs" onClick={() => {
-                    const tiers = [...(editDraft.pricingTiers || []), { max_input: 0, input_price: 0, output_price: 0 }];
-                    setEditDraft({ ...editDraft, pricingTiers: tiers });
-                  }}>
-                    + 添加档位
-                  </Button>
-                </div>
-              </details>
-            </div>}
-
-            {connTestResult && (
-              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
-                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
-              )}>
-                {connTestResult.ok
-                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-              </div>
-            )}
-
-            <DialogFooter className="px-6 py-2.5 shrink-0 flex-row justify-between sm:justify-between">
-              <Button variant="ghost" onClick={() => setEditModalOpen(false)}>{t("common.cancel")}</Button>
-              <div className="flex gap-2 items-center">
-                <Button variant="secondary"
-                  disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft?.providerSlug)) && !(editDraft?.apiKeyValue || "").trim()) || !(editDraft?.baseUrl || "").trim() || connTesting}
-                  onClick={() => { const _ep = providers.find((p) => p.slug === editDraft?.providerSlug); doTestConnection({
-                    testApiType: editDraft?.apiType || "openai",
-                    testBaseUrl: editDraft?.baseUrl || "",
-                    testApiKey: (editDraft?.apiKeyValue || "").trim() || (isLocalProvider(_ep) ? localProviderPlaceholderKey(_ep) : ""),
-                    testProviderSlug: editDraft?.providerSlug,
-                  }); }}
-                >
-                  {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                </Button>
-                <Button onClick={async () => { await doSaveEditedEndpoint(); }} disabled={!!busy}>{t("common.save")}</Button>
-              </div>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ── Add compiler dialog ── */}
-        <Dialog open={addCompDialogOpen} onOpenChange={(open) => { if (!open) setAddCompDialogOpen(false); }}>
-          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { setConnTestResult(null); }}>
-            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
-              <DialogTitle>{t("llm.addCompiler")}</DialogTitle>
-              <DialogDescription className="sr-only">{t("llm.addCompiler")}</DialogDescription>
-            </DialogHeader>
-
-            <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
-              {/* Provider */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(compilerProviderSlug) && <span className="text-[11px] font-normal text-muted-foreground/70">API 地址：{compilerBaseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setCompBaseUrlExpanded(v => !v)}>{compBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
-                <ProviderSearchSelect
-                  value={compilerProviderSlug}
-                  onChange={(slug) => {
-                    setCompilerProviderSlug(slug);
-                    setCompBaseUrlExpanded(false);
-                    setCompilerCodingPlan(false);
-                    if (slug === "custom") {
-                      setCompilerApiType("openai");
-                      setCompilerBaseUrl("");
-                      setCompilerApiKeyEnv("CUSTOM_COMPILER_API_KEY");
-                      setCompilerApiKeyValue("");
-                    } else {
-                      const p = providers.find((x) => x.slug === slug);
-                      if (p) {
-                        setCompilerApiType((p.api_type as any) || "openai");
-                        setCompilerBaseUrl(p.default_base_url || "");
-                        const suggested = p.api_key_env_suggestion || envKeyFromSlug(p.slug);
-                        const used = new Set(Object.keys(envDraft || {}));
-                        for (const ep of [...savedEndpoints, ...savedCompilerEndpoints]) { if (ep.api_key_env) used.add(ep.api_key_env); }
-                        setCompilerApiKeyEnv(nextEnvKeyName(suggested, used));
-                        if (isLocalProvider(p)) {
-                          setCompilerApiKeyValue(localProviderPlaceholderKey(p));
-                        } else {
-                          setCompilerApiKeyValue("");
-                        }
-                      }
-                    }
-                  }}
-                  options={providers.map((p) => ({ value: p.slug, label: p.name }))}
-                />
-              </div>
-
-              {/* Coding Plan toggle */}
-              {(() => { const cp = providers.find((x) => x.slug === compilerProviderSlug); return cp?.coding_plan_base_url ? (
-                <label htmlFor="coding-plan-comp" className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 cursor-pointer select-none hover:bg-accent/50 transition-colors">
-                  <div className="space-y-0.5">
-                    <div className="text-sm font-medium">{t("llm.codingPlan")}</div>
-                    <div className="text-xs text-muted-foreground">{t("llm.codingPlanHint")}</div>
-                  </div>
-                  <Switch id="coding-plan-comp" checked={compilerCodingPlan} onCheckedChange={(v) => {
-                    setCompilerCodingPlan(v);
-                    if (cp) {
-                      if (v && cp.coding_plan_base_url) {
-                        setCompilerBaseUrl(cp.coding_plan_base_url);
-                        setCompilerApiType("anthropic");
-                      } else {
-                        setCompilerBaseUrl(cp.default_base_url || "");
-                        setCompilerApiType((cp.api_type as "openai" | "anthropic") || "openai");
-                      }
-                    }
-                  }} />
-                </label>
-              ) : null; })()}
-
-              {/* Base URL */}
-              {["custom", "ollama", "lmstudio"].includes(compilerProviderSlug) ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-              </div>
-              ) : compBaseUrlExpanded ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-              </div>
-              ) : null}
-
-              {/* API Key Env */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.apiKeyEnv")}</Label>
-                <Input value={compilerApiKeyEnv} onChange={(e) => setCompilerApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
-              </div>
-
-              {/* API Key */}
-              <div className="space-y-1.5">
-                <Label className="inline-flex items-center gap-2">
-                  API Key {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}
-                  {(() => { const url = getProviderApplyUrl(compilerProviderSlug); const cp = providers.find((p) => p.slug === compilerProviderSlug); return url && !isLocalProvider(cp) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>获取 API Key</Button> : null; })()}
-                </Label>
-                <Input value={compilerApiKeyValue} onChange={(e) => setCompilerApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} type="password" />
-                {isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5">
-                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchCompilerModels} disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{compilerModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {compilerModels.length} 个）</span>}</span></Label>
-                <SearchSelect value={compilerModel} onChange={(v) => setCompilerModel(v)} options={compilerModels.map((m) => m.id)} placeholder={compilerModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
-              </div>
-
-              {/* Endpoint Name */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.endpointName")} <span className="text-[11px] font-normal text-muted-foreground/70">({t("common.optional")})</span></Label>
-                <Input value={compilerEndpointName} onChange={(e) => setCompilerEndpointName(e.target.value)} placeholder={`compiler-${compilerProviderSlug || "custom"}-${compilerModel || "model"}`} />
-              </div>
-            </div>
-
-            {connTestResult && (
-              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
-                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
-              )}>
-                {connTestResult.ok
-                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-              </div>
-            )}
-
-            <DialogFooter className="px-6 py-2.5 shrink-0 flex-col sm:flex-col gap-1.5">
-              <div className="flex items-center justify-between w-full">
-                <Button variant="ghost" onClick={() => setAddCompDialogOpen(false)}>{t("common.cancel")}</Button>
-                <div className="flex gap-2 items-center">
-                  <Button variant="secondary"
-                    disabled={(!compilerApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug))) || !compilerBaseUrl.trim() || connTesting}
-                    onClick={() => { const _cp = providers.find((p) => p.slug === compilerProviderSlug); doTestConnection({
-                      testApiType: compilerApiType,
-                      testBaseUrl: compilerBaseUrl,
-                      testApiKey: compilerApiKeyValue.trim() || (isLocalProvider(_cp) ? localProviderPlaceholderKey(_cp) : ""),
-                      testProviderSlug: compilerProviderSlug || null,
-                    }); }}
-                  >
-                    {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </Button>
-                  {(() => {
-                    const _isCompLocal = isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug));
-                    const cMissing: string[] = [];
-                    if (!compilerModel.trim()) cMissing.push(t("status.model"));
-                    if (!_isCompLocal && !compilerApiKeyEnv.trim()) cMissing.push("Key Env Name");
-                    if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
-                    if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
-                    const cBtnDisabled = cMissing.length > 0 || !!busy;
-                    return (
-                      <Button onClick={async () => { const ok = await doSaveCompilerEndpoint(); if (ok) { setAddCompDialogOpen(false); setConnTestResult(null); } }} disabled={cBtnDisabled}>
-                        {t("llm.addEndpoint")}
-                      </Button>
-                    );
-                  })()}
-                </div>
-              </div>
-              {(() => {
-                const _isCompLocal = isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug));
-                const cMissing: string[] = [];
-                if (!compilerModel.trim()) cMissing.push(t("status.model"));
-                if (!_isCompLocal && !compilerApiKeyEnv.trim()) cMissing.push("Key Env Name");
-                if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
-                if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
-                const cShow = cMissing.length > 0 && !busy;
-                return (
-                  <div className={cn("text-[10px] text-muted-foreground text-right w-full", !cShow && "invisible")}>{t("common.missingFields") || "缺少"}: {cMissing.join(", ") || "—"}</div>
-                );
-              })()}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ── Add STT dialog ── */}
-        <Dialog open={addSttDialogOpen} onOpenChange={(open) => { if (!open) setAddSttDialogOpen(false); }}>
-          <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { setConnTestResult(null); }}>
-            <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
-              <DialogTitle>{t("llm.addStt")}</DialogTitle>
-              <DialogDescription className="sr-only">{t("llm.addStt")}</DialogDescription>
-            </DialogHeader>
-
-            <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4" style={{ scrollbarGutter: "stable" }}>
-              {/* Provider */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.provider")} {!["custom", "ollama", "lmstudio"].includes(sttProviderSlug) && <span className="text-[11px] font-normal text-muted-foreground/70">API 地址：{sttBaseUrl || "—"} <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => setSttBaseUrlExpanded(v => !v)}>{sttBaseUrlExpanded ? "收起" : "配置"}</Button></span>}</Label>
-                <ProviderSearchSelect
-                  value={sttProviderSlug}
-                  onChange={(slug) => {
-                    setSttBaseUrlExpanded(false);
-                    setSttProviderSlug(slug);
-                    if (slug === "custom") {
-                      setSttApiType("openai");
-                      setSttBaseUrl("");
-                      setSttApiKeyEnv("CUSTOM_STT_API_KEY");
-                      setSttApiKeyValue("");
-                      setSttModels([]);
-                      setSttModel("");
-                    } else {
-                      const p = providers.find((x) => x.slug === slug);
-                      if (p) {
-                        setSttApiType((p.api_type as any) || "openai");
-                        setSttBaseUrl(p.default_base_url || "");
-                        const suggested = p.api_key_env_suggestion || envKeyFromSlug(p.slug);
-                        const used = new Set(Object.keys(envDraft || {}));
-                        for (const ep of [...savedEndpoints, ...savedCompilerEndpoints, ...savedSttEndpoints]) { if (ep.api_key_env) used.add(ep.api_key_env); }
-                        setSttApiKeyEnv(nextEnvKeyName(suggested, used));
-                        if (isLocalProvider(p)) {
-                          setSttApiKeyValue(localProviderPlaceholderKey(p));
-                        } else {
-                          setSttApiKeyValue("");
-                        }
-                      }
-                      const rec = STT_RECOMMENDED_MODELS[slug];
-                      if (rec?.length) {
-                        setSttModels(rec.map((m) => ({ id: m.id, name: m.id, capabilities: {} })));
-                        setSttModel(rec[0].id);
-                      } else {
-                        setSttModels([]);
-                        setSttModel("");
-                      }
-                    }
-                  }}
-                  options={providers.map((p) => ({ value: p.slug, label: p.name }))}
-                />
-              </div>
-
-              {/* Base URL */}
-              {["custom", "ollama", "lmstudio"].includes(sttProviderSlug) ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-              </div>
-              ) : sttBaseUrlExpanded ? (
-              <div className="space-y-1.5">
-                <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-                <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
-              </div>
-              ) : null}
-
-              {/* API Key Env */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.apiKeyEnv")}</Label>
-                <Input value={sttApiKeyEnv} onChange={(e) => setSttApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
-              </div>
-
-              {/* API Key */}
-              <div className="space-y-1.5">
-                <Label className="inline-flex items-center gap-2">
-                  API Key {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <span className="text-muted-foreground text-[11px] font-normal">({t("llm.localNoKey")})</span>}
-                  {(() => { const url = getProviderApplyUrl(sttProviderSlug); const sp = providers.find((p) => p.slug === sttProviderSlug); return url && !isLocalProvider(sp) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>获取 API Key</Button> : null; })()}
-                </Label>
-                <Input value={sttApiKeyValue} onChange={(e) => setSttApiKeyValue(e.target.value)} placeholder={isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) ? t("llm.localKeyPlaceholder") : "输入调用大模型的 API Key"} type="password" />
-                {isLocalProvider(providers.find((p) => p.slug === sttProviderSlug)) && <p className="text-xs text-primary">{t("llm.localHint")}</p>}
-              </div>
-
-              {/* Model */}
-              <div className="space-y-1.5">
-                <Label>{t("status.model")} <span className="text-[11px] font-normal text-muted-foreground/70">自行输入或<Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px] disabled:opacity-100 disabled:pointer-events-auto disabled:cursor-default" onClick={doFetchSttModels} disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || !!busy}>拉取模型列表</Button>并选择{sttModels.length > 0 && <span className="text-muted-foreground/50">（已拉取 {sttModels.length} 个）</span>}</span></Label>
-                <SearchSelect value={sttModel} onChange={(v) => setSttModel(v)} options={sttModels.map((m) => m.id)} placeholder={sttModels.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")} disabled={!!busy} />
-                {(() => {
-                  const rec = STT_RECOMMENDED_MODELS[sttProviderSlug];
-                  if (!rec?.length) return null;
-                  return (
-                    <div className="mt-1 text-xs text-muted-foreground/70 leading-relaxed">
-                      {rec.map((m) => (
-                        <span key={m.id} className="mr-3">
-                          <code className="bg-muted/50 px-1.5 py-0.5 rounded cursor-pointer hover:bg-muted transition-colors" onClick={() => setSttModel(m.id)}>{m.id}</code>
-                          {m.note && <span className="ml-1 text-primary">{m.note}</span>}
-                        </span>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Endpoint Name */}
-              <div className="space-y-1.5">
-                <Label>{t("llm.endpointName")} <span className="text-[11px] font-normal text-muted-foreground/70">({t("common.optional")})</span></Label>
-                <Input value={sttEndpointName} onChange={(e) => setSttEndpointName(e.target.value)} placeholder={`stt-${sttProviderSlug || "custom"}-${sttModel || "model"}`} />
-              </div>
-            </div>
-
-            {connTestResult && (
-              <div className={cn("mx-6 px-3 py-2 rounded-lg text-xs leading-relaxed shrink-0",
-                connTestResult.ok ? "bg-emerald-500/8 border border-emerald-500/25 text-emerald-600" : "bg-red-500/6 border border-red-500/20 text-red-600"
-              )}>
-                {connTestResult.ok
-                  ? `${t("llm.testSuccess")} · ${connTestResult.latencyMs}ms · ${t("llm.testModelCount", { count: connTestResult.modelCount ?? 0 })}`
-                  : `${t("llm.testFailed")}：${connTestResult.error} (${connTestResult.latencyMs}ms)`}
-              </div>
-            )}
-
-            <DialogFooter className="px-6 py-2.5 shrink-0 flex-col sm:flex-col gap-1.5">
-              <div className="flex items-center justify-between w-full">
-                <Button variant="ghost" onClick={() => setAddSttDialogOpen(false)}>{t("common.cancel")}</Button>
-                <div className="flex gap-2 items-center">
-                  <Button variant="secondary"
-                    disabled={(!sttApiKeyValue.trim() && !isLocalProvider(providers.find((p) => p.slug === sttProviderSlug))) || !sttBaseUrl.trim() || connTesting}
-                    onClick={() => { const _sp = providers.find((p) => p.slug === sttProviderSlug); doTestConnection({
-                      testApiType: sttApiType,
-                      testBaseUrl: sttBaseUrl,
-                      testApiKey: sttApiKeyValue.trim() || (isLocalProvider(_sp) ? localProviderPlaceholderKey(_sp) : ""),
-                      testProviderSlug: sttProviderSlug || null,
-                    }); }}
-                  >
-                    {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
-                  </Button>
-                  {(() => {
-                    const _isSttLocal = isLocalProvider(providers.find((p) => p.slug === sttProviderSlug));
-                    const sMissing: string[] = [];
-                    if (!sttModel.trim()) sMissing.push(t("status.model"));
-                    if (!_isSttLocal && !sttApiKeyValue.trim()) sMissing.push("API Key");
-                    if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
-                    const sBtnDisabled = sMissing.length > 0 || !!busy;
-                    return (
-                      <Button onClick={async () => { const ok = await doSaveSttEndpoint(); if (ok) { setAddSttDialogOpen(false); setConnTestResult(null); } }} disabled={sBtnDisabled}>
-                        {t("llm.addStt")}
-                      </Button>
-                    );
-                  })()}
-                </div>
-              </div>
-              {(() => {
-                const _isSttLocal = isLocalProvider(providers.find((p) => p.slug === sttProviderSlug));
-                const sMissing: string[] = [];
-                if (!sttModel.trim()) sMissing.push(t("status.model"));
-                if (!_isSttLocal && !sttApiKeyValue.trim()) sMissing.push("API Key");
-                if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
-                const sShow = sMissing.length > 0 && !busy;
-                return (
-                  <div className={cn("text-[10px] text-muted-foreground text-right w-full", !sShow && "invisible")}>{t("common.missingFields") || "缺少"}: {sMissing.join(", ") || "—"}</div>
-                );
-              })()}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </>
+      <LLMView
+        savedEndpoints={savedEndpoints}
+        savedCompilerEndpoints={savedCompilerEndpoints}
+        savedSttEndpoints={savedSttEndpoints}
+        setSavedEndpoints={setSavedEndpoints}
+        setSavedCompilerEndpoints={setSavedCompilerEndpoints}
+        setSavedSttEndpoints={setSavedSttEndpoints}
+        envDraft={envDraft}
+        setEnvDraft={setEnvDraft}
+        secretShown={secretShown}
+        setSecretShown={setSecretShown}
+        busy={busy}
+        currentWorkspaceId={currentWorkspaceId}
+        dataMode={dataMode}
+        shouldUseHttpApi={shouldUseHttpApi}
+        httpApiBase={httpApiBase}
+        askConfirm={askConfirm}
+        providers={providers}
+        doLoadProviders={doLoadProviders}
+        loadSavedEndpoints={loadSavedEndpoints}
+        readWorkspaceFile={readWorkspaceFile}
+        writeWorkspaceFile={writeWorkspaceFile}
+        venvDir={venvDir}
+        ensureEnvLoaded={ensureEnvLoaded}
+      />
     );
   }
 
@@ -5421,7 +2754,10 @@ export function App() {
         venvDir={venvDir}
         imDisabled={imDisabled}
         onToggleIM={opts?.onboarding ? undefined : () => toggleViewDisabled("im")}
+        multiAgentEnabled={multiAgentEnabled}
         apiBaseUrl={httpApiBase()}
+        onRequestRestart={restartService}
+        wizardMode={opts?.onboarding}
         onNavigateToBotConfig={opts?.onboarding ? undefined : (presetType) => { setView("im"); }}
         {...(opts?.onboarding ? { pendingBots: obPendingBots, onPendingBotsChange: setObPendingBots } : {})}
       />
@@ -5457,7 +2793,7 @@ export function App() {
           <details className="group rounded-lg border border-border">
             <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
               <span className="flex items-center gap-1.5">
-                <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open:rotate-180 text-muted-foreground" />
+                <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90 text-muted-foreground" />
                 {t("config.toolsMCP")}
               </span>
               <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
@@ -5505,8 +2841,8 @@ export function App() {
           <details className="group/skills rounded-lg border border-border mt-2">
             <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
               <span className="flex items-center gap-1.5">
-                <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/skills:rotate-180 text-muted-foreground" />
-                Skills 技能集成
+                <ChevronRight className="size-4 shrink-0 transition-transform group-open/skills:rotate-90 text-muted-foreground" />
+                {t("config.toolsSkills")}
               </span>
               <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
                 <span>{disabledViews.includes("skills") ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
@@ -5536,7 +2872,7 @@ export function App() {
                   setSkillsTouched(true);
                 }}
               >
-                启用全部
+                {t("config.toolsEnableAll")}
               </button>
               <button
                 className="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-accent/50 transition-colors"
@@ -5548,10 +2884,10 @@ export function App() {
                   setSkillsTouched(true);
                 }}
               >
-                禁用全部
+                {t("config.toolsDisableAll")}
               </button>
               <span className="text-xs text-muted-foreground ml-auto">
-                {skillsDetail ? `${Object.values(skillsSelection).filter(Boolean).length} / ${skillsDetail.length} 已启用` : ""}
+                {skillsDetail ? t("config.toolsSkillsCount", { enabled: Object.values(skillsSelection).filter(Boolean).length, total: skillsDetail.length }) : ""}
               </span>
             </div>
           </details>
@@ -5560,7 +2896,7 @@ export function App() {
           <details className="group/desktop rounded-lg border border-border mt-2">
             <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
               <span className="flex items-center gap-1.5">
-                <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/desktop:rotate-180 text-muted-foreground" />
+                <ChevronRight className="size-4 shrink-0 transition-transform group-open/desktop:rotate-90 text-muted-foreground" />
                 {t("config.toolsDesktop")}
               </span>
               <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
@@ -5588,7 +2924,7 @@ export function App() {
               </div>
               <details className="group/deskadv rounded-lg border border-border">
                 <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors text-muted-foreground">
-                  <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/deskadv:rotate-180" />
+                  <ChevronRight className="size-4 shrink-0 transition-transform group-open/deskadv:rotate-90" />
                   {t("config.toolsDesktopAdvanced")}
                 </summary>
                 <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
@@ -5610,20 +2946,14 @@ export function App() {
 
           {/* ── Model Downloads & Voice Recognition — hidden (not actively used) ── */}
 
-          {/* ── Network & Proxy ── */}
+          {/* ── Tool Parallelism ── */}
           <details className="group/net rounded-lg border border-border mt-2">
             <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronDownIcon className="size-4 shrink-0 transition-transform group-open/net:rotate-180 text-muted-foreground" />
-              {t("config.toolsNetwork")}
+              <ChevronRight className="size-4 shrink-0 transition-transform group-open/net:rotate-90 text-muted-foreground" />
+              {t("config.toolsParallel")}
             </summary>
             <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid3">
-                {FT({ k: "HTTP_PROXY", label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890" })}
-                {FT({ k: "HTTPS_PROXY", label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890" })}
-                {FT({ k: "ALL_PROXY", label: "ALL_PROXY", placeholder: "socks5://..." })}
-              </div>
               <div className="grid2">
-                {FB({ k: "FORCE_IPV4", label: t("config.toolsForceIPv4"), help: t("config.toolsForceIPv4Help") })}
                 {FT({ k: "TOOL_MAX_PARALLEL", label: t("config.toolsParallel"), placeholder: "1", help: t("config.toolsParallelHelp") })}
               </div>
             </div>
@@ -5668,8 +2998,8 @@ export function App() {
         {/* ── CLI 命令行工具管理 (desktop only) ── */}
         {IS_TAURI && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3 className="text-base font-bold tracking-tight">CLI 命令行工具</h3>
-          <p className="text-sm text-muted-foreground mt-1 mb-3">管理终端命令注册，注册后可在 CMD / PowerShell / 终端中直接使用 oa 或 openakita 命令。</p>
+          <h3 className="text-base font-bold tracking-tight">{t("config.cliTitle")}</h3>
+          <p className="text-sm text-muted-foreground mt-1 mb-3">{t("config.cliDesc")}</p>
           <CliManager />
         </div>
         )}
@@ -5684,738 +3014,27 @@ export function App() {
   }
 
   function renderAdvanced() {
-
-    async function fetchSystemInfo() {
-      const url = shouldUseHttpApi() ? httpApiBase() : null;
-      if (!url) { notifyError(t("adv.needService")); return; }
-      try {
-        const res = await safeFetch(`${url}/api/system-info`, { signal: AbortSignal.timeout(8_000) });
-        const data = await res.json();
-        const info: Record<string, string> = {};
-        if (data.os) info[t("adv.sysOs")] = data.os;
-        if (data.openakita_version) info[t("adv.sysVersion")] = data.openakita_version;
-        setAdvSysInfo(info);
-      } catch (e) { notifyError(String(e)); }
-    }
-
-    // ── 系统运维区域 ──
-
-    const opsWs = workspaces.find(w => w.id === (currentWorkspaceId || "default"));
-    const opsWsPath = opsWs?.path || "";
-    const opsLogsPath = opsWsPath ? joinPath(opsWsPath, "logs") : "";
-    const opsIdentityPath = opsWsPath ? joinPath(opsWsPath, "identity") : "";
-
-    const opsPathRows: { label: string; path: string }[] = [
-      { label: t("adv.opsWorkspacePath"), path: opsWsPath },
-      { label: t("adv.opsLogsPath"), path: opsLogsPath },
-      { label: t("adv.opsIdentityPath"), path: opsIdentityPath },
-    ];
-
-    async function opsOpenFolder(p: string) {
-      if (!p) return;
-      try {
-        await invoke("show_item_in_folder", { path: p });
-      } catch {
-        try {
-          await invoke("open_file_with_default", { path: p });
-        } catch {
-          if (opsWsPath && opsWsPath !== p) {
-            try { await invoke("open_file_with_default", { path: opsWsPath }); } catch (e) { notifyError(String(e)); }
-          }
-        }
-      }
-    }
-
-    async function opsHandleBundleExport() {
-      if (!currentWorkspaceId) return;
-      let _b: string | number | undefined;
-      try {
-        const ts = Math.floor(Date.now() / 1000);
-        const filename = `openakita-diagnostic-${ts}.zip`;
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const defaultDir = info?.homeDir ? joinPath(info.homeDir, "Downloads") : undefined;
-        const chosen = await save({
-          defaultPath: defaultDir ? joinPath(defaultDir, filename) : filename,
-          filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
-        });
-        if (!chosen) return;
-        _b = notifyLoading(t("adv.opsLogExporting"));
-        let sysInfoJson: string | undefined;
-        if (shouldUseHttpApi()) {
-          try {
-            const res = await safeFetch(`${httpApiBase()}/api/system-info`, { signal: AbortSignal.timeout(5_000) });
-            const data = await res.json();
-            sysInfoJson = JSON.stringify(data, null, 2);
-          } catch { /* best-effort */ }
-        }
-        const dest = await invoke<string>("export_diagnostic_bundle", {
-          workspaceId: currentWorkspaceId,
-          systemInfoJson: sysInfoJson ?? null,
-          destPath: chosen,
-        });
-        notifySuccess(t("adv.opsLogExportSuccess", { path: dest }));
-        await invoke("show_item_in_folder", { path: dest });
-      } catch (e) { notifyError(String(e)); } finally { if (_b !== undefined) dismissLoading(_b); }
-    }
-
-    // ── Backup functions ──
-
-    async function runBackupNow() {
-      if (!currentWorkspaceId) return;
-      let outputDir = envGet(envDraft, "BACKUP_PATH");
-      if (!outputDir) {
-        try {
-          const { openFileDialog } = await import("./platform");
-          const selected = await openFileDialog({ directory: true, title: t("adv.backupPath") });
-          if (!selected) return;
-          outputDir = selected;
-          setEnvDraft((prev) => envSet(prev, "BACKUP_PATH", outputDir));
-        } catch (e) { notifyError(String(e)); return; }
-      }
-      const _b = notifyLoading(t("adv.backupExporting"));
-      try {
-        const apiPort = (serviceStatus && "port" in serviceStatus ? serviceStatus.port : undefined) || 18900;
-        const result = await invoke<{ status: string; path?: string; filename?: string; size_bytes?: number }>(
-          "export_workspace_backup",
-          {
-            workspaceId: currentWorkspaceId,
-            outputDir,
-            includeUserdata: envGet(envDraft, "BACKUP_INCLUDE_USERDATA", "true") === "true",
-            includeMedia: envGet(envDraft, "BACKUP_INCLUDE_MEDIA", "false") === "true",
-            apiPort,
-          }
-        );
-        notifySuccess(t("adv.backupDone", { path: result.filename || result.path || "" }));
-        loadBackupHistory();
-      } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
-    }
-
-    async function executeBackupImport(zipPath: string) {
-      if (!currentWorkspaceId) return;
-      const _b = notifyLoading(t("adv.backupExporting"));
-      try {
-        const apiPort = (serviceStatus && "port" in serviceStatus ? serviceStatus.port : undefined) || 18900;
-        const result = await invoke<{ status: string; restored_count?: number }>(
-          "import_workspace_backup",
-          { workspaceId: currentWorkspaceId, zipPath, apiPort }
-        );
-        notifySuccess(t("adv.backupImportDone", { count: result.restored_count ?? 0 }));
-      } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
-    }
-
-    async function runBackupImport() {
-      if (!currentWorkspaceId) return;
-      try {
-        const { openFileDialog } = await import("./platform");
-        const zipPath = await openFileDialog({ title: t("adv.backupImport"), filters: [{ name: "Backup", extensions: ["zip"] }] });
-        if (!zipPath) return;
-        askConfirm(t("adv.backupImportConfirm"), () => executeBackupImport(zipPath));
-      } catch (e) { notifyError(String(e)); }
-    }
-
-    async function loadBackupHistory() {
-      const url = shouldUseHttpApi() ? httpApiBase() : null;
-      if (!url || !envGet(envDraft, "BACKUP_PATH")) { setBackupHistory([]); return; }
-      try {
-        const res = await safeFetch(`${url}/api/workspace/backups`, { signal: AbortSignal.timeout(5_000) });
-        const data = await res.json();
-        setBackupHistory(data.backups || []);
-      } catch { setBackupHistory([]); }
-    }
-
-    async function browseBackupPath() {
-      try {
-        const { openFileDialog } = await import("./platform");
-        const selected = await openFileDialog({ directory: true, title: t("adv.backupPath") });
-        if (selected) {
-          setEnvDraft((prev) => envSet(prev, "BACKUP_PATH", selected));
-        }
-      } catch (e) { notifyError(String(e)); }
-    }
-
-    // ── Workspace migration ──
-
-    async function runMigratePreflight() {
-      if (!migrateTargetPath.trim()) { notifyError(t("adv.migrateTargetPlaceholder")); return; }
-      setMigrateBusy(true);
-      try {
-        const info = await invoke<NonNullable<typeof migratePreflight>>("preflight_migrate_root", { targetPath: migrateTargetPath.trim() });
-        setMigratePreflight(info);
-      } catch (e: any) {
-        notifyError(String(e));
-        setMigratePreflight(null);
-      } finally {
-        setMigrateBusy(false);
-      }
-    }
-
-    async function browseMigratePath() {
-      try {
-        const { openFileDialog } = await import("./platform");
-        const selected = await openFileDialog({ directory: true, title: t("adv.migrateTargetPath") });
-        if (selected) {
-          setMigrateTargetPath(selected);
-          setMigratePreflight(null);
-        }
-      } catch (e) { notifyError(String(e)); }
-    }
-
-    async function executeMigrate() {
-      if (!migratePreflight?.canMigrate) return;
-      setMigrateBusy(true);
-      const _busyId = notifyLoading(t("adv.migrateBusy"));
-      try {
-        const info = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
-          "set_custom_root_dir", { path: migrateTargetPath.trim(), migrate: true }
-        );
-        setMigrateCurrentRoot(info.currentRoot);
-        setMigrateCustomRoot(info.customRoot);
-        setMigratePreflight(null);
-        dismissLoading(_busyId);
-        setMigrateBusy(false);
-        notifySuccess(t("adv.migrateSuccess"));
-        await refreshAll();
-        await restartService();
-      } catch (e: any) {
-        notifyError(t("adv.migrateFailed", { error: String(e) }));
-        setMigrateBusy(false);
-        dismissLoading(_busyId);
-      }
-    }
-
-    function runMigrate() {
-      if (!migratePreflight?.canMigrate) return;
-      askConfirm(
-        t("adv.migrateConfirm", { from: migratePreflight.sourcePath, to: migratePreflight.targetPath }),
-        () => executeMigrate()
-      );
-    }
-
-    async function executeMigrateReset() {
-      setMigrateBusy(true);
-      const _busyId = notifyLoading(t("adv.migrateBusy"));
-      try {
-        const info = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
-          "set_custom_root_dir", { path: null, migrate: true }
-        );
-        setMigrateCurrentRoot(info.currentRoot);
-        setMigrateCustomRoot(info.customRoot);
-        setMigratePreflight(null);
-        setMigrateTargetPath("");
-        dismissLoading(_busyId);
-        setMigrateBusy(false);
-        notifySuccess(t("adv.migrateResetDone", { path: info.currentRoot }));
-        await refreshAll();
-        await restartService();
-      } catch (e: any) {
-        notifyError(String(e));
-        setMigrateBusy(false);
-        dismissLoading(_busyId);
-      }
-    }
-
-    function runMigrateResetDefault() {
-      askConfirm(t("adv.migrateResetConfirm"), () => executeMigrateReset());
-    }
-
     return (
-      <>
-        {/* ── 系统配置（桌面通知 / 会话 / 日志） ── */}
-        <div className="card">
-          <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("config.agentAdvanced")}</h3>
-
-          <Section title={t("config.agentDesktopNotify")}>
-            <div className="grid2">
-              {FB({ k: "DESKTOP_NOTIFY_ENABLED", label: t("config.agentDesktopNotifyEnable"), help: t("config.agentDesktopNotifyEnableHelp") })}
-              {FB({ k: "DESKTOP_NOTIFY_SOUND", label: t("config.agentDesktopNotifySound"), help: t("config.agentDesktopNotifySoundHelp") })}
-            </div>
-          </Section>
-
-          <Section title={t("config.agentSessionSection")} className="mt-2">
-            <div className="grid3">
-              {FT({ k: "SESSION_TIMEOUT_MINUTES", label: t("config.agentSessionTimeout"), placeholder: "30" })}
-              {FT({ k: "SESSION_MAX_HISTORY", label: t("config.agentSessionMax"), placeholder: "50" })}
-              {FT({ k: "SESSION_STORAGE_PATH", label: t("config.agentSessionPath"), placeholder: "data/sessions" })}
-            </div>
-          </Section>
-
-          <Section title={t("config.agentLogSection")} className="mt-2">
-            <div className="grid3">
-              {FS({ k: "LOG_LEVEL", label: t("config.agentLogLevel"), options: [
-                { value: "DEBUG", label: "DEBUG" },
-                { value: "INFO", label: "INFO" },
-                { value: "WARNING", label: "WARNING" },
-                { value: "ERROR", label: "ERROR" },
-              ] })}
-              {FT({ k: "LOG_DIR", label: t("config.agentLogDir"), placeholder: "logs" })}
-              {FT({ k: "DATABASE_PATH", label: t("config.agentDbPath"), placeholder: "data/agent.db" })}
-            </div>
-            <div className="grid3">
-              {FT({ k: "LOG_MAX_SIZE_MB", label: t("config.agentLogMaxMB"), placeholder: "10" })}
-              {FT({ k: "LOG_BACKUP_COUNT", label: t("config.agentLogBackup"), placeholder: "30" })}
-              {FT({ k: "LOG_RETENTION_DAYS", label: t("config.agentLogRetention"), placeholder: "30" })}
-            </div>
-            <div className="grid3">
-              {FB({ k: "LOG_TO_CONSOLE", label: t("config.agentLogConsole") })}
-              {FB({ k: "LOG_TO_FILE", label: t("config.agentLogFile") })}
-            </div>
-          </Section>
-        </div>
-
-        {/* ── 上下文管理 ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <Section title={t("config.ctxMgmtTitle")}>
-            <div className="grid2">
-              {FT({ k: "CONTEXT_MAX_WINDOW", label: t("config.ctxMaxWindow") + " (tokens)", help: t("config.ctxMaxWindowHelp"), placeholder: t("config.ctxMaxWindowPlaceholder") })}
-              {FR({ k: "CONTEXT_MIN_RECENT_TURNS", label: t("config.ctxMinRecentTurns"), help: t("config.ctxMinRecentTurnsHelp"), min: 2, max: 30, step: 1, defaultValue: 8, unit: t("config.ctxUnitTurns") })}
-            </div>
-            <div className="grid2">
-              {FR({ k: "CONTEXT_COMPRESSION_RATIO", label: t("config.ctxCompressionRatio"), help: t("config.ctxCompressionRatioHelp"), min: 0.05, max: 0.5, step: 0.01, defaultValue: 0.15, unit: "×" })}
-              {FR({ k: "CONTEXT_COMPRESSION_THRESHOLD", label: t("config.ctxCompressionThreshold"), help: t("config.ctxCompressionThresholdHelp"), min: 0.5, max: 0.95, step: 0.01, defaultValue: 0.85, unit: "×" })}
-            </div>
-            <div className="grid2">
-              {FR({ k: "CONTEXT_BOUNDARY_COMPRESSION_RATIO", label: t("config.ctxBoundaryRatio"), help: t("config.ctxBoundaryRatioHelp"), min: 0.05, max: 0.5, step: 0.01, defaultValue: 0.18, unit: "×" })}
-              {FR({ k: "CONTEXT_LARGE_TOOL_THRESHOLD", label: t("config.ctxLargeToolThreshold"), help: t("config.ctxLargeToolThresholdHelp"), min: 500, max: 20000, step: 500, defaultValue: 5000, unit: "tokens" })}
-            </div>
-            <div className="grid2">
-              {FB({ k: "CONTEXT_ENABLE_TOOL_COMPRESSION", label: t("config.ctxEnableToolCompression"), help: t("config.ctxEnableToolCompressionHelp") })}
-            </div>
-          </Section>
-        </div>
-
-        {/* ── Card 2: 网络与安全 ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.networkSecurityTitle")}</h3>
-
-          <Section title={t("adv.webNetworkTitle", { defaultValue: "Web 访问" })}>
-            <div className="cardHint" style={{ marginBottom: 4 }}>
-              {t("adv.webNetworkHint", { defaultValue: "控制 HTTP API 服务的监听范围和代理设置。修改后需重启后端生效。" })}
-            </div>
-            <FieldBool k="API_HOST" label={t("adv.apiHostLabel", { defaultValue: "允许外部访问（局域网/公网）" })}
-              help={t("adv.apiHostHelp", { defaultValue: "开启后监听 0.0.0.0，允许其他设备通过 IP 访问 Web 端。关闭则仅本机可访问。" })}
-              envDraft={{ ...envDraft, API_HOST: (envDraft.API_HOST === "0.0.0.0") ? "true" : "false" }}
-              onEnvChange={(fn) => {
-                const next = fn({ API_HOST: (envDraft.API_HOST === "0.0.0.0") ? "true" : "false" });
-                if (next.API_HOST === "true") {
-                  askConfirm(
-                    t("adv.apiHostWarn"),
-                    () => setEnvDraft((prev) => ({ ...prev, API_HOST: "0.0.0.0" })),
-                  );
-                } else {
-                  setEnvDraft((prev) => ({ ...prev, API_HOST: "127.0.0.1" }));
-                }
-              }}
-            />
-            <FieldBool k="TRUST_PROXY" label={t("adv.trustProxyLabel", { defaultValue: "反向代理模式（Nginx/Caddy）" })}
-              help={t("adv.trustProxyHelp", { defaultValue: "通过反向代理部署时必须开启。开启后读取 X-Forwarded-For 获取真实 IP，并关闭本地免密。" })}
-              envDraft={envDraft} onEnvChange={(fn) => setEnvDraft((prev) => fn(prev))}
-            />
-            <p className="mt-1.5 text-xs text-muted-foreground/70">
-              {t("adv.webNetworkRestartHint", { defaultValue: "保存后需在状态面板重启后端生效" })}
-            </p>
-          </Section>
-
-          {IS_TAURI && !!serviceStatus?.running && dataMode !== "remote" && (
-            <Section title={t("adv.webPasswordTitle")} className="mt-2">
-              <div className="cardHint" style={{ marginBottom: 4 }}>{t("adv.webPasswordHint")}</div>
-              <WebPasswordManager apiBase={httpApiBase()} />
-            </Section>
-          )}
-        </div>
-
-        {/* ── Card 3: 平台与云服务 ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.platformTitle")}</h3>
-
-          <Section title={t("adv.hubTitle")}
-            toggle={
-              <Switch
-                checked={storeVisible}
-                onCheckedChange={(v) => { setStoreVisible(v); localStorage.setItem("openakita_storeVisible", String(v)); }}
-              />
-            }
-          >
-            <p className="text-xs text-muted-foreground mb-1">{t("adv.hubHint")}</p>
-            <div className="flex items-center gap-1.5">
-              <Input
-                value={hubApiUrl}
-                onChange={(e) => setHubApiUrl(e.target.value)}
-                placeholder={t("adv.hubUrlPlaceholder")}
-                className="flex-1 max-w-[380px]"
-              />
-              <Button
-                size="sm"
-                disabled={!!busy}
-                onClick={async () => {
-                  const val = hubApiUrl.trim() || "https://openakita.ai/api";
-                  if (shouldUseHttpApi()) {
-                    try {
-                      await safeFetch(`${httpApiBase()}/api/config/env`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ entries: { HUB_API_URL: val } }),
-                      });
-                      notifySuccess(t("adv.hubSaved"));
-                    } catch (e) { notifyError(String(e)); }
-                  } else {
-                    setEnvDraft((prev) => envSet(prev, "HUB_API_URL", val));
-                    notifySuccess(t("adv.hubSaved"));
-                  }
-                }}
-              >
-                {t("common.save") || "Save"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!!busy}
-                onClick={async () => {
-                  const url = (hubApiUrl.trim() || "https://openakita.ai/api").replace(/\/$/, "");
-                  try {
-                    const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(6000) });
-                    if (res.ok) notifySuccess(t("adv.hubTestOk"));
-                    else notifyError(t("adv.hubTestFail"));
-                  } catch { notifyError(t("adv.hubTestFail")); }
-                }}
-              >
-                {t("adv.hubTest")}
-              </Button>
-            </div>
-          </Section>
-        </div>
-
-        {/* ── Card 4: 数据与备份 ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.dataBackupTitle")}</h3>
-
-          <Section title={t("adv.backupAutoTitle")} subtitle={t("adv.backupAutoHint")}
-            toggle={
-              <Switch
-                checked={envGet(envDraft, "BACKUP_ENABLED", "false") === "true"}
-                onCheckedChange={(v) => setEnvDraft((prev) => envSet(prev, "BACKUP_ENABLED", String(v)))}
-              />
-            }
-          >
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">{t("adv.backupPath")}</Label>
-                <div className="flex gap-1.5 items-center">
-                  <Input
-                    value={envGet(envDraft, "BACKUP_PATH")}
-                    onChange={(e) => setEnvDraft((prev) => envSet(prev, "BACKUP_PATH", e.target.value))}
-                    placeholder={t("adv.backupPathPlaceholder")}
-                    className="flex-1"
-                  />
-                  <Button variant="outline" onClick={browseBackupPath} disabled={!!busy}>{t("adv.backupBrowse")}</Button>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">{t("adv.backupMaxKeep")}</Label>
-                <Input
-                  type="number"
-                  min={1} max={100}
-                  value={envGet(envDraft, "BACKUP_MAX_BACKUPS", "5")}
-                  onChange={(e) => setEnvDraft((prev) => envSet(prev, "BACKUP_MAX_BACKUPS", String(Math.max(1, parseInt(e.target.value) || 5))))}
-                  className="w-20"
-                />
-              </div>
-
-              {envGet(envDraft, "BACKUP_ENABLED", "false") === "true" && (
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">{t("adv.backupSchedule")}</Label>
-                  <div className="flex items-center gap-2">
-                    {(() => {
-                      const cron = envGet(envDraft, "BACKUP_CRON", "0 2 * * *");
-                      const schedVal = cron === "0 2 * * *" ? "daily" : cron === "0 2 * * 0" ? "weekly" : "custom";
-                      return (
-                        <>
-                          <Select
-                            value={schedVal}
-                            onValueChange={(v) => {
-                              if (v === "daily") setEnvDraft((prev) => envSet(prev, "BACKUP_CRON", "0 2 * * *"));
-                              else if (v === "weekly") setEnvDraft((prev) => envSet(prev, "BACKUP_CRON", "0 2 * * 0"));
-                            }}
-                          >
-                            <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="daily">{t("adv.backupScheduleDaily")}</SelectItem>
-                              <SelectItem value="weekly">{t("adv.backupScheduleWeekly")}</SelectItem>
-                              <SelectItem value="custom">{t("adv.backupScheduleCustom")}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          {schedVal === "custom" && (
-                            <Input
-                              value={cron}
-                              onChange={(e) => setEnvDraft((prev) => envSet(prev, "BACKUP_CRON", e.target.value))}
-                              className="w-[140px]"
-                            />
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="backup-userdata"
-                    checked={envGet(envDraft, "BACKUP_INCLUDE_USERDATA", "true") === "true"}
-                    onCheckedChange={(v) => setEnvDraft((prev) => envSet(prev, "BACKUP_INCLUDE_USERDATA", String(!!v)))}
-                  />
-                  <Label htmlFor="backup-userdata" className="cursor-pointer">{t("adv.backupIncludeUserdata")}</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="backup-media"
-                    checked={envGet(envDraft, "BACKUP_INCLUDE_MEDIA", "false") === "true"}
-                    onCheckedChange={(v) => setEnvDraft((prev) => envSet(prev, "BACKUP_INCLUDE_MEDIA", String(!!v)))}
-                  />
-                  <Label htmlFor="backup-media" className="cursor-pointer">{t("adv.backupIncludeMedia")}</Label>
-                </div>
-              </div>
-            </div>
-          </Section>
-
-          {IS_TAURI && (
-            <Section title={t("adv.backupManualTitle")} subtitle={t("adv.backupManualHint")} className="mt-2">
-              <div className="space-y-3">
-                <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" size="sm" onClick={runBackupNow} disabled={!currentWorkspaceId || !!busy}>
-                    {t("adv.backupNow")}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={runBackupImport} disabled={!currentWorkspaceId || !!busy}>
-                    {t("adv.backupRestore")}
-                  </Button>
-                </div>
-
-                {envGet(envDraft, "BACKUP_PATH") && (
-                  <div>
-                    <div
-                      className="text-sm font-medium cursor-pointer flex items-center gap-1"
-                      onClick={() => { setBackupShowHistory((p) => !p); if (!backupShowHistory) loadBackupHistory(); }}
-                    >
-                      <span className="inline-block transition-transform duration-150" style={{ transform: backupShowHistory ? "rotate(90deg)" : "rotate(0)" }}>▸</span>
-                      {t("adv.backupHistory")}
-                    </div>
-                    {backupShowHistory && (
-                      <div className="mt-1.5">
-                        {backupHistory.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">{t("adv.backupNoHistory")}</p>
-                        ) : (
-                          <div className="flex flex-col gap-1">
-                            {backupHistory.map((b) => (
-                              <div key={b.filename} className="flex justify-between items-center text-xs py-1 px-2 rounded-md bg-muted/30">
-                                <span className="font-mono">{b.filename}</span>
-                                <span className="text-muted-foreground whitespace-nowrap ml-3">
-                                  {(b.size_bytes / 1024 / 1024).toFixed(1)} MB
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </Section>
-          )}
-
-          {IS_TAURI && (
-            <Section title={t("adv.migrateTitle")} subtitle={t("adv.migrateHint")} className="mt-2">
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">{t("adv.migrateCurrentPath")}</Label>
-                  <p className="text-xs font-mono text-muted-foreground break-all">{migrateCurrentRoot || "—"}</p>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">{t("adv.migrateTargetPath")}</Label>
-                  <div className="flex gap-1.5 items-center">
-                    <Input
-                      value={migrateTargetPath}
-                      onChange={(e) => { setMigrateTargetPath(e.target.value); setMigratePreflight(null); }}
-                      placeholder={t("adv.migrateTargetPlaceholder")}
-                      className="flex-1"
-                      disabled={migrateBusy}
-                    />
-                    <Button variant="outline" size="sm" onClick={browseMigratePath} disabled={migrateBusy}>
-                      {t("adv.migrateBrowse")}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={runMigratePreflight} disabled={migrateBusy || !migrateTargetPath.trim()}>
-                      {migrateBusy ? t("adv.migrateChecking") : t("adv.migrateCheck")}
-                    </Button>
-                  </div>
-                </div>
-
-                {migratePreflight && (
-                  <div className="rounded-md border p-3 space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">{t("adv.migrateSourceSize")}</span>
-                      <span className="font-mono">{migratePreflight.sourceSizeMb.toFixed(1)} MB</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">{t("adv.migrateTargetFree")}</span>
-                      <span className="font-mono">{migratePreflight.targetFreeMb >= 1024 ? (migratePreflight.targetFreeMb / 1024).toFixed(1) + " GB" : migratePreflight.targetFreeMb.toFixed(0) + " MB"}</span>
-                    </div>
-                    {migratePreflight.entries.length > 0 && (
-                      <div>
-                        <span className="text-muted-foreground text-xs">{t("adv.migrateEntries")}</span>
-                        <div className="flex flex-col gap-0.5 mt-1">
-                          {migratePreflight.entries.map((e) => (
-                            <div key={e.name} className="flex justify-between text-xs py-0.5 px-2 rounded bg-muted/30">
-                              <span className="font-mono">{e.isDir ? "📁" : "📄"} {e.name}{e.existsAtTarget ? ` (${t("adv.migrateConflictHint")})` : ""}</span>
-                              <span className="text-muted-foreground">{e.sizeMb.toFixed(1)} MB</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <p className={`text-xs ${migratePreflight.canMigrate ? "text-muted-foreground" : "text-destructive"}`}>
-                      {migratePreflight.reason}
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex gap-2 flex-wrap">
-                  <Button
-                    size="sm"
-                    onClick={runMigrate}
-                    disabled={migrateBusy || !migratePreflight?.canMigrate}
-                  >
-                    {migrateBusy ? t("adv.migrateBusy") : t("adv.migrateStart")}
-                  </Button>
-                  {migrateCustomRoot && (
-                    <Button variant="outline" size="sm" onClick={runMigrateResetDefault} disabled={migrateBusy}>
-                      {t("adv.migrateResetDefault")}
-                    </Button>
-                  )}
-                </div>
-
-              </div>
-            </Section>
-          )}
-        </div>
-
-        {/* ── Card 5: 系统信息与运维 ── */}
-        <div className="card" style={{ marginTop: 12 }}>
-          <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.sysOpsTitle")}</h3>
-
-          <Section title={t("adv.sysTitle")}
-            toggle={IS_TAURI ? (
-              <Button variant="outline" size="xs" onClick={(e) => { e.preventDefault(); opsHandleBundleExport(); }} disabled={!!busy || !currentWorkspaceId}>
-                {busy === t("adv.opsLogExporting") ? t("adv.opsLogExporting") : t("adv.exportDiagBtn")}
-              </Button>
-            ) : undefined}
-          >
-            {!advSysInfo ? (
-              advLoading.sysinfo ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span className="spinner size-3.5" />
-                  {t("common.loading")}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={fetchSystemInfo} disabled={!!busy || !serviceStatus?.running}>{t("adv.sysLoad")}</Button>
-                  {!serviceStatus?.running && <span className="text-xs text-muted-foreground">{t("adv.needService")}</span>}
-                </div>
-              )
-            ) : (
-              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-                {Object.entries(advSysInfo).map(([k, v]) => (
-                  <Fragment key={k}>
-                    <span className="font-medium text-muted-foreground">{k}</span>
-                    <span>{v}</span>
-                  </Fragment>
-                ))}
-                <span className="font-medium text-muted-foreground">Desktop</span>
-                <span>{desktopVersion}</span>
-              </div>
-            )}
-          </Section>
-
-          {IS_TAURI && (
-            <Section title={t("adv.opsPaths")} className="mt-2">
-              <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1.5 items-center text-sm">
-                {opsPathRows.map((row) => (
-                  <Fragment key={row.label}>
-                    <span className="font-medium whitespace-nowrap">{row.label}</span>
-                    <span className="break-all text-muted-foreground text-xs font-mono">{row.path || "—"}</span>
-                    <Button variant="outline" size="xs" onClick={() => opsOpenFolder(row.path)} disabled={!row.path}>{t("adv.opsOpenFolder")}</Button>
-                  </Fragment>
-                ))}
-              </div>
-            </Section>
-          )}
-
-          {IS_TAURI && (
-            <Section title={t("adv.factoryResetTitle")} subtitle={t("adv.factoryResetSubtitle")} className="mt-2">
-              <p className="text-xs text-muted-foreground mb-2">{t("adv.factoryResetDesc")}</p>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => { setFactoryResetConfirmText(""); setFactoryResetOpen(true); }}
-                disabled={!!busy}
-              >
-                {t("adv.factoryResetBtn")}
-              </Button>
-            </Section>
-          )}
-
-          <AlertDialog open={factoryResetOpen} onOpenChange={(open) => { if (!open) setFactoryResetOpen(false); }}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t("adv.factoryResetConfirmTitle")}</AlertDialogTitle>
-                <AlertDialogDescription className="space-y-2" asChild>
-                  <div>
-                    <p>{t("adv.factoryResetConfirmDesc")}</p>
-                    <ul className="list-disc pl-5 text-sm space-y-0.5">
-                      <li>{t("adv.factoryResetItem1")}</li>
-                      <li>{t("adv.factoryResetItem2")}</li>
-                      <li>{t("adv.factoryResetItem3")}</li>
-                      <li>{t("adv.factoryResetItem4")}</li>
-                    </ul>
-                    <p className="font-medium mt-2">{t("adv.factoryResetTypeHint")}</p>
-                    <Input
-                      value={factoryResetConfirmText}
-                      onChange={(e) => setFactoryResetConfirmText(e.target.value)}
-                      placeholder="RESET"
-                      className="mt-1"
-                      autoFocus
-                    />
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                <AlertDialogAction
-                  variant="destructive"
-                  disabled={factoryResetConfirmText !== "RESET"}
-                  onClick={async () => {
-                    setFactoryResetOpen(false);
-                    const _b = notifyLoading(t("adv.factoryResetInProgress"));
-                    try {
-                      const result = await invoke<string>("factory_reset");
-                      dismissLoading(_b);
-                      notifySuccess(result);
-                      try { localStorage.clear(); } catch {}
-                      setTimeout(() => { setView("onboarding"); window.location.reload(); }, 1500);
-                    } catch (e) {
-                      dismissLoading(_b);
-                      notifyError(String(e));
-                    }
-                  }}
-                >
-                  {t("adv.factoryResetConfirmBtn")}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </>
+    return (
+      <AdvancedView
+        envDraft={envDraft}
+        setEnvDraft={setEnvDraft}
+        busy={busy}
+        workspaces={workspaces}
+        currentWorkspaceId={currentWorkspaceId}
+        serviceStatus={serviceStatus}
+        dataMode={dataMode}
+        info={info}
+        storeVisible={storeVisible}
+        setStoreVisible={setStoreVisible}
+        desktopVersion={desktopVersion}
+        shouldUseHttpApi={shouldUseHttpApi}
+        httpApiBase={httpApiBase}
+        askConfirm={askConfirm}
+        refreshAll={refreshAll}
+        restartService={restartService}
+        setView={setView}
+      />
     );
   }
 
@@ -6603,7 +3222,7 @@ export function App() {
                     {FT({ k: "TELEGRAM_PROXY", label: "代理（可选）", placeholder: "http://127.0.0.1:7890 / socks5://..." })}
                     {FB({ k: "TELEGRAM_REQUIRE_PAIRING", label: t("config.imPairing") })}
                     {FT({ k: "TELEGRAM_PAIRING_CODE", label: t("config.imPairingCode"), placeholder: t("config.imPairingCodeHint") })}
-                    <TelegramPairingCodeHint currentWorkspaceId={currentWorkspaceId} />
+                    <TelegramPairingCodeHint currentWorkspaceId={currentWorkspaceId} envDraft={envDraft} onEnvChange={setEnvDraft} />
                     {FT({ k: "TELEGRAM_WEBHOOK_URL", label: "Webhook URL", placeholder: "https://..." })}
                   </>
                 ),
@@ -6886,10 +3505,10 @@ export function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
                 {FT({ k: "AGENT_NAME", label: "Agent 名称", placeholder: "OpenAkita" })}
                 {FT({ k: "MAX_ITERATIONS", label: "最大迭代次数", placeholder: "300" })}
-                {FS({ k: "THINKING_MODE", label: "Thinking 模式", options: [
-                  { value: "auto", label: "auto (自动判断)" },
-                  { value: "always", label: "always (始终思考)" },
-                  { value: "never", label: "never (从不思考)" },
+                {FS({ k: "THINKING_MODE", label: t("config.agentThinking"), options: [
+                  { value: "auto", label: t("config.agentThinkingAuto") },
+                  { value: "always", label: t("config.agentThinkingAlways") },
+                  { value: "never", label: t("config.agentThinkingNever") },
                 ] })}
                 {FT({ k: "DATABASE_PATH", label: "数据库路径", placeholder: "data/agent.db" })}
                 {FS({ k: "LOG_LEVEL", label: "日志级别", options: [
@@ -6952,7 +3571,7 @@ export function App() {
               {t("config.applyRestart")}
             </button>
           </div>
-          
+
         </div>
       </>
     );
@@ -6988,48 +3607,8 @@ export function App() {
     [endpointSummary, endpointHealth],
   );
 
-  // 保存 env keys 的辅助函数（供 SkillManager 使用，路由逻辑与 saveEnvKeys 一致）
-  async function saveEnvKeysExternal(keys: string[]) {
-    const entries: Record<string, string> = {};
-    for (const k of keys) {
-      if (Object.prototype.hasOwnProperty.call(envDraft, k)) {
-        const v = (envDraft[k] ?? "").trim();
-        if (v.length > 0) {
-          entries[k] = v;
-        }
-      }
-    }
-    if (!Object.keys(entries).length) return;
-
-    if (shouldUseHttpApi()) {
-      try {
-        await safeFetch(`${httpApiBase()}/api/config/env`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entries }),
-        });
-        return;
-      } catch {
-        logger.warn("App", "saveEnvKeysExternal: HTTP failed, falling back to Tauri");
-      }
-    }
-    if (IS_TAURI && currentWorkspaceId) {
-      const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
-      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
-    }
-  }
 
   // ── Onboarding Wizard 渲染 ──
-  async function obLoadModules() {
-    if (!IS_TAURI) return;
-    try {
-      const modules = await invoke<ModuleInfo[]>("detect_modules");
-      setObModules(modules);
-      
-    } catch (e) {
-      logger.warn("App", "detect_modules failed", { error: String(e) });
-    }
-  }
 
   async function obLoadEnvCheck() {
     if (!IS_TAURI) return;
@@ -7041,7 +3620,7 @@ export function App() {
     }
   }
 
-  
+
 
   const [obHasErrors, setObHasErrors] = useState(false);
 
@@ -7065,12 +3644,10 @@ export function App() {
     setObDetailLog([]);
     setObHasErrors(false);
 
-    // 安装配置日志：单独写入 {data_root}/logs/onboarding-日期.log，便于排查
     const dateLabel = new Date().toISOString().slice(0, 19).replace("T", "_").replace(/:/g, "-");
     let obLogPath: string | null = null;
     try {
       obLogPath = await invoke<string>("start_onboarding_log", { dateLabel });
-      // 写入配置快照（不记录密钥明文）
       if (obLogPath) {
         const configLines: string[] = [];
         configLines.push("");
@@ -7094,25 +3671,18 @@ export function App() {
         invoke("append_onboarding_log_lines", { logPath: obLogPath, lines: configLines }).catch(() => {});
       }
     } catch {
-      // 日志文件创建失败不影响主流程
     }
 
-    // 初始化任务列表
     const taskDefs: SetupTask[] = [
       { id: "workspace", label: "准备工作区", status: "pending" },
-      { id: "llm-config", label: "保存 LLM 配置", status: savedEndpoints.length > 0 ? "pending" : "skipped" },
-      { id: "env-save", label: "保存环境变量", status: "pending" },
     ];
-    
     taskDefs.push({ id: "backend-check", label: "检查后端环境", status: "pending" });
-    // CLI 注册
     const cliCommands: string[] = [];
     if (obCliOpenakita) cliCommands.push("openakita");
     if (obCliOa) cliCommands.push("oa");
     if (cliCommands.length > 0) {
       taskDefs.push({ id: "cli", label: `注册 CLI 命令 (${cliCommands.join(", ")})`, status: "pending" });
     }
-    // 开机自启
     if (obAutostart) {
       taskDefs.push({ id: "autostart", label: t("onboarding.autostart.taskLabel"), status: "pending" });
     }
@@ -7121,6 +3691,8 @@ export function App() {
     }
     taskDefs.push({ id: "service-start", label: "启动后端服务", status: "pending" });
     taskDefs.push({ id: "http-wait", label: "等待 HTTP 服务就绪", status: "pending" });
+    taskDefs.push({ id: "llm-config", label: "保存 LLM 配置", status: savedEndpoints.length > 0 ? "pending" : "skipped" });
+    taskDefs.push({ id: "env-save", label: "保存环境变量", status: "pending" });
     setObTasks(taskDefs);
 
     const log = (msg: string) => {
@@ -7133,7 +3705,6 @@ export function App() {
         invoke("append_onboarding_log", { logPath: obLogPath, line }).catch(() => {});
       }
     };
-    /** 将任务状态写入日志，便于排查 */
     const logTask = (label: string, status: string, detail?: string) => {
       const msg = detail ? `[任务] ${label}: ${status} - ${detail}` : `[任务] ${label}: ${status}`;
       const now = new Date();
@@ -7355,15 +3926,29 @@ export function App() {
       }
 
       // ── STEP: service-start ──
+      // The early-start in ob-welcome may have already launched the backend.
+      // Probe first to avoid a redundant start (which is harmless but slow).
       updateTask("service-start", { status: "running" });
       logTask("启动后端服务", "running");
-      log(t("onboarding.progress.startingService"));
       const effectiveVenv = venvDir || (info ? joinPath(info.openakitaRootDir, "venv") : "");
+      let httpReady = false;
       try {
-        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
-        log(t("onboarding.progress.serviceStarted"));
-        updateTask("service-start", { status: "done" });
-        logTask("启动后端服务", "done");
+        const earlyProbe = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) }).then(r => r.ok).catch(() => false);
+        if (earlyProbe) {
+          log("✓ 后端已在运行（由 ob-welcome 提前启动）");
+          setServiceStatus({ running: true, pid: null, pidFile: "" });
+          setDataMode("remote");
+          httpReady = true;
+          updateTask("service-start", { status: "done", detail: "已在运行" });
+          logTask("启动后端服务", "done", "已在运行");
+          updateTask("http-wait", { status: "done", detail: "已就绪" });
+          logTask("等待 HTTP 服务就绪", "done", "已就绪");
+        } else {
+          log(t("onboarding.progress.startingService"));
+          await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+          log(t("onboarding.progress.serviceStarted"));
+          updateTask("service-start", { status: "done" });
+          logTask("启动后端服务", "done");
 
         // ── STEP: http-wait ──
         let httpReady = false;
@@ -7387,14 +3972,15 @@ export function App() {
               updateTask("http-wait", { status: "done", detail: `${(i + 1) * 2}s` });
               logTask("等待 HTTP 服务就绪", "done", `${(i + 1) * 2}s`);
               break;
-            }
-          } catch { /* not ready yet */ }
-          if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
-        }
-        if (!httpReady) {
-          log("⚠ HTTP 服务尚未就绪，可进入主页面后手动刷新");
-          updateTask("http-wait", { status: "error", detail: "超时" });
-          logTask("等待 HTTP 服务就绪", "error", "超时");
+              }
+            } catch { /* not ready yet */ }
+            if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
+          }
+          if (!httpReady) {
+            log("⚠ HTTP 服务尚未就绪，可进入主页面后手动刷新");
+            updateTask("http-wait", { status: "error", detail: "超时" });
+            logTask("等待 HTTP 服务就绪", "error", "超时");
+          }
         }
       } catch (e) {
         const errStr = String(e);
@@ -7407,6 +3993,120 @@ export function App() {
           log('--- 详细错误信息 ---');
           log(errStr);
         }
+        hasErr = true;
+      }
+
+      // ── STEP: llm-config (via HTTP API, after backend is ready) ──
+      if (savedEndpoints.length > 0) {
+        updateTask("llm-config", { status: "running" });
+        logTask("保存 LLM 配置", "running");
+        if (httpReady) {
+          try {
+            const base = httpApiBase();
+            for (const ep of savedEndpoints) {
+              const apiKey = envDraft[(ep as any).api_key_env] || "";
+              await safeFetch(`${base}/api/config/save-endpoint`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  endpoint: ep,
+                  api_key: apiKey || null,
+                  endpoint_type: "endpoints",
+                }),
+              });
+            }
+            for (const ep of savedCompilerEndpoints) {
+              const apiKey = envDraft[(ep as any).api_key_env] || "";
+              await safeFetch(`${base}/api/config/save-endpoint`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  endpoint: ep,
+                  api_key: apiKey || null,
+                  endpoint_type: "compiler_endpoints",
+                }),
+              });
+            }
+            for (const ep of savedSttEndpoints) {
+              const apiKey = envDraft[(ep as any).api_key_env] || "";
+              await safeFetch(`${base}/api/config/save-endpoint`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  endpoint: ep,
+                  api_key: apiKey || null,
+                  endpoint_type: "stt_endpoints",
+                }),
+              });
+            }
+            log(t("onboarding.progress.llmConfigSaved"));
+            updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length + savedCompilerEndpoints.length + savedSttEndpoints.length} 个端点` });
+            logTask("保存 LLM 配置", "done", `${savedEndpoints.length + savedCompilerEndpoints.length + savedSttEndpoints.length} 个端点`);
+          } catch (e) {
+            log(`⚠ LLM 配置保存失败: ${String(e)}`);
+            updateTask("llm-config", { status: "error", detail: String(e).slice(0, 120) });
+            logTask("保存 LLM 配置", "error", String(e));
+            hasErr = true;
+          }
+        } else {
+          log("⚠ HTTP 服务未就绪，使用 Tauri 直接写入 LLM 配置");
+          try {
+            const llmData = { endpoints: savedEndpoints, compiler_endpoints: savedCompilerEndpoints, stt_endpoints: savedSttEndpoints, settings: {} };
+            await invoke("workspace_write_file", {
+              workspaceId: activeWsId,
+              relativePath: "data/llm_endpoints.json",
+              content: JSON.stringify(llmData, null, 2),
+            });
+            log(t("onboarding.progress.llmConfigSaved"));
+            updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length} 个端点 (Tauri)` });
+            logTask("保存 LLM 配置", "done", `${savedEndpoints.length} 个端点 (Tauri 回退)`);
+          } catch (e) {
+            log(`⚠ LLM 配置保存失败: ${String(e)}`);
+            updateTask("llm-config", { status: "error", detail: String(e).slice(0, 120) });
+            logTask("保存 LLM 配置", "error", String(e));
+            hasErr = true;
+          }
+        }
+      }
+
+      // ── STEP: env-save (IM and other non-LLM env vars) ──
+      updateTask("env-save", { status: "running" });
+      logTask("保存环境变量", "running");
+      try {
+        const imKeys = getAutoSaveKeysForStep("im");
+        const entries: Record<string, string> = {};
+        for (const k of imKeys) {
+          if (Object.prototype.hasOwnProperty.call(envDraft, k) && envDraft[k]) {
+            entries[k] = envDraft[k];
+          }
+        }
+        if (!httpReady) {
+          for (const ep of [...savedEndpoints, ...savedCompilerEndpoints, ...savedSttEndpoints]) {
+            const keyName = (ep as any).api_key_env;
+            if (keyName && Object.prototype.hasOwnProperty.call(envDraft, keyName) && envDraft[keyName]) {
+              entries[keyName] = envDraft[keyName];
+            }
+          }
+        }
+        if (Object.keys(entries).length > 0) {
+          if (httpReady) {
+            await safeFetch(`${httpApiBase()}/api/config/env`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ entries }),
+            });
+          } else if (IS_TAURI && activeWsId) {
+            const tauriEntries = Object.entries(entries).map(([key, value]) => ({ key, value }));
+            await invoke("workspace_update_env", { workspaceId: activeWsId, entries: tauriEntries });
+          }
+          log(t("onboarding.progress.envSaved") || "✓ 环境变量已保存");
+        }
+        updateTask("env-save", { status: "done", detail: `${Object.keys(entries).length} 项` });
+        logTask("保存环境变量", "done", `${Object.keys(entries).length} 项`);
+      } catch (e) {
+        log(`⚠ 保存环境变量失败: ${String(e)}`);
+        updateTask("env-save", { status: "error", detail: String(e) });
+        logTask("保存环境变量", "error", String(e));
         hasErr = true;
       }
 
@@ -7617,6 +4317,7 @@ export function App() {
                 size="lg"
                 className="mt-2 px-10 rounded-xl text-[15px]"
                 onClick={async () => {
+                  let earlyStartWsId = currentWorkspaceId || "";
                   try {
                     const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
                     if (!wsList.length) {
@@ -7625,15 +4326,48 @@ export function App() {
                       await invoke("set_current_workspace", { id: wsId });
                       setCurrentWorkspaceId(wsId);
                       setWorkspaces([{ id: wsId, name: t("onboarding.defaultWorkspace"), path: "", isCurrent: true }]);
+                      earlyStartWsId = wsId;
                     } else {
                       setWorkspaces(wsList);
                       if (!currentWorkspaceId && wsList.length > 0) {
                         setCurrentWorkspaceId(wsList[0].id);
                       }
+                      earlyStartWsId = currentWorkspaceId || wsList[0]?.id || "";
                     }
                   } catch (e) {
                     logger.warn("App", "ob: create default workspace failed", { error: String(e) });
                   }
+
+                  // Kick off backend startup in background so HTTP API is
+                  // likely ready by the time the user reaches ob-llm.
+                  if (IS_TAURI && earlyStartWsId) {
+                    const wsId = earlyStartWsId;
+                    const effectiveVenv = venvDir || (info ? joinPath(info.openakitaRootDir, "venv") : "");
+                    (async () => {
+                      try {
+                        const backendInfo = await invoke<{
+                          bundled: boolean; venvReady: boolean; exePath: string;
+                          bundledChecked: string; venvChecked: string;
+                        }>("check_backend_availability", { venvDir: effectiveVenv });
+                        if (!backendInfo.bundled && !backendInfo.venvReady) return;
+                        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
+                        for (let i = 0; i < 15; i++) {
+                          await new Promise(r => setTimeout(r, 2000));
+                          try {
+                            const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
+                            if (res.ok) {
+                              setServiceStatus({ running: true, pid: null, pidFile: "" });
+                              setDataMode("remote");
+                              break;
+                            }
+                          } catch { /* not ready yet */ }
+                        }
+                      } catch (e) {
+                        logger.warn("App", "ob: early backend start failed, will retry in ob-progress", { error: String(e) });
+                      }
+                    })();
+                  }
+
                   setObStep("ob-agreement");
                 }}
               >
@@ -7738,9 +4472,6 @@ export function App() {
               <div className="obFooterBtns">
                 <Button variant="outline" onClick={() => setObStep("ob-llm")}>{t("config.prev")}</Button>
                 <Button onClick={() => setObStep("ob-cli")}>{t("config.next")}</Button>
-                <Button variant="secondary" onClick={() => setObStep("ob-cli")} title={t("onboarding.im.skip")}>
-                  {t("onboarding.im.skipShort") || t("onboarding.im.skip")}
-                </Button>
               </div>
             </div>
           </div>
@@ -7760,7 +4491,7 @@ export function App() {
                   <Checkbox checked={obCliOpenakita} onCheckedChange={() => setObCliOpenakita(!obCliOpenakita)} />
                   <div className="obModuleInfo">
                     <strong style={{ fontFamily: "monospace", fontSize: 15 }}>openakita</strong>
-                    <span className="obModuleDesc">完整命令名称</span>
+                    <span className="obModuleDesc">{t("onboarding.system.cmdFull")}</span>
                   </div>
                 </label>
 
@@ -7768,16 +4499,16 @@ export function App() {
                   <Checkbox checked={obCliOa} onCheckedChange={() => setObCliOa(!obCliOa)} />
                   <div className="obModuleInfo">
                     <strong style={{ fontFamily: "monospace", fontSize: 15 }}>oa</strong>
-                    <span className="obModuleDesc">简短别名，推荐日常使用</span>
+                    <span className="obModuleDesc">{t("onboarding.system.cmdShort")}</span>
                   </div>
-                  <Badge variant="secondary" className="obModuleBadge obModuleBadgeRec">推荐</Badge>
+                  <Badge variant="secondary" className="obModuleBadge obModuleBadgeRec">{t("onboarding.system.recommended")}</Badge>
                 </label>
 
                 <label className="obModuleItem" data-checked={obCliAddToPath || undefined}>
                   <Checkbox checked={obCliAddToPath} onCheckedChange={() => setObCliAddToPath(!obCliAddToPath)} />
                   <div className="obModuleInfo">
-                    <strong>添加到系统 PATH</strong>
-                    <span className="obModuleDesc">新打开的终端中可直接输入命令名运行，无需完整路径</span>
+                    <strong>{t("onboarding.system.addToPath")}</strong>
+                    <span className="obModuleDesc">{t("onboarding.system.addToPathDesc")}</span>
                   </div>
                 </label>
 
@@ -7796,17 +4527,17 @@ export function App() {
               {(obCliOpenakita || obCliOa) && (
                 <Card className="mt-4">
                   <CardContent className="py-4 px-5 space-y-2.5">
-                    <p className="text-[13px] font-semibold text-muted-foreground">安装后可使用的命令示例</p>
+                    <p className="text-[13px] font-semibold text-muted-foreground">{t("onboarding.system.cmdExamples")}</p>
                     <div className="bg-slate-900 rounded-lg px-4 py-3.5 font-mono text-[13px] leading-[1.9] text-slate-200 overflow-x-auto">
                       {obCliOa && <>
-                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> serve <span className="text-slate-400 ml-6"># 启动后端服务</span></div>
-                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> status <span className="text-slate-400 ml-4"># 查看运行状态</span></div>
-                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> run <span className="text-slate-400 ml-9"># 单次对话</span></div>
+                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> serve <span className="text-slate-400 ml-6">{t("onboarding.system.commentServe")}</span></div>
+                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> status <span className="text-slate-400 ml-4">{t("onboarding.system.commentStatus")}</span></div>
+                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> run <span className="text-slate-400 ml-9">{t("onboarding.system.commentRun")}</span></div>
                       </>}
                       {obCliOa && obCliOpenakita && <div className="h-1" />}
                       {obCliOpenakita && <>
-                        <div><span className="text-slate-400">$</span> <span className="text-indigo-300">openakita</span> init <span className="text-slate-400 ml-2"># 初始化工作区</span></div>
-                        <div><span className="text-slate-400">$</span> <span className="text-indigo-300">openakita</span> serve <span className="text-slate-400"># 启动后端服务</span></div>
+                        <div><span className="text-slate-400">$</span> <span className="text-indigo-300">openakita</span> init <span className="text-slate-400 ml-2">{t("onboarding.system.commentInit")}</span></div>
+                        <div><span className="text-slate-400">$</span> <span className="text-indigo-300">openakita</span> serve <span className="text-slate-400">{t("onboarding.system.commentServe")}</span></div>
                       </>}
                     </div>
                   </CardContent>
@@ -7818,7 +4549,7 @@ export function App() {
               <div className="obFooterBtns">
                 <Button variant="outline" onClick={() => setObStep("ob-im")}>{t("config.prev")}</Button>
                 <Button onClick={() => { setObStep("ob-progress"); obRunSetup(); }}>
-                  {t("onboarding.modules.startInstall")}
+                  {t("onboarding.system.startInstall")}
                 </Button>
               </div>
             </div>
@@ -7843,7 +4574,7 @@ export function App() {
             <div className="obContent" style={{ display: "flex", flexDirection: "column", gap: 0, flex: 1, minHeight: 0 }}>
               <h2 className="obStepTitle">{t("onboarding.progress.title")}</h2>
               <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.5 }}>
-                模块与运行环境体积较大，安装过程中请耐心等待，请勿关闭本窗口。
+                {t("onboarding.progress.patience")}
               </p>
 
               {/* ── 任务进度列表 ── */}
@@ -7878,7 +4609,7 @@ export function App() {
                       )}
                     </div>
                     {task.status === "running" && (
-                      <span style={{ fontSize: 12, color: "#3b82f6", flexShrink: 0, fontWeight: 500 }}>进行中</span>
+                      <span style={{ fontSize: 12, color: "#3b82f6", flexShrink: 0, fontWeight: 500 }}>{t("onboarding.progress.inProgress")}</span>
                     )}
                   </div>
                 ))}
@@ -7895,7 +4626,7 @@ export function App() {
                 ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
               >
                 {obDetailLog.length === 0 && (
-                  <div style={{ color: "#64748b" }}>等待任务开始...</div>
+                  <div style={{ color: "#64748b" }}>{t("onboarding.progress.waitingStart")}</div>
                 )}
                 {obDetailLog.map((line, i) => (
                   <div key={i} style={{
@@ -7976,14 +4707,14 @@ export function App() {
   }
 
   function renderStepContent() {
-    if (!info) return <div className="card">加载中...</div>;
+    if (!info) return <div className="card">{t("common.loading")}</div>;
     if (view === "status") return renderStatus();
     if (view === "chat") return null;  // ChatView 始终挂载，不在此渲染
 
     const _disableToggle = (viewKey: string, label: string) => (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 12 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--muted)", cursor: "pointer" }}>
-          <span>{disabledViews.includes(viewKey) ? `${label} 已禁用` : `${label} 已启用`}</span>
+          <span>{disabledViews.includes(viewKey) ? t("common.disabled", { label }) : t("common.enabled", { label })}</span>
           <div
             onClick={() => toggleViewDisabled(viewKey)}
             style={{
@@ -8014,7 +4745,7 @@ export function App() {
           currentWorkspaceId={currentWorkspaceId}
           envDraft={envDraft}
           onEnvChange={setEnvDraft}
-          onSaveEnvKeys={saveEnvKeysExternal}
+          onSaveEnvKeys={saveEnvKeys}
           apiBaseUrl={apiBaseUrl}
           serviceRunning={!!serviceStatus?.running}
           dataMode={dataMode}
@@ -8027,13 +4758,13 @@ export function App() {
           <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「配置 → IM 通道」中启用</p>
         </div>
       ) : (
-        <IMView serviceRunning={serviceStatus?.running ?? false} multiAgentEnabled={multiAgentEnabled} apiBaseUrl={apiBaseUrl} onRequestRestart={restartService} venvDir={venvDir} />
+        <IMView serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl} />
       );
     }
     if (view === "token_stats") {
       return (
         <div>
-          {_disableToggle("token_stats", "Token 统计")}
+          {_disableToggle("token_stats", t("sidebar.tokenStats"))}
           {disabledViews.includes("token_stats") ? (
             <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
               <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，点击上方开关启用</p>
@@ -8457,7 +5188,7 @@ export function App() {
               await invoke("create_workspace", { id, name, setCurrent: true });
               await refreshAll();
               setCurrentWorkspaceId(id);
-              envLoadedForWs.current = null;
+              resetEnvLoaded();
               notifySuccess(`${name} (${id})`);
             } catch (err: any) { notifyError(String(err)); }
           }}
@@ -8469,7 +5200,7 @@ export function App() {
             setTauriRemoteMode(false);
             setDataMode("local");
             setServiceStatus({ running: false, pid: null, pidFile: "" });
-            envLoadedForWs.current = null;
+            resetEnvLoaded();
             notifySuccess(t("topbar.disconnected"));
           }}
           onConnect={() => {
@@ -8482,7 +5213,7 @@ export function App() {
             await startLocalServiceWithConflictCheck(effectiveWsId);
           }}
           onRefreshAll={async () => { await refreshAll(); try { await refreshStatus(undefined, undefined, true); } catch {} }}
-          toggleTheme={toggleTheme}
+          onSetTheme={(theme) => { setThemePref(theme); notifySuccess(`${t("topbar.themeLabel")}: ${t(THEME_I18N_KEYS[theme])}`); }}
           themePrefState={themePrefState}
           isWeb={IS_WEB || IS_CAPACITOR}
           onLogout={(IS_WEB || IS_CAPACITOR) ? async () => {
@@ -8656,24 +5387,6 @@ export function App() {
         )}
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
-        {/* ── Module restart prompt ── */}
-        {moduleRestartPrompt && (
-          <ModalOverlay onClose={() => setModuleRestartPrompt(null)}>
-            <div className="modalContent" style={{ maxWidth: 400, padding: "28px 24px", borderRadius: 16 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>{t("modules.restartTitle")}</div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20, lineHeight: 1.6 }}>
-                {t("modules.restartDesc", { name: moduleRestartPrompt })}
-              </div>
-              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                <button className="btnSmall" onClick={() => setModuleRestartPrompt(null)}>{t("modules.restartLater")}</button>
-                <button className="btnPrimary btnSmall" onClick={async () => {
-                  setModuleRestartPrompt(null);
-                  await applyAndRestart([]);
-                }}>{t("modules.restartNow")}</button>
-              </div>
-            </div>
-          </ModalOverlay>
-        )}
 
         {/* ── Service conflict dialog ── */}
         {conflictDialog && (

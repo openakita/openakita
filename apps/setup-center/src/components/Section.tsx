@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 
 export function Section({ title, subtitle, children, toggle, className }: {
   title: string;
@@ -12,7 +12,7 @@ export function Section({ title, subtitle, children, toggle, className }: {
       <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
         <span className="flex items-center gap-1.5">
           {children ? (
-            <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180 text-muted-foreground" />
+            <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90 text-muted-foreground" />
           ) : (
             <span className="size-4 shrink-0" />
           )}

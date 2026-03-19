@@ -2721,9 +2721,16 @@ fn main() {
             openakita_uninstall_skill,
             openakita_list_marketplace,
             openakita_get_skill_config,
+            openakita_wecom_onboard_start,
+            openakita_wecom_onboard_poll,
             openakita_feishu_onboard_start,
             openakita_feishu_onboard_poll,
             openakita_feishu_validate,
+            openakita_qqbot_onboard_start,
+            openakita_qqbot_onboard_poll,
+            openakita_qqbot_onboard_create,
+            openakita_qqbot_onboard_poll_and_create,
+            openakita_qqbot_validate,
             fetch_pypi_versions,
             http_get_json,
             http_proxy_request,
@@ -3116,6 +3123,7 @@ async fn spawn_blocking_result<R: Send + 'static>(
 ///
 /// - Quoted values (`"..."` or `'...'`): return content between quotes literally.
 /// - Unquoted values: strip inline comment (`#` preceded by whitespace).
+#[allow(dead_code)]
 fn clean_env_value(raw: &str) -> String {
     let v = raw.trim();
     if v.len() >= 2 {
@@ -3135,6 +3143,7 @@ fn clean_env_value(raw: &str) -> String {
     v.to_string()
 }
 
+#[allow(dead_code)]
 fn read_env_kv(path: &Path) -> Vec<(String, String)> {
     let Ok(content) = fs::read_to_string(path) else {
         return vec![];
@@ -3267,15 +3276,9 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     // Disable colored / styled output to avoid ANSI escape codes in log files.
     cmd.env("NO_COLOR", "1");
 
-    // inherit current env, then overlay workspace .env
-    // 注意：忽略会污染 Python 运行时的键，避免用户导入旧 .env 后把
-    // _internal/venv 的模块搜索路径破坏（典型表现：No module named encodings）。
-    for (k, v) in read_env_kv(&ws_dir.join(".env")) {
-        if is_harmful_python_env_key(&k) {
-            continue;
-        }
-        cmd.env(k, v);
-    }
+    // .env 由 Python 端的 load_dotenv(override=True) 自行加载，
+    // 不再由 Rust 注入，避免编码/BOM 问题导致 Key 丢失或损坏值抢占。
+    // Rust 只注入 Python 自己无法确定的路径类环境变量。
     cmd.env("LLM_ENDPOINTS_CONFIG", ws_dir.join("data").join("llm_endpoints.json"));
     cmd.env("OPENAKITA_ROOT", openakita_root_dir().to_string_lossy().to_string());
 
@@ -5191,6 +5194,37 @@ async fn openakita_get_skill_config(
     .await
 }
 
+/// Start WeCom QR code onboarding (generate QR).
+/// Returns JSON with qr_url + qr_id.
+#[tauri::command]
+async fn openakita_wecom_onboard_start(
+    venv_dir: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["wecom-onboard-start"];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Poll WeCom QR code scan result.
+/// Returns JSON with bot_id + secret on success.
+#[tauri::command]
+async fn openakita_wecom_onboard_poll(
+    venv_dir: String,
+    scode: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec![
+            "wecom-onboard-poll",
+            "--scode",
+            &scode,
+        ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
 /// Start Feishu Device Flow onboarding (QR scan).
 /// Returns JSON with device_code + verification_uri.
 #[tauri::command]
@@ -5247,6 +5281,81 @@ async fn openakita_feishu_validate(
             &app_secret,
             "--domain",
             &d,
+        ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Start QQ Bot OpenClaw onboarding (QR scan).
+/// Returns JSON with session_id + qr_url.
+#[tauri::command]
+async fn openakita_qqbot_onboard_start(venv_dir: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["qqbot-onboard-start"];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Poll QQ Bot OpenClaw login status.
+/// Returns JSON with status / developer_id.
+#[tauri::command]
+async fn openakita_qqbot_onboard_poll(
+    venv_dir: String,
+    session_id: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["qqbot-onboard-poll", "--session-id", &session_id];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Create a QQ bot via OpenClaw.
+/// Returns JSON with app_id / app_secret / bot_name.
+#[tauri::command]
+async fn openakita_qqbot_onboard_create(venv_dir: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["qqbot-onboard-create"];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Atomic poll + create in one process so cookies carry over.
+/// Returns JSON with status / app_id / app_secret.
+#[tauri::command]
+async fn openakita_qqbot_onboard_poll_and_create(
+    venv_dir: String,
+    session_id: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec![
+            "qqbot-onboard-poll-and-create",
+            "--session-id",
+            &session_id,
+        ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Validate QQ Bot App ID / App Secret credentials.
+/// Returns JSON with {valid: bool, error?: string}.
+#[tauri::command]
+async fn openakita_qqbot_validate(
+    venv_dir: String,
+    app_id: String,
+    app_secret: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec![
+            "qqbot-validate",
+            "--app-id",
+            &app_id,
+            "--app-secret",
+            &app_secret,
         ];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })

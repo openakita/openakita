@@ -411,15 +411,24 @@ MODEL_CAPABILITIES = {
             "thinking": True,
             "thinking_only": True,
         },
+        # DashScope 第三方模型 — MiniMax（thinking-only，不接受 enable_thinking=False）
+        "MiniMax-M2.5": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
+        "MiniMax-M2.1": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
+        "MiniMax-M2": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
+        # DashScope 第三方模型 — Kimi / GLM（支持 enable_thinking 切换）
+        "kimi-k2.5": {"text": True, "vision": True, "video": True, "tools": True, "thinking": False},
+        "glm-5": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
     },
     "minimax": {
         # MiniMax 官方（不支持 /v1/models 端点）
+        # M2+ 系列均为 thinking-only 模型，不接受 enable_thinking=False
         "minimax-m2.5": {
             "text": True,
             "vision": False,
             "video": False,
             "tools": True,
             "thinking": True,
+            "thinking_only": True,
         },
         "minimax-m2.5-highspeed": {
             "text": True,
@@ -427,6 +436,7 @@ MODEL_CAPABILITIES = {
             "video": False,
             "tools": True,
             "thinking": True,
+            "thinking_only": True,
         },
         "minimax-m2.1": {
             "text": True,
@@ -434,6 +444,7 @@ MODEL_CAPABILITIES = {
             "video": False,
             "tools": True,
             "thinking": True,
+            "thinking_only": True,
         },
         "minimax-m2.1-highspeed": {
             "text": True,
@@ -441,6 +452,7 @@ MODEL_CAPABILITIES = {
             "video": False,
             "tools": True,
             "thinking": True,
+            "thinking_only": True,
         },
         "minimax-m2": {
             "text": True,
@@ -448,6 +460,7 @@ MODEL_CAPABILITIES = {
             "video": False,
             "tools": True,
             "thinking": True,
+            "thinking_only": True,
         },
         "abab6.5s-chat": {
             "text": True,

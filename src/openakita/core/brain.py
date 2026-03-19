@@ -455,7 +455,7 @@ class Brain:
         # 转换响应: LLMClient -> Anthropic Message
         return self._convert_response_to_anthropic(response)
 
-    async def messages_create_async(self, use_thinking: bool = None, thinking_depth: str | None = None, **kwargs) -> AnthropicMessage:
+    async def messages_create_async(self, use_thinking: bool = None, thinking_depth: str | None = None, cancel_event: asyncio.Event | None = None, **kwargs) -> AnthropicMessage:
         """异步版本的 messages_create，直接 await LLMClient.chat()。
 
         用于已处在事件循环中的场景（如取消收尾），避免 asyncio.to_thread + asyncio.run
@@ -489,6 +489,7 @@ class Brain:
                 enable_thinking=use_thinking,
                 thinking_depth=thinking_depth,
                 conversation_id=conversation_id,
+                cancel_event=cancel_event,
                 extra_params=extra_params,
             )
             _choices = getattr(response, 'choices', None) or []

@@ -3,6 +3,10 @@
 ; - 卸载时强制杀掉残留进程（Setup Center 本体 + OpenAkita 后台服务）
 ; - 勾选"清理用户数据"时，删除用户目录下的 ~/.openakita
 
+; Declare StrRep from StrFunc.nsh for JSON path escaping
+; (StrFunc.nsh is included by installer.nsi before this file)
+${StrRep}
+
 ; ── PATH 辅助脚本 ──
 ; 通过 PowerShell 安全地读写 PATH 注册表值，解决：
 ; 1. NSIS ReadRegStr 字符串长度上限导致长 PATH 被截断/清空
@@ -53,12 +57,11 @@
 
 !macro _OpenAkita_KillPid pid
   StrCpy $0 "${pid}"
-  ; 仅在 pid 非空时执行 kill；nsExec 在隐藏控制台中运行，无弹窗
-  ; 先 Stop-Process 杀主进程，再 taskkill /T 杀子进程树
   ${If} $0 != ""
     nsExec::ExecToLog 'powershell -NoProfile -Command "Stop-Process -Id $0 -Force -ErrorAction SilentlyContinue"'
     Pop $1
-    nsExec::ExecToLog 'cmd /c taskkill /PID $0 /T /F >nul 2>&1'
+    nsExec::ExecToStack 'cmd /c taskkill /PID $0 /T /F >nul 2>&1'
+    Pop $1
     Pop $1
   ${EndIf}
 !macroend
@@ -68,14 +71,26 @@
 ; 如果文件不存在或内容为空，$R9 = 默认路径
 !macro _OpenAkita_ResolveRoot
   ExpandEnvStrings $R9 "%USERPROFILE%\.openakita"
-  IfFileExists "$R9\custom_root.txt" +1 +8
-  ClearErrors
-  FileOpen $R8 "$R9\custom_root.txt" "r"
-  IfErrors +5 0
-  FileRead $R8 $R7
-  FileClose $R8
-  StrCmp $R7 "" +2 0
-  StrCpy $R9 $R7
+  ${If} ${FileExists} "$R9\custom_root.txt"
+    ClearErrors
+    FileOpen $R8 "$R9\custom_root.txt" "r"
+    ${IfNot} ${Errors}
+      FileRead $R8 $R7
+      FileClose $R8
+      ; Strip trailing \r\n from FileRead
+      StrCpy $R8 $R7 1 -1
+      ${If} $R8 == "$\n"
+        StrCpy $R7 $R7 -1
+      ${EndIf}
+      StrCpy $R8 $R7 1 -1
+      ${If} $R8 == "$\r"
+        StrCpy $R7 $R7 -1
+      ${EndIf}
+      ${If} $R7 != ""
+        StrCpy $R9 $R7
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 !macro _OpenAkita_KillServicePidsIn dir
@@ -85,6 +100,15 @@
     ${IfNot} ${Errors}
       FileRead $R4 $R5
       FileClose $R4
+      ; Strip trailing \r\n from PID value
+      StrCpy $R6 $R5 1 -1
+      ${If} $R6 == "$\n"
+        StrCpy $R5 $R5 -1
+      ${EndIf}
+      StrCpy $R6 $R5 1 -1
+      ${If} $R6 == "$\r"
+        StrCpy $R5 $R5 -1
+      ${EndIf}
       StrCpy $R6 $R5 32
       !insertmacro _OpenAkita_KillPid $R6
     ${EndIf}
@@ -133,23 +157,40 @@
   FileClose $R8
 !macroend
 
+; Write a reusable PS1 script that kills all processes under a given directory.
+; Using -File avoids curly-brace parsing issues that occur when passing
+; Where-Object { ... } script blocks via powershell -Command "...".
+; Appends trailing backslash to prevent prefix collisions (e.g. C:\foo vs C:\foobar).
+!macro _OpenAkita_WriteKillByPathScript
+  InitPluginsDir
+  FileOpen $R9 "$PLUGINSDIR\_oa_killbypath.ps1" w
+  FileWrite $R9 "param([string]$$Dir)$\r$\n"
+  FileWrite $R9 "if (-not $$Dir) { exit 0 }$\r$\n"
+  FileWrite $R9 "$$d = $$Dir.TrimEnd([char]92) + [char]92$\r$\n"
+  FileWrite $R9 "Get-Process | Where-Object {$\r$\n"
+  FileWrite $R9 "    $$_.Path -and $$_.Path.StartsWith($$d, [System.StringComparison]::OrdinalIgnoreCase)$\r$\n"
+  FileWrite $R9 "} | Stop-Process -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileClose $R9
+!macroend
+
 ; Standalone process-killing macro — called both BEFORE running old uninstaller
 ; (reinst_uninstall phase) and in Section Install (NSIS_HOOK_PREINSTALL).
 ; Ensures file locks are released regardless of old uninstaller's capabilities.
 !macro NSIS_HOOK_PREINSTALL_KILLPROCS
   nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process -Name openakita-setup-center,openakita-server -EA SilentlyContinue | Stop-Process -Force"'
   Pop $0
-  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
+  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
   Pop $0
-  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
+  Pop $0
+  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
+  Pop $0
   Pop $0
   !insertmacro _OpenAkita_KillAllServicePids
-  System::Call 'kernel32::SetEnvironmentVariable(t "OA_KILL_DIR", t "$INSTDIR")'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$env:OA_KILL_DIR, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -EA SilentlyContinue"'
+  !insertmacro _OpenAkita_WriteKillByPathScript
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$INSTDIR"'
   Pop $0
   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
-  System::Call 'kernel32::SetEnvironmentVariable(t "OA_KILL_DIR", t "$R0")'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$env:OA_KILL_DIR, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -EA SilentlyContinue"'
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$R0"'
   Pop $0
   Sleep 3000
 !macroend
@@ -163,11 +204,29 @@
   DetailPrint "Stopping OpenAkita processes..."
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
 
-  ; 合并清理环境组件 + 可选用户数据（单次 PowerShell 调用替代逐目录多次调用）
+  ; 解析自定义数据根目录和默认根目录
+  !insertmacro _OpenAkita_ResolveRoot
+  StrCpy $R1 $R9
   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
+
+  !insertmacro _OpenAkita_WriteCleanupScript
+
+  ; 清理自定义数据根目录（如果与默认路径不同）
+  ${If} $R1 != $R0
+  ${AndIf} ${FileExists} "$R1\*"
+    DetailPrint "Cleaning custom data root components..."
+    ${If} $EnvCleanUserDataConfirmed = 1
+      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R1" -CleanUserData'
+      Pop $0
+    ${Else}
+      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R1"'
+      Pop $0
+    ${EndIf}
+  ${EndIf}
+
+  ; 始终清理默认根目录
   ${If} ${FileExists} "$R0\*"
     DetailPrint "Cleaning previous installation components..."
-    !insertmacro _OpenAkita_WriteCleanupScript
     ${If} $EnvCleanUserDataConfirmed = 1
       DetailPrint "Cleaning user data (as requested)..."
       nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R0" -CleanUserData'
@@ -187,18 +246,19 @@
   ; 卸载前：强制杀掉残留进程（合并 PowerShell 调用，nsExec 无弹窗）
   nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process -Name openakita-setup-center,openakita-server -EA SilentlyContinue | Stop-Process -Force"'
   Pop $0
-  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
+  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
   Pop $0
-  nsExec::ExecToLog 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
+  Pop $0
+  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
+  Pop $0
   Pop $0
   !insertmacro _OpenAkita_KillAllServicePids
-  ; 兜底：杀掉安装目录和数据目录下所有残留进程
-  System::Call 'kernel32::SetEnvironmentVariable(t "OA_KILL_DIR", t "$INSTDIR")'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$env:OA_KILL_DIR, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -EA SilentlyContinue"'
+  ; 兜底：杀掉安装目录和数据目录下所有残留进程（使用 -File 避免花括号解析问题）
+  !insertmacro _OpenAkita_WriteKillByPathScript
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$INSTDIR"'
   Pop $0
   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
-  System::Call 'kernel32::SetEnvironmentVariable(t "OA_KILL_DIR", t "$R0")'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$env:OA_KILL_DIR, [System.StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -EA SilentlyContinue"'
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$R0"'
   Pop $0
   Sleep 3000
 !macroend
@@ -229,6 +289,8 @@
   ${EndIf}
   ; 写入 cli.json
   ${If} $R4 != ""
+    ; Escape backslashes in path for valid JSON (\ → \\)
+    ${StrRep} $R6 "$INSTDIR\bin" "\" "\\"
     FileOpen $R5 "$R0\cli.json" w
     FileWrite $R5 '{"commands": [$R4], "addToPath": '
     ${If} $R3 = ${BST_CHECKED}
@@ -236,7 +298,7 @@
     ${Else}
       FileWrite $R5 'false'
     ${EndIf}
-    FileWrite $R5 ', "binDir": "$INSTDIR\bin", "installedAt": "${VERSION}"}'
+    FileWrite $R5 ', "binDir": "$R6", "installedAt": "${VERSION}"}'
     FileClose $R5
   ${EndIf}
 

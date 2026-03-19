@@ -76,7 +76,8 @@ dependencies = [
 [project.optional-dependencies]
 # 飞书 IM 通道
 feishu = [
-    "lark-oapi>=1.2.0",
+    "lark-oapi>=1.3.0",
+    "qrcode>=8.0",
 ]
 
 # 钉钉 IM 通道 (Stream 模式)
@@ -88,6 +89,12 @@ dingtalk = [
 wework = [
     "aiohttp>=3.9.0",
     "pycryptodome>=3.19.0",
+]
+
+# 企业微信 WebSocket 长连接通道
+wework_ws = [
+    "websockets>=15.0.1",
+    "cryptography>=42.0.0",
 ]
 
 # OneBot 协议通道 (NapCat/Lagrange 等)
@@ -113,11 +120,12 @@ windows = [
 # 全部可选依赖（core + 所有 IM 通道 + 桌面自动化）
 all = [
     # -- IM 通道 --
-    "lark-oapi>=1.2.0",
+    "lark-oapi>=1.3.0",
     "dingtalk-stream>=0.24.0",
     "aiohttp>=3.9.0",
     "pycryptodome>=3.19.0",
     "websockets>=15.0.1",
+    "cryptography>=42.0.0",
     "qq-botpy>=1.1.5",
     "pilk>=0.2.1",
     # -- 桌面自动化 --

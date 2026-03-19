@@ -279,10 +279,26 @@ async def list_channels(request: Request):
     from datetime import datetime as dt
 
     results: list[dict] = []
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], int] = {}
     session_manager = getattr(gateway, "session_manager", None)
 
     skip_channels = {"desktop"}
+
+    def _add_or_merge(entry: dict) -> None:
+        """Add a channel entry, merging chat_name into existing if needed."""
+        pair = (entry["channel_id"], entry["chat_id"])
+        if pair in seen:
+            idx = seen[pair]
+            existing = results[idx]
+            if not existing.get("chat_name") and entry.get("chat_name"):
+                existing["chat_name"] = entry["chat_name"]
+            if not existing.get("chat_type") and entry.get("chat_type"):
+                existing["chat_type"] = entry["chat_type"]
+            if not existing.get("display_name") and entry.get("display_name"):
+                existing["display_name"] = entry["display_name"]
+            return
+        seen[pair] = len(results)
+        results.append(entry)
 
     if session_manager:
         # 1. Active memory sessions
@@ -298,15 +314,14 @@ async def list_channels(request: Request):
                 cid = getattr(s, "chat_id", None)
                 if not ch or not cid or ch in skip_channels:
                     continue
-                pair = (ch, cid)
-                if pair in seen:
-                    continue
-                seen.add(pair)
-                results.append({
+                _add_or_merge({
                     "channel_id": ch,
                     "chat_id": cid,
                     "user_id": getattr(s, "user_id", None),
                     "last_active": getattr(s, "last_active", dt.min).isoformat(),
+                    "chat_name": getattr(s, "chat_name", "") or "",
+                    "chat_type": getattr(s, "chat_type", "private") or "private",
+                    "display_name": getattr(s, "display_name", "") or "",
                 })
 
         # 2. Persisted sessions from file
@@ -324,15 +339,14 @@ async def list_channels(request: Request):
                         state = s.get("state", "")
                         if not ch or not cid or state == "closed" or ch in skip_channels:
                             continue
-                        pair = (ch, cid)
-                        if pair in seen:
-                            continue
-                        seen.add(pair)
-                        results.append({
+                        _add_or_merge({
                             "channel_id": ch,
                             "chat_id": cid,
                             "user_id": s.get("user_id"),
                             "last_active": s.get("last_active", ""),
+                            "chat_name": s.get("chat_name", ""),
+                            "chat_type": s.get("chat_type", "private"),
+                            "display_name": s.get("display_name", ""),
                         })
                 except Exception as e:
                     logger.warning(f"Failed to read sessions file: {e}")
@@ -355,12 +369,25 @@ async def list_channels(request: Request):
                     if pair in seen:
                         continue
                     seen.add(pair)
-                    results.append({
+                    _add_or_merge({
                         "channel_id": ch,
                         "chat_id": cid,
                         "user_id": item.get("user_id"),
                         "last_active": item.get("last_seen", ""),
+                        "chat_name": "",
+                        "chat_type": "private",
+                        "display_name": "",
                     })
+
+    alias_store = getattr(gateway, "chat_aliases", None)
+    if alias_store:
+        for entry in results:
+            ch = entry.get("channel_id", "")
+            cid = entry.get("chat_id", "")
+            if ch and cid:
+                a = alias_store.get_alias(ch, cid)
+                if a:
+                    entry["alias"] = a
 
     return {"channels": results}
 

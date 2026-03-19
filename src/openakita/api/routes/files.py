@@ -85,13 +85,53 @@ async def serve_file(request: Request, path: str = ""):
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
-    # Determine content type
-    content_type, _ = mimetypes.guess_type(str(full_path))
-    if not content_type:
-        content_type = "application/octet-stream"
+    content_type = _guess_content_type(full_path)
 
+    is_inline = content_type.startswith(("audio/", "video/", "image/"))
     return FileResponse(
         path=str(full_path),
         media_type=content_type,
         filename=full_path.name,
+        content_disposition_type="inline" if is_inline else "attachment",
     )
+
+
+_MIME_FALLBACK: dict[str, str] = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+    ".m4a": "audio/mp4",
+    ".wma": "audio/x-ms-wma",
+    ".opus": "audio/opus",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+    ".mov": "video/quicktime",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".pdf": "application/pdf",
+}
+
+
+def _guess_content_type(path: Path) -> str:
+    """Guess MIME type with a built-in fallback table for common media formats.
+
+    Python's mimetypes module reads from the Windows registry, which can be
+    unreliable (missing entries, uppercase extensions, custom associations).
+    We try mimetypes first, then fall back to our own table using the
+    lowercased extension.
+    """
+    ct, _ = mimetypes.guess_type(str(path))
+    if ct:
+        return ct
+    ext = path.suffix.lower()
+    return _MIME_FALLBACK.get(ext, "application/octet-stream")

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   IconClock,
   DotGreen, DotGray, DotYellow, DotRed, DotBlueProcessing,
+  IM_LOGO_MAP,
 } from "../icons";
 import { safeFetch } from "../providers";
 import { IS_WEB, onWsEvent } from "../platform";
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Loader2, RefreshCw, Plus, Trash2, Pencil, Power, PowerOff, Zap, Search, CalendarX2, SearchX, Info, AlertTriangle } from "lucide-react";
@@ -48,6 +49,10 @@ type IMChannel = {
   chat_id: string;
   user_id: string | null;
   last_active: string;
+  chat_name?: string;
+  chat_type?: string;
+  display_name?: string;
+  alias?: string;
 };
 
 // Frontend-only schedule mode; maps to backend trigger_type (once/interval/cron)
@@ -102,20 +107,61 @@ function pad2(n: number): string { return n.toString().padStart(2, "0"); }
 
 const CHANNEL_LABELS: Record<string, string> = {
   telegram: "Telegram",
+  dingtalk: "钉钉",
+  feishu: "飞书",
+  wework: "企业微信",
+  wework_ws: "企业微信",
+  wework_bot: "企业微信",
+  qqbot: "QQ",
+  onebot: "QQ(OneBot)",
+  onebot_reverse: "QQ(OneBot)",
   wechat: "微信",
   discord: "Discord",
   slack: "Slack",
-  dingtalk: "钉钉",
-  feishu: "飞书",
   whatsapp: "WhatsApp",
   web: "Web",
 };
 
-function formatChannelLabel(channelId: string, chatId: string): string {
-  const platform = CHANNEL_LABELS[channelId.toLowerCase()] || channelId;
+function extractPlatformBase(channelId: string): string {
+  return channelId.split(":")[0];
+}
+
+function extractPlatformLabel(channelId: string): string {
+  const base = extractPlatformBase(channelId);
+  return CHANNEL_LABELS[base.toLowerCase()] || base;
+}
+
+function extractBotName(channelId: string): string {
+  const parts = channelId.split(":");
+  return parts.length > 1 ? parts.slice(1).join(":") : "";
+}
+
+function shortChatId(chatId: string): string {
+  if (!chatId) return "";
+  return chatId.length > 16 ? chatId.slice(0, 8) + "…" + chatId.slice(-6) : chatId;
+}
+
+function formatChannelLabel(channelId: string, chatId: string, ch?: IMChannel): string {
+  if (ch) {
+    const typeIcon = ch.chat_type === "group" ? "👥 " : "💬 ";
+    const name = ch.alias || ch.chat_name || shortChatId(ch.chat_id);
+    return typeIcon + name;
+  }
+  const platform = extractPlatformLabel(channelId);
   if (!chatId) return platform;
-  const shortChat = chatId.length > 16 ? chatId.slice(0, 8) + "…" + chatId.slice(-6) : chatId;
-  return `${platform} · ${shortChat}`;
+  return `${platform} · ${shortChatId(chatId)}`;
+}
+
+function groupChannelsByPlatform(channels: IMChannel[]): Record<string, IMChannel[]> {
+  const groups: Record<string, IMChannel[]> = {};
+  for (const ch of channels) {
+    const platform = extractPlatformLabel(ch.channel_id);
+    const botName = extractBotName(ch.channel_id);
+    const key = botName ? `${platform} · ${botName}` : platform;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(ch);
+  }
+  return groups;
 }
 
 function safeInt(s: string, fallback: number): number {
@@ -490,8 +536,8 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
 
   const statusDotTip = (status: string): string => {
     const map: Record<string, string> = {
-      pending: "等待中", scheduled: "已调度", running: "执行中",
-      completed: "已完成", failed: "失败", disabled: "已禁用", cancelled: "已取消",
+      pending: t("scheduler.statusPending"), scheduled: t("scheduler.statusScheduled"), running: t("scheduler.statusRunning"),
+      completed: t("scheduler.statusCompleted"), failed: t("scheduler.statusFailed"), disabled: t("scheduler.statusDisabled"), cancelled: t("scheduler.statusCancelled"),
     };
     return map[status] || status;
   };
@@ -538,10 +584,10 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
   // ── Not running ──
   if (!serviceRunning) {
     return (
-      <div className="imViewEmpty">
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconClock size={48} />
-        <div style={{ marginTop: 12, fontWeight: 600 }}>计划任务</div>
-        <div style={{ marginTop: 4, opacity: 0.5, fontSize: 13 }}>后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-3 font-semibold">{t("scheduler.title")}</div>
+        <div className="mt-1 text-xs opacity-50">{t("scheduler.serviceNotRunning")}</div>
       </div>
     );
   }
@@ -586,20 +632,20 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
             <Label>{t("scheduler.runAt")}</Label>
             <div className="flex items-center gap-1.5">
               <Select value={curY ? String(curY) : ""} onValueChange={v => updateRunAt(parseInt(v), curMo || defMo, curD || defD, curH, curM)}>
-                <SelectTrigger className="w-[82px]"><SelectValue placeholder="年" /></SelectTrigger>
+                <SelectTrigger className="w-[82px]"><SelectValue placeholder={t("scheduler.unitYear")} /></SelectTrigger>
                 <SelectContent>{yearOptions.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
               </Select>
-              <span className="text-xs text-muted-foreground">年</span>
+              <span className="text-xs text-muted-foreground">{t("scheduler.unitYear")}</span>
               <Select value={curMo ? String(curMo) : ""} onValueChange={v => updateRunAt(curY || defY, parseInt(v), curD || defD, curH, curM)}>
-                <SelectTrigger className="w-[68px]"><SelectValue placeholder="月" /></SelectTrigger>
+                <SelectTrigger className="w-[68px]"><SelectValue placeholder={t("scheduler.unitMonth")} /></SelectTrigger>
                 <SelectContent>{monthOptions.map(m => <SelectItem key={m} value={String(m)}>{pad2(m)}</SelectItem>)}</SelectContent>
               </Select>
-              <span className="text-xs text-muted-foreground">月</span>
+              <span className="text-xs text-muted-foreground">{t("scheduler.unitMonth")}</span>
               <Select value={curD ? String(curD) : ""} onValueChange={v => updateRunAt(curY || defY, curMo || defMo, parseInt(v), curH, curM)}>
-                <SelectTrigger className="w-[68px]"><SelectValue placeholder="日" /></SelectTrigger>
+                <SelectTrigger className="w-[68px]"><SelectValue placeholder={t("scheduler.unitDay")} /></SelectTrigger>
                 <SelectContent>{dayOptions.map(d => <SelectItem key={d} value={String(d)}>{pad2(d)}</SelectItem>)}</SelectContent>
               </Select>
-              <span className="text-xs text-muted-foreground mr-1">日</span>
+              <span className="text-xs text-muted-foreground mr-1">{t("scheduler.unitDay")}</span>
               <Select value={String(curH)} onValueChange={v => updateRunAt(curY || defY, curMo || defMo, curD || defD, parseInt(v), curM)}>
                 <SelectTrigger className="w-[68px]"><SelectValue /></SelectTrigger>
                 <SelectContent>{hourOptions.map(h => <SelectItem key={h} value={String(h)}>{pad2(h)}</SelectItem>)}</SelectContent>
@@ -833,7 +879,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                     <Info size={14} className="text-muted-foreground cursor-help shrink-0" />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-[260px]">
-                    {t("scheduler.channelTooltip", "选择一个已连接的 IM 通道，任务执行结果将自动推送到该通道")}
+                    {t("scheduler.channelTooltip")}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -859,15 +905,39 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                     <SelectTrigger className={cn("w-full", isStale && "border-amber-400 dark:border-amber-600")}>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper" className="max-h-[300px]">
                       <SelectItem value="__none__">
-                        {t("scheduler.channelNone", "不推送通知")}
+                        {t("scheduler.channelNone")}
                       </SelectItem>
-                      {channels.map(ch => (
-                        <SelectItem key={`${ch.channel_id}|${ch.chat_id}`} value={`${ch.channel_id}|${ch.chat_id}`}>
-                          {formatChannelLabel(ch.channel_id, ch.chat_id)}
-                        </SelectItem>
-                      ))}
+                      {(() => {
+                        const grouped = groupChannelsByPlatform(channels);
+                        return Object.entries(grouped).map(([platform, items], gi) => {
+                          const base = items[0] ? extractPlatformBase(items[0].channel_id).toLowerCase() : "";
+                          const LogoIcon = IM_LOGO_MAP[base];
+                          return (
+                            <SelectGroup key={platform}>
+                              {gi > 0 && <div className="mx-2 my-1 h-px bg-border" />}
+                              <SelectLabel className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground px-2">
+                                {LogoIcon && <LogoIcon size={14} />}
+                                {platform}
+                              </SelectLabel>
+                              {items.map(ch => {
+                                const itemBase = extractPlatformBase(ch.channel_id).toLowerCase();
+                                const ItemLogo = IM_LOGO_MAP[itemBase];
+                                return (
+                                  <SelectItem key={`${ch.channel_id}|${ch.chat_id}`} value={`${ch.channel_id}|${ch.chat_id}`}>
+                                    <span className="flex items-center gap-1.5">
+                                      {ItemLogo && <ItemLogo size={14} />}
+                                      {ch.chat_type === "group" ? "👥" : "💬"}
+                                      <span>{ch.alias || ch.chat_name || shortChatId(ch.chat_id)}</span>
+                                    </span>
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectGroup>
+                          );
+                        });
+                      })()}
                       {isStale && (
                         <SelectItem value={currentKey}>
                           ⚠ {formatChannelLabel(form.channel_id, form.chat_id)}
@@ -878,12 +948,12 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   {isStale && (
                     <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
                       <AlertTriangle size={12} className="shrink-0" />
-                      {t("scheduler.channelStale", "该通道当前不在线或已被移除，任务执行时将无法推送通知")}
+                      {t("scheduler.channelStale")}
                     </p>
                   )}
                   {channels.length === 0 && !currentKey && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      {t("scheduler.channelEmpty", "暂无可用通道，请先在「IM 通道」中连接至少一个消息平台")}
+                      {t("scheduler.channelEmpty")}
                     </p>
                   )}
                 </>
@@ -970,27 +1040,25 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   >
                     <Zap size={13} />
                   </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => openEdit(task)}
+                    title={t("scheduler.editTask")}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <Pencil size={13} />
+                  </Button>
                   {task.deletable && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => openEdit(task)}
-                        title={t("scheduler.editTask")}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <Pencil size={13} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => deleteTask(task)}
-                        title={t("scheduler.delete")}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 size={13} />
-                      </Button>
-                    </>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => deleteTask(task)}
+                      title={t("scheduler.delete")}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 size={13} />
+                    </Button>
                   )}
                 </div>
               </div>
@@ -1018,7 +1086,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   <span style={{ color: "var(--text)" }}>
                     {task.channel_id
                       ? formatChannelLabel(task.channel_id, task.chat_id || "")
-                      : t("scheduler.channelNone", "不推送通知")}
+                      : t("scheduler.channelNone")}
                   </span>
                 </div>
                 <div>
@@ -1054,10 +1122,10 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
         display: "flex", alignItems: "center", justifyContent: "center",
         gap: 20, padding: "16px 0 4px", fontSize: 12, color: "var(--muted)",
       }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotGreen size={7} /> 已调度</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotBlueProcessing size={7} /> 执行中</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotRed size={7} /> 失败</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotGray size={7} /> 已完成 / 已禁用</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotGreen size={7} /> {t("scheduler.statusScheduled")}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotBlueProcessing size={7} /> {t("scheduler.statusRunning")}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotRed size={7} /> {t("scheduler.statusFailed")}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><DotGray size={7} /> {t("scheduler.statusCompleted")} / {t("scheduler.statusDisabled")}</span>
       </div>
     </div>
   );

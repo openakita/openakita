@@ -22,6 +22,7 @@ from .providers.anthropic import AnthropicProvider
 from .providers.base import LLMProvider
 from .providers.openai import OpenAIProvider
 from .providers.openai_responses import OpenAIResponsesProvider
+from ..core.errors import UserCancelledError
 from .types import (
     AllEndpointsFailedError,
     AudioBlock,
@@ -299,6 +300,7 @@ class LLMClient:
         enable_thinking: bool = False,
         thinking_depth: str | None = None,
         conversation_id: str | None = None,
+        cancel_event: asyncio.Event | None = None,
         **kwargs,
     ) -> LLMResponse:
         """
@@ -441,7 +443,7 @@ class LLMClient:
                     )
 
         if eligible:
-            return await self._try_endpoints(eligible, request, allow_failover=allow_failover)
+            return await self._try_endpoints(eligible, request, allow_failover=allow_failover, cancel_event=cancel_event)
 
         # eligible 为空 — 使用公共降级策略
         providers = await self._resolve_providers_with_fallback(
@@ -454,8 +456,9 @@ class LLMClient:
             require_pdf=require_pdf,
             conversation_id=conversation_id,
             prefer_endpoint=self._last_success_endpoint if has_tool_context else None,
+            cancel_event=cancel_event,
         )
-        return await self._try_endpoints(providers, request, allow_failover=allow_failover)
+        return await self._try_endpoints(providers, request, allow_failover=allow_failover, cancel_event=cancel_event)
 
     async def chat_stream(
         self,
@@ -619,6 +622,7 @@ class LLMClient:
         require_pdf: bool = False,
         conversation_id: str | None = None,
         prefer_endpoint: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> list[LLMProvider]:
         """公共分层降级策略 — 供 chat() 和 chat_stream() 复用
 
@@ -727,11 +731,26 @@ class LLMClient:
                 if transient_like:
                     min_transient_cd = min(p.cooldown_remaining for p in transient_like)
                     if 0 < min_transient_cd <= 35:
+                        if cancel_event and cancel_event.is_set():
+                            raise UserCancelledError(reason="用户请求停止", source="llm_cooldown_wait")
                         logger.info(
                             f"[LLM] All endpoints in cooldown. "
                             f"Waiting {min_transient_cd}s for transient recovery..."
                         )
-                        await asyncio.sleep(min(min_transient_cd + 1, 35))
+                        wait_seconds = min(min_transient_cd + 1, 35)
+                        if cancel_event:
+                            try:
+                                await asyncio.wait_for(
+                                    cancel_event.wait(), timeout=wait_seconds,
+                                )
+                                raise UserCancelledError(
+                                    reason="用户请求停止",
+                                    source="llm_cooldown_wait",
+                                )
+                            except asyncio.TimeoutError:
+                                pass
+                        else:
+                            await asyncio.sleep(wait_seconds)
                         # 等待后重新筛选
                         eligible = self._filter_eligible_endpoints(
                             require_tools=require_tools,
@@ -920,14 +939,76 @@ class LLMClient:
         if override_provider and override_provider in eligible:
             eligible.remove(override_provider)
             eligible.insert(0, override_provider)
+        elif override_provider and override_provider not in eligible and require_thinking:
+            # 用户明确选择的端点仅因缺少 thinking 能力被排除时，
+            # 将其追加到末尾作为 non-thinking fallback。
+            # 这样当所有 thinking 端点都失败后，可以在同一轮 _try_endpoints 内
+            # 立即回落到用户选的端点，而不是走完整的降级重试周期。
+            cfg = override_provider.config
+            passes_other = (
+                (not require_tools or cfg.has_capability("tools"))
+                and (not require_vision or cfg.has_capability("vision"))
+                and (not require_video or cfg.has_capability("video"))
+                and (not require_audio or cfg.has_capability("audio"))
+                and (not require_pdf or cfg.has_capability("pdf"))
+            )
+            if passes_other:
+                eligible.append(override_provider)
+                logger.info(
+                    f"[LLM] User-selected endpoint {override_provider.name} "
+                    f"lacks thinking capability; appended as non-thinking fallback"
+                )
 
         return eligible
+
+    @staticmethod
+    async def _race_with_cancel(
+        awaitable,
+        cancel_event: asyncio.Event,
+    ) -> LLMResponse:
+        """Race an awaitable against a cancellation event.
+
+        Returns the awaitable's result if it completes first.
+        Raises UserCancelledError if cancel_event fires first,
+        after cleanly cancelling the in-flight task.
+        """
+        task = asyncio.ensure_future(awaitable)
+        cancel_waiter = asyncio.ensure_future(cancel_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                [task, cancel_waiter],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+                try:
+                    await p
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            if task in done:
+                return task.result()
+
+            raise UserCancelledError(
+                reason="用户请求停止",
+                source="llm_request_cancelled",
+            )
+        except BaseException:
+            for t in (task, cancel_waiter):
+                if not t.done():
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            raise
 
     async def _try_endpoints(
         self,
         providers: list[LLMProvider],
         request: LLMRequest,
         allow_failover: bool = True,
+        cancel_event: asyncio.Event | None = None,
     ) -> LLMResponse:
         """尝试多个端点
 
@@ -970,7 +1051,23 @@ class LLMClient:
         providers_to_try = providers
 
         for i, provider in enumerate(providers_to_try):
+            if cancel_event and cancel_event.is_set():
+                raise UserCancelledError(reason="用户请求停止", source="llm_try_endpoints")
+
+            # 当端点不支持 thinking 但请求要求 thinking 时，临时降级
+            _thinking_downgraded = False
+            if request.enable_thinking and not provider.config.has_capability("thinking"):
+                request.enable_thinking = False
+                _thinking_downgraded = True
+                logger.info(
+                    f"[LLM] endpoint={provider.name} thinking soft-disabled "
+                    f"(endpoint lacks thinking capability)"
+                )
+
             for attempt in range(max_attempts):
+                if cancel_event and cancel_event.is_set():
+                    raise UserCancelledError(reason="用户请求停止", source="llm_try_endpoints")
+
                 try:
                     tools_count = len(request.tools) if request.tools else 0
                     logger.info(
@@ -978,7 +1075,12 @@ class LLMClient:
                         f"action=request tools={tools_count}"
                     )
 
-                    response = await provider.chat(request)
+                    if cancel_event:
+                        response = await self._race_with_cancel(
+                            provider.chat(request), cancel_event,
+                        )
+                    else:
+                        response = await provider.chat(request)
 
                     # 成功：重置连续失败计数
                     provider.record_success()
@@ -997,6 +1099,9 @@ class LLMClient:
 
                     response.endpoint_name = provider.name
                     return response
+
+                except (UserCancelledError, asyncio.CancelledError):
+                    raise
 
                 except AuthenticationError as e:
                     # 认证/配额错误：长冷静期，直接切换（不重试当前端点）
@@ -1151,6 +1256,10 @@ class LLMClient:
                         f"(category={provider.error_category})"
                     )
                     break
+
+            # 恢复 thinking 标记，确保下一个端点拿到原始请求参数
+            if _thinking_downgraded:
+                request.enable_thinking = True
 
             # 切换到下一个端点
             if i < len(providers_to_try) - 1:

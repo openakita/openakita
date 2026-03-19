@@ -110,8 +110,8 @@ export function Sidebar({
         <div className={`navItem ${view === "status" ? "navItemActive" : ""}`} onClick={async () => { onViewChange("status"); try { await onRefreshStatus(); } catch { /* ignore */ } }} role="button" tabIndex={0} title={t("sidebar.status")}>
           <IconStatus size={16} /> {!collapsed && <span>{t("sidebar.status")}</span>}
         </div>
-        <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats", "Token 统计")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
-          <IconZap size={16} /> {!collapsed && <span>{t("sidebar.tokenStats", "Token 统计")}</span>}
+        <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
+          <IconZap size={16} /> {!collapsed && <span>{t("sidebar.tokenStats")}</span>}
         </div>
         {multiAgentEnabled && (
           <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
@@ -262,7 +262,7 @@ export function Sidebar({
                 onMouseLeave={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "none"; }}
               >
                 <IconBug size={12} />
-                <span className="feedbackText" style={{ fontSize: 11 }}>反馈</span>
+                <span className="feedbackText" style={{ fontSize: 11 }}>{t("feedback.trigger")}</span>
               </span>
             )}
             <span

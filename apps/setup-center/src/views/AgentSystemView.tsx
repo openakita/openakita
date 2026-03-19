@@ -252,9 +252,9 @@ export function AgentSystemView(props: AgentSystemViewProps) {
             {FT({ k: "AGENT_NAME", label: t("config.agentName"), placeholder: "OpenAkita" })}
             {FT({ k: "MAX_ITERATIONS", label: t("config.agentMaxIter"), placeholder: "300", help: t("config.agentMaxIterHelp") })}
             {FS({ k: "THINKING_MODE", label: t("config.agentThinking"), options: [
-              { value: "auto", label: "auto (自动判断)" },
-              { value: "always", label: "always (始终思考)" },
-              { value: "never", label: "never (从不思考)" },
+              { value: "auto", label: t("config.agentThinkingAuto") },
+              { value: "always", label: t("config.agentThinkingAlways") },
+              { value: "never", label: t("config.agentThinkingNever") },
             ] })}
           </div>
         </Section>

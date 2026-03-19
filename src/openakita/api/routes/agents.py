@@ -17,6 +17,31 @@ _deleting_lock = asyncio.Lock()
 VALID_BOT_TYPES = frozenset({"feishu", "telegram", "dingtalk", "wework", "wework_ws", "onebot", "onebot_reverse", "qqbot"})
 
 
+def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:
+    """Clear ``_bot_default_agent`` metadata on sessions belonging to *bot_cfg*.
+
+    This forces ``_apply_bot_agent_profile`` to re-apply the (new)
+    ``agent_profile_id`` on the next message for each affected session.
+    """
+    try:
+        from openakita.main import get_message_gateway, _bot_channel_name
+        gw = get_message_gateway()
+        if gw is None or gw.session_manager is None:
+            return
+        channel_name = _bot_channel_name(bot_cfg)
+        sessions = gw.session_manager.list_sessions(channel=channel_name)
+        cleared = 0
+        for s in sessions:
+            if s.get_metadata("_bot_default_agent") is not None:
+                s.metadata.pop("_bot_default_agent", None)
+                cleared += 1
+        if cleared:
+            gw.session_manager.mark_dirty()
+            logger.info(f"[Agents API] Cleared _bot_default_agent on {cleared} sessions for {channel_name}")
+    except Exception as e:
+        logger.warning(f"[Agents API] Failed to invalidate bot agent sessions: {e}")
+
+
 # ─── Pydantic models ─────────────────────────────────────────────────────
 
 
@@ -130,6 +155,8 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
         raise HTTPException(status_code=404, detail=f"bot '{bot_id}' not found")
 
     bot = dict(bots[idx])
+    old_agent_profile = bot.get("agent_profile_id", "default")
+
     if body.type is not None:
         if body.type not in VALID_BOT_TYPES:
             raise HTTPException(
@@ -150,6 +177,10 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
     settings.im_bots = bots
     runtime_state.save()
     logger.info(f"[Agents API] Updated bot: {bot_id}")
+
+    new_agent_profile = bot.get("agent_profile_id", "default")
+    if new_agent_profile != old_agent_profile:
+        _invalidate_bot_agent_sessions(bot)
 
     from openakita.main import apply_im_bot, remove_im_bot
     if bot.get("enabled", True):

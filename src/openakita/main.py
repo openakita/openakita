@@ -114,7 +114,7 @@ _CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
     "feishu": [("lark_oapi", "lark-oapi")],
     "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
     "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
-    "wework_ws": [("websockets", "websockets")],
+    "wework_ws": [("websockets", "websockets"), ("cryptography", "cryptography")],
     "onebot": [("websockets", "websockets")],
     "onebot_reverse": [("websockets", "websockets")],
     "qqbot": [("botpy", "qq-botpy"), ("pilk", "pilk")],
@@ -666,22 +666,34 @@ async def start_im_channels(agent_or_master):
 
     # Telegram
     if settings.telegram_enabled and settings.telegram_bot_token:
-        try:
-            from .channels.adapters import TelegramAdapter
-
-            telegram = TelegramAdapter(
-                bot_token=settings.telegram_bot_token,
-                webhook_url=settings.telegram_webhook_url or None,
-                media_dir=settings.project_root / "data" / "media" / "telegram",
-                pairing_code=settings.telegram_pairing_code or None,
-                require_pairing=settings.telegram_require_pairing,
-                proxy=settings.telegram_proxy or None,
+        _tg_dup = any(
+            b.get("type") == "telegram"
+            and b.get("credentials", {}).get("bot_token") == settings.telegram_bot_token
+            and b.get("enabled", True)
+            for b in (settings.im_bots or [])
+        )
+        if _tg_dup:
+            logger.info(
+                "Telegram adapter skipped: im_bots already contains a telegram bot "
+                f"with the same bot_token ({settings.telegram_bot_token[:8]}...)"
             )
-            await _message_gateway.register_adapter(telegram)
-            adapters_started.append("telegram")
-            logger.info("Telegram adapter registered")
-        except Exception as e:
-            logger.error(f"Failed to start Telegram adapter: {e}")
+        else:
+            try:
+                from .channels.adapters import TelegramAdapter
+
+                telegram = TelegramAdapter(
+                    bot_token=settings.telegram_bot_token,
+                    webhook_url=settings.telegram_webhook_url or None,
+                    media_dir=settings.project_root / "data" / "media" / "telegram",
+                    pairing_code=settings.telegram_pairing_code or None,
+                    require_pairing=settings.telegram_require_pairing,
+                    proxy=settings.telegram_proxy or None,
+                )
+                await _message_gateway.register_adapter(telegram)
+                adapters_started.append("telegram")
+                logger.info("Telegram adapter registered")
+            except Exception as e:
+                logger.error(f"Failed to start Telegram adapter: {e}")
 
     # 飞书
     if settings.feishu_enabled and settings.feishu_app_id:
@@ -766,18 +778,30 @@ async def start_im_channels(agent_or_master):
 
     # 钉钉
     if settings.dingtalk_enabled and settings.dingtalk_client_id:
-        try:
-            from .channels.adapters import DingTalkAdapter
-
-            dingtalk = DingTalkAdapter(
-                app_key=settings.dingtalk_client_id,
-                app_secret=settings.dingtalk_client_secret,
+        _ding_dup = any(
+            b.get("type") == "dingtalk"
+            and b.get("credentials", {}).get("client_id") == settings.dingtalk_client_id
+            and b.get("enabled", True)
+            for b in (settings.im_bots or [])
+        )
+        if _ding_dup:
+            logger.info(
+                "DingTalk adapter skipped: im_bots already contains a dingtalk bot "
+                f"with the same client_id ({settings.dingtalk_client_id[:8]}...)"
             )
-            await _message_gateway.register_adapter(dingtalk)
-            adapters_started.append("dingtalk")
-            logger.info("DingTalk adapter registered")
-        except Exception as e:
-            logger.error(f"Failed to start DingTalk adapter: {e}")
+        else:
+            try:
+                from .channels.adapters import DingTalkAdapter
+
+                dingtalk = DingTalkAdapter(
+                    app_key=settings.dingtalk_client_id,
+                    app_secret=settings.dingtalk_client_secret,
+                )
+                await _message_gateway.register_adapter(dingtalk)
+                adapters_started.append("dingtalk")
+                logger.info("DingTalk adapter registered")
+            except Exception as e:
+                logger.error(f"Failed to start DingTalk adapter: {e}")
 
     # OneBot (通用协议)
     if settings.onebot_enabled:
@@ -800,22 +824,34 @@ async def start_im_channels(agent_or_master):
 
     # QQ 官方机器人
     if settings.qqbot_enabled and settings.qqbot_app_id:
-        try:
-            from .channels.adapters import QQBotAdapter
-
-            qqbot = QQBotAdapter(
-                app_id=settings.qqbot_app_id,
-                app_secret=settings.qqbot_app_secret,
-                sandbox=settings.qqbot_sandbox,
-                mode=settings.qqbot_mode,
-                webhook_port=settings.qqbot_webhook_port,
-                webhook_path=settings.qqbot_webhook_path,
+        _qq_dup = any(
+            b.get("type") == "qqbot"
+            and b.get("credentials", {}).get("app_id") == settings.qqbot_app_id
+            and b.get("enabled", True)
+            for b in (settings.im_bots or [])
+        )
+        if _qq_dup:
+            logger.info(
+                "QQ Bot adapter skipped: im_bots already contains a qqbot bot "
+                f"with the same app_id ({settings.qqbot_app_id[:8]}...)"
             )
-            await _message_gateway.register_adapter(qqbot)
-            adapters_started.append("qqbot")
-            logger.info("QQ Official Bot adapter registered")
-        except Exception as e:
-            logger.error(f"Failed to start QQ Official Bot adapter: {e}")
+        else:
+            try:
+                from .channels.adapters import QQBotAdapter
+
+                qqbot = QQBotAdapter(
+                    app_id=settings.qqbot_app_id,
+                    app_secret=settings.qqbot_app_secret,
+                    sandbox=settings.qqbot_sandbox,
+                    mode=settings.qqbot_mode,
+                    webhook_port=settings.qqbot_webhook_port,
+                    webhook_path=settings.qqbot_webhook_path,
+                )
+                await _message_gateway.register_adapter(qqbot)
+                adapters_started.append("qqbot")
+                logger.info("QQ Official Bot adapter registered")
+            except Exception as e:
+                logger.error(f"Failed to start QQ Official Bot adapter: {e}")
 
     # Multi-bot: create additional adapters from im_bots config
     if settings.im_bots:

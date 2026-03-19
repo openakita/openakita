@@ -10,11 +10,16 @@ Provides HTTP API for the frontend to manage MCP servers:
 
 from __future__ import annotations
 
-import json
 import logging
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+
+from openakita.tools.mcp_workspace import (
+    add_server_to_workspace,
+    remove_server_from_workspace,
+    sync_tools_after_connect,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +58,8 @@ def _refresh_catalog_text(request: Request):
 def _sync_tools_to_catalog(request: Request, server_name: str, client):
     """连接成功后将运行时工具同步到 catalog 并刷新系统提示"""
     catalog = _get_mcp_catalog(request)
-    tools = client.list_tools(server_name)
-    if catalog and tools:
-        tool_dicts = [
-            {"name": t.name, "description": t.description,
-             "input_schema": t.input_schema}
-            for t in tools
-        ]
-        catalog.sync_tools_from_client(server_name, tool_dicts, force=True)
+    if catalog:
+        sync_tools_after_connect(server_name, client, catalog)
     _refresh_catalog_text(request)
 
 
@@ -97,7 +96,7 @@ async def list_mcp_servers(request: Request):
 
     servers = []
     for name in configured:
-        server_config = client._servers.get(name)
+        server_config = client.get_server_config(name)
         tools = client.list_tools(name)
 
         catalog_info = None
@@ -223,9 +222,11 @@ async def get_mcp_instructions(request: Request, server_name: str):
 @router.post("/api/mcp/servers/add")
 async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     """Add a new MCP server config (persisted to workspace data/mcp/servers/)."""
+    import re
+    from pathlib import Path
+
     from openakita.tools.mcp import VALID_TRANSPORTS
 
-    import re
     if not body.name.strip():
         return {"status": "error", "message": "服务器名称不能为空"}
     if not re.match(r'^[a-zA-Z0-9_-]+$', body.name.strip()):
@@ -237,119 +238,50 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     if body.transport in ("streamable_http", "sse") and not body.url.strip():
         return {"status": "error", "message": f"{body.transport} 模式需要填写 URL"}
 
-    from openakita.config import settings
-
-    name = body.name.strip()
-    server_dir = settings.mcp_config_path / name
-    server_dir.mkdir(parents=True, exist_ok=True)
-
-    # stdio 模式下自动解析相对路径为绝对路径
-    resolved_args = list(body.args)
-    if body.transport == "stdio":
-        from pathlib import Path as _P
-        search_bases = [server_dir, settings.project_root, _P.cwd()]
-        for i, arg in enumerate(resolved_args):
-            if arg.startswith("-") or _P(arg).is_absolute():
-                continue
-            for base in search_bases:
-                candidate = base / arg
-                if candidate.is_file():
-                    resolved_args[i] = str(candidate.resolve())
-                    break
-
-    metadata = {
-        "serverIdentifier": name,
-        "serverName": body.description or name,
-        "command": body.command,
-        "args": resolved_args,
-        "env": body.env,
-        "transport": body.transport,
-        "url": body.url,
-        "autoConnect": body.auto_connect,
-    }
-
-    metadata_file = server_dir / "SERVER_METADATA.json"
-    metadata_file.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
     client = _get_mcp_client(request)
     catalog = _get_mcp_catalog(request)
+    if not client or not catalog:
+        return {"status": "error", "message": "Agent not initialized"}
 
-    if catalog:
-        catalog.scan_mcp_directory(settings.mcp_config_path)
-        catalog.invalidate_cache()
+    from openakita.config import settings
 
-    if client:
-        from openakita.tools.mcp import MCPServerConfig
-        client.add_server(MCPServerConfig(
-            name=name,
-            command=body.command,
-            args=resolved_args,
-            env=body.env,
-            description=body.description,
-            transport=body.transport,
-            url=body.url,
-            cwd=str(server_dir),
-        ))
+    result = await add_server_to_workspace(
+        name=body.name.strip(),
+        transport=body.transport,
+        command=body.command,
+        args=body.args,
+        env=body.env,
+        url=body.url,
+        description=body.description,
+        instructions="",
+        auto_connect=body.auto_connect,
+        config_base_dir=settings.mcp_config_path,
+        search_bases=[settings.project_root, Path.cwd()],
+        client=client,
+        catalog=catalog,
+    )
 
     _refresh_catalog_text(request)
-
-    # 添加后尝试连接，获取工具信息
-    connect_result = None
-    if client:
-        result = await client.connect(name)
-        if result.success:
-            _sync_tools_to_catalog(request, name, client)
-            connect_result = {"connected": True, "tool_count": result.tool_count}
-        else:
-            connect_result = {"connected": False, "error": result.error}
-
-    return {
-        "status": "ok",
-        "server": name,
-        "path": str(server_dir),
-        "connect_result": connect_result,
-    }
+    return result
 
 
 @router.delete("/api/mcp/servers/{server_name}")
 async def remove_mcp_server(request: Request, server_name: str):
     """Remove an MCP server config (only workspace configs, not built-in)."""
+    client = _get_mcp_client(request)
+    catalog = _get_mcp_catalog(request)
+    if not client or not catalog:
+        return {"status": "error", "message": "Agent not initialized"}
+
     from openakita.config import settings
 
-    client = _get_mcp_client(request)
-    if client and server_name in client.list_connected():
-        await client.disconnect(server_name)
-
-    workspace_dir = settings.mcp_config_path / server_name
-    builtin_dir = settings.mcp_builtin_path / server_name
-
-    removed = False
-    if workspace_dir.exists():
-        import shutil
-        shutil.rmtree(workspace_dir, ignore_errors=True)
-        removed = True
-    elif builtin_dir.exists():
-        return {"status": "error", "message": f"{server_name} is a built-in server and cannot be removed"}
-
-    if client:
-        client._servers.pop(server_name, None)
-        client._connections.pop(server_name, None)
-        prefix = f"{server_name}:"
-        for key in [k for k in client._tools if k.startswith(prefix)]:
-            del client._tools[key]
-        for key in [k for k in client._resources if k.startswith(prefix)]:
-            del client._resources[key]
-        for key in [k for k in client._prompts if k.startswith(prefix)]:
-            del client._prompts[key]
-
-    catalog = _get_mcp_catalog(request)
-    if catalog:
-        catalog._servers = [s for s in catalog._servers if s.identifier != server_name]
-        catalog.invalidate_cache()
+    result = await remove_server_from_workspace(
+        server_name,
+        config_base_dir=settings.mcp_config_path,
+        builtin_dir=settings.mcp_builtin_path,
+        client=client,
+        catalog=catalog,
+    )
 
     _refresh_catalog_text(request)
-
-    return {"status": "ok", "server": server_name, "removed": removed}
+    return result

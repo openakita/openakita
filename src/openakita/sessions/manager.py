@@ -173,6 +173,7 @@ class SessionManager:
         config: SessionConfig | None = None,
         chat_type: str = "private",
         display_name: str = "",
+        chat_name: str = "",
     ) -> Session | None:
         """
         获取或创建会话
@@ -185,7 +186,8 @@ class SessionManager:
             create_if_missing: 如果不存在是否创建
             config: 会话配置（创建时使用）
             chat_type: 聊天类型 ("group" | "private")
-            display_name: 用户昵称或群名
+            display_name: 用户昵称
+            chat_name: 聊天/群组名称
 
         Returns:
             Session 或 None
@@ -206,6 +208,7 @@ class SessionManager:
                 session = self._create_session(
                     channel, chat_id, user_id, thread_id, config,
                     chat_type=chat_type, display_name=display_name,
+                    chat_name=chat_name,
                 )
                 self._sessions[session_key] = session
                 logger.info(f"Created new session: {session_key}")
@@ -230,6 +233,7 @@ class SessionManager:
         config: SessionConfig | None = None,
         chat_type: str = "private",
         display_name: str = "",
+        chat_name: str = "",
     ) -> Session:
         """创建新会话"""
         # 合并配置
@@ -245,6 +249,7 @@ class SessionManager:
             config=session_config,
             chat_type=chat_type,
             display_name=display_name,
+            chat_name=chat_name,
         )
 
         # 设置记忆范围

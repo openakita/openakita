@@ -451,6 +451,11 @@ class AgentState:
             task = self._tasks.get(session_id) if session_id else self.current_task
         if task:
             task.request_skip(reason)
+        else:
+            logger.warning(
+                f"[State] skip_current_step: no task found for session {session_id}, "
+                f"active sessions: {list(self._tasks.keys())}"
+            )
 
     async def insert_user_message(self, text: str, session_id: str | None = None) -> None:
         """向任务注入用户消息"""
@@ -459,6 +464,11 @@ class AgentState:
             task = self._tasks.get(session_id) if session_id else self.current_task
         if task:
             await task.add_user_insert(text)
+        else:
+            logger.warning(
+                f"[State] insert_user_message: no task found for session {session_id}, "
+                f"active sessions: {list(self._tasks.keys())}"
+            )
 
     @property
     def is_task_cancelled(self) -> bool:

@@ -45,6 +45,14 @@ hidden_imports_core = [
     "openakita.channels.gateway",
     "openakita.channels.base",
     "openakita.channels.types",
+    "openakita.channels.registry",
+    "openakita.channels.group_response",
+    "openakita.channels.policy",
+    "openakita.channels.bot_config",
+    "openakita.channels.chat_aliases",
+    "openakita.channels.retry",
+    "openakita.channels.text_splitter",
+    "openakita.channels.media_parser",
     "openakita.channels.adapters",
     "openakita.channels.adapters.telegram",
     "openakita.channels.adapters.feishu",
@@ -52,6 +60,7 @@ hidden_imports_core = [
     "openakita.channels.adapters.onebot",
     "openakita.channels.adapters.qq_official",
     "openakita.channels.adapters.wework_bot",
+    "openakita.channels.adapters.wework_ws",
     "openakita.channels.media",
     "openakita.channels.media.handler",
     "openakita.channels.media.audio_utils",
@@ -62,6 +71,9 @@ hidden_imports_core = [
     "openakita.evolution.installer",
     "openakita.setup_center",
     "openakita.setup_center.bridge",
+    "openakita.setup.qqbot_onboard",
+    "openakita.setup.wecom_onboard",
+    "openakita.setup.feishu_onboard",
     "openakita.mcp_servers",
     "openakita.mcp_servers.desktop_control",
     "openakita.mcp_servers.web_search",
@@ -77,6 +89,8 @@ hidden_imports_core = [
     "openakita.hub.agent_hub_client",
     "openakita.hub.skill_store_client",
     "openakita.agents.packager",
+    "openakita.agents.presets",
+    "openakita.agents.profile",
     # -- tools.handlers / definitions (新增模块需显式声明，避免缓存遗漏) --
     "openakita.tools.handlers.agent_hub",
     "openakita.tools.handlers.skill_store",
@@ -246,6 +260,10 @@ hidden_imports_core = [
     "nacl",                     # PyNaCl: ed25519 签名验证 (QQ 官方机器人)
     "nacl.signing",             # 签名验证
     "nacl.exceptions",          # 签名异常
+    "cryptography",             # cryptography: AES-256-CBC 文件解密 (wework_ws)
+    "cryptography.hazmat",
+    "cryptography.hazmat.primitives",
+    "cryptography.hazmat.primitives.ciphers",
     # -- 浏览器自动化 (原为外置模块，现直接打包以提高用户体验) --
     "playwright",               # Playwright 浏览器自动化 (~20MB Python 包)
     "playwright.async_api",
@@ -502,6 +520,14 @@ if (web_dist_dir / "index.html").exists():
 else:
     print("[spec] INFO: dist-web not found, web remote access will not be available")
 
+# openakita source code: needed by bridge subcommand which runs via the bundled
+# system python.exe (not the frozen executable), so it needs importable .py files
+# in _internal/openakita/
+_openakita_src = SRC_DIR / "openakita"
+if _openakita_src.exists():
+    datas.append((str(_openakita_src), "openakita"))
+    print(f"[spec] Bundling openakita source: {_openakita_src}")
+
 # Provider list (single source of truth, shared by frontend and backend)
 # Must be bundled to openakita/llm/registries/ directory, Python reads via Path(__file__).parent
 providers_json = SRC_DIR / "openakita" / "llm" / "registries" / "providers.json"
@@ -551,6 +577,27 @@ try:
     print(f"[spec] Bundling requests_toolbelt: {_rt_dir}")
 except ImportError:
     print("[spec] WARNING: requests_toolbelt not installed")
+
+# httpx 及其传递依赖: bridge.py 子进程通过独立 python.exe 运行（非冻结可执行文件），
+# 只能从 sys.path 上的 loose 文件导入，无法读取 PYZ 归档。
+# 飞书/企微/QQ 扫码 onboard 以及 list-models、health-check 等命令均依赖 httpx。
+_bridge_subprocess_pkgs = [
+    ("httpx", "httpx"),           # HTTP 客户端
+    ("httpcore", "httpcore"),     # httpx 核心传输层
+    ("h11", "h11"),              # HTTP/1.1 协议解析 (httpcore 依赖)
+    ("anyio", "anyio"),          # 异步 I/O (httpx AsyncClient 依赖)
+    ("sniffio", "sniffio"),      # 异步库检测 (anyio 依赖)
+    ("idna", "idna"),            # 国际域名处理 (httpx URL 解析依赖)
+    ("socksio", "socksio"),      # SOCKS 代理支持 (httpx[socks])
+]
+for _imp_name, _pkg_name in _bridge_subprocess_pkgs:
+    try:
+        _mod = __import__(_imp_name)
+        _mod_dir = str(Path(_mod.__file__).parent)
+        datas.append((_mod_dir, _pkg_name))
+        print(f"[spec] Bundling {_pkg_name}: {_mod_dir}")
+    except ImportError:
+        print(f"[spec] WARNING: {_imp_name} not installed, bridge subprocess may fail")
 
 # Built-in Python interpreter + pip (bundled mode can install optional modules without host Python)
 # IMPORTANT: do NOT bundle a venv launcher (it may require pyvenv.cfg at runtime).

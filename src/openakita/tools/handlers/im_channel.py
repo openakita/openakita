@@ -575,9 +575,9 @@ class IMChannelHandler:
                 pass
 
             if not dedupe_key and sha256:
-                dedupe_key = f"{art_type}:{sha256}"
+                dedupe_key = f"content:{sha256}"
             elif not dedupe_key and path:
-                dedupe_key = f"{art_type}:{hashlib.sha1((path + '|' + caption).encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+                dedupe_key = f"path:{hashlib.sha1(path.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
             receipt = {
                 "index": idx,
                 "type": art_type,
@@ -749,9 +749,12 @@ class IMChannelHandler:
             _img_reason = str(e)
         except Exception as e:
             logger.warning(f"[IM] send_image failed for {channel}: {e}")
+            _is_timeout = "timed out" in str(e).lower() or "timeout" in type(e).__name__.lower()
+            if _is_timeout:
+                return f"⚠️ 图片发送超时（可能已发送成功）: {image_path}"
             _img_reason = ""
 
-        # 降级：以文件形式发送图片
+        # 降级：以文件形式发送图片（仅非超时错误才走此路径）
         try:
             message_id = await adapter.send_file(chat_id, image_path, caption)
             logger.info(f"[IM] Sent image as file to {channel}:{chat_id}: {image_path}")

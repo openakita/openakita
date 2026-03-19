@@ -5,8 +5,10 @@
 
 支持的格式：
 - Markdown 图片: ![alt](path_or_url)
+- HTML img 标签: <img src="...">
+- Markdown 链接文件: [filename](path_or_url)（非图片扩展名时视为文件）
 - MEDIA: 指令行: MEDIA: /path/to/file
-- 裸本地路径（以已知图片/文件扩展名结尾的绝对路径独占一行）
+- 裸本地路径（以已知扩展名结尾的绝对路径独占一行）
 
 解析后返回清理过的文本和提取出的媒体路径列表。
 """
@@ -22,11 +24,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac", ".amr"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
 FILE_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".zip", ".rar", ".7z", ".tar", ".gz",
     ".txt", ".csv", ".json", ".xml", ".yaml", ".yml",
-    ".mp3", ".wav", ".ogg", ".mp4", ".avi", ".mov", ".mkv",
 }
 
 MEDIA_LINE_PREFIX = "MEDIA:"
@@ -37,10 +40,24 @@ _RE_MARKDOWN_IMAGE = re.compile(
     r"!\[([^\]]*)\]\(([^)\s]+)\)",
 )
 
+# HTML <img> 标签 — 提取 src 属性
+_RE_HTML_IMG = re.compile(
+    r"""<img\s+[^>]*?src\s*=\s*["']([^"']+)["'][^>]*?/?>""",
+    re.IGNORECASE,
+)
+
+# Markdown 链接: [text](url) — 不匹配 ![img](...) 格式
+_RE_MARKDOWN_LINK = re.compile(
+    r"(?<!!)\[([^\]]+)\]\(([^)\s]+)\)",
+)
+
 _RE_BARE_LOCAL_PATH = re.compile(
     r"^[ \t]*([A-Za-z]:[/\\][^\n]+|/[^\n]+)$",
     re.MULTILINE,
 )
+
+# 合并所有已知媒体扩展名（用于裸路径检测）
+_ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | AUDIO_EXTENSIONS | VIDEO_EXTENSIONS | FILE_EXTENSIONS
 
 
 @dataclass
@@ -55,6 +72,8 @@ class MediaParseResult:
     cleaned_text: str = ""
     images: list[ExtractedMedia] = field(default_factory=list)
     files: list[ExtractedMedia] = field(default_factory=list)
+    audios: list[ExtractedMedia] = field(default_factory=list)
+    videos: list[ExtractedMedia] = field(default_factory=list)
 
 
 class PathSecurityError(Exception):
@@ -91,14 +110,32 @@ def validate_path_security(
             )
 
 
+_ALLOWED_URL_SCHEMES = {"http://", "https://"}
+
+
 def is_http_url(s: str) -> bool:
-    return s.startswith("http://") or s.startswith("https://")
+    return any(s.startswith(scheme) for scheme in _ALLOWED_URL_SCHEMES)
+
+
+def _is_safe_url(s: str) -> bool:
+    """拒绝 javascript:, file:, data: 等危险 scheme"""
+    s_lower = s.strip().lower()
+    if ":" in s_lower:
+        scheme_part = s_lower.split(":", 1)[0]
+        if scheme_part in ("javascript", "data", "file", "vbscript", "ftp"):
+            return False
+    return True
 
 
 def _classify_by_extension(path_str: str) -> str:
-    ext = Path(path_str).suffix.lower()
+    cleaned = path_str.split("?")[0].split("#")[0]
+    ext = Path(cleaned).suffix.lower()
     if ext in IMAGE_EXTENSIONS:
         return "image"
+    if ext in AUDIO_EXTENSIONS:
+        return "audio"
+    if ext in VIDEO_EXTENSIONS:
+        return "video"
     return "file"
 
 
@@ -132,7 +169,11 @@ def parse_media_from_text(
     cleaned = text
 
     def _try_add(source: str) -> bool:
-        """尝试添加媒体项（去重 + 安全校验）"""
+        """尝试添加媒体项（去重 + 安全校验 + scheme 白名单）"""
+        if not _is_safe_url(source):
+            logger.warning(f"Media source rejected (unsafe scheme): {source[:100]}")
+            return False
+
         key = source.lower().replace("\\", "/")
         if key in seen:
             return False
@@ -151,6 +192,10 @@ def parse_media_from_text(
         media = ExtractedMedia(path=source, is_url=is_url, media_type=media_type)
         if media_type == "image":
             result.images.append(media)
+        elif media_type == "audio":
+            result.audios.append(media)
+        elif media_type == "video":
+            result.videos.append(media)
         else:
             result.files.append(media)
         return True
@@ -178,12 +223,33 @@ def parse_media_from_text(
             return m.group(0)
         cleaned = _RE_MARKDOWN_IMAGE.sub(_md_replacer, cleaned)
 
-    # 3. 解析裸本地路径（独占一行的绝对路径，以已知扩展名结尾）
+    # 3. 解析 HTML <img src="..."> 标签
+    if parse_markdown_images:
+        def _html_img_replacer(m: re.Match) -> str:
+            source = m.group(1)
+            if _try_add(source) and remove_from_text:
+                return ""
+            return m.group(0)
+        cleaned = _RE_HTML_IMG.sub(_html_img_replacer, cleaned)
+
+    # 4. 解析 Markdown 链接 [text](path)（仅提取媒体扩展名的链接）
+    if parse_markdown_images:
+        def _md_link_replacer(m: re.Match) -> str:
+            source = m.group(2)
+            ext = Path(source.split("?")[0]).suffix.lower()
+            if ext not in _ALL_MEDIA_EXTENSIONS:
+                return m.group(0)
+            if _try_add(source) and remove_from_text:
+                return ""
+            return m.group(0)
+        cleaned = _RE_MARKDOWN_LINK.sub(_md_link_replacer, cleaned)
+
+    # 5. 解析裸本地路径（独占一行的绝对路径，以已知扩展名结尾）
     if parse_bare_paths:
         def _bare_replacer(m: re.Match) -> str:
             candidate = m.group(1).strip()
             ext = Path(candidate).suffix.lower()
-            if ext not in IMAGE_EXTENSIONS and ext not in FILE_EXTENSIONS:
+            if ext not in _ALL_MEDIA_EXTENSIONS:
                 return m.group(0)
             if _try_add(candidate) and remove_from_text:
                 return ""

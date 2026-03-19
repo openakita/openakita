@@ -120,7 +120,11 @@ class OneBotAdapter(ChannelAdapter):
         self._SEEN_CAPACITY = 500
 
         # chat_id → chat_type 映射（send_typing 需要区分群/私聊）
-        self._chat_type_map: dict[str, str] = {}
+        self._chat_type_map: OrderedDict[str, str] = OrderedDict()
+        self._CHAT_TYPE_MAP_CAPACITY = 2000
+
+        # group_id → group_name 缓存
+        self._group_name_cache: dict[str, str] = {}
 
     # ==================== 生命周期 ====================
 
@@ -253,6 +257,8 @@ class OneBotAdapter(ChannelAdapter):
                 self.config.ws_url,
                 additional_headers=headers,
                 open_timeout=10,
+                ping_interval=30,
+                ping_timeout=10,
             )
             logger.info(f"OneBot adapter connected to {self.config.ws_url}")
             return True
@@ -351,7 +357,7 @@ class OneBotAdapter(ChannelAdapter):
         if not isinstance(raw_message, list):
             raw_message = []
 
-        content = await self._parse_message(raw_message)
+        content, _reply_to_id = await self._parse_message(raw_message)
 
         if message_type == "private":
             chat_type = "private"
@@ -364,6 +370,8 @@ class OneBotAdapter(ChannelAdapter):
             chat_id = str(data.get("group_id") or data.get("user_id"))
 
         self._chat_type_map[chat_id] = chat_type
+        if len(self._chat_type_map) > self._CHAT_TYPE_MAP_CAPACITY:
+            self._chat_type_map.popitem(last=False)
         is_direct_message = chat_type == "private"
 
         is_mentioned = False
@@ -379,6 +387,20 @@ class OneBotAdapter(ChannelAdapter):
         sender = data.get("sender") or {}
         user_id = str(data.get("user_id"))
 
+        chat_name = ""
+        if chat_type == "group" and data.get("group_id"):
+            gid = str(data["group_id"])
+            chat_name = self._group_name_cache.get(gid, "")
+            if not chat_name:
+                try:
+                    info = await self.get_group_info(data["group_id"])
+                    if info:
+                        chat_name = info.get("name") or ""
+                        if chat_name:
+                            self._group_name_cache[gid] = chat_name
+                except Exception:
+                    pass
+
         unified = UnifiedMessage.create(
             channel=self.channel_name,
             channel_message_id=msg_id,
@@ -389,12 +411,14 @@ class OneBotAdapter(ChannelAdapter):
             chat_type=chat_type,
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
+            reply_to=_reply_to_id,
             raw=data,
             metadata={
                 "nickname": sender.get("nickname"),
                 "card": sender.get("card"),
                 "is_group": chat_type == "group",
                 "sender_name": sender.get("card") or sender.get("nickname") or "",
+                "chat_name": chat_name,
             },
         )
 
@@ -433,9 +457,11 @@ class OneBotAdapter(ChannelAdapter):
 
     # ==================== 消息解析 ====================
 
-    async def _parse_message(self, message: list) -> MessageContent:
+    async def _parse_message(self, message: list) -> tuple[MessageContent, str | None]:
+        """解析 OneBot 消息段列表，返回 (content, reply_to_id)"""
         content = MessageContent()
         text_parts = []
+        reply_to_id: str | None = None
 
         for segment in message:
             if not isinstance(segment, dict):
@@ -444,18 +470,21 @@ class OneBotAdapter(ChannelAdapter):
             data = segment.get("data") or {}
 
             if seg_type == "text":
-                text_parts.append(data.get("text", ""))
+                text_parts.append(data.get("text") or "")
             elif seg_type == "image":
+                import mimetypes
+                img_file = data.get("file") or "image.jpg"
+                img_mime = mimetypes.guess_type(img_file)[0] or "image/jpeg"
                 media = MediaFile.create(
-                    filename=data.get("file", "image.jpg"),
-                    mime_type="image/jpeg",
+                    filename=img_file,
+                    mime_type=img_mime,
                     url=data.get("url"),
                     file_id=data.get("file"),
                 )
                 content.images.append(media)
             elif seg_type == "record":
                 media = MediaFile.create(
-                    filename=data.get("file", "voice.amr"),
+                    filename=data.get("file") or "voice.amr",
                     mime_type="audio/amr",
                     url=data.get("url"),
                     file_id=data.get("file"),
@@ -463,7 +492,7 @@ class OneBotAdapter(ChannelAdapter):
                 content.voices.append(media)
             elif seg_type == "video":
                 media = MediaFile.create(
-                    filename=data.get("file", "video.mp4"),
+                    filename=data.get("file") or "video.mp4",
                     mime_type="video/mp4",
                     url=data.get("url"),
                     file_id=data.get("file"),
@@ -471,7 +500,7 @@ class OneBotAdapter(ChannelAdapter):
                 content.videos.append(media)
             elif seg_type == "file":
                 media = MediaFile.create(
-                    filename=data.get("name", "file"),
+                    filename=data.get("name") or "file",
                     mime_type="application/octet-stream",
                     file_id=data.get("id"),
                 )
@@ -480,9 +509,31 @@ class OneBotAdapter(ChannelAdapter):
                 text_parts.append(f"@{data.get('qq', data.get('id', ''))}")
             elif seg_type == "face":
                 text_parts.append(f"[表情:{data.get('id', '')}]")
+            elif seg_type == "reply":
+                rid = data.get("id", "")
+                if rid:
+                    reply_to_id = str(rid)
+            elif seg_type == "forward":
+                fwd_id = data.get("id", "")
+                text_parts.append(f"[合并转发:{fwd_id}]")
+            elif seg_type == "share":
+                url = data.get("url", "")
+                title = data.get("title", "链接")
+                text_parts.append(f"[分享: {title} {url}]")
+            elif seg_type == "json":
+                json_data = str(data.get("data", ""))
+                text_parts.append(f"[JSON消息: {json_data[:200]}]")
+            elif seg_type == "xml":
+                xml_data = str(data.get("data", ""))
+                text_parts.append(f"[XML消息: {xml_data[:200]}]")
+            elif seg_type == "location":
+                lat = data.get("lat", "")
+                lon = data.get("lon", data.get("long", ""))
+                title = data.get("title", "")
+                content.location = {"lat": lat, "lng": lon, "name": title}
 
         content.text = "".join(text_parts) if text_parts else None
-        return content
+        return content, reply_to_id
 
     # ==================== API 调用 ====================
 
@@ -523,10 +574,15 @@ class OneBotAdapter(ChannelAdapter):
     # ==================== 消息发送 ====================
 
     def _is_group_message(self, message: OutgoingMessage) -> bool:
-        return bool(message.metadata.get("is_group"))
+        if "is_group" in message.metadata:
+            return bool(message.metadata["is_group"])
+        return self._chat_type_map.get(message.chat_id, "group") == "group"
 
     async def send_message(self, message: OutgoingMessage) -> str:
         msg_array = []
+
+        if message.reply_to:
+            msg_array.append({"type": "reply", "data": {"id": str(message.reply_to)}})
 
         if message.content.text:
             msg_array.append({"type": "text", "data": {"text": message.content.text}})
@@ -555,15 +611,15 @@ class OneBotAdapter(ChannelAdapter):
         else:
             result = await self._call_api("send_private_msg", {"user_id": chat_id, "message": msg_array})
 
-        return str(result.get("message_id", ""))
+        return str((result or {}).get("message_id", ""))
 
     async def send_group_message(self, group_id: int, message: str) -> str:
         result = await self._call_api("send_group_msg", {"group_id": group_id, "message": message})
-        return str(result.get("message_id", ""))
+        return str((result or {}).get("message_id", ""))
 
     async def send_private_message(self, user_id: int, message: str) -> str:
         result = await self._call_api("send_private_msg", {"user_id": user_id, "message": message})
-        return str(result.get("message_id", ""))
+        return str((result or {}).get("message_id", ""))
 
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
         """发送"正在输入"状态（NapCat 扩展 API: set_input_status）。
@@ -597,10 +653,13 @@ class OneBotAdapter(ChannelAdapter):
                 raise ImportError("httpx not installed. Run: pip install httpx")
 
             async with hx.AsyncClient() as client:
-                response = await client.get(media.url)
+                response = await client.get(media.url, timeout=60.0)
                 response.raise_for_status()
 
-                local_path = self.media_dir / media.filename
+                stem = Path(media.filename).stem
+                suffix = Path(media.filename).suffix or ".bin"
+                local_path = self.media_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
+
                 with open(local_path, "wb") as f:
                     f.write(response.content)
 
@@ -669,17 +728,7 @@ class OneBotAdapter(ChannelAdapter):
         key = "group_id" if _is_grp else "user_id"
         try:
             result = await self._call_api(api, {key: chat_id_int, "file": file_str, "name": path.name})
-            return str(result.get("message_id", f"file_{chat_id}"))
-        except Exception:
-            pass
-
-        fallback_api = "upload_private_file" if _is_grp else "upload_group_file"
-        fallback_key = "user_id" if _is_grp else "group_id"
-        try:
-            result = await self._call_api(
-                fallback_api, {fallback_key: chat_id_int, "file": file_str, "name": path.name}
-            )
-            return str(result.get("message_id", f"file_{chat_id}"))
+            return str((result or {}).get("message_id", f"file_{chat_id}"))
         except Exception as e:
             raise RuntimeError(f"Failed to send file via OneBot: {e}") from e
 
@@ -711,7 +760,7 @@ class OneBotAdapter(ChannelAdapter):
             with contextlib.suppress(Exception):
                 await self._call_api(api, {key: chat_id_int, "message": caption_msg})
 
-        return str(result.get("message_id", ""))
+        return str((result or {}).get("message_id", ""))
 
     async def delete_message(self, chat_id: str, message_id: str) -> bool:
         try:

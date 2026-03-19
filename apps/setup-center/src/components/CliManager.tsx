@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "../platform";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -7,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Terminal, Trash2 } from "lucide-react";
 
 export function CliManager() {
+  const { t } = useTranslation();
   const [cliStatus, setCliStatus] = useState<{
     registeredCommands: string[];
     inPath: boolean;
@@ -30,7 +32,7 @@ export function CliManager() {
       setCliRegOa(status.registeredCommands.includes("oa"));
       setCliRegPath(status.inPath);
     } catch (e) {
-      setCliMsg(`查询 CLI 状态失败: ${String(e)}`);
+      setCliMsg(`${t("config.cliStatusError")} ${String(e)}`);
     }
   }
 
@@ -39,7 +41,7 @@ export function CliManager() {
     if (cliRegOpenakita) cmds.push("openakita");
     if (cliRegOa) cmds.push("oa");
     if (cmds.length === 0) {
-      setCliMsg("请至少选择一个命令名称");
+      setCliMsg(t("config.cliSelectOne"));
       return;
     }
     setCliLoading(true);
@@ -49,7 +51,7 @@ export function CliManager() {
       setCliMsg(`✓ ${result}`);
       await loadCliStatus();
     } catch (e) {
-      setCliMsg(`✗ 注册失败: ${String(e)}`);
+      setCliMsg(`✗ ${t("config.cliRegisterFailed")} ${String(e)}`);
     } finally {
       setCliLoading(false);
     }
@@ -63,7 +65,7 @@ export function CliManager() {
       setCliMsg(`✓ ${result}`);
       await loadCliStatus();
     } catch (e) {
-      setCliMsg(`✗ 注销失败: ${String(e)}`);
+      setCliMsg(`✗ ${t("config.cliUnregisterFailed")} ${String(e)}`);
     } finally {
       setCliLoading(false);
     }
@@ -75,18 +77,18 @@ export function CliManager() {
     <div className="space-y-4">
       {cliStatus && hasRegistered && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/30 dark:bg-emerald-950/20 px-4 py-3 space-y-1.5">
-          <p className="text-[13px] font-semibold">已注册命令</p>
+          <p className="text-[13px] font-semibold">{t("config.cliRegistered")}</p>
           <div className="flex items-center gap-2 flex-wrap">
             {cliStatus.registeredCommands.map(cmd => (
               <Badge key={cmd} variant="secondary" className="font-mono text-xs">{cmd}</Badge>
             ))}
             {cliStatus.inPath ? (
-              <span className="text-xs text-emerald-600 dark:text-emerald-400">已在 PATH 中</span>
+              <span className="text-xs text-emerald-600 dark:text-emerald-400">{t("config.cliInPath")}</span>
             ) : (
-              <span className="text-xs text-amber-600 dark:text-amber-400">未在 PATH 中</span>
+              <span className="text-xs text-amber-600 dark:text-amber-400">{t("config.cliNotInPath")}</span>
             )}
           </div>
-          <p className="text-[11px] text-muted-foreground">目录: {cliStatus.binDir}</p>
+          <p className="text-[11px] text-muted-foreground">{t("config.cliDirLabel")} {cliStatus.binDir}</p>
         </div>
       )}
 
@@ -94,30 +96,30 @@ export function CliManager() {
         <div className="flex items-center gap-2">
           <Checkbox id="cli-openakita" checked={cliRegOpenakita} onCheckedChange={() => setCliRegOpenakita(!cliRegOpenakita)} />
           <Label htmlFor="cli-openakita" className="text-[13px] cursor-pointer font-normal">
-            <strong className="font-semibold">openakita</strong> — 完整命令
+            <strong className="font-semibold">openakita</strong> — {t("config.cliCmdFull")}
           </Label>
         </div>
         <div className="flex items-center gap-2">
           <Checkbox id="cli-oa" checked={cliRegOa} onCheckedChange={() => setCliRegOa(!cliRegOa)} />
           <Label htmlFor="cli-oa" className="text-[13px] cursor-pointer font-normal">
-            <strong className="font-semibold">oa</strong> — 简短别名
+            <strong className="font-semibold">oa</strong> — {t("config.cliCmdShort")}
           </Label>
         </div>
         <div className="flex items-center gap-2">
           <Checkbox id="cli-path" checked={cliRegPath} onCheckedChange={() => setCliRegPath(!cliRegPath)} />
-          <Label htmlFor="cli-path" className="text-[13px] cursor-pointer font-normal">添加到系统 PATH</Label>
+          <Label htmlFor="cli-path" className="text-[13px] cursor-pointer font-normal">{t("config.cliAddToPath")}</Label>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={doRegister} disabled={cliLoading}>
           {cliLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Terminal className="size-3.5" />}
-          {hasRegistered ? "更新注册" : "注册"}
+          {hasRegistered ? t("config.cliUpdate") : t("config.cliRegister")}
         </Button>
         {hasRegistered && (
           <Button variant="outline" size="sm" onClick={doUnregister} disabled={cliLoading}>
             <Trash2 className="size-3.5" />
-            注销全部
+            {t("config.cliUnregisterAll")}
           </Button>
         )}
       </div>

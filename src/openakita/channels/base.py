@@ -84,6 +84,41 @@ class ChannelAdapter(ABC):
         """是否运行中"""
         return self._running
 
+    def collect_warnings(self) -> list[str]:
+        """检查配置和运行状态，返回安全/配置告警列表。
+
+        子类可覆写此方法以添加平台特有的检查。
+        基类提供通用检查：
+        - 必填凭证是否疑似占位符
+        - 端口范围检查
+        """
+        warnings: list[str] = []
+        config = getattr(self, "config", None)
+        if config is None:
+            return warnings
+
+        placeholder_hints = ("your_", "xxx", "placeholder", "changeme", "test123")
+        for field_name in ("app_id", "app_key", "app_secret", "token", "secret", "bot_id"):
+            value = getattr(config, field_name, None)
+            if isinstance(value, str) and value:
+                lower = value.lower()
+                for hint in placeholder_hints:
+                    if lower.startswith(hint) or lower == hint:
+                        warnings.append(
+                            f"[{self.channel_name}] {field_name} 疑似占位符值 '{value[:20]}'，"
+                            f"请检查配置是否正确。"
+                        )
+                        break
+
+        port = getattr(config, "callback_port", None) or getattr(config, "webhook_port", None)
+        if isinstance(port, int) and port < 1024:
+            warnings.append(
+                f"[{self.channel_name}] 端口 {port} < 1024，"
+                f"可能需要 root 权限或 setcap 配置。"
+            )
+
+        return warnings
+
     # ==================== 生命周期 ====================
 
     @abstractmethod

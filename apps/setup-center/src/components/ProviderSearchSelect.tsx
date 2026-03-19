@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, CheckIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ export function ProviderSearchSelect({
   disabled?: boolean;
   extraOptions?: { value: string; label: string }[];
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [hoverIdx, setHoverIdx] = useState(0);
   const [search, setSearch] = useState("");
@@ -135,7 +137,7 @@ export function ProviderSearchSelect({
             setSearch(e.target.value);
             setOpen(true);
           }}
-          placeholder={placeholder || "搜索服务商..."}
+          placeholder={placeholder || t("llm.searchProvider")}
           onClick={() => {
             if (!open) { clearTimeout(blurTimerRef.current); setIsFocused(true); setSearch(""); setOpen(true); }
           }}

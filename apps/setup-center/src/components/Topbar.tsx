@@ -8,6 +8,13 @@ import {
   IconLaptop, IconMoon, IconSun, IconGlobe, IconClipboard,
 } from "../icons";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup,
+  DropdownMenuRadioItem, DropdownMenuTrigger, DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { LogOut } from "lucide-react";
 import { openExternalUrl } from "../platform";
 import { copyToClipboard } from "../utils/clipboard";
 
@@ -30,7 +37,7 @@ export type TopbarProps = {
   onConnect: () => void;
   onStart: () => Promise<void>;
   onRefreshAll: () => Promise<void>;
-  toggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void;
   themePrefState: Theme;
   isWeb?: boolean;
   onLogout?: () => void;
@@ -243,41 +250,109 @@ export function Topbar({
         <span className="topbarEpCount">{t("topbar.endpoints", { count: endpointCount })}</span>
         {dataMode === "remote" && <span className="pill" style={{ fontSize: 10, marginLeft: 4, background: "#e3f2fd", color: "#1565c0" }}>{t("connect.remoteMode")}</span>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-        {isWeb ? (
-          onLogout && (
-            <Button variant="destructive" size="xs" onClick={onLogout} title={t("topbar.logout")}>
-              <IconX size={13} />
-              <span>{t("topbar.logout")}</span>
-            </Button>
-          )
-        ) : serviceRunning ? (
-          <Button variant="secondary" size="xs" onClick={onDisconnect} disabled={!!busy} title={t("topbar.disconnect")}>
-            <IconX size={13} />
-            <span>{t("topbar.disconnect")}</span>
-          </Button>
-        ) : (
-          <>
-            <Button variant="outline" size="xs" onClick={onConnect} disabled={!!busy} title={t("topbar.connect")}>
-              <IconLink size={13} />
-              <span>{t("topbar.connect")}</span>
-            </Button>
-            <Button variant="outline" size="xs" onClick={onStart} disabled={!!busy} title={t("topbar.start")}>
-              <IconPower size={13} />
-              <span>{t("topbar.start")}</span>
-            </Button>
-          </>
-        )}
-        <Button variant="ghost" size="icon-xs" onClick={onRefreshAll} disabled={!!busy} title={t("topbar.refresh")}>
-          <IconRefresh size={14} />
-        </Button>
-        <Button variant="ghost" size="icon-xs" onClick={toggleTheme} title={themePrefState === "system" ? "主题: 随系统" : themePrefState === "dark" ? "主题: 暗色" : "主题: 亮色"}>
-          {themePrefState === "system" ? <IconLaptop size={14} /> : themePrefState === "dark" ? <IconMoon size={14} /> : <IconSun size={14} />}
-        </Button>
-        <Button variant="ghost" size="icon-xs" onClick={() => { i18n.changeLanguage(i18n.language?.startsWith("zh") ? "en" : "zh"); }} title="中/EN">
-          <IconGlobe size={14} />
-        </Button>
-      </div>
+      <TooltipProvider delayDuration={300}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {isWeb ? (
+            onLogout && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={onLogout}>
+                    <LogOut size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("topbar.logout")}</TooltipContent>
+              </Tooltip>
+            )
+          ) : serviceRunning ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" onClick={onDisconnect} disabled={!!busy}>
+                  <LogOut size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t("topbar.disconnect")}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={onConnect} disabled={!!busy}>
+                    <IconLink size={14} />
+                    <span>{t("topbar.connect")}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("topbar.connect")}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={onStart} disabled={!!busy}>
+                    <IconPower size={14} />
+                    <span>{t("topbar.start")}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("topbar.start")}</TooltipContent>
+              </Tooltip>
+            </>
+          )}
+
+          <div className="h-4 w-px bg-border" />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" onClick={onRefreshAll} disabled={!!busy}>
+                <IconRefresh size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t("topbar.refresh")}</TooltipContent>
+          </Tooltip>
+
+          <div className="h-4 w-px bg-border" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" title={t("topbar.themeLabel", "主题")}>
+                {themePrefState === "system" ? <IconLaptop size={16} /> : themePrefState === "dark" ? <IconMoon size={16} /> : <IconSun size={16} />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{t("topbar.themeLabel", "主题")}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup value={themePrefState} onValueChange={(v) => onSetTheme(v as Theme)}>
+                <DropdownMenuRadioItem value="system" className="gap-2">
+                  <IconLaptop size={14} />
+                  {t("topbar.themeSystem")}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="light" className="gap-2">
+                  <IconSun size={14} />
+                  {t("topbar.themeLight")}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="dark" className="gap-2">
+                  <IconMoon size={14} />
+                  {t("topbar.themeDark")}
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className="h-4 w-px bg-border" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" title={t("topbar.langLabel", "语言")}>
+                <IconGlobe size={16} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{t("topbar.langLabel", "语言")}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup value={i18n.language?.startsWith("zh") ? "zh" : "en"} onValueChange={(v) => i18n.changeLanguage(v)}>
+                <DropdownMenuRadioItem value="zh">中文</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </TooltipProvider>
     </div>
   );
 }

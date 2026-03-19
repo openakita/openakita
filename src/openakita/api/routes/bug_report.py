@@ -160,9 +160,15 @@ def _collect_system_info() -> dict:
 
     # Configured endpoints count
     try:
-        from openakita.config import settings
-        from openakita.llm.client import LLMClient
-        info["endpoints_count"] = len(getattr(LLMClient, "_endpoints", []))
+        from openakita.llm.config import get_default_config_path, load_endpoints_config
+        config_path = get_default_config_path()
+        if config_path.exists():
+            eps, compiler_eps, stt_eps, _ = load_endpoints_config(config_path)
+            info["endpoints_count"] = len(eps)
+            info["compiler_endpoints_count"] = len(compiler_eps)
+            info["stt_endpoints_count"] = len(stt_eps)
+        else:
+            info["endpoints_count"] = 0
     except Exception:
         pass
 

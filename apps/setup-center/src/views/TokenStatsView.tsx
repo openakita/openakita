@@ -48,14 +48,15 @@ type SessionRow = {
   total_cost: number;
 };
 
-const PERIODS: { key: PeriodKey; label: string }[] = [
-  { key: "1d", label: "1天" },
-  { key: "3d", label: "3天" },
-  { key: "1w", label: "1周" },
-  { key: "1m", label: "1月" },
-  { key: "6m", label: "半年" },
-  { key: "1y", label: "1年" },
-];
+const PERIOD_KEYS: PeriodKey[] = ["1d", "3d", "1w", "1m", "6m", "1y"];
+const PERIOD_I18N: Record<PeriodKey, string> = {
+  "1d": "tokenStats.period1d",
+  "3d": "tokenStats.period3d",
+  "1w": "tokenStats.period1w",
+  "1m": "tokenStats.period1m",
+  "6m": "tokenStats.period6m",
+  "1y": "tokenStats.period1y",
+};
 
 function utcToLocal(utcStr: string): string {
   if (!utcStr || utcStr.length <= 10) return utcStr;
@@ -141,10 +142,10 @@ export function TokenStatsView({
 
   if (!serviceRunning) {
     return (
-      <div className="imViewEmpty">
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconStatus size={48} />
-        <div style={{ marginTop: 12, fontWeight: 600 }}>Token 统计</div>
-        <div style={{ marginTop: 4, opacity: 0.5, fontSize: 13 }}>后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-3 font-semibold">{t("tokenStats.title")}</div>
+        <div className="mt-1 text-xs opacity-50">{t("tokenStats.serviceNotRunning")}</div>
       </div>
     );
   }
@@ -160,18 +161,18 @@ export function TokenStatsView({
 
       {/* Period selector */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-        {PERIODS.map((p) => (
+        {PERIOD_KEYS.map((pk) => (
           <button
-            key={p.key}
-            onClick={() => setPeriod(p.key)}
+            key={pk}
+            onClick={() => setPeriod(pk)}
             style={{
               padding: "4px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
-              border: period === p.key ? "1.5px solid var(--brand)" : "1px solid var(--line)",
-              background: period === p.key ? "var(--brand-bg)" : "var(--bg)",
-              color: period === p.key ? "var(--brand)" : "var(--text-secondary)",
+              border: period === pk ? "1.5px solid var(--brand)" : "1px solid var(--line)",
+              background: period === pk ? "var(--brand-bg)" : "var(--bg)",
+              color: period === pk ? "var(--brand)" : "var(--text-secondary)",
             }}
           >
-            {p.label}
+            {t(PERIOD_I18N[pk])}
           </button>
         ))}
         <button onClick={fetchAll} disabled={loading} style={{

@@ -93,6 +93,7 @@ export function isDashScopeCodingPlanProvider(providerSlug: string | null, baseU
 
 export function miniMaxFallbackModels(providerSlug: string | null): ListedModel[] {
   const ids = [
+    "MiniMax-M2.7",
     "MiniMax-M2.5",
     "MiniMax-M2.5-highspeed",
     "MiniMax-M2.1",

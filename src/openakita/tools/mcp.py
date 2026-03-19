@@ -388,6 +388,20 @@ class MCPClient:
                 elif "PATH" not in subprocess_env and "Path" not in subprocess_env:
                     subprocess_env["PATH"] = shell_path
 
+        # Windows PyInstaller: _internal/ 目录下的 python.exe 是裸解释器,
+        # 会影响外部脚本的 python 命令解析 — 从 PATH 中移除
+        if sys.platform == "win32" and getattr(sys, "frozen", False):
+            if subprocess_env is None:
+                subprocess_env = dict(os.environ)
+            internal_dir = str(Path(sys.executable).parent / "_internal")
+            for path_key in ("PATH", "Path"):
+                if path_key in subprocess_env:
+                    subprocess_env[path_key] = os.pathsep.join(
+                        p for p in subprocess_env[path_key].split(os.pathsep)
+                        if not p.startswith(internal_dir)
+                    )
+                    break
+
         server_params = StdioServerParameters(
             command=command,
             args=args,
@@ -424,8 +438,12 @@ class MCPClient:
             logger.info(f"Connected to MCP server via stdio: {server_name} ({tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
         except asyncio.TimeoutError:
-            msg = f"连接超时（{self._CONNECT_TIMEOUT}s）。命令: {command} {' '.join(args)}"
-            logger.error(f"Timeout connecting to {server_name} via stdio")
+            stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
+            msg = (
+                f"连接超时（{self._CONNECT_TIMEOUT}s）。"
+                f"命令: {command} {' '.join(args)}{stderr_hint}"
+            )
+            logger.error("Timeout connecting to %s via stdio%s", server_name, stderr_hint)
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
         except FileNotFoundError:
@@ -675,6 +693,39 @@ class MCPClient:
                         pass
         except Exception:
             pass
+
+    @staticmethod
+    def _try_capture_stdio_stderr(stdio_cm: Any) -> str:
+        """Try to read stderr from the stdio subprocess for diagnostic hints."""
+        if stdio_cm is None:
+            return ""
+        try:
+            frame = getattr(stdio_cm, "ag_frame", None)
+            if frame is None:
+                return ""
+            proc = frame.f_locals.get("process")
+            if proc is None or not hasattr(proc, "stderr") or proc.stderr is None:
+                return ""
+            stderr_pipe = proc.stderr
+            # Non-blocking read of available bytes
+            if hasattr(stderr_pipe, "_buffer"):
+                data = bytes(stderr_pipe._buffer)
+            elif hasattr(stderr_pipe, "read"):
+                import asyncio
+                try:
+                    data = stderr_pipe.read(2048) if not asyncio.iscoroutinefunction(
+                        getattr(stderr_pipe, "read", None)
+                    ) else b""
+                except Exception:
+                    data = b""
+            else:
+                return ""
+            if data:
+                text = data.decode("utf-8", errors="replace").strip()[:500]
+                return f"\n子进程 stderr: {text}"
+        except Exception:
+            pass
+        return ""
 
     @staticmethod
     async def _isolated_cm_cleanup(server_name: str, conn: dict) -> None:
@@ -965,6 +1016,42 @@ class MCPClient:
                 return MCPCallResult(success=False, error=f"{type(e).__name__}: {e}")
 
         return MCPCallResult(success=False, error="Unexpected: retry loop exhausted")
+
+    # ==================== 公共状态查询 / 管理 ====================
+
+    def has_server(self, name: str) -> bool:
+        """检查服务器是否已配置"""
+        return name in self._servers
+
+    def is_connected(self, name: str) -> bool:
+        """检查服务器是否已连接"""
+        return name in self._connections
+
+    def get_server_config(self, name: str) -> MCPServerConfig | None:
+        """获取服务器配置（只读）"""
+        return self._servers.get(name)
+
+    def remove_server(self, name: str) -> None:
+        """移除服务器配置及其关联的工具/资源/提示词（不断开连接，需先调 disconnect）"""
+        self._servers.pop(name, None)
+        self._connections.pop(name, None)
+        prefix = f"{name}:"
+        self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
+        self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
+        self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
+
+    async def reset(self) -> None:
+        """断开所有连接并清空全部状态（用于重载配置）"""
+        for name in list(self._connections):
+            try:
+                await self.disconnect(name)
+            except Exception as e:
+                logger.warning("Failed to disconnect %s during reset: %s", name, e)
+        self._servers.clear()
+        self._connections.clear()
+        self._tools.clear()
+        self._resources.clear()
+        self._prompts.clear()
 
     def list_servers(self) -> list[str]:
         """列出所有配置的服务器"""

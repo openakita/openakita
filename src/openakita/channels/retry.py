@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any, Awaitable, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -22,15 +23,34 @@ def default_should_retry(exc: BaseException) -> bool:
     各适配器可提供自定义判定函数来处理平台特有的可重试错误码
     （如 token 过期、限流等）。
     """
-    import httpx
-
     if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
         return True
+    try:
+        import httpx
+    except ImportError:
+        return False
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
+        status = exc.response.status_code
+        return status >= 500 or status == 429
     if isinstance(exc, httpx.TransportError):
         return True
     return False
+
+
+def _extract_retry_after(exc: BaseException) -> float | None:
+    """Extract Retry-After seconds from an HTTP 429 response, if available."""
+    try:
+        import httpx
+    except ImportError:
+        return None
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        ra = exc.response.headers.get("retry-after")
+        if ra:
+            try:
+                return float(ra)
+            except (ValueError, TypeError):
+                pass
+    return None
 
 
 async def async_with_retry(
@@ -77,6 +97,11 @@ async def async_with_retry(
             if attempt >= max_retries or not should_retry(exc):
                 raise
             delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+            jitter = random.uniform(0, delay * 0.25)
+            delay += jitter
+            retry_after = _extract_retry_after(exc)
+            if retry_after is not None:
+                delay = max(delay, retry_after)
             logger.warning(
                 f"[Retry] {label} attempt {attempt + 1}/{1 + max_retries} "
                 f"failed: {exc!r}; retrying in {delay:.1f}s"

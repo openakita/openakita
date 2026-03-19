@@ -3,8 +3,28 @@
 // Tauri-specific modules are loaded via dynamic import() so they are never
 // bundled into the web build and never evaluated when running in a browser.
 
-import { IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB } from "./detect";
-export { IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB };
+import { IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, IS_MOBILE_BROWSER } from "./detect";
+export { IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, IS_MOBILE_BROWSER };
+
+// ---------------------------------------------------------------------------
+// Asset protocol: serve local files directly from disk (desktop only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a local file path to a Tauri asset protocol URL.
+ * Desktop: direct disk access via asset:// — no HTTP, no proxy, no CORS.
+ * Web: returns null — caller should fall back to HTTP URL.
+ */
+export function getAssetUrl(filePath: string): string | null {
+  if (!IS_TAURI || !filePath) return null;
+  try {
+    const internals = (window as any).__TAURI_INTERNALS__;
+    if (internals?.convertFileSrc) {
+      return internals.convertFileSrc(filePath, "asset");
+    }
+  } catch { /* unavailable — fall back to HTTP */ }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Core: invoke & listen

@@ -16,15 +16,34 @@ from .types import ConfigurationError, EndpointConfig
 logger = logging.getLogger(__name__)
 
 
-def _safe_load_dotenv(env_path: Path) -> None:
-    """Load a .env file with encoding fallback.
+def _strip_bom(raw: bytes) -> bytes:
+    """Strip UTF-8 BOM (EF BB BF) if present."""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw[3:]
+    return raw
 
-    Tries UTF-8 first (python-dotenv default). On ``UnicodeDecodeError``
-    (e.g. GBK-encoded Chinese comments on Windows) retries with the
-    platform default encoding so the backend can still start.
+
+def _safe_load_dotenv(env_path: Path) -> None:
+    """Load a .env file with BOM handling, encoding fallback, and override.
+
+    - Strips UTF-8 BOM before loading (Windows Notepad compatibility).
+    - Tries UTF-8 first, falls back to platform default encoding.
+    - Uses ``override=True`` so Python's own read always wins over any
+      values that may have been pre-injected into ``os.environ``.
     """
     try:
-        load_dotenv(env_path)
+        raw = env_path.read_bytes()
+        stripped = _strip_bom(raw)
+        if stripped != raw:
+            logger.debug("Stripped UTF-8 BOM from %s", env_path)
+            tmp = env_path.with_suffix(".env._bom_tmp")
+            try:
+                tmp.write_bytes(stripped)
+                load_dotenv(tmp, override=True)
+            finally:
+                tmp.unlink(missing_ok=True)
+        else:
+            load_dotenv(env_path, override=True)
     except UnicodeDecodeError:
         logger.warning(
             "Failed to read %s as UTF-8; retrying with system encoding. "
@@ -32,9 +51,11 @@ def _safe_load_dotenv(env_path: Path) -> None:
             env_path,
         )
         try:
-            load_dotenv(env_path, encoding=None)
+            load_dotenv(env_path, override=True, encoding=None)
         except Exception:
             logger.error("Could not load %s with any encoding, skipping.", env_path)
+    except Exception as e:
+        logger.error("Unexpected error loading %s: %s", env_path, e)
 
 
 def _load_env():
@@ -48,6 +69,7 @@ def _load_env():
         env_path = current / ".env"
         if env_path.exists():
             _safe_load_dotenv(env_path)
+            logger.info("Loaded .env from %s", env_path)
             return
         parent = current.parent
         if parent == current:
@@ -59,8 +81,11 @@ def _load_env():
         env_path = current / ".env"
         if env_path.exists():
             _safe_load_dotenv(env_path)
+            logger.info("Loaded .env from %s", env_path)
             return
         current = current.parent
+
+    logger.debug("No .env file found in search paths (CWD=%s)", cwd)
 
 
 _load_env()

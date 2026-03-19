@@ -12,10 +12,15 @@ MCP 处理器
 - reload_mcp_servers: 重新加载所有配置
 """
 
-import json
 import logging
-import shutil
 from typing import TYPE_CHECKING, Any
+
+from ..mcp_workspace import (
+    add_server_to_workspace,
+    reload_all_servers,
+    remove_server_from_workspace,
+    sync_tools_after_connect,
+)
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -75,16 +80,17 @@ class MCPHandler:
         server = params["server"]
         mcp_tool_name = params["tool_name"]
         arguments = params.get("arguments", {})
+        client = self.agent.mcp_client
 
-        if server not in self.agent.mcp_client.list_connected():
-            result = await self.agent.mcp_client.connect(server)
+        if not client.is_connected(server):
+            result = await client.connect(server)
             if not result.success:
                 return f"❌ 无法连接到 MCP 服务器 {server}: {result.error}"
 
-        result = await self.agent.mcp_client.call_tool(server, mcp_tool_name, arguments)
+        result = await client.call_tool(server, mcp_tool_name, arguments)
 
         if result.reconnected:
-            self._sync_catalog_after_reconnect(server)
+            self._sync_and_refresh(server)
 
         if result.success:
             return f"✅ MCP 工具调用成功:\n{result.data}"
@@ -136,46 +142,31 @@ class MCPHandler:
         else:
             return f"❌ 未找到服务器 {server} 的使用说明，或服务器不存在"
 
-    def _sync_catalog_after_reconnect(self, server: str) -> None:
-        """隐式重连后同步 catalog 和系统提示"""
-        tools = self.agent.mcp_client.list_tools(server)
-        if tools:
-            tool_dicts = [
-                {"name": t.name, "description": t.description,
-                 "input_schema": t.input_schema}
-                for t in tools
-            ]
-            self.agent.mcp_catalog.sync_tools_from_client(server, tool_dicts, force=True)
+    def _sync_and_refresh(self, server: str) -> None:
+        """同步工具到 catalog 并刷新系统提示"""
+        sync_tools_after_connect(server, self.agent.mcp_client, self.agent.mcp_catalog)
         self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
-        logger.info("MCP catalog refreshed after auto-reconnect for %s", server)
+        logger.info("MCP catalog refreshed for %s", server)
 
     # ==================== 连接管理工具 ====================
 
     async def _connect_server(self, params: dict) -> str:
         """连接到 MCP 服务器"""
         server = params["server"]
+        client = self.agent.mcp_client
 
-        if server in self.agent.mcp_client.list_connected():
-            tools = self.agent.mcp_client.list_tools(server)
+        if client.is_connected(server):
+            tools = client.list_tools(server)
             return f"✅ 已连接到 {server}（{len(tools)} 个工具可用）"
 
-        if server not in self.agent.mcp_client.list_servers():
+        if not client.has_server(server):
             return f"❌ 服务器 {server} 未配置。请先用 add_mcp_server 添加或检查名称"
 
-        result = await self.agent.mcp_client.connect(server)
+        result = await client.connect(server)
         if result.success:
-            tools = self.agent.mcp_client.list_tools(server)
+            self._sync_and_refresh(server)
+            tools = client.list_tools(server)
             tool_names = [t.name for t in tools]
-
-            if tools:
-                tool_dicts = [
-                    {"name": t.name, "description": t.description,
-                     "input_schema": t.input_schema}
-                    for t in tools
-                ]
-                self.agent.mcp_catalog.sync_tools_from_client(server, tool_dicts, force=True)
-                self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
-
             return (
                 f"✅ 已连接到 MCP 服务器: {server}\n"
                 f"发现 {len(tools)} 个工具: {', '.join(tool_names)}"
@@ -189,17 +180,20 @@ class MCPHandler:
     async def _disconnect_server(self, params: dict) -> str:
         """断开 MCP 服务器"""
         server = params["server"]
+        client = self.agent.mcp_client
 
-        if server not in self.agent.mcp_client.list_connected():
+        if not client.is_connected(server):
             return f"⚪ 服务器 {server} 未连接"
 
-        await self.agent.mcp_client.disconnect(server)
+        await client.disconnect(server)
         return f"✅ 已断开 MCP 服务器: {server}"
 
     # ==================== 配置管理工具 ====================
 
     async def _add_server(self, params: dict) -> str:
         """添加 MCP 服务器配置到工作区"""
+        from pathlib import Path
+
         from ...config import settings
         from ..mcp import VALID_TRANSPORTS
 
@@ -212,106 +206,46 @@ class MCPHandler:
             return f"❌ 不支持的传输协议: {transport}（支持: {', '.join(sorted(VALID_TRANSPORTS))}）"
 
         command = params.get("command", "")
-        args = params.get("args", [])
-        env = params.get("env", {})
         url = params.get("url", "")
-        description = params.get("description", name)
-        instructions_text = params.get("instructions", "")
-        auto_connect = params.get("auto_connect", False)
 
         if transport == "stdio" and not command:
             return "❌ stdio 模式需要指定 command 参数"
         if transport in ("streamable_http", "sse") and not url:
             return f"❌ {transport} 模式需要指定 url 参数"
 
-        server_dir = settings.mcp_config_path / name
-        server_dir.mkdir(parents=True, exist_ok=True)
-
-        # stdio 模式下：将 args 中的相对路径解析为绝对路径
-        # AI 创建 MCP 时经常使用相对路径（如 "server.py"），需要转换为绝对路径
-        # 搜索顺序：server_dir → project_root → cwd
-        resolved_args = list(args)
-        if transport == "stdio":
-            from pathlib import Path as _P
-            search_bases = [
-                server_dir,
-                settings.project_root,
-                _P.cwd(),
-            ]
-            for i, arg in enumerate(resolved_args):
-                if arg.startswith("-") or _P(arg).is_absolute():
-                    continue
-                for base in search_bases:
-                    candidate = base / arg
-                    if candidate.is_file():
-                        resolved_args[i] = str(candidate.resolve())
-                        logger.info(f"Resolved relative arg '{arg}' -> '{resolved_args[i]}'")
-                        break
-
-        metadata = {
-            "serverIdentifier": name,
-            "serverName": description,
-            "command": command,
-            "args": resolved_args,
-            "env": env,
-            "transport": transport,
-            "url": url,
-            "autoConnect": auto_connect,
-        }
-
-        metadata_file = server_dir / "SERVER_METADATA.json"
-        metadata_file.write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        result = await add_server_to_workspace(
+            name=name,
+            transport=transport,
+            command=command,
+            args=params.get("args", []),
+            env=params.get("env", {}),
+            url=url,
+            description=params.get("description", name),
+            instructions=params.get("instructions", ""),
+            auto_connect=params.get("auto_connect", False),
+            config_base_dir=settings.mcp_config_path,
+            search_bases=[settings.project_root, Path.cwd()],
+            client=self.agent.mcp_client,
+            catalog=self.agent.mcp_catalog,
         )
 
-        if instructions_text:
-            instructions_file = server_dir / "INSTRUCTIONS.md"
-            instructions_file.write_text(instructions_text, encoding="utf-8")
+        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
 
-        # 热加载: 注册到 catalog 和 client
-        self.agent.mcp_catalog.scan_mcp_directory(settings.mcp_config_path)
-        self.agent.mcp_catalog.invalidate_cache()
-
-        from ..mcp import MCPServerConfig
-        self.agent.mcp_client.add_server(MCPServerConfig(
-            name=name,
-            command=command,
-            args=resolved_args,
-            env=env,
-            description=description,
-            transport=transport,
-            url=url,
-            cwd=str(server_dir),
-        ))
-
-        # 添加后尝试连接并发现工具
-        connect_result = await self.agent.mcp_client.connect(name)
-        connect_msg = ""
-        if connect_result.success:
+        cr = result.get("connect_result") or {}
+        if cr.get("connected"):
             tools = self.agent.mcp_client.list_tools(name)
-            if tools:
-                tool_dicts = [
-                    {"name": t.name, "description": t.description,
-                     "input_schema": t.input_schema}
-                    for t in tools
-                ]
-                self.agent.mcp_catalog.sync_tools_from_client(name, tool_dicts, force=True)
             tool_names = [t.name for t in tools]
             connect_msg = f"\n\n✅ 已自动连接，发现 {len(tools)} 个工具: {', '.join(tool_names)}"
         else:
             connect_msg = (
-                f"\n\n⚠️ 自动连接失败: {connect_result.error}\n"
+                f"\n\n⚠️ 自动连接失败: {cr.get('error', '未知')}\n"
                 f"配置已保存，可稍后手动调用 `connect_mcp_server(\"{name}\")` 重试"
             )
-
-        # 刷新系统提示中的 MCP 清单
-        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
 
         return (
             f"✅ 已添加 MCP 服务器: {name}\n"
             f"  传输: {transport}\n"
-            f"  配置路径: {server_dir}"
+            f"  配置路径: {result['path']}"
             f"{connect_msg}"
         )
 
@@ -323,33 +257,18 @@ class MCPHandler:
         if not name:
             return "❌ 服务器名称不能为空"
 
-        server_dir = settings.mcp_config_path / name
-        builtin_dir = settings.mcp_builtin_path / name
-
-        if not server_dir.exists():
-            if builtin_dir.exists():
-                return f"❌ {name} 是内置 MCP 服务器，不能删除。可在 .env 中禁用 MCP"
-            return f"❌ 未找到 MCP 服务器: {name}"
-
-        if name in self.agent.mcp_client.list_connected():
-            await self.agent.mcp_client.disconnect(name)
-
-        shutil.rmtree(server_dir, ignore_errors=True)
-
-        self.agent.mcp_client._servers.pop(name, None)
-        self.agent.mcp_client._connections.pop(name, None)
-        prefix = f"{name}:"
-        for key in [k for k in self.agent.mcp_client._tools if k.startswith(prefix)]:
-            del self.agent.mcp_client._tools[key]
-
-        self.agent.mcp_catalog._servers = [
-            s for s in self.agent.mcp_catalog._servers
-            if s.identifier != name
-        ]
-        self.agent.mcp_catalog.invalidate_cache()
+        result = await remove_server_from_workspace(
+            name,
+            config_base_dir=settings.mcp_config_path,
+            builtin_dir=settings.mcp_builtin_path,
+            client=self.agent.mcp_client,
+            catalog=self.agent.mcp_catalog,
+        )
 
         self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
 
+        if result["status"] == "error":
+            return f"❌ {result['message']}"
         return f"✅ 已移除 MCP 服务器: {name}"
 
     async def _reload_servers(self, params: dict) -> str:
@@ -360,68 +279,26 @@ class MCPHandler:
         只应在 master agent 上执行的初始化逻辑）。
         """
         from ...config import settings
-        from ..mcp import MCPServerConfig
 
-        # 1) 断开所有连接
-        connected = list(self.agent.mcp_client.list_connected())
-        for server_name in connected:
-            try:
-                await self.agent.mcp_client.disconnect(server_name)
-            except Exception as e:
-                logger.warning(f"Failed to disconnect {server_name}: {e}")
-
-        # 2) 清空全局状态
-        self.agent.mcp_client._connections.clear()
-        self.agent.mcp_client._servers.clear()
-        self.agent.mcp_client._tools.clear()
-        self.agent.mcp_client._resources.clear()
-        self.agent.mcp_client._prompts.clear()
-        self.agent.mcp_catalog._servers.clear()
-        self.agent.mcp_catalog.invalidate_cache()
-
-        # 3) 重新扫描配置目录
-        total_count = 0
-        for dir_path in [
+        scan_dirs = [
             settings.mcp_builtin_path,
             settings.project_root / ".mcp",
             settings.mcp_config_path,
-        ]:
-            if dir_path.exists():
-                count = self.agent.mcp_catalog.scan_mcp_directory(dir_path)
-                if count > 0:
-                    total_count += count
+        ]
 
-        # 4) 同步注册到 MCPClient
-        for server in self.agent.mcp_catalog.servers:
-            if not server.identifier:
-                continue
-            transport = server.transport or "stdio"
-            if transport == "stdio" and not server.command:
-                continue
-            if transport in ("streamable_http", "sse") and not server.url:
-                continue
-            self.agent.mcp_client.add_server(MCPServerConfig(
-                name=server.identifier,
-                command=server.command or "",
-                args=list(server.args or []),
-                env=dict(server.env or {}),
-                description=server.name or "",
-                transport=transport,
-                url=server.url or "",
-                cwd=server.config_dir or "",
-            ))
+        counts = await reload_all_servers(
+            client=self.agent.mcp_client,
+            catalog=self.agent.mcp_catalog,
+            scan_dirs=scan_dirs,
+        )
 
-        # 5) 刷新 catalog 文本
         self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
-
-        catalog_count = self.agent.mcp_catalog.server_count
-        client_count = len(self.agent.mcp_client.list_servers())
 
         return (
             f"✅ MCP 配置已重新加载\n"
-            f"  目录中: {catalog_count} 个服务器\n"
-            f"  可连接: {client_count} 个服务器\n"
-            f"  之前已连接的 {len(connected)} 个服务器已断开\n\n"
+            f"  目录中: {counts['catalog_count']} 个服务器\n"
+            f"  可连接: {counts['client_count']} 个服务器\n"
+            f"  之前已连接的 {counts['previously_connected']} 个服务器已断开\n\n"
             f"使用 `connect_mcp_server(server)` 重新连接"
         )
 

@@ -131,6 +131,24 @@ class BotMsgCrypt:
 
         return base64.b64encode(encrypted).decode("utf-8")
 
+    @staticmethod
+    def _validate_pkcs7_padding(data: bytes, block_size: int = 32) -> int:
+        """校验 PKCS#7 填充并返回 pad_len，校验失败时抛出 ValueError。"""
+        if not data:
+            raise ValueError("empty data for PKCS#7 unpadding")
+        pad_len = data[-1]
+        if pad_len < 1 or pad_len > block_size or pad_len > len(data):
+            raise ValueError(
+                f"invalid PKCS#7 pad_len={pad_len} (block_size={block_size}, data_len={len(data)})"
+            )
+        for i in range(1, pad_len + 1):
+            if data[-i] != pad_len:
+                raise ValueError(
+                    f"PKCS#7 padding byte mismatch at offset -{i}: "
+                    f"expected {pad_len}, got {data[-i]}"
+                )
+        return pad_len
+
     def _decrypt(self, ciphertext: str) -> str:
         """解密消息"""
         try:
@@ -146,14 +164,18 @@ class BotMsgCrypt:
         cipher = AES.new(self.aes_key, AES.MODE_CBC, iv)
         decrypted = cipher.decrypt(encrypted)
 
-        # 去 PKCS#7 填充
-        pad_len = decrypted[-1]
+        # 去 PKCS#7 填充（含校验）
+        pad_len = self._validate_pkcs7_padding(decrypted)
         content = decrypted[:-pad_len]
 
         # 解析: random(16B) + msg_len(4B) + msg + receiveid
         msg_len = struct.unpack("!I", content[16:20])[0]
+        if 20 + msg_len > len(content):
+            raise ValueError(
+                f"msg_len={msg_len} exceeds content boundary "
+                f"(content_len={len(content)})"
+            )
         msg = content[20 : 20 + msg_len].decode("utf-8")
-        # receiveid 部分对于智能机器人应为空字符串，不做校验
 
         return msg
 
@@ -249,8 +271,8 @@ class BotMsgCrypt:
         cipher = AES.new(self.aes_key, AES.MODE_CBC, iv)
         decrypted = cipher.decrypt(encrypted_data)
 
-        # PKCS#7 去填充
-        pad_len = decrypted[-1]
+        # PKCS#7 去填充（含校验）
+        pad_len = self._validate_pkcs7_padding(decrypted)
         return decrypted[:-pad_len]
 
 
@@ -303,11 +325,23 @@ class StreamSession:
 class WeWorkBotConfig:
     """企业微信智能机器人配置"""
 
-    corp_id: str  # 企业 ID（用于标识，不参与 API 调用）
-    token: str  # 回调 Token
-    encoding_aes_key: str  # 回调加密 AES Key
-    callback_port: int = 9880  # 回调服务端口
-    callback_host: str = "0.0.0.0"  # 回调服务绑定地址
+    corp_id: str
+    token: str
+    encoding_aes_key: str
+    callback_port: int = 9880
+    callback_host: str = "0.0.0.0"
+
+    def __post_init__(self) -> None:
+        if not self.corp_id or not self.corp_id.strip():
+            raise ValueError("WeWorkBotConfig: corp_id is required")
+        if not self.token or not self.token.strip():
+            raise ValueError("WeWorkBotConfig: token is required")
+        if not self.encoding_aes_key or not self.encoding_aes_key.strip():
+            raise ValueError("WeWorkBotConfig: encoding_aes_key is required")
+        if not (1 <= self.callback_port <= 65535):
+            raise ValueError(
+                f"WeWorkBotConfig: invalid callback_port {self.callback_port}"
+            )
 
 
 # ==================== 适配器 ====================
@@ -357,6 +391,19 @@ class WeWorkBotAdapter(ChannelAdapter):
 
     # 过期清理间隔
     CLEANUP_INTERVAL = 120
+
+    @staticmethod
+    def _truncate_utf8(text: str, max_bytes: int) -> str:
+        """将文本截断到不超过 max_bytes 字节，保证 UTF-8 完整性。"""
+        encoded = text.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return text
+        truncated = encoded[:max_bytes]
+        while truncated and truncated[-1] & 0xC0 == 0x80:
+            truncated = truncated[:-1]
+        if truncated and truncated[-1] & 0x80:
+            truncated = truncated[:-1]
+        return truncated.decode("utf-8", errors="ignore")
 
     def __init__(
         self,
@@ -628,10 +675,11 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         if ready_to_finish:
             # ── settle 完成: 返回 finish=true + content + images ──
+            final_content = self._truncate_utf8(session.content or "", 20480)
             reply_stream: dict[str, Any] = {
                 "id": stream_id,
                 "finish": True,
-                "content": session.content or "",
+                "content": final_content,
             }
 
             # 附加图片到 msg_item（仅 finish=true 时有效）
@@ -676,7 +724,7 @@ class WeWorkBotAdapter(ChannelAdapter):
                     "stream": {
                         "id": stream_id,
                         "finish": False,
-                        "content": session.content or "",
+                        "content": self._truncate_utf8(session.content or "", 20480),
                     },
                 },
                 ensure_ascii=False,
@@ -888,7 +936,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": ""},
+            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
         )
 
         self._log_message(unified)
@@ -931,7 +979,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": ""},
+            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
         )
 
         self._log_message(unified)
@@ -951,6 +999,7 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         text_parts = []
         images = []
+        files = []
 
         for item in msg_items:
             item_type = item.get("msgtype", "")
@@ -965,6 +1014,17 @@ class WeWorkBotAdapter(ChannelAdapter):
                 )
                 media.extra = {"aes_encrypted": True}
                 images.append(media)
+            elif item_type == "file":
+                file_data = item.get("file", {})
+                file_url = file_data.get("url", "")
+                file_name = file_data.get("filename", f"{msgid}_{len(files)}")
+                media = MediaFile.create(
+                    filename=file_name,
+                    mime_type="application/octet-stream",
+                    url=file_url,
+                )
+                media.extra = {"aes_encrypted": True}
+                files.append(media)
 
         # 处理引用
         quote_data = msg_data.get("quote")
@@ -989,6 +1049,7 @@ class WeWorkBotAdapter(ChannelAdapter):
         content = MessageContent(
             text=combined_text,
             images=images,
+            files=files,
         )
 
         unified = UnifiedMessage.create(
@@ -1002,7 +1063,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": ""},
+            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
         )
 
         self._log_message(unified)
@@ -1047,7 +1108,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": ""},
+            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
         )
 
         self._log_message(unified)
@@ -1090,7 +1151,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": ""},
+            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
         )
 
         self._log_message(unified)
@@ -1492,7 +1553,8 @@ class WeWorkBotAdapter(ChannelAdapter):
             raise ValueError("Media has no URL to download")
 
         # 下载
-        response = await self._http_client.get(media.url)
+        response = await self._http_client.get(media.url, timeout=60.0)
+        response.raise_for_status()
         raw_data = response.content
 
         # 如果标记了 AES 加密，解密内容
@@ -1507,11 +1569,12 @@ class WeWorkBotAdapter(ChannelAdapter):
                 logger.error(
                     f"WeWorkBot: Failed to decrypt media {media.filename}: {e}"
                 )
-                # 如果解密失败，仍然保存原始数据
-                pass
+                media.status = MediaStatus.FAILED
+                raise ValueError(f"Media decryption failed for {media.filename}") from e
 
         # 保存到本地
-        local_path = self.media_dir / media.filename
+        safe_name = Path(media.filename).name or "download"
+        local_path = self.media_dir / safe_name
         with open(local_path, "wb") as f:
             f.write(raw_data)
 

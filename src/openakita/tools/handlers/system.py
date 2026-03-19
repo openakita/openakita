@@ -299,7 +299,7 @@ class SystemHandler:
                 "saved_to": str(out_path),
                 "request_id": request_id,
                 "elapsed_ms": elapsed_ms,
-                "hint": "如需发送到 IM，请使用 deliver_artifacts(type=image, path=saved_to)。",
+                "hint": "如需发送到 IM，请调用 deliver_artifacts(type=image, path=saved_to)。仅需调用一次，不要以 file 类型重复发送。",
             },
             ensure_ascii=False,
             indent=2,

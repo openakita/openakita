@@ -61,7 +61,7 @@ _SENSITIVE_PATTERN = re.compile(r"(api_key|secret|token|password)", re.IGNORECAS
 # ---------------------------------------------------------------------------
 _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
     (("anthropic_", "default_model", "max_tokens"), "LLM"),
-    (("kimi_", "dashscope_", "minimax_", "openrouter_"), "LLM/备用端点"),
+    (("dashscope_",), "LLM/DashScope"),
     (("agent_name", "max_iterations", "force_tool_call",
       "tool_max_parallel", "allow_parallel", "selfcheck_"), "Agent"),
     (("thinking_",), "Agent/思考模式"),
@@ -435,9 +435,15 @@ class ConfigHandler:
                 elif key in os.environ:
                     del os.environ[key]
 
-            # 热重载 settings
+            # 热重载 settings（reload 已跳过 _PERSISTABLE_KEYS 字段）
             changed_fields = settings.reload()
             logger.info(f"[ConfigHandler] set: updated {len(env_entries)} entries, reloaded fields: {changed_fields}")
+
+            # 双重保险：恢复运行时持久化字段（防止旧版 reload 或异常路径覆盖）
+            try:
+                runtime_state.load()
+            except Exception as e:
+                logger.warning(f"[ConfigHandler] runtime_state.load failed: {e}")
 
             # 持久化 runtime_state（如果修改了可持久化的字段）
             try:
@@ -514,10 +520,8 @@ class ConfigHandler:
 
         target = (params.get("target") or "main").strip()
 
-        # 从 provider registry 获取默认值
         api_type = endpoint_data.get("api_type", "")
         base_url = endpoint_data.get("base_url", "")
-        api_key_env_suggestion = ""
 
         if not api_type or not base_url:
             defaults = self._get_provider_defaults(provider)
@@ -526,94 +530,56 @@ class ConfigHandler:
                     api_type = defaults.get("api_type", "openai")
                 if not base_url:
                     base_url = defaults.get("base_url", "")
-                api_key_env_suggestion = defaults.get("api_key_env", "")
 
         if not api_type:
             api_type = "openai"
         if not base_url:
             return f"❌ 无法推断 {provider} 的 API 地址，请手动提供 base_url"
 
-        # 加载现有端点（需要在确定 api_key_env 之前，用于去重）
-        from ...llm.config import load_endpoints_config, save_endpoints_config
-        from ...llm.types import EndpointConfig
-
-        endpoints, compiler_eps, stt_eps, ep_settings = load_endpoints_config()
-
-        # Collect all api_key_env names already in use across all endpoint lists
-        used_env_keys: set[str] = set()
-        for ep in [*endpoints, *compiler_eps, *stt_eps]:
-            if ep.api_key_env:
-                used_env_keys.add(ep.api_key_env)
-
-        # 处理 API Key: 存入 .env
         api_key = endpoint_data.get("api_key", "").strip()
-        api_key_env = ""
-        if api_key:
-            base_env_name = api_key_env_suggestion or f"{provider.upper()}_API_KEY"
-            env_var_name = _unique_env_key(base_env_name, used_env_keys)
-            api_key_env = env_var_name
 
-            from ...config import settings
-            project_root = Path(settings.project_root)
-            env_path = project_root / ".env"
-            existing = env_path.read_text(encoding="utf-8", errors="replace") if env_path.exists() else ""
-            new_content = _update_env_content(existing, {env_var_name: api_key})
-            env_path.write_text(new_content, encoding="utf-8")
-            os.environ[env_var_name] = api_key
-            logger.info(f"[ConfigHandler] Stored API key in .env as {env_var_name}")
-        else:
-            base_env_name = endpoint_data.get("api_key_env") or api_key_env_suggestion
-            if base_env_name:
-                api_key_env = _unique_env_key(base_env_name, used_env_keys)
-            else:
-                api_key_env = ""
+        endpoint_type_map = {"compiler": "compiler_endpoints", "stt": "stt_endpoints"}
+        endpoint_type = endpoint_type_map.get(target, "endpoints")
 
-        new_ep = EndpointConfig(
-            name=name,
-            provider=provider,
-            api_type=api_type,
-            base_url=base_url,
-            api_key_env=api_key_env or None,
-            model=model,
-            priority=int(endpoint_data.get("priority", 10)),
-            max_tokens=int(endpoint_data.get("max_tokens", 0)),
-            context_window=int(endpoint_data.get("context_window", 200000)),
-            timeout=int(endpoint_data.get("timeout", 180)),
-            capabilities=endpoint_data.get("capabilities"),
-        )
+        ep_dict = {
+            "name": name,
+            "provider": provider,
+            "api_type": api_type,
+            "base_url": base_url,
+            "model": model,
+            "priority": int(endpoint_data.get("priority", 10)),
+            "max_tokens": int(endpoint_data.get("max_tokens", 0)),
+            "context_window": int(endpoint_data.get("context_window", 200000)),
+            "timeout": int(endpoint_data.get("timeout", 180)),
+        }
+        if endpoint_data.get("capabilities"):
+            ep_dict["capabilities"] = endpoint_data["capabilities"]
+        if endpoint_data.get("api_key_env"):
+            ep_dict["api_key_env"] = endpoint_data["api_key_env"]
 
-        # 选择目标列表
-        if target == "compiler":
-            target_list = compiler_eps
-        elif target == "stt":
-            target_list = stt_eps
-        else:
-            target_list = endpoints
+        from ...llm.endpoint_manager import EndpointManager
+        from ...config import settings
 
-        # 检查重名
-        for existing_ep in target_list:
-            if existing_ep.name == name:
-                return f"❌ 端点 \"{name}\" 已存在，请使用其他名称或先删除旧端点"
+        mgr = EndpointManager(Path(settings.project_root))
+        try:
+            result = mgr.save_endpoint(
+                endpoint=ep_dict,
+                api_key=api_key or None,
+                endpoint_type=endpoint_type,
+            )
+        except ValueError as e:
+            return f"❌ {e}"
 
-        target_list.append(new_ep)
-
-        # 保存
-        save_endpoints_config(
-            endpoints, ep_settings,
-            compiler_endpoints=compiler_eps,
-            stt_endpoints=stt_eps,
-        )
-
-        # 热重载 LLM client
         reload_info = self._reload_llm_client()
 
+        api_key_env = result.get("api_key_env", "")
         key_info = f"API Key 已存入 .env ({api_key_env})" if api_key_env else "未配置 API Key"
         return (
             f"✅ 已添加 LLM 端点:\n"
             f"- 名称: {name}\n"
             f"- 服务商: {provider} | 协议: {api_type}\n"
             f"- API 地址: {base_url}\n"
-            f"- 模型: {model} | 优先级: {new_ep.priority}\n"
+            f"- 模型: {model} | 优先级: {ep_dict['priority']}\n"
             f"- {key_info}\n"
             f"- 目标: {target}\n"
             f"- {reload_info}"
@@ -629,37 +595,19 @@ class ConfigHandler:
 
         target = (params.get("target") or "main").strip()
 
-        from ...llm.config import load_endpoints_config, save_endpoints_config
+        endpoint_type_map = {"compiler": "compiler_endpoints", "stt": "stt_endpoints"}
+        endpoint_type = endpoint_type_map.get(target, "endpoints")
 
-        endpoints, compiler_eps, stt_eps, ep_settings = load_endpoints_config()
+        from ...llm.endpoint_manager import EndpointManager
+        from ...config import settings
 
-        if target == "compiler":
-            target_list = compiler_eps
-        elif target == "stt":
-            target_list = stt_eps
-        else:
-            target_list = endpoints
+        mgr = EndpointManager(Path(settings.project_root))
+        removed = mgr.delete_endpoint(endpoint_name, endpoint_type=endpoint_type)
 
-        original_len = len(target_list)
-        filtered = [ep for ep in target_list if ep.name != endpoint_name]
-
-        if len(filtered) == original_len:
-            available = ", ".join(ep.name for ep in target_list) or "(无)"
+        if removed is None:
+            all_eps = mgr.list_endpoints(endpoint_type)
+            available = ", ".join(e.get("name", "") for e in all_eps) or "(无)"
             return f"❌ 未找到端点 \"{endpoint_name}\"。当前 {target} 端点: {available}"
-
-        # 更新对应列表
-        if target == "compiler":
-            compiler_eps = filtered
-        elif target == "stt":
-            stt_eps = filtered
-        else:
-            endpoints = filtered
-
-        save_endpoints_config(
-            endpoints, ep_settings,
-            compiler_endpoints=compiler_eps,
-            stt_endpoints=stt_eps,
-        )
 
         reload_info = self._reload_llm_client()
         return f"✅ 已删除端点 \"{endpoint_name}\" ({target})。{reload_info}"

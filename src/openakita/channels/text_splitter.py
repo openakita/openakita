@@ -157,6 +157,8 @@ def chunk_markdown_text(
     Returns:
         拆分后的文本列表
     """
+    if not text or not text.strip():
+        return []
     if max_length <= 0 or len(text) <= max_length:
         return [text]
 
@@ -219,6 +221,8 @@ def chunk_text_by_bytes(
     Returns:
         拆分后的文本列表
     """
+    if not text or not text.strip():
+        return []
     if len(text.encode("utf-8")) <= max_bytes:
         return [text]
 

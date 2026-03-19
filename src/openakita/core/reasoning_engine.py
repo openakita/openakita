@@ -782,6 +782,7 @@ class ReasoningEngine:
                     thinking_depth=thinking_depth,
                     iteration=iteration,
                     agent_profile_id=agent_profile_id,
+                    cancel_event=state.cancel_event,
                 )
 
                 if task_monitor:
@@ -2503,6 +2504,16 @@ class ReasoningEngine:
                 return "写入成功" if "成功" in r or "ok" in r.lower() or r_len < 100 else f"完成 ({r_len} 字符)"
             case "browser_screenshot":
                 return "截图已获取"
+            case "desktop_screenshot":
+                return "桌面截图已保存"
+            case "deliver_artifacts":
+                try:
+                    import json as _json
+                    _d = _json.loads(r)
+                    _n = len(_d.get("receipts", []))
+                    return f"已交付 {_n} 个文件" if _n else ""
+                except Exception:
+                    return ""
             case "switch_persona":
                 return "切换完成"
             case _:
@@ -2829,6 +2840,7 @@ class ReasoningEngine:
                     thinking_depth=thinking_depth,
                     iteration=iteration,
                     agent_profile_id=agent_profile_id,
+                    cancel_event=cancel_event,
                 )
                 await queue.put(("result", decision))
             except Exception as exc:
@@ -2894,6 +2906,7 @@ class ReasoningEngine:
         thinking_depth: str | None = None,
         iteration: int = 0,
         agent_profile_id: str = "default",
+        cancel_event: asyncio.Event | None = None,
     ) -> Decision:
         """
         推理阶段: 调用 LLM，返回结构化 Decision。
@@ -2919,6 +2932,7 @@ class ReasoningEngine:
                 response = await self._brain.messages_create_async(
                     use_thinking=use_thinking,
                     thinking_depth=thinking_depth,
+                    cancel_event=cancel_event,
                     model=current_model,
                     max_tokens=self._brain.max_tokens,
                     system=system_prompt,

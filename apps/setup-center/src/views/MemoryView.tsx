@@ -330,10 +330,10 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
 
   if (!serviceRunning) {
     return (
-      <div className="imViewEmpty">
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconBrain size={48} />
-        <div style={{ marginTop: 12, fontWeight: 600 }}>记忆管理</div>
-        <div style={{ marginTop: 4, opacity: 0.5, fontSize: 13 }}>后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-3 font-semibold">记忆管理</div>
+        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
       </div>
     );
   }

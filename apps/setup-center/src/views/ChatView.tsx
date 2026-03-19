@@ -5,9 +5,10 @@ import { useEffect, useMemo, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { setThemePref } from "../theme";
 import type { Theme } from "../theme";
-import { invoke, downloadFile, openFileWithDefault, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, onWsEvent, logger } from "../platform";
+import { invoke, downloadFile, openFileWithDefault, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, IS_MOBILE_BROWSER, onWsEvent, logger, getAssetUrl } from "../platform";
 import { getAccessToken } from "../platform/auth";
 import { safeFetch } from "../providers";
 import type {
@@ -270,7 +271,7 @@ type StreamEvent =
   | { type: "text_delta"; content: string }
   | { type: "text"; content?: string; text?: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
-  | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean }
+  | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean; skipped?: boolean }
   | { type: "plan_created"; plan: ChatPlan }
   | { type: "plan_step_updated"; stepId?: string; stepIdx?: number; status: string }
   | { type: "plan_completed" }
@@ -1124,6 +1125,175 @@ function SlashCommandPanel({
 
 // ─── 消息渲染 ───
 
+// ─── Artifact 渲染（供 MessageBubble / FlatMessageItem 共用） ───
+
+function VoiceArtifact({ src, caption }: { src: string; caption?: string }) {
+  const [error, setError] = useState(false);
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <audio
+        controls
+        preload="metadata"
+        src={src}
+        style={{ maxWidth: "100%" }}
+        onError={() => setError(true)}
+      />
+      {error && (
+        <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 4 }}>
+          音频加载失败，请检查文件是否存在或格式是否支持
+        </div>
+      )}
+      {caption && (
+        <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{caption}</div>
+      )}
+    </div>
+  );
+}
+
+function ArtifactItem({ art, displayUrl, downloadUrl, onImagePreview }: {
+  art: ChatArtifact;
+  displayUrl: string;
+  downloadUrl: string;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
+}) {
+  const { t } = useTranslation();
+
+  if (art.artifact_type === "image") {
+    return (
+      <div style={{ marginBottom: 8, position: "relative", display: "inline-block" }}>
+        <img
+          src={displayUrl}
+          alt={art.caption || art.name}
+          style={{
+            maxWidth: "100%",
+            maxHeight: 400,
+            borderRadius: 8,
+            border: "1px solid var(--line)",
+            display: "block",
+            cursor: "pointer",
+          }}
+          onClick={() => {
+            if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
+            _artifactClickTimer = setTimeout(() => {
+              onImagePreview?.(displayUrl, downloadUrl, art.name || "image");
+            }, 250);
+          }}
+          onDoubleClick={() => {
+            if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
+            (async () => {
+              try {
+                const savedPath = await downloadFile(downloadUrl, art.name || `image-${Date.now()}.png`);
+                await openFileWithDefault(savedPath);
+              } catch (err) {
+                logger.error("Chat", "图片打开失败", { error: String(err) });
+              }
+            })();
+          }}
+        />
+        <button
+          title={t("chat.downloadImage") || "保存图片"}
+          style={{
+            position: "absolute", top: 8, right: 8,
+            background: "rgba(0,0,0,0.55)", color: "#fff",
+            border: "none", borderRadius: 6, width: 32, height: 32,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", opacity: 0.8, transition: "opacity 0.15s",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.8"; }}
+          onClick={async (e) => {
+            e.stopPropagation();
+            try {
+              const savedPath = await downloadFile(downloadUrl, art.name || `image-${Date.now()}.png`);
+              await showInFolder(savedPath);
+            } catch (err) {
+              logger.error("Chat", "图片下载失败", { error: String(err) });
+            }
+          }}
+        >
+          <IconDownload size={16} />
+        </button>
+        {art.caption && (
+          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
+        )}
+      </div>
+    );
+  }
+
+  if (art.artifact_type === "voice") {
+    return <VoiceArtifact src={displayUrl} caption={art.caption} />;
+  }
+
+  const FileIcon = getFileTypeIcon(art.name || "");
+  const sizeStr = art.size != null
+    ? art.size > 1048576 ? `${(art.size / 1048576).toFixed(1)} MB` : `${(art.size / 1024).toFixed(1)} KB`
+    : "";
+  return (
+    <div style={{
+      display: "inline-flex", alignItems: "center", gap: 10,
+      padding: "10px 14px", borderRadius: 10, border: "1px solid var(--line)",
+      fontSize: 13, marginBottom: 4, cursor: "pointer",
+      background: "var(--panel)",
+      transition: "background 0.15s",
+    }}
+      onClick={() => {
+        if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
+        _artifactClickTimer = setTimeout(async () => {
+          try {
+            const savedPath = await downloadFile(downloadUrl, art.name || "file");
+            await showInFolder(savedPath);
+          } catch (err) {
+            logger.error("Chat", "文件下载失败", { error: String(err) });
+          }
+        }, 250);
+      }}
+      onDoubleClick={() => {
+        if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
+        (async () => {
+          try {
+            const savedPath = await downloadFile(downloadUrl, art.name || "file");
+            await openFileWithDefault(savedPath);
+          } catch (err) {
+            logger.error("Chat", "文件打开失败", { error: String(err) });
+          }
+        })();
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(37,99,235,0.08)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--panel)"; }}
+    >
+      <FileIcon size={28} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+        <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{art.name}</span>
+        <span style={{ fontSize: 11, opacity: 0.5 }}>
+          {sizeStr}{sizeStr && art.caption ? " · " : ""}{art.caption || ""}
+        </span>
+      </div>
+      <IconDownload size={14} style={{ opacity: 0.4, flexShrink: 0 }} />
+    </div>
+  );
+}
+
+function ArtifactList({ artifacts, apiBaseUrl, onImagePreview }: {
+  artifacts: ChatArtifact[];
+  apiBaseUrl?: string;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      {artifacts.map((art, i) => {
+        const httpUrl = (() => {
+          const rawUrl = art.file_url.startsWith("http")
+            ? art.file_url
+            : `${apiBaseUrl || ""}${art.file_url}`;
+          return appendAuthToken(rawUrl);
+        })();
+        const displayUrl = getAssetUrl(art.path) || httpUrl;
+        return <ArtifactItem key={i} art={art} displayUrl={displayUrl} downloadUrl={httpUrl} onImagePreview={onImagePreview} />;
+      })}
+    </div>
+  );
+}
+
 const MessageBubble = memo(function MessageBubble({
   msg,
   onAskAnswer,
@@ -1138,7 +1308,7 @@ const MessageBubble = memo(function MessageBubble({
   apiBaseUrl?: string;
   showChain?: boolean;
   onSkipStep?: () => void;
-  onImagePreview?: (url: string, name: string) => void;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   mdModules?: MdModules | null;
 }) {
   const { t } = useTranslation();
@@ -1215,134 +1385,7 @@ const MessageBubble = memo(function MessageBubble({
 
         {/* Artifacts (images, files delivered by agent) */}
         {msg.artifacts && msg.artifacts.length > 0 && (
-          <div style={{ marginTop: 8 }}>
-            {msg.artifacts.map((art, i) => {
-              const rawUrl = art.file_url.startsWith("http")
-                ? art.file_url
-                : `${apiBaseUrl || ""}${art.file_url}`;
-              const fullUrl = appendAuthToken(rawUrl);
-              if (art.artifact_type === "image") {
-                return (
-                  <div key={i} style={{ marginBottom: 8, position: "relative", display: "inline-block" }}>
-                    <img
-                      src={fullUrl}
-                      alt={art.caption || art.name}
-                      style={{
-                        maxWidth: "100%",
-                        maxHeight: 400,
-                        borderRadius: 8,
-                        border: "1px solid var(--line)",
-                        display: "block",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => {
-                        if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
-                        _artifactClickTimer = setTimeout(() => {
-                          onImagePreview?.(fullUrl, art.name || "image");
-                        }, 250);
-                      }}
-                      onDoubleClick={() => {
-                        if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
-                        (async () => {
-                          try {
-                            const savedPath = await downloadFile(fullUrl, art.name || `image-${Date.now()}.png`);
-                            await openFileWithDefault(savedPath);
-                          } catch (err) {
-                            logger.error("Chat", "图片打开失败", { error: String(err) });
-                          }
-                        })();
-                      }}
-                    />
-                    <button
-                      title={t("chat.downloadImage") || "保存图片"}
-                      style={{
-                        position: "absolute", top: 8, right: 8,
-                        background: "rgba(0,0,0,0.55)", color: "#fff",
-                        border: "none", borderRadius: 6, width: 32, height: 32,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        cursor: "pointer", opacity: 0.8, transition: "opacity 0.15s",
-                      }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.8"; }}
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        try {
-                          const savedPath = await downloadFile(fullUrl, art.name || `image-${Date.now()}.png`);
-                          await showInFolder(savedPath);
-                        } catch (err) {
-                          logger.error("Chat", "图片下载失败", { error: String(err) });
-                        }
-                      }}
-                    >
-                      <IconDownload size={16} />
-                    </button>
-                    {art.caption && (
-                      <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
-                    )}
-                  </div>
-                );
-              }
-              if (art.artifact_type === "voice") {
-                return (
-                  <div key={i} style={{ marginBottom: 8 }}>
-                    <audio controls src={fullUrl} style={{ maxWidth: "100%" }} />
-                    {art.caption && (
-                      <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
-                    )}
-                  </div>
-                );
-              }
-              return (() => {
-                const FileIcon = getFileTypeIcon(art.name || "");
-                const sizeStr = art.size != null
-                  ? art.size > 1048576 ? `${(art.size / 1048576).toFixed(1)} MB` : `${(art.size / 1024).toFixed(1)} KB`
-                  : "";
-                return (
-                  <div key={i} style={{
-                    display: "inline-flex", alignItems: "center", gap: 10,
-                    padding: "10px 14px", borderRadius: 10, border: "1px solid var(--line)",
-                    fontSize: 13, marginBottom: 4, cursor: "pointer",
-                    background: "var(--panel)",
-                    transition: "background 0.15s",
-                  }}
-                    onClick={() => {
-                      if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
-                      _artifactClickTimer = setTimeout(async () => {
-                        try {
-                          const savedPath = await downloadFile(fullUrl, art.name || "file");
-                          await showInFolder(savedPath);
-                        } catch (err) {
-                          logger.error("Chat", "文件下载失败", { error: String(err) });
-                        }
-                      }, 250);
-                    }}
-                    onDoubleClick={() => {
-                      if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
-                      (async () => {
-                        try {
-                          const savedPath = await downloadFile(fullUrl, art.name || "file");
-                          await openFileWithDefault(savedPath);
-                        } catch (err) {
-                          logger.error("Chat", "文件打开失败", { error: String(err) });
-                        }
-                      })();
-                    }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(37,99,235,0.08)"; }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--panel)"; }}
-                  >
-                    <FileIcon size={28} />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                      <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{art.name}</span>
-                      <span style={{ fontSize: 11, opacity: 0.5 }}>
-                        {sizeStr}{sizeStr && art.caption ? " · " : ""}{art.caption || ""}
-                      </span>
-                    </div>
-                    <IconDownload size={14} style={{ opacity: 0.4, flexShrink: 0 }} />
-                  </div>
-                );
-              })();
-            })}
-          </div>
+          <ArtifactList artifacts={msg.artifacts} apiBaseUrl={apiBaseUrl} onImagePreview={onImagePreview} />
         )}
 
         {/* Ask user */}
@@ -1376,7 +1419,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
   apiBaseUrl?: string;
   showChain?: boolean;
   onSkipStep?: () => void;
-  onImagePreview?: (url: string, name: string) => void;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   mdModules?: MdModules | null;
 }) {
   const { t } = useTranslation();
@@ -1458,124 +1501,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
 
           {/* Artifacts */}
           {msg.artifacts && msg.artifacts.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              {msg.artifacts.map((art, i) => {
-                const rawUrl = art.file_url.startsWith("http")
-                  ? art.file_url
-                  : `${apiBaseUrl || ""}${art.file_url}`;
-                const fullUrl = appendAuthToken(rawUrl);
-                if (art.artifact_type === "image") {
-                  return (
-                    <div key={i} style={{ marginBottom: 8, position: "relative", display: "inline-block" }}>
-                      <img
-                        src={fullUrl}
-                        alt={art.caption || art.name}
-                        style={{ maxWidth: "100%", maxHeight: 400, borderRadius: 8, border: "1px solid var(--line)", display: "block", cursor: "pointer" }}
-                        onClick={() => {
-                          if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
-                          _artifactClickTimer = setTimeout(() => {
-                            onImagePreview?.(fullUrl, art.name || "image");
-                          }, 250);
-                        }}
-                        onDoubleClick={() => {
-                          if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
-                          (async () => {
-                            try {
-                              const savedPath = await downloadFile(fullUrl, art.name || `image-${Date.now()}.png`);
-                              await openFileWithDefault(savedPath);
-                            } catch (err) {
-                              logger.error("Chat", "图片打开失败", { error: String(err) });
-                            }
-                          })();
-                        }}
-                      />
-                      <button
-                        title={t("chat.downloadImage") || "保存图片"}
-                        style={{
-                          position: "absolute", top: 8, right: 8,
-                          background: "rgba(0,0,0,0.55)", color: "#fff",
-                          border: "none", borderRadius: 6, width: 32, height: 32,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          cursor: "pointer", opacity: 0.8, transition: "opacity 0.15s",
-                        }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "1"; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = "0.8"; }}
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            const savedPath = await downloadFile(fullUrl, art.name || `image-${Date.now()}.png`);
-                            await showInFolder(savedPath);
-                          } catch (err) {
-                            logger.error("Chat", "图片下载失败", { error: String(err) });
-                          }
-                        }}
-                      >
-                        <IconDownload size={16} />
-                      </button>
-                    </div>
-                  );
-                }
-                if (art.artifact_type === "voice") {
-                  return (
-                    <div key={i} style={{ marginBottom: 8 }}>
-                      <audio controls src={fullUrl} style={{ maxWidth: "100%" }} />
-                      {art.caption && (
-                        <div style={{ fontSize: 12, opacity: 0.6, marginTop: 4 }}>{art.caption}</div>
-                      )}
-                    </div>
-                  );
-                }
-                return (() => {
-                  const FileIcon = getFileTypeIcon(art.name || "");
-                  const sizeStr = art.size != null
-                    ? art.size > 1048576 ? `${(art.size / 1048576).toFixed(1)} MB` : `${(art.size / 1024).toFixed(1)} KB`
-                    : "";
-                  return (
-                    <div key={i} style={{
-                      display: "inline-flex", alignItems: "center", gap: 10,
-                      padding: "10px 14px", borderRadius: 10, border: "1px solid var(--line)",
-                      fontSize: 13, marginBottom: 4, cursor: "pointer",
-                      background: "var(--panel)",
-                      transition: "background 0.15s",
-                    }}
-                      onClick={() => {
-                        if (_artifactClickTimer) clearTimeout(_artifactClickTimer);
-                        _artifactClickTimer = setTimeout(async () => {
-                          try {
-                            const savedPath = await downloadFile(fullUrl, art.name || "file");
-                            await showInFolder(savedPath);
-                          } catch (err) {
-                            logger.error("Chat", "文件下载失败", { error: String(err) });
-                          }
-                        }, 250);
-                      }}
-                      onDoubleClick={() => {
-                        if (_artifactClickTimer) { clearTimeout(_artifactClickTimer); _artifactClickTimer = null; }
-                        (async () => {
-                          try {
-                            const savedPath = await downloadFile(fullUrl, art.name || "file");
-                            await openFileWithDefault(savedPath);
-                          } catch (err) {
-                            logger.error("Chat", "文件打开失败", { error: String(err) });
-                          }
-                        })();
-                      }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(37,99,235,0.08)"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--panel)"; }}
-                    >
-                      <FileIcon size={28} />
-                      <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                        <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{art.name}</span>
-                        <span style={{ fontSize: 11, opacity: 0.5 }}>
-                          {sizeStr}{sizeStr && art.caption ? " · " : ""}{art.caption || ""}
-                        </span>
-                      </div>
-                      <IconDownload size={14} style={{ opacity: 0.4, flexShrink: 0 }} />
-                    </div>
-                  );
-                })()
-              })}
-            </div>
+            <ArtifactList artifacts={msg.artifacts} apiBaseUrl={apiBaseUrl} onImagePreview={onImagePreview} />
           )}
 
           {/* Ask user */}
@@ -1796,7 +1722,7 @@ export function ChatView({
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
-  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [lightbox, setLightbox] = useState<{ url: string; downloadUrl: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
@@ -1944,8 +1870,8 @@ export function ChatView({
     try { const v = localStorage.getItem("chat_thinkingDepth"); return (v === "low" || v === "medium" || v === "high") ? v : "medium"; }
     catch { return "medium"; }
   });
-  const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
-  const thinkingMenuRef = useRef<HTMLDivElement | null>(null);
+  const [thinkingModeTipOpen, setThinkingModeTipOpen] = useState(false);
+  const [thinkingDepthTipOpen, setThinkingDepthTipOpen] = useState(false);
 
   // 持久化思考偏好
   useEffect(() => { try { localStorage.setItem("chat_thinkingMode", thinkingMode); } catch {} }, [thinkingMode]);
@@ -2033,17 +1959,17 @@ export function ChatView({
   }, [flushCurrentConversationToStorage]);
 
   // ── APP 后台恢复：中断已断开的 SSE 流 ──
-  // Tauri WebView (macOS WKWebView / Windows WebView2) kills HTTP streams
-  // when the window is in the background, so we need to proactively abort and
-  // let the error handler clean up.  Regular browsers keep fetch streams alive
-  // across tab switches / minimize, so aborting would unnecessarily terminate
-  // a perfectly healthy response — skip for IS_WEB.
+  // Tauri / Capacitor / mobile browsers kill HTTP streams when the app/tab is
+  // in the background.  Desktop browsers keep fetch streams alive across tab
+  // switches, so we only skip the abort for desktop web.
+  // Abort reason "app_resumed" tells the catch handler to attempt recovery from
+  // backend session history instead of marking the conversation as user-cancelled.
   useEffect(() => {
-    if (IS_WEB) return;
+    if (IS_WEB && !IS_MOBILE_BROWSER) return;
     const handler = () => {
       for (const [convId, ctx] of streamContexts.current) {
         if (!ctx.isStreaming) continue;
-        ctx.abort.abort();
+        ctx.abort.abort("app_resumed");
         logger.warn("Chat", "SSE stream aborted after app resume", { convId });
       }
     };
@@ -2533,18 +2459,6 @@ export function ChatView({
     return () => document.removeEventListener("mousedown", handler);
   }, [modelMenuOpen]);
 
-  // ── 点击外部关闭思考菜单 ──
-  useEffect(() => {
-    if (!thinkingMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (thinkingMenuRef.current && !thinkingMenuRef.current.contains(e.target as Node)) {
-        setThinkingMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [thinkingMenuOpen]);
-
   // ── 斜杠命令定义 ──
   const slashCommands: SlashCommand[] = useMemo(() => [
     { id: "model", label: "切换模型", description: "选择使用的 LLM 端点", action: (args) => {
@@ -2618,22 +2532,22 @@ export function ChatView({
         setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考模式: ${currentLabel}\n用法: /thinking on|off|auto`, timestamp: Date.now() }]);
       }
     }},
-    { id: "thinking_depth", label: "思考深度", description: "设置思考深度 (low/medium/high)", action: (args) => {
+    { id: "thinking_depth", label: "思考程度", description: "设置思考程度 (low/medium/high)", action: (args) => {
       const depth = args?.toLowerCase().trim();
       if (depth === "low" || depth === "medium" || depth === "high") {
         setThinkingDepth(depth);
         const label = { low: "低", medium: "中", high: "高" }[depth];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `思考深度已设置为: ${label}`, timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `思考程度已设置为: ${label}`, timestamp: Date.now() }]);
       } else {
         const currentLabel = { low: "低", medium: "中", high: "高" }[thinkingDepth];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考深度: ${currentLabel}\n用法: /thinking_depth low|medium|high`, timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考程度: ${currentLabel}\n用法: /thinking_depth low|medium|high`, timestamp: Date.now() }]);
       }
     }},
     { id: "help", label: "帮助", description: "显示可用命令列表", action: () => {
       setMessages((prev) => [...prev, {
         id: genId(),
         role: "system",
-        content: "**可用命令：**\n- `/model [端点名]` — 切换 LLM 端点\n- `/plan` — 开启/关闭计划模式\n- `/thinking [on|off|auto]` — 深度思考模式\n- `/thinking_depth [low|medium|high]` — 思考深度\n- `/clear` — 清空对话\n- `/skill [技能名]` — 使用技能\n- `/persona [角色ID]` — 查看/切换角色\n- `/agent [Agent名]` — 切换 Agent\n- `/agents` — 查看 Agent 列表\n- `/help` — 显示此帮助",
+        content: "**可用命令：**\n- `/model [端点名]` — 切换 LLM 端点\n- `/plan` — 开启/关闭计划模式\n- `/thinking [on|off|auto]` — 深度思考模式\n- `/thinking_depth [low|medium|high]` — 思考程度\n- `/clear` — 清空对话\n- `/skill [技能名]` — 使用技能\n- `/persona [角色ID]` — 查看/切换角色\n- `/agent [Agent名]` — 切换 Agent\n- `/agents` — 查看 Agent 列表\n- `/help` — 显示此帮助",
         timestamp: Date.now(),
       }]);
     }},
@@ -3661,37 +3575,48 @@ export function ChatView({
         }
       }
     } catch (e: unknown) {
-      // Only treat as user-initiated abort when OUR AbortController was triggered.
-      // DOMException "AbortError" can also originate from the browser itself
-      // (page lifecycle freeze, tab discard, memory pressure) and must NOT be
-      // conflated with explicit user cancellation.
-      if (abort.signal.aborted) {
+      // Distinguish three abort scenarios:
+      // 1. User clicked stop → abort.signal.aborted && reason !== "app_resumed"
+      // 2. App resumed from background → abort.signal.reason === "app_resumed"
+      // 3. Browser/OS killed connection → DOMException AbortError without our signal
+      const isOurAbort = abort.signal.aborted;
+      const isAppResumeAbort = isOurAbort && abort.signal.reason === "app_resumed";
+      const isUserStop = isOurAbort && !isAppResumeAbort;
+
+      if (isUserStop) {
         updateMessages((prev) => prev.map((m) =>
           m.id === assistantMsg.id ? { ...m, content: m.content || "（已中止）", streaming: false } : m
         ));
       } else {
-        const isBrowserAbort =
-          (e instanceof DOMException && e.name === "AbortError") ||
-          (e instanceof Error && e.name === "AbortError");
-
-        if (isBrowserAbort) {
-          // Browser killed the connection (tab frozen / discarded, etc.)
-          // Preserve whatever content we already received — don't overwrite it.
+        if (isAppResumeAbort) {
+          // App returned from background — the stream is dead but the backend may
+          // still be running.  Preserve whatever content we already received and
+          // attempt recovery below.
           updateMessages((prev) => prev.map((m) =>
             m.id === assistantMsg.id ? { ...m, streaming: false } : m
           ));
         } else {
-          const errMsg = e instanceof Error ? e.message : String(e);
-          let guidance = t("chat.backendServiceHint");
-          try {
-            const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(2000) });
-            if (healthRes.ok) {
-              guidance = t("chat.backendOnlineUpstreamHint");
-            }
-          } catch { /* health probe failed -> keep backend guidance */ }
-          updateMessages((prev) => prev.map((m) =>
-            m.id === assistantMsg.id ? { ...m, content: m.content || `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
-          ));
+          const isBrowserAbort =
+            (e instanceof DOMException && e.name === "AbortError") ||
+            (e instanceof Error && e.name === "AbortError");
+
+          if (isBrowserAbort) {
+            updateMessages((prev) => prev.map((m) =>
+              m.id === assistantMsg.id ? { ...m, streaming: false } : m
+            ));
+          } else {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            let guidance = t("chat.backendServiceHint");
+            try {
+              const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(2000) });
+              if (healthRes.ok) {
+                guidance = t("chat.backendOnlineUpstreamHint");
+              }
+            } catch { /* health probe failed -> keep backend guidance */ }
+            updateMessages((prev) => prev.map((m) =>
+              m.id === assistantMsg.id ? { ...m, content: m.content || `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
+            ));
+          }
         }
 
         // Fire-and-forget: try to recover the (possibly completed) response
@@ -3701,6 +3626,7 @@ export function ChatView({
           const _recoverMsgId = assistantMsg.id;
           const _recoverUserTs = userMsg.timestamp;
           const _recoverKey = STORAGE_KEY_MSGS_PREFIX + thisConvId;
+          const _recoverDelay = isAppResumeAbort ? 4000 : 3000;
           setTimeout(() => {
             safeFetch(`${apiBase}/api/sessions/${encodeURIComponent(convId)}/history`)
               .then((r) => r.ok ? r.json() : null)
@@ -3736,7 +3662,7 @@ export function ChatView({
                 });
               })
               .catch(() => {});
-          }, 3000);
+          }, _recoverDelay);
         }
       }
     } finally {
@@ -3866,8 +3792,8 @@ export function ChatView({
     }).catch(() => {});
   }, [apiBase, activeConvId]);
 
-  const handleImagePreview = useCallback((url: string, name: string) => {
-    setLightbox({ url, name });
+  const handleImagePreview = useCallback((displayUrl: string, downloadUrl: string, name: string) => {
+    setLightbox({ url: displayUrl, downloadUrl, name });
   }, []);
 
   const handleCancelTask = useCallback(() => {
@@ -4273,10 +4199,10 @@ export function ChatView({
   // ── 未启动服务提示 ──
   if (!serviceRunning) {
     return (
-      <div className="imViewEmpty">
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconMessageCircle size={48} />
-        <div style={{ marginTop: 12, fontWeight: 600 }}>{t("chat.title")}</div>
-        <div style={{ marginTop: 4, opacity: 0.5, fontSize: 13 }}>后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-3 font-semibold">{t("chat.title")}</div>
+        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
       </div>
     );
   }
@@ -4853,75 +4779,94 @@ export function ChatView({
             {/* Bottom toolbar */}
             <div className="chatInputToolbar">
               <div className="chatInputToolbarLeft">
-                <button data-slot="toolbar" onClick={() => fileInputRef.current?.click()} className="chatInputIconBtn" title={t("chat.attach")}>
-                  <IconPaperclip size={16} />
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button data-slot="toolbar" onClick={() => fileInputRef.current?.click()} className="chatInputIconBtn">
+                      <IconPaperclip size={16} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">{t("chat.attach")}</TooltipContent>
+                </Tooltip>
                 <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,audio/*,.pdf,.txt,.md,.py,.js,.ts,.json,.csv" style={{ display: "none" }} onChange={handleFileSelect} />
 
-                <button data-slot="toolbar" onClick={toggleRecording} className={`chatInputIconBtn ${isRecording ? "chatInputIconBtnDanger" : ""}`} title={isRecording ? t("chat.stopRecording") : t("chat.voice")}>
-                  {isRecording ? <IconStopCircle size={16} /> : <IconMic size={16} />}
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button data-slot="toolbar" onClick={toggleRecording} className={`chatInputIconBtn ${isRecording ? "chatInputIconBtnDanger" : ""}`}>
+                      {isRecording ? <IconStopCircle size={16} /> : <IconMic size={16} />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">{isRecording ? t("chat.stopRecording") : t("chat.voice")}</TooltipContent>
+                </Tooltip>
 
-                <button data-slot="toolbar" onClick={() => setPlanMode((v) => !v)} className={`chatInputIconBtn ${planMode ? "chatInputIconBtnActive" : ""}`} title={t("chat.planMode")}>
-                  <IconPlan size={16} />
-                  <span style={{ fontSize: 11, marginLeft: 2 }}>Plan</span>
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button data-slot="toolbar" onClick={() => setPlanMode((v) => !v)} className={`chatInputIconBtn ${planMode ? "chatInputIconBtnActive" : ""}`}>
+                      <IconPlan size={16} />
+                      <span style={{ fontSize: 11, marginLeft: 2 }}>Plan</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">{t("chat.planMode")}</TooltipContent>
+                </Tooltip>
 
-                {/* 深度思考按钮 + 下拉菜单 */}
-                <div ref={thinkingMenuRef} style={{ position: "relative", display: "inline-flex" }}>
-                  <button
-                    data-slot="toolbar"
-                    onClick={() => {
-                      if (thinkingMode === "auto") {
-                        setThinkingMode("on");
-                      } else if (thinkingMode === "on") {
-                        setThinkingMode("off");
-                      } else {
-                        setThinkingMode("auto");
-                      }
-                    }}
-                    onContextMenu={(e) => { e.preventDefault(); setThinkingMenuOpen((v) => !v); }}
-                    className={`chatInputIconBtn ${thinkingMode === "on" ? "chatInputIconBtnActive" : thinkingMode === "off" ? "chatInputIconBtnOff" : ""}`}
-                    title={`深度思考: ${thinkingMode === "on" ? "开启" : thinkingMode === "off" ? "关闭" : "自动"} (右键设置深度)`}
-                  >
-                    <IconZap size={16} />
-                    <span style={{ fontSize: 11, marginLeft: 2 }}>
-                      {thinkingMode === "on" ? "Think" : thinkingMode === "off" ? "NoThink" : "Auto"}
-                    </span>
-                  </button>
-                  {thinkingMenuOpen && (
-                    <div className="chatThinkingMenu">
-                      <div className="chatThinkingMenuSection">思考模式</div>
-                      {(["auto", "on", "off"] as const).map((mode) => (
-                        <div
-                          key={mode}
-                          className={`chatThinkingMenuItem ${thinkingMode === mode ? "chatThinkingMenuItemActive" : ""}`}
-                          onClick={() => { setThinkingMode(mode); setThinkingMenuOpen(false); }}
-                        >
-                          <span>{{ auto: "🤖 自动", on: "🧠 开启", off: "⚡ 关闭" }[mode]}</span>
-                          <span style={{ fontSize: 10, opacity: 0.5 }}>{{ auto: "系统决定", on: "强制深度思考", off: "快速回复" }[mode]}</span>
-                        </div>
-                      ))}
-                      <div className="chatThinkingMenuDivider" />
-                      <div className="chatThinkingMenuSection">思考深度</div>
-                      {(["low", "medium", "high"] as const).map((depth) => (
-                        <div
-                          key={depth}
-                          className={`chatThinkingMenuItem ${thinkingDepth === depth ? "chatThinkingMenuItemActive" : ""}`}
-                          onClick={() => { setThinkingDepth(depth); setThinkingMenuOpen(false); }}
-                        >
-                          <span>{{ low: "💨 低", medium: "⚖️ 中", high: "🔬 高" }[depth]}</span>
-                          <span style={{ fontSize: 10, opacity: 0.5 }}>{{ low: "快速响应", medium: "平衡模式", high: "深度推理" }[depth]}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* 深度思考按钮 + 思考程度按钮 */}
+                <Tooltip open={thinkingModeTipOpen}>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-slot="toolbar"
+                      onMouseEnter={() => setThinkingModeTipOpen(true)}
+                      onMouseLeave={() => setThinkingModeTipOpen(false)}
+                      onClick={() => {
+                        if (thinkingMode === "auto") {
+                          setThinkingMode("on");
+                        } else if (thinkingMode === "on") {
+                          setThinkingMode("off");
+                        } else {
+                          setThinkingMode("auto");
+                        }
+                      }}
+                      className={`chatInputIconBtn ${thinkingMode === "on" ? "chatInputIconBtnActive" : thinkingMode === "off" ? "chatInputIconBtnOff" : ""}`}
+                    >
+                      <IconZap size={16} />
+                      <span style={{ fontSize: 11, marginLeft: 2 }}>
+                        {thinkingMode === "on" ? "Think" : thinkingMode === "off" ? "NoThink" : "Auto"}
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs" onPointerDownOutside={(e) => e.preventDefault()}>
+                    {thinkingMode === "on" ? t("chat.thinkingOn") : thinkingMode === "off" ? t("chat.thinkingOff") : t("chat.thinkingAuto")}
+                  </TooltipContent>
+                </Tooltip>
+                {thinkingMode !== "off" && (
+                  <Tooltip open={thinkingDepthTipOpen}>
+                    <TooltipTrigger asChild>
+                      <button
+                        data-slot="toolbar"
+                        onMouseEnter={() => setThinkingDepthTipOpen(true)}
+                        onMouseLeave={() => setThinkingDepthTipOpen(false)}
+                        onClick={() => {
+                          setThinkingDepth((d) => d === "low" ? "medium" : d === "medium" ? "high" : "low");
+                        }}
+                        className="chatInputIconBtn"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
+                          <rect x="1" y="9" width="3" height="4" rx="0.5" fill="currentColor" opacity={thinkingDepth === "low" || thinkingDepth === "medium" || thinkingDepth === "high" ? 1 : 0.25} />
+                          <rect x="5.5" y="5.5" width="3" height="7.5" rx="0.5" fill="currentColor" opacity={thinkingDepth === "medium" || thinkingDepth === "high" ? 1 : 0.25} />
+                          <rect x="10" y="2" width="3" height="11" rx="0.5" fill="currentColor" opacity={thinkingDepth === "high" ? 1 : 0.25} />
+                        </svg>
+                        <span style={{ fontSize: 10 }}>{{ low: t("chat.depthLow"), medium: t("chat.depthMedium"), high: t("chat.depthHigh") }[thinkingDepth]}</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs" onPointerDownOutside={(e) => e.preventDefault()}>
+                      {{ low: t("chat.depthTipLow"), medium: t("chat.depthTipMedium"), high: t("chat.depthTipHigh") }[thinkingDepth]}
+                      <span className="block text-[10px] opacity-60 mt-0.5">{t("chat.depthClickToSwitch")}</span>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </div>
 
               <div className="chatInputToolbarRight">
-                {/* Context usage ring */}
-                {contextLimit > 0 && (() => {
+                {/* Context usage ring — only show when we have real usage data */}
+                {contextLimit > 0 && contextTokens > 0 && (() => {
                   const pct = Math.min(contextTokens / contextLimit, 1);
                   const pctLabel = (pct * 100).toFixed(1);
                   const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
@@ -5112,7 +5057,7 @@ export function ChatView({
               onClick={async (e) => {
                 e.stopPropagation();
                 try {
-                  const savedPath = await downloadFile(lightbox.url, lightbox.name || `image-${Date.now()}.png`);
+                  const savedPath = await downloadFile(lightbox.downloadUrl, lightbox.name || `image-${Date.now()}.png`);
                   await showInFolder(savedPath);
                 } catch (err) {
                   logger.error("Chat", "图片下载失败", { error: String(err) });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, IS_WEB, IS_TAURI } from "../platform";
+import { safeFetch } from "../providers";
 import { IconInfo } from "../icons";
 import type { EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
@@ -227,26 +228,50 @@ export function FieldSlider({
   );
 }
 
-export function TelegramPairingCodeHint({ currentWorkspaceId }: { currentWorkspaceId: string | null }) {
+export function TelegramPairingCodeHint({
+  currentWorkspaceId, apiBase, envDraft, onEnvChange,
+}: {
+  currentWorkspaceId: string | null;
+  apiBase?: string;
+  envDraft?: EnvMap;
+  onEnvChange?: (updater: (prev: EnvMap) => EnvMap) => void;
+}) {
   const { t } = useTranslation();
   const [currentCode, setCurrentCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const syncToEnv = useCallback((code: string) => {
+    if (!onEnvChange || !envDraft) return;
+    const existing = envGet(envDraft, "TELEGRAM_PAIRING_CODE", "");
+    if (!existing) {
+      onEnvChange((m) => envSet(m, "TELEGRAM_PAIRING_CODE", code));
+    }
+  }, [onEnvChange, envDraft]);
+
   const loadCode = useCallback(async () => {
-    if (!currentWorkspaceId || !IS_TAURI) { setCurrentCode(null); return; }
     setLoading(true);
     try {
-      const code = await invoke<string>("workspace_read_file", {
-        workspaceId: currentWorkspaceId,
-        relativePath: "data/telegram/pairing/pairing_code.txt",
-      });
-      setCurrentCode(code.trim());
+      let code: string | null = null;
+      if (IS_TAURI && currentWorkspaceId) {
+        const raw = await invoke<string>("workspace_read_file", {
+          workspaceId: currentWorkspaceId,
+          relativePath: "data/telegram/pairing/pairing_code.txt",
+        });
+        code = raw.trim() || null;
+      } else {
+        const base = apiBase || "";
+        const res = await safeFetch(`${base}/api/im/telegram/pairing-code`);
+        const data = await res.json();
+        code = data.code || null;
+      }
+      setCurrentCode(code);
+      if (code) syncToEnv(code);
     } catch {
       setCurrentCode(null);
     } finally {
       setLoading(false);
     }
-  }, [currentWorkspaceId]);
+  }, [currentWorkspaceId, apiBase, syncToEnv]);
 
   useEffect(() => { loadCode(); }, [loadCode]);
 

@@ -457,6 +457,12 @@ class Agent:
             self._tools.extend(ORG_SETUP_TOOLS)
             logger.info(f"Multi-agent tools enabled ({len(AGENT_TOOLS) + len(ORG_SETUP_TOOLS)} tools)")
 
+        # Platform hub tools (Agent Hub + Skill Store, only when enabled)
+        if settings.hub_enabled:
+            from ..tools.definitions import HUB_TOOLS
+            self._tools.extend(HUB_TOOLS)
+            logger.info(f"Platform hub tools enabled ({len(HUB_TOOLS)} tools)")
+
         self._update_shell_tool_description()
 
         # 对话上下文
@@ -1068,19 +1074,18 @@ class Agent:
             ["export_agent", "import_agent", "list_exportable_agents", "inspect_agent_package"],
         )
 
-        # Agent Hub（平台 Agent Store 交互）
-        self.handler_registry.register(
-            "agent_hub",
-            create_agent_hub_handler(self),
-            ["search_hub_agents", "install_hub_agent", "publish_agent", "get_hub_agent_detail"],
-        )
-
-        # Skill Store（平台 Skill Store 交互）
-        self.handler_registry.register(
-            "skill_store",
-            create_skill_store_handler(self),
-            ["search_store_skills", "install_store_skill", "get_store_skill_detail", "submit_skill_repo"],
-        )
+        # Agent Hub + Skill Store（平台交互，仅在 hub_enabled 时注册）
+        if settings.hub_enabled:
+            self.handler_registry.register(
+                "agent_hub",
+                create_agent_hub_handler(self),
+                ["search_hub_agents", "install_hub_agent", "publish_agent", "get_hub_agent_detail"],
+            )
+            self.handler_registry.register(
+                "skill_store",
+                create_skill_store_handler(self),
+                ["search_store_skills", "install_store_skill", "get_store_skill_detail", "submit_skill_repo"],
+            )
 
         # 桌面工具（仅 Windows 且依赖可用时注册，与 _tools/ToolCatalog 保持一致）
         if _ensure_desktop():
@@ -1247,307 +1252,8 @@ class Agent:
         subdir: str | None = None,
         extra_files: list[str] | None = None,
     ) -> str:
-        """
-        安装技能到当前工作区的技能目录
-
-        支持：
-        1. Git 仓库 URL (克隆并查找 SKILL.md)
-        2. 单个 SKILL.md 文件 URL (创建规范目录结构)
-
-        Args:
-            source: Git 仓库 URL 或 SKILL.md 文件 URL
-            name: 技能名称 (可选)
-            subdir: Git 仓库中技能所在的子目录
-            extra_files: 额外文件 URL 列表
-
-        Returns:
-            安装结果消息
-        """
-
-        skills_dir = settings.skills_path
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        # 判断是 Git 仓库还是文件 URL
-        is_git = self._is_git_url(source)
-
-        if is_git:
-            return await self._install_skill_from_git(source, name, subdir, skills_dir)
-        else:
-            return await self._install_skill_from_url(source, name, extra_files, skills_dir)
-
-    def _is_git_url(self, url: str) -> bool:
-        """判断是否为 Git 仓库 URL"""
-        git_patterns = [
-            r"^git@",  # SSH
-            r"\.git$",  # 以 .git 结尾
-            r"^https?://github\.com/",
-            r"^https?://gitlab\.com/",
-            r"^https?://bitbucket\.org/",
-            r"^https?://gitee\.com/",
-        ]
-        return any(re.search(pattern, url) for pattern in git_patterns)
-
-    async def _install_skill_from_git(
-        self, git_url: str, name: str | None, subdir: str | None, skills_dir: Path
-    ) -> str:
-        """从 Git 仓库安装技能"""
-        import shutil
-        import tempfile
-
-        temp_dir = None
-        try:
-            # 1. 克隆仓库到临时目录
-            temp_dir = Path(tempfile.mkdtemp(prefix="skill_install_"))
-
-            # 执行 git clone
-            result = await self.shell_tool.run(f'git clone --depth 1 "{git_url}" "{temp_dir}"')
-
-            if not result.success:
-                return f"❌ Git 克隆失败:\n{result.output}"
-
-            # 2. 查找 SKILL.md
-            search_dir = temp_dir / subdir if subdir else temp_dir
-            skill_md_path = self._find_skill_md(search_dir)
-
-            if not skill_md_path:
-                # 列出可能的技能目录
-                possible = self._list_skill_candidates(temp_dir)
-                hint = ""
-                if possible:
-                    hint = "\n\n可能的技能目录:\n" + "\n".join(f"- {p}" for p in possible[:5])
-                return f"❌ 未找到 SKILL.md 文件{hint}"
-
-            skill_source_dir = skill_md_path.parent
-
-            # 3. 解析技能元数据
-            skill_content = skill_md_path.read_text(encoding="utf-8")
-            extracted_name = self._extract_skill_name(skill_content)
-            skill_name = name or extracted_name or skill_source_dir.name
-            skill_name = self._normalize_skill_name(skill_name)
-
-            # 4. 复制到 skills 目录
-            target_dir = skills_dir / skill_name
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-
-            shutil.copytree(skill_source_dir, target_dir)
-
-            # 5. 确保有规范的目录结构
-            self._ensure_skill_structure(target_dir)
-
-            # 6. 加载技能
-            self._list_installed_files(target_dir)
-            try:
-                loaded = self.skill_loader.load_skill(target_dir)
-                if loaded:
-                    self._skill_catalog_text = self.skill_catalog.generate_catalog()
-                    self._update_skill_tools()
-                    self.notify_pools_skills_changed()
-                    logger.info(f"Skill installed from git: {skill_name}")
-            except Exception as e:
-                logger.error(f"Failed to load installed skill: {e}")
-
-            return f"""✅ 技能从 Git 安装成功！
-
-**技能名称**: {skill_name}
-**来源**: {git_url}
-**安装路径**: {target_dir}
-
-**目录结构**:
-```
-{skill_name}/
-{self._format_tree(target_dir)}
-```
-
-技能已自动加载，可以使用:
-- `get_skill_info("{skill_name}")` 查看详细指令
-- `list_skills` 查看所有已安装技能"""
-
-        except Exception as e:
-            logger.error(f"Failed to install skill from git: {e}")
-            return f"❌ Git 安装失败: {str(e)}"
-        finally:
-            # 清理临时目录
-            if temp_dir and temp_dir.exists():
-                with contextlib.suppress(BaseException):
-                    shutil.rmtree(temp_dir)
-
-    async def _install_skill_from_url(
-        self, url: str, name: str | None, extra_files: list[str] | None, skills_dir: Path
-    ) -> str:
-        """从 URL 安装技能"""
-        import httpx
-
-        try:
-            # 1. 下载 SKILL.md
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                skill_content = response.text
-
-            # 2. 提取技能名称
-            extracted_name = self._extract_skill_name(skill_content)
-            skill_name = name or extracted_name
-
-            if not skill_name:
-                # 从 URL 提取
-                from urllib.parse import urlparse
-
-                path = urlparse(url).path
-                skill_name = path.split("/")[-1].replace(".md", "").replace("skill", "").strip("-_")
-
-            skill_name = self._normalize_skill_name(skill_name or "custom-skill")
-
-            # 3. 创建技能目录结构
-            skill_dir = skills_dir / skill_name
-            skill_dir.mkdir(parents=True, exist_ok=True)
-
-            # 4. 保存 SKILL.md
-            (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-
-            # 5. 创建规范目录结构
-            self._ensure_skill_structure(skill_dir)
-
-            installed_files = ["SKILL.md"]
-
-            # 6. 下载额外文件
-            if extra_files:
-                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                    for file_url in extra_files:
-                        try:
-                            from urllib.parse import urlparse
-
-                            file_name = urlparse(file_url).path.split("/")[-1]
-                            if not file_name:
-                                continue
-
-                            response = await client.get(file_url)
-                            response.raise_for_status()
-
-                            # 根据文件类型放到对应目录
-                            if file_name.endswith(".md"):
-                                dest = skill_dir / "references" / file_name
-                            elif file_name.endswith((".py", ".sh", ".js")):
-                                dest = skill_dir / "scripts" / file_name
-                            else:
-                                dest = skill_dir / file_name
-
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            dest.write_text(response.text, encoding="utf-8")
-                            installed_files.append(str(dest.relative_to(skill_dir)))
-                        except Exception as e:
-                            logger.warning(f"Failed to download {file_url}: {e}")
-
-            # 7. 加载技能
-            try:
-                loaded = self.skill_loader.load_skill(skill_dir)
-                if loaded:
-                    self._skill_catalog_text = self.skill_catalog.generate_catalog()
-                    self._update_skill_tools()
-                    self.notify_pools_skills_changed()
-                    logger.info(f"Skill installed from URL: {skill_name}")
-            except Exception as e:
-                logger.error(f"Failed to load installed skill: {e}")
-
-            return f"""✅ 技能安装成功！
-
-**技能名称**: {skill_name}
-**安装路径**: {skill_dir}
-
-**目录结构**:
-```
-{skill_name}/
-{self._format_tree(skill_dir)}
-```
-
-**安装文件**: {", ".join(installed_files)}
-
-技能已自动加载，可以使用:
-- `get_skill_info("{skill_name}")` 查看详细指令
-- `list_skills` 查看所有已安装技能"""
-
-        except Exception as e:
-            logger.error(f"Failed to install skill from URL: {e}")
-            return f"❌ URL 安装失败: {str(e)}"
-
-    def _extract_skill_name(self, content: str) -> str | None:
-        """从 SKILL.md 内容提取技能名称"""
-        import re
-
-        import yaml
-
-        match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
-        if match:
-            try:
-                metadata = yaml.safe_load(match.group(1))
-                return metadata.get("name")
-            except Exception:
-                pass
-        return None
-
-    def _normalize_skill_name(self, name: str) -> str:
-        """标准化技能名称"""
-        import re
-
-        name = name.lower().replace("_", "-").replace(" ", "-")
-        name = re.sub(r"[^a-z0-9-]", "", name)
-        name = re.sub(r"-+", "-", name).strip("-")
-        return name or "custom-skill"
-
-    def _find_skill_md(self, search_dir: Path) -> Path | None:
-        """在目录中查找 SKILL.md"""
-        # 先检查当前目录
-        skill_md = search_dir / "SKILL.md"
-        if skill_md.exists():
-            return skill_md
-
-        # 递归查找
-        for path in search_dir.rglob("SKILL.md"):
-            return path
-
-        return None
-
-    def _list_skill_candidates(self, base_dir: Path) -> list[str]:
-        """列出可能包含技能的目录"""
-        candidates = []
-        for path in base_dir.rglob("*.md"):
-            if path.name.lower() in ("skill.md", "readme.md"):
-                rel_path = path.parent.relative_to(base_dir)
-                if str(rel_path) != ".":
-                    candidates.append(str(rel_path))
-        return candidates
-
-    def _ensure_skill_structure(self, skill_dir: Path) -> None:
-        """确保技能目录有规范结构"""
-        (skill_dir / "scripts").mkdir(exist_ok=True)
-        (skill_dir / "references").mkdir(exist_ok=True)
-        (skill_dir / "assets").mkdir(exist_ok=True)
-
-    def _list_installed_files(self, skill_dir: Path) -> list[str]:
-        """列出已安装的文件"""
-        files = []
-        for path in skill_dir.rglob("*"):
-            if path.is_file():
-                files.append(str(path.relative_to(skill_dir)))
-        return files
-
-    def _format_tree(self, directory: Path, prefix: str = "") -> str:
-        """格式化目录树"""
-        lines = []
-        items = sorted(directory.iterdir(), key=lambda x: (x.is_file(), x.name))
-
-        for i, item in enumerate(items):
-            is_last = i == len(items) - 1
-            connector = "└── " if is_last else "├── "
-            lines.append(f"{prefix}{connector}{item.name}")
-
-            if item.is_dir():
-                extension = "    " if is_last else "│   "
-                sub_tree = self._format_tree(item, prefix + extension)
-                if sub_tree:
-                    lines.append(sub_tree)
-
-        return "\n".join(lines)
+        """安装技能 — 委托给 SkillManager。"""
+        return await self.skill_manager.install_skill(source, name, subdir, extra_files)
 
     async def _load_mcp_servers(self) -> None:
         """
@@ -2213,7 +1919,11 @@ search_github → install_skill → 使用
 
 1. **语音转文字** - 系统**已自动处理**语音识别！
    - 用户发送的语音消息会被系统**自动**转写为文字（通过本地 Whisper medium 模型）
-   - 你收到的消息中，语音内容已经被转写为文字了
+   - ⚠️ **消息来源判断规则**（必须严格遵守）：
+     - 带 `[来源:语音转写]` 前缀 → 该消息是语音消息的转写结果
+     - 带 `[语音转文字: ...]` 或 `[语音内容: ...]` 标签 → 该消息包含语音转写内容
+     - **没有以上任何标记的纯文本 → 这是用户键盘输入的文本消息，不是语音！**
+   - **绝对禁止**：把没有语音标记的普通文本当作"语音命令"来处理或要求确认
    - 如果看到 `[语音: X秒]` 但没有文字内容，说明自动识别失败
    - **只有**在自动识别失败时（如看到"语音识别失败"提示），才需要手动处理语音文件
    - ⚠️ **重要**：不要每次收到语音消息都调用语音识别工具！系统已经自动处理了！
@@ -2229,8 +1939,9 @@ search_github → install_skill → 使用
 - ✅ 告诉用户"语音转文字已内置并自动运行，请发送语音测试"
 
 **语音消息处理流程**：
-1. 用户发送语音 → 2. 系统自动下载并用 Whisper 转文字 → 3. 你收到的是转写后的文字
+1. 用户发送语音 → 2. 系统自动下载并用 Whisper 转文字 → 3. 你收到的是带 `[来源:语音转写]` 前缀的转写文字
 4. 只有当你看到"[语音识别失败]"或"自动识别失败"时，才需要用 get_voice_file 工具获取文件路径并手动处理
+5. **再次强调**：没有语音标记的消息就是普通文本输入，直接按文本处理即可
 
 ### 记忆使用原则
 **上下文优先**：当前对话内容永远优先于记忆中的信息。
@@ -2573,6 +2284,101 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
     def _get_raw_context_window(self) -> int:
         """获取当前端点配置的原始 context_window 值（用于传递给预算系统）。"""
         return _shared_get_raw_context_window(self.brain)
+
+    # NOTE: _estimate_tokens / _group_messages 已迁移至 context_utils / context_manager
+    # 以下保留 v1.25.x 的兼容方法，委托给共享实现
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        估算文本的 token 数量
+
+        使用中英文感知算法：中文约 1.5 字符/token，英文约 4 字符/token。
+        与 prompt.budget.estimate_tokens() 保持一致，避免各处估算值差异过大。
+        """
+        if not text:
+            return 0
+        # 统计中文字符数量
+        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        total_chars = len(text)
+        english_chars = total_chars - chinese_chars
+        # 中文约 1.5 字符/token，英文约 4 字符/token
+        chinese_tokens = chinese_chars / 1.5
+        english_tokens = english_chars / 4
+        return max(int(chinese_tokens + english_tokens), 1)
+
+    def _estimate_messages_tokens(self, messages: list[dict]) -> int:
+        """估算消息列表的 token 数量（委托给 context_manager 的统一算法）"""
+        return self.context_manager.estimate_messages_tokens(messages)
+
+    @staticmethod
+    def _group_messages(messages: list[dict]) -> list[list[dict]]:
+        """
+        将消息列表分组为"工具交互组"，保证 tool_calls/tool 配对不被拆散
+
+        分组规则：
+        - assistant 消息如果包含 tool_calls（即 content 中有 type=tool_use），
+          则该 assistant 和紧随其后所有 role=user 且仅含 tool_result 的消息归为同一组
+        - 其他消息各自独立成组
+        - 系统注入的纯文本 user 消息（如 LoopGuard 提示）独立成组
+
+        Returns:
+            分组后的列表，每个元素是一组消息（list[dict]）
+        """
+        if not messages:
+            return []
+
+        groups: list[list[dict]] = []
+        i = 0
+
+        while i < len(messages):
+            msg = messages[i]
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            # 检测 assistant 消息是否包含 tool_use
+            has_tool_calls = False
+            if role == "assistant" and isinstance(content, list):
+                has_tool_calls = any(
+                    isinstance(item, dict) and item.get("type") == "tool_use"
+                    for item in content
+                )
+
+            if has_tool_calls:
+                # 开始一个工具交互组：assistant(tool_calls) + 后续的 tool_result 消息
+                group = [msg]
+                i += 1
+                while i < len(messages):
+                    next_msg = messages[i]
+                    next_role = next_msg.get("role", "")
+                    next_content = next_msg.get("content", "")
+
+                    # user 消息仅含 tool_result → 属于本工具组
+                    if next_role == "user" and isinstance(next_content, list):
+                        all_tool_results = all(
+                            isinstance(item, dict) and item.get("type") == "tool_result"
+                            for item in next_content
+                            if isinstance(item, dict)
+                        )
+                        if all_tool_results and next_content:
+                            group.append(next_msg)
+                            i += 1
+                            continue
+
+                    # tool 角色消息（OpenAI 格式）→ 也属于本工具组
+                    if next_role == "tool":
+                        group.append(next_msg)
+                        i += 1
+                        continue
+
+                    # 其他消息类型 → 工具组结束
+                    break
+
+                groups.append(group)
+            else:
+                # 普通消息独立成组
+                groups.append([msg])
+                i += 1
+
+        return groups
 
     # ==================== Attachment Memory Helpers ====================
 
@@ -5689,16 +5495,38 @@ NEXT: 建议的下一步（如有）"""
         Returns:
             是否成功设置 skip（False 表示无活跃任务）
         """
-        _sid = session_id or getattr(self, "_current_session_id", None)
-        if hasattr(self, "agent_state") and self.agent_state:
-            task = (
-                self.agent_state.get_task_for_session(_sid) if _sid else None
-            ) or self.agent_state.current_task
+        has_state = hasattr(self, "agent_state") and self.agent_state
+        if not has_state:
+            logger.warning(f"[SkipStep] No agent_state to skip: {reason}")
+            return False
+
+        _effective_sid = session_id or getattr(self, "_current_session_id", None)
+        task = (
+            self.agent_state.get_task_for_session(_effective_sid) if _effective_sid else None
+        )
+        if not task and _effective_sid:
+            for _alt_key in (self._current_conversation_id, self._current_session_id):
+                if _alt_key and _alt_key != _effective_sid:
+                    task = self.agent_state.get_task_for_session(_alt_key)
+                    if task:
+                        _effective_sid = _alt_key
+                        break
+        if not task:
+            task = self.agent_state.current_task
             if task:
-                self.agent_state.skip_current_step(reason, session_id=_sid)
-                logger.info(f"[SkipStep] Step skip requested: {reason} (session={_sid})")
-                return True
-        logger.warning(f"[SkipStep] No active task to skip: {reason}")
+                _effective_sid = task.session_id or task.task_id
+
+        if task:
+            self.agent_state.skip_current_step(reason, session_id=_effective_sid)
+            logger.info(
+                f"[SkipStep] Step skip requested: {reason} "
+                f"(session_id={session_id}, effective_sid={_effective_sid!r})"
+            )
+            return True
+        logger.warning(
+            f"[SkipStep] No active task to skip: {reason} "
+            f"(session_id={session_id})"
+        )
         return False
 
     async def insert_user_message(self, text: str, session_id: str | None = None) -> bool:
@@ -5712,15 +5540,31 @@ NEXT: 建议的下一步（如有）"""
         Returns:
             是否成功入队（False 表示无活跃任务，消息被丢弃）
         """
-        _sid = session_id or getattr(self, "_current_session_id", None)
-        if hasattr(self, "agent_state") and self.agent_state:
-            task = (
-                self.agent_state.get_task_for_session(_sid) if _sid else None
-            ) or self.agent_state.current_task
+        has_state = hasattr(self, "agent_state") and self.agent_state
+        if not has_state:
+            logger.warning(f"[UserInsert] No agent_state, message dropped: {text[:50]}...")
+            return False
+
+        _effective_sid = session_id or getattr(self, "_current_session_id", None)
+        task = (
+            self.agent_state.get_task_for_session(_effective_sid) if _effective_sid else None
+        )
+        if not task and _effective_sid:
+            for _alt_key in (self._current_conversation_id, self._current_session_id):
+                if _alt_key and _alt_key != _effective_sid:
+                    task = self.agent_state.get_task_for_session(_alt_key)
+                    if task:
+                        _effective_sid = _alt_key
+                        break
+        if not task:
+            task = self.agent_state.current_task
             if task:
-                await self.agent_state.insert_user_message(text, session_id=_sid)
-                logger.info(f"[UserInsert] User message queued: {text[:50]}... (session={_sid})")
-                return True
+                _effective_sid = task.session_id or task.task_id
+
+        if task:
+            await self.agent_state.insert_user_message(text, session_id=_effective_sid)
+            logger.info(f"[UserInsert] User message queued: {text[:50]}... (effective_sid={_effective_sid!r})")
+            return True
         logger.warning(f"[UserInsert] No active task, message dropped: {text[:50]}...")
         return False
 

@@ -18,6 +18,8 @@ ADAPTER_REGISTRY: dict[str, AdapterFactory] = {}
 
 
 def register_adapter(bot_type: str, factory: AdapterFactory) -> None:
+    if bot_type in ADAPTER_REGISTRY:
+        logger.warning(f"Overwriting adapter registration for '{bot_type}'")
     ADAPTER_REGISTRY[bot_type] = factory
 
 
@@ -61,6 +63,9 @@ def _create_telegram(creds: dict, *, channel_name: str, bot_id: str, agent_profi
         kwargs["pairing_code"] = creds["pairing_code"]
     if creds.get("proxy"):
         kwargs["proxy"] = creds["proxy"]
+    rp = _cred_bool(creds.get("require_pairing"))
+    if rp is not None:
+        kwargs["require_pairing"] = rp
     return TelegramAdapter(**kwargs)
 
 

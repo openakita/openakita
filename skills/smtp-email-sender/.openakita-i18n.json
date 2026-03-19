@@ -1,0 +1,6 @@
+{
+  "zh": {
+    "name": "SMTP 邮件发送",
+    "description": "通过 SMTP 协议发送邮件，支持 Gmail、Outlook、企业邮箱等，支持附件和 HTML 格式。"
+  }
+}

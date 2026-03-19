@@ -505,14 +505,16 @@ class OpenAIProvider(LLMProvider):
 
         # DashScope 思考模式 — 必须在 extra_params 之后，以覆盖其中的 enable_thinking
         if self.config.provider == "dashscope" and self.config.has_capability("thinking"):
-            body["enable_thinking"] = bool(request.enable_thinking)
-            if request.enable_thinking and request.thinking_depth:
-                # 映射 thinking_depth 到 DashScope thinking_budget
+            ds_thinking = bool(request.enable_thinking)
+            if not ds_thinking and is_always_thinking:
+                ds_thinking = True
+            body["enable_thinking"] = ds_thinking
+            if ds_thinking and request.thinking_depth:
                 budget_map = {"low": 1024, "medium": 4096, "high": 16384}
                 budget = budget_map.get(request.thinking_depth)
                 if budget:
                     body["thinking_budget"] = budget
-            elif not request.enable_thinking:
+            elif not ds_thinking:
                 body.pop("thinking_budget", None)
 
         # SiliconFlow 思考模式

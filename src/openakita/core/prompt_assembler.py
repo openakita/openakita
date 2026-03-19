@@ -392,10 +392,32 @@ class PromptAssembler:
 **记住：这三类都是工具，都可以调用，不要说"我没有这个能力"！**
 """
 
-    @staticmethod
-    def _build_core_principles() -> str:
+    def _build_core_principles(self) -> str:
         """构建核心原则"""
-        return """## 核心原则 (最高优先级!!!)
+        hub_enabled = settings.hub_enabled
+
+        if hub_enabled:
+            create_tool_lines = (
+                "- 平台搜索 → search_hub_agents / search_store_skills → install（优先从 OpenAkita 平台查找现成 Agent 或 Skill）\n"
+                "- GitHub 安装 → search_github → install_skill\n"
+                "- 临时脚本 → write_file + run_shell\n"
+                "- 创建技能 → skill-creator → load_skill"
+            )
+            create_tool_note = (
+                "> 用户需要某种能力时，先搜平台（Agent Hub / Skill Store），再搜 GitHub，最后自建。\n"
+                "> 平台离线时跳过平台步骤，直接走 GitHub 或自建。"
+            )
+        else:
+            create_tool_lines = (
+                "- GitHub 安装 → search_github → install_skill\n"
+                "- 临时脚本 → write_file + run_shell\n"
+                "- 创建技能 → skill-creator → load_skill"
+            )
+            create_tool_note = (
+                "> 用户需要某种能力时，先搜 GitHub，再自建。"
+            )
+
+        return f"""## 核心原则 (最高优先级!!!)
 
 ### 第一铁律：任务型请求必须使用工具
 
@@ -409,13 +431,9 @@ class PromptAssembler:
 ### 第二铁律：没有工具就创造工具
 
 **绝不说"我没有这个能力"！立即行动：**
-- 平台搜索 → search_hub_agents / search_store_skills → install（优先从 OpenAkita 平台查找现成 Agent 或 Skill）
-- GitHub 安装 → search_github → install_skill
-- 临时脚本 → write_file + run_shell
-- 创建技能 → skill-creator → load_skill
+{create_tool_lines}
 
-> 用户需要某种能力时，先搜平台（Agent Hub / Skill Store），再搜 GitHub，最后自建。
-> 平台离线时跳过平台步骤，直接走 GitHub 或自建。
+{create_tool_note}
 
 ### 第三铁律：问题自己解决
 

@@ -68,9 +68,18 @@ class FeishuConfig:
 
     app_id: str
     app_secret: str
-    verification_token: str | None = None  # 用于 Webhook 验证
-    encrypt_key: str | None = None  # 用于消息加解密
-    log_level: str = "INFO"  # 日志级别: DEBUG, INFO, WARN, ERROR
+    verification_token: str | None = None
+    encrypt_key: str | None = None
+    log_level: str = "INFO"
+
+    def __post_init__(self) -> None:
+        if not self.app_id or not self.app_id.strip():
+            raise ValueError("FeishuConfig: app_id is required")
+        if not self.app_secret or not self.app_secret.strip():
+            raise ValueError("FeishuConfig: app_secret is required")
+        self.log_level = self.log_level.upper()
+        if self.log_level not in ("DEBUG", "INFO", "WARN", "ERROR"):
+            raise ValueError(f"FeishuConfig: invalid log_level '{self.log_level}'")
 
 
 class FeishuAdapter(ChannelAdapter):
@@ -151,6 +160,8 @@ class FeishuAdapter(ChannelAdapter):
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
         self._ws_loop: asyncio.AbstractEventLoop | None = None
+        self._ws_watchdog_task: asyncio.Task | None = None
+        self._ws_restart_count: int = 0
         self._bot_open_id: str | None = None
         self._capabilities: list[str] = []
 
@@ -161,6 +172,10 @@ class FeishuAdapter(ChannelAdapter):
         # 用户名缓存：open_id → display name（避免重复调 Contact API）
         self._user_name_cache: collections.OrderedDict[str, str] = collections.OrderedDict()
         self._user_name_cache_max = 200
+
+        # 群名缓存：chat_id → group name（避免重复调 im.v1.chat.get）
+        self._chat_name_cache: collections.OrderedDict[str, str] = collections.OrderedDict()
+        self._chat_name_cache_max = 200
 
         # "思考中..."占位卡片：session_key → 卡片 message_id
         # session_key = chat_id 或 chat_id:thread_id（话题模式）
@@ -305,6 +320,67 @@ class FeishuAdapter(ChannelAdapter):
 
         # 探测可用权限/能力
         await self._probe_capabilities()
+
+        # 启动 WebSocket 看门狗（后台任务，周期性检查 WS 线程存活状态）
+        if self._ws_thread is not None:
+            self._ws_watchdog_task = asyncio.create_task(self._ws_watchdog_loop())
+
+    # ==================== WebSocket 看门狗 ====================
+
+    _WS_WATCHDOG_INTERVAL = 15          # 检查间隔（秒）
+    _WS_WATCHDOG_INITIAL_DELAY = 30     # 首次检查前等待（秒）
+    _WS_RECONNECT_MIN_INTERVAL = 10     # 最小重连间隔（秒）
+    _WS_RECONNECT_MAX_DELAY = 120       # 最大退避延迟（秒）
+
+    _WS_STABLE_THRESHOLD = 300  # 连接稳定 5 分钟后重置重连计数
+
+    async def _ws_watchdog_loop(self) -> None:
+        """周期性检查 WebSocket 线程是否存活，退出后自动重启。"""
+        await asyncio.sleep(self._WS_WATCHDOG_INITIAL_DELAY)
+        last_restart_time = 0.0
+        stable_since = asyncio.get_running_loop().time()
+
+        while self._running:
+            await asyncio.sleep(self._WS_WATCHDOG_INTERVAL)
+            if not self._running:
+                break
+
+            ws_thread = self._ws_thread
+            if ws_thread is not None and ws_thread.is_alive():
+                now = asyncio.get_running_loop().time()
+                if self._ws_restart_count > 0 and (now - stable_since) >= self._WS_STABLE_THRESHOLD:
+                    logger.info("Feishu WS watchdog: connection stable, resetting restart count")
+                    self._ws_restart_count = 0
+                continue
+
+            # WS 线程已退出，计算退避延迟后重启
+            now = asyncio.get_running_loop().time()
+            since_last = now - last_restart_time
+            if since_last < self._WS_RECONNECT_MIN_INTERVAL:
+                continue
+
+            self._ws_restart_count += 1
+            backoff = min(
+                self._WS_RECONNECT_MIN_INTERVAL * (2 ** min(self._ws_restart_count - 1, 6)),
+                self._WS_RECONNECT_MAX_DELAY,
+            )
+            logger.warning(
+                f"Feishu WS watchdog: thread exited (restart #{self._ws_restart_count}), "
+                f"reconnecting in {backoff:.0f}s"
+            )
+            await asyncio.sleep(backoff)
+            if not self._running:
+                break
+
+            try:
+                self.start_websocket(blocking=False)
+                last_restart_time = asyncio.get_running_loop().time()
+                stable_since = last_restart_time
+                logger.info(
+                    f"Feishu WS watchdog: reconnected (restart #{self._ws_restart_count})"
+                )
+            except Exception as e:
+                logger.error(f"Feishu WS watchdog: reconnect failed: {e}")
 
     async def _probe_capabilities(self) -> None:
         """探测飞书适配器已实现方法对应的权限是否可用
@@ -493,6 +569,15 @@ class FeishuAdapter(ChannelAdapter):
             builder = builder.register_p2_im_chat_member_bot_deleted_v1(self._on_bot_chat_deleted)
         except AttributeError:
             pass
+        # 注册卡片交互回调（card.action.trigger），需要 lark-oapi >= 1.3.0
+        try:
+            builder = builder.register_p2_card_action_trigger(self._on_card_action)
+        except AttributeError:
+            logger.warning(
+                "Feishu: register_p2_card_action_trigger not available, "
+                "card button interactions will not work. "
+                "Upgrade lark-oapi to >= 1.3.0."
+            )
         self._event_dispatcher = builder.build()
 
     def _on_message_receive(self, data: Any) -> None:
@@ -631,6 +716,224 @@ class FeishuAdapter(ChannelAdapter):
                 logger.info(f"Feishu: bot removed from chat {chat_id}")
         except Exception as e:
             logger.debug(f"Feishu: failed to handle bot_deleted event: {e}")
+
+    # ==================== 卡片交互回调 ====================
+
+    def _on_card_action(self, data: Any) -> Any:
+        """卡片回传交互回调 (card.action.trigger) — WebSocket 长连接模式。
+
+        在 WS 线程中同步调用，必须在 3 秒内返回 P2CardActionTriggerResponse。
+        """
+        try:
+            from lark_oapi.event.callback.model.p2_card_action_trigger import (
+                P2CardActionTriggerResponse,
+            )
+        except ImportError:
+            logger.error("P2CardActionTriggerResponse not available, card action ignored")
+            return None
+
+        try:
+            event = data.event
+            action = event.action
+            value = action.value
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    value = {"action": value}
+
+            resp_dict = self._dispatch_card_action(value or {})
+            return P2CardActionTriggerResponse(resp_dict)
+
+        except Exception as e:
+            logger.error(f"Feishu: card action callback error: {e}", exc_info=True)
+            return P2CardActionTriggerResponse({
+                "toast": {"type": "error", "content": "处理失败，请稍后重试"},
+            })
+
+    def _handle_card_action_webhook(self, body: dict) -> dict:
+        """卡片回传交互回调 (card.action.trigger) — Webhook 模式。
+
+        直接返回响应 dict 作为 HTTP 响应体。
+        """
+        try:
+            event = body.get("event", {})
+            action = event.get("action", {})
+            value = action.get("value", {})
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    value = {"action": value}
+
+            return self._dispatch_card_action(value or {})
+
+        except Exception as e:
+            logger.error(f"Feishu: card action webhook error: {e}", exc_info=True)
+            return {
+                "toast": {"type": "error", "content": "处理失败，请稍后重试"},
+            }
+
+    def _dispatch_card_action(self, value: dict) -> dict:
+        """根据按钮 value 中的 action 字段分发到对应处理逻辑。
+
+        返回飞书卡片回调响应 dict（含可选的 toast / card 字段）。
+        """
+        action_type = value.get("action", "")
+
+        if action_type == "expand_folder":
+            return self._handle_expand_folder(value.get("path", ""))
+
+        if action_type == "collapse_folder":
+            return self._handle_collapse_folder(value)
+
+        logger.debug(f"Feishu: unknown card action: {action_type}")
+        return {}
+
+    def _handle_expand_folder(self, path: str) -> dict:
+        """读取目录内容并返回包含文件树和展开按钮的更新卡片。"""
+        if not path:
+            return {"toast": {"type": "error", "content": "路径为空"}}
+
+        norm = os.path.normpath(path)
+        if ".." in norm.split(os.sep):
+            return {"toast": {"type": "error", "content": "不允许的路径"}}
+
+        if not os.path.isdir(norm):
+            return {"toast": {"type": "warning", "content": f"目录不存在: {os.path.basename(norm)}"}}
+
+        try:
+            entries = os.listdir(norm)
+        except PermissionError:
+            return {"toast": {"type": "error", "content": "没有权限访问此目录"}}
+        except OSError as e:
+            return {"toast": {"type": "error", "content": f"读取失败: {e}"}}
+
+        card = self._build_folder_card(norm, entries)
+        return {"card": {"type": "raw", "data": card}}
+
+    def _handle_collapse_folder(self, value: dict) -> dict:
+        """折叠目录：返回仅含目录名和展开按钮的精简卡片。"""
+        path = value.get("path", "")
+        parent = value.get("parent", "")
+        if not path:
+            return {}
+
+        folder_name = os.path.basename(path) or path
+        elements = [
+            {"tag": "markdown", "content": f"📁 **{folder_name}**"},
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": f"📂 展开 {folder_name}"},
+                        "type": "default",
+                        "value": {"action": "expand_folder", "path": path},
+                    },
+                ],
+            },
+        ]
+
+        title = os.path.basename(parent) if parent else folder_name
+        return {
+            "card": {
+                "type": "raw",
+                "data": {
+                    "config": {"wide_screen_mode": True},
+                    "header": {
+                        "title": {"tag": "plain_text", "content": f"📁 {title}"},
+                        "template": "blue",
+                    },
+                    "elements": elements,
+                },
+            },
+        }
+
+    @staticmethod
+    def _build_folder_card(dir_path: str, entries: list[str]) -> dict:
+        """构建含文件列表和子目录展开按钮的飞书交互卡片（JSON 1.0）。"""
+        folder_name = os.path.basename(dir_path) or dir_path
+
+        dirs: list[str] = []
+        files: list[str] = []
+        for entry in sorted(entries):
+            if entry.startswith("."):
+                continue
+            full = os.path.join(dir_path, entry)
+            if os.path.isdir(full):
+                dirs.append(entry)
+            else:
+                files.append(entry)
+
+        _ICON = {
+            "dir": "📁", "md": "📝", "txt": "📄", "pdf": "📕",
+            "png": "🖼️", "jpg": "🖼️", "jpeg": "🖼️", "gif": "🖼️",
+            "mp3": "🎵", "wav": "🎵", "mp4": "🎬",
+            "py": "🐍", "js": "📜", "json": "📋", "csv": "📊",
+        }
+
+        md_lines: list[str] = []
+        for d in dirs:
+            md_lines.append(f"📁 **{d}/**")
+        for f in files:
+            ext = f.rsplit(".", 1)[-1].lower() if "." in f else ""
+            icon = _ICON.get(ext, "📄")
+            md_lines.append(f"{icon} {f}")
+
+        elements: list[dict] = []
+
+        if md_lines:
+            MAX_DISPLAY = 50
+            if len(md_lines) > MAX_DISPLAY:
+                shown = md_lines[:MAX_DISPLAY]
+                shown.append(f"\n*...共 {len(md_lines)} 项，已显示前 {MAX_DISPLAY} 项*")
+                md_lines = shown
+            elements.append({"tag": "markdown", "content": "\n".join(md_lines)})
+        else:
+            elements.append({"tag": "markdown", "content": "*(空目录)*"})
+
+        if dirs:
+            MAX_BUTTONS_PER_ROW = 5
+            for i in range(0, min(len(dirs), 20), MAX_BUTTONS_PER_ROW):
+                chunk = dirs[i : i + MAX_BUTTONS_PER_ROW]
+                actions = []
+                for d in chunk:
+                    actions.append({
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": f"📂 展开 {d}"},
+                        "type": "default",
+                        "value": {
+                            "action": "expand_folder",
+                            "path": os.path.join(dir_path, d),
+                        },
+                    })
+                elements.append({"tag": "action", "actions": actions})
+
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "📁 折叠"},
+                    "type": "default",
+                    "value": {
+                        "action": "collapse_folder",
+                        "path": dir_path,
+                        "parent": str(Path(dir_path).parent),
+                    },
+                },
+            ],
+        })
+
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📁 {folder_name}"},
+                "template": "blue",
+            },
+            "elements": elements,
+        }
 
     def _buffer_event(self, chat_id: str, event: dict) -> None:
         """线程安全地缓冲事件"""
@@ -783,7 +1086,7 @@ class FeishuAdapter(ChannelAdapter):
                 )
             if response.success():
                 logger.debug(f"Feishu: thinking card sent to {chat_id}")
-                return response.data.message_id
+                return response.data.message_id if response.data else ""
             logger.debug(f"Feishu: thinking card failed: {response.msg}")
         except Exception as e:
             logger.debug(f"Feishu: _send_thinking_card error: {e}")
@@ -1094,6 +1397,11 @@ class FeishuAdapter(ChannelAdapter):
         """
         self._running = False
 
+        # 0) 取消看门狗任务
+        if self._ws_watchdog_task is not None:
+            self._ws_watchdog_task.cancel()
+            self._ws_watchdog_task = None
+
         # 1) 停止 WS 线程的事件循环 → SDK 的 ws_client.start() 会退出阻塞
         ws_loop = self._ws_loop
         if ws_loop is not None:
@@ -1145,6 +1453,8 @@ class FeishuAdapter(ChannelAdapter):
 
         if event_type == "im.message.receive_v1":
             asyncio.create_task(self._handle_message_event(event))
+        elif event_type == "card.action.trigger":
+            return self._handle_card_action_webhook(body)
 
         return {"success": True}
 
@@ -1197,7 +1507,14 @@ class FeishuAdapter(ChannelAdapter):
         content = MessageContent()
 
         msg_type = message.get("message_type")
-        msg_content = json.loads(message.get("content", "{}"))
+        raw_content = message.get("content", "{}")
+        if isinstance(raw_content, dict):
+            msg_content = raw_content
+        else:
+            try:
+                msg_content = json.loads(raw_content) if raw_content else {}
+            except (json.JSONDecodeError, TypeError):
+                msg_content = {}
 
         if msg_type == "text":
             content.text = msg_content.get("text", "")
@@ -1358,6 +1675,10 @@ class FeishuAdapter(ChannelAdapter):
         metadata["sender_name"] = await self._resolve_user_name(
             sender_id.get("open_id", "")
         )
+        if chat_type == "group":
+            metadata["chat_name"] = await self._resolve_chat_name(
+                message.get("chat_id", "")
+            )
 
         return UnifiedMessage.create(
             channel=self.channel_name,
@@ -1396,6 +1717,28 @@ class FeishuAdapter(ChannelAdapter):
         self._user_name_cache[open_id] = name
         while len(self._user_name_cache) > self._user_name_cache_max:
             self._user_name_cache.popitem(last=False)
+
+        return name
+
+    async def _resolve_chat_name(self, chat_id: str) -> str:
+        """从缓存或 im.v1.chat.get API 获取群聊名称，失败时静默返回空字符串。"""
+        if not chat_id:
+            return ""
+
+        if chat_id in self._chat_name_cache:
+            self._chat_name_cache.move_to_end(chat_id)
+            return self._chat_name_cache[chat_id]
+
+        try:
+            info = await self.get_chat_info(chat_id)
+            name = (info or {}).get("name") or "" if info else ""
+        except Exception:
+            name = ""
+
+        if name:
+            self._chat_name_cache[chat_id] = name
+            while len(self._chat_name_cache) > self._chat_name_cache_max:
+                self._chat_name_cache.popitem(last=False)
 
         return name
 
@@ -1632,7 +1975,7 @@ class FeishuAdapter(ChannelAdapter):
                         await self.send_image(message.chat_id, extra_img.local_path, reply_to=reply_target)
                     except Exception as e:
                         logger.warning(f"Feishu: send extra image failed: {e}")
-            return response.data.message_id
+            return response.data.message_id if response.data else ""
 
         # 普通发送（在线程池中执行同步调用）
         request = (
@@ -1665,7 +2008,7 @@ class FeishuAdapter(ChannelAdapter):
                 except Exception as e:
                     logger.warning(f"Feishu: send extra image failed: {e}")
 
-        return response.data.message_id
+        return response.data.message_id if response.data else ""
 
     # ==================== IM 查询工具方法 ====================
 
@@ -1832,7 +2175,7 @@ class FeishuAdapter(ChannelAdapter):
                 )
 
             if response.success():
-                return response.data.image_key
+                return response.data.image_key if response.data else ""
 
             if attempt == 0 and self._is_token_error(response):
                 logger.warning(
@@ -1887,7 +2230,8 @@ class FeishuAdapter(ChannelAdapter):
             raise RuntimeError(f"Download succeeded but response.file is empty for {media.file_id}")
 
         # 保存文件
-        local_path = self.media_dir / media.filename
+        safe_name = Path(media.filename).name or "download"
+        local_path = self.media_dir / safe_name
         with open(local_path, "wb") as f:
             f.write(response.file.read())
 
@@ -1968,7 +2312,7 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send card: {response.msg}")
 
-        return response.data.message_id
+        return response.data.message_id if response.data else ""
 
     async def reply_message(self, message_id: str, text: str, msg_type: str = "text") -> str:
         """
@@ -2006,7 +2350,7 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to reply message: {response.msg}")
 
-        return response.data.message_id
+        return response.data.message_id if response.data else ""
 
     async def send_photo(
         self, chat_id: str, photo_path: str, caption: str | None = None,
@@ -2065,7 +2409,7 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send photo: {response.msg}")
 
-        message_id = response.data.message_id
+        message_id = response.data.message_id if response.data else ""
 
         if caption:
             await self._send_text(chat_id, caption, reply_to=reply_to)
@@ -2130,7 +2474,7 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send file: {response.msg}")
 
-        message_id = response.data.message_id
+        message_id = response.data.message_id if response.data else ""
 
         if caption:
             await self._send_text(chat_id, caption, reply_to=reply_to)
@@ -2195,7 +2539,7 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send voice: {response.msg}")
 
-        message_id = response.data.message_id
+        message_id = response.data.message_id if response.data else ""
 
         if caption:
             await self._send_text(chat_id, caption, reply_to=reply_to)
@@ -2244,7 +2588,7 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send text: {response.msg}")
 
-        return response.data.message_id
+        return response.data.message_id if response.data else ""
 
     async def _upload_file(self, path: str) -> str:
         """上传文件到飞书（含 token 过期自动重试）"""
@@ -2268,7 +2612,7 @@ class FeishuAdapter(ChannelAdapter):
                 )
 
             if response.success():
-                return response.data.file_key
+                return response.data.file_key if response.data else ""
 
             if attempt == 0 and self._is_token_error(response):
                 logger.warning(
@@ -2287,16 +2631,18 @@ class FeishuAdapter(ChannelAdapter):
         content: str,
         buttons: list[dict] | None = None,
     ) -> dict:
-        """
-        构建简单卡片
+        """构建简单卡片。
 
         Args:
             title: 标题
-            content: 内容
-            buttons: 按钮列表 [{"text": "按钮文字", "value": "回调值"}]
+            content: Markdown 内容
+            buttons: 按钮列表，每项支持两种格式：
+                - ``{"text": "按钮文字", "value": "字符串回调值"}``
+                - ``{"text": "按钮文字", "value": {"action": "xxx", ...}}``
+                  传 dict 时整体作为按钮 value，便于卡片回调分发。
 
         Returns:
-            卡片 JSON
+            飞书卡片 JSON（1.0 结构）
         """
         elements = [
             {
@@ -2308,12 +2654,14 @@ class FeishuAdapter(ChannelAdapter):
         if buttons:
             actions = []
             for btn in buttons:
+                raw_value = btn.get("value", btn["text"])
+                btn_value = raw_value if isinstance(raw_value, dict) else {"action": raw_value}
                 actions.append(
                     {
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": btn["text"]},
-                        "type": "primary",
-                        "value": {"action": btn.get("value", btn["text"])},
+                        "type": btn.get("type", "primary"),
+                        "value": btn_value,
                     }
                 )
 

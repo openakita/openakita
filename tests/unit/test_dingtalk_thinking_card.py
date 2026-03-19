@@ -8,14 +8,20 @@ Validates all paths identified in the plan:
 - Split message: first fragment consumes card, rest sent normally
 - Fast response: no card created
 - Media message: card updated to "处理完成", media sent normally
+- AI Card: upgrade path with fallback to StandardCard
 """
 
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from openakita.channels.adapters.dingtalk import DingTalkAdapter
+from openakita.channels.adapters.dingtalk import DingTalkAdapter, _CardState
 from openakita.channels.types import MessageContent, OutgoingMessage, MediaFile
+
+
+def _sk(chat_id: str, thread_id: str | None = None) -> str:
+    """Build session key matching DingTalkAdapter._make_session_key"""
+    return f"{chat_id}:{thread_id or ''}"
 
 
 @pytest.fixture
@@ -28,6 +34,8 @@ def adapter():
     a._conversation_types["conv_private"] = "1"
     a._conversation_users["conv_private"] = "staff123"
     a._conversation_users["conv_group"] = "staff456"
+    # Default: force StandardCard path for backward compat tests
+    a._ai_card_available = False
     return a
 
 
@@ -38,6 +46,24 @@ def _mock_card_response(success=True):
     else:
         resp.json.return_value = {"errcode": 400, "errmsg": "bad request"}
     resp.status_code = 200 if success else 400
+    return resp
+
+
+def _mock_ai_card_create_response():
+    resp = MagicMock()
+    resp.json.return_value = {"outTrackId": "ai_mock123", "success": True}
+    return resp
+
+
+def _mock_ai_card_deliver_response():
+    resp = MagicMock()
+    resp.json.return_value = {"spaceId": "space_123", "success": True}
+    return resp
+
+
+def _mock_ai_card_stream_response():
+    resp = MagicMock()
+    resp.json.return_value = {"success": True}
     return resp
 
 
@@ -53,13 +79,15 @@ class TestSendTyping:
         adapter._http_client.post = AsyncMock(return_value=_mock_card_response())
         await adapter.send_typing("conv_group")
 
-        assert "conv_group" in adapter._thinking_cards
+        sk = _sk("conv_group")
+        assert sk in adapter._thinking_cards
+        card_state = adapter._thinking_cards[sk]
+        assert isinstance(card_state, _CardState)
+        assert card_state.is_ai_card is False
         adapter._http_client.post.assert_called_once()
-        call_args = adapter._http_client.post.call_args
-        body = call_args.kwargs["json"]
+        body = adapter._http_client.post.call_args.kwargs["json"]
         assert body["cardTemplateId"] == "StandardCard"
         assert body["openConversationId"] == "conv_group"
-        assert "singleChatReceiver" not in body
 
     @pytest.mark.asyncio
     async def test_idempotent_second_call(self, adapter):
@@ -86,22 +114,24 @@ class TestSendTyping:
         adapter._http_client.post = AsyncMock(return_value=_mock_card_response())
         await adapter.send_typing("conv_private")
 
-        assert "conv_private" not in adapter._thinking_cards
-        adapter._http_client.post.assert_not_called()
+        sk = _sk("conv_private")
+        assert sk not in adapter._thinking_cards
 
     @pytest.mark.asyncio
     async def test_api_failure_rolls_back(self, adapter):
         adapter._http_client.post = AsyncMock(return_value=_mock_card_response(success=False))
         await adapter.send_typing("conv_group")
 
-        assert "conv_group" not in adapter._thinking_cards
+        sk = _sk("conv_group")
+        assert sk not in adapter._thinking_cards
 
     @pytest.mark.asyncio
     async def test_network_error_rolls_back(self, adapter):
         adapter._http_client.post = AsyncMock(side_effect=Exception("timeout"))
         await adapter.send_typing("conv_group")
 
-        assert "conv_group" not in adapter._thinking_cards
+        sk = _sk("conv_group")
+        assert sk not in adapter._thinking_cards
 
     @pytest.mark.asyncio
     async def test_carddata_is_json_string(self, adapter):
@@ -117,6 +147,40 @@ class TestSendTyping:
         assert parsed["contents"][0]["type"] == "markdown"
 
 
+class TestAICardSendTyping:
+    """AI Card specific tests."""
+
+    @pytest.mark.asyncio
+    async def test_ai_card_create_and_deliver(self, adapter):
+        adapter._ai_card_available = True
+        create_resp = _mock_ai_card_create_response()
+        deliver_resp = _mock_ai_card_deliver_response()
+        adapter._http_client.post = AsyncMock(side_effect=[create_resp, deliver_resp])
+
+        await adapter.send_typing("conv_group")
+
+        sk = _sk("conv_group")
+        assert sk in adapter._thinking_cards
+        card_state = adapter._thinking_cards[sk]
+        assert card_state.is_ai_card is True
+        assert adapter._http_client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_ai_card_fallback_to_standard(self, adapter):
+        adapter._ai_card_available = True
+        ai_fail = MagicMock()
+        ai_fail.json.return_value = {"errcode": 403, "errmsg": "no permission"}
+        standard_ok = _mock_card_response()
+        adapter._http_client.post = AsyncMock(side_effect=[ai_fail, standard_ok])
+
+        await adapter.send_typing("conv_group")
+
+        sk = _sk("conv_group")
+        assert sk in adapter._thinking_cards
+        assert adapter._thinking_cards[sk].is_ai_card is False
+        assert adapter._ai_card_available is False
+
+
 class TestClearTyping:
     @pytest.mark.asyncio
     async def test_noop_when_no_card(self, adapter):
@@ -127,11 +191,12 @@ class TestClearTyping:
 
     @pytest.mark.asyncio
     async def test_updates_stale_card(self, adapter):
-        adapter._thinking_cards["conv_group"] = "biz_stale"
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="biz_stale", is_ai_card=False)
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
         await adapter.clear_typing("conv_group")
 
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
         adapter._http_client.put.assert_called_once()
         body = adapter._http_client.put.call_args.kwargs["json"]
         assert body["cardBizId"] == "biz_stale"
@@ -140,31 +205,47 @@ class TestClearTyping:
 
     @pytest.mark.asyncio
     async def test_update_failure_silent(self, adapter):
-        adapter._thinking_cards["conv_group"] = "biz_stale"
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="biz_stale", is_ai_card=False)
         adapter._http_client.put = AsyncMock(side_effect=Exception("network"))
         await adapter.clear_typing("conv_group")
 
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
+
+    @pytest.mark.asyncio
+    async def test_ai_card_clear_finishes_card(self, adapter):
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="ai_track_123", is_ai_card=True)
+        adapter._http_client.put = AsyncMock(return_value=_mock_ai_card_stream_response())
+        await adapter.clear_typing("conv_group")
+
+        assert sk not in adapter._thinking_cards
+        adapter._http_client.put.assert_called_once()
+        body = adapter._http_client.put.call_args.kwargs["json"]
+        assert body["outTrackId"] == "ai_track_123"
+        assert body["cardData"]["cardParamMap"]["flowStatus"] == "FINISHED"
 
 
 class TestSendMessageConsumesCard:
     @pytest.mark.asyncio
     async def test_normal_text_updates_card(self, adapter):
-        adapter._thinking_cards["conv_group"] = "biz_001"
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="biz_001", is_ai_card=False)
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
         msg = OutgoingMessage.text("conv_group", "Hello response")
 
         result = await adapter.send_message(msg)
 
         assert result == "card_biz_001"
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
         body = adapter._http_client.put.call_args.kwargs["json"]
         card_data = json.loads(body["cardData"])
         assert card_data["contents"][0]["text"] == "Hello response"
 
     @pytest.mark.asyncio
     async def test_card_update_failure_falls_through(self, adapter):
-        adapter._thinking_cards["conv_group"] = "biz_002"
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="biz_002", is_ai_card=False)
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response(success=False))
         adapter._http_client.post = AsyncMock(return_value=_mock_webhook_response())
         adapter._session_webhooks["conv_group"] = "https://fake-webhook"
@@ -173,11 +254,12 @@ class TestSendMessageConsumesCard:
         result = await adapter.send_message(msg)
 
         assert result.startswith("webhook_")
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
 
     @pytest.mark.asyncio
     async def test_media_message_updates_card_to_done(self, adapter):
-        adapter._thinking_cards["conv_group"] = "biz_003"
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="biz_003", is_ai_card=False)
         put_mock = AsyncMock(return_value=_mock_card_response())
         post_mock = AsyncMock(return_value=_mock_webhook_response())
         adapter._http_client.put = put_mock
@@ -192,7 +274,7 @@ class TestSendMessageConsumesCard:
 
         await adapter.send_message(msg)
 
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
         put_body = put_mock.call_args.kwargs["json"]
         card_data = json.loads(put_body["cardData"])
         assert "处理完成" in card_data["contents"][0]["text"]
@@ -207,6 +289,22 @@ class TestSendMessageConsumesCard:
 
         assert result.startswith("webhook_")
 
+    @pytest.mark.asyncio
+    async def test_ai_card_consumed_by_send_message(self, adapter):
+        sk = _sk("conv_group")
+        adapter._thinking_cards[sk] = _CardState(card_id="ai_track_001", is_ai_card=True)
+        adapter._http_client.put = AsyncMock(return_value=_mock_ai_card_stream_response())
+        msg = OutgoingMessage.text("conv_group", "AI response")
+
+        result = await adapter.send_message(msg)
+
+        assert result == "card_ai_track_001"
+        assert sk not in adapter._thinking_cards
+        body = adapter._http_client.put.call_args.kwargs["json"]
+        assert body["outTrackId"] == "ai_track_001"
+        assert body["cardData"]["cardParamMap"]["flowStatus"] == "FINISHED"
+        assert body["cardData"]["cardParamMap"]["msgContent"] == "AI response"
+
 
 class TestTypingLifecycle:
     """End-to-end lifecycle tests simulating Gateway behavior."""
@@ -218,12 +316,13 @@ class TestTypingLifecycle:
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
 
         await adapter.send_typing("conv_group")
-        assert "conv_group" in adapter._thinking_cards
+        sk = _sk("conv_group")
+        assert sk in adapter._thinking_cards
 
         msg = OutgoingMessage.text("conv_group", "final answer")
         result = await adapter.send_message(msg)
         assert result.startswith("card_")
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
 
         await adapter.clear_typing("conv_group")
         assert adapter._http_client.put.call_count == 1
@@ -235,13 +334,14 @@ class TestTypingLifecycle:
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
 
         await adapter.send_typing("conv_group")
-        card_id = adapter._thinking_cards["conv_group"]
-        assert card_id is not None
+        sk = _sk("conv_group")
+        card_state = adapter._thinking_cards[sk]
+        assert card_state is not None
 
         await adapter.clear_typing("conv_group")
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
         put_body = adapter._http_client.put.call_args.kwargs["json"]
-        assert put_body["cardBizId"] == card_id
+        assert put_body["cardBizId"] == card_state.card_id
         assert "处理完成" in json.loads(put_body["cardData"])["contents"][0]["text"]
 
     @pytest.mark.asyncio
@@ -251,19 +351,20 @@ class TestTypingLifecycle:
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
 
         await adapter.send_typing("conv_group")
-        first_card = adapter._thinking_cards["conv_group"]
+        sk = _sk("conv_group")
+        first_card = adapter._thinking_cards[sk]
 
         msg = OutgoingMessage.text("conv_group", "main response")
         await adapter.send_message(msg)
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
 
         await adapter.send_typing("conv_group")
-        second_card = adapter._thinking_cards["conv_group"]
-        assert second_card != first_card
+        second_card = adapter._thinking_cards[sk]
+        assert second_card.card_id != first_card.card_id
 
         msg2 = OutgoingMessage.text("conv_group", "interrupt response")
         await adapter.send_message(msg2)
-        assert "conv_group" not in adapter._thinking_cards
+        assert sk not in adapter._thinking_cards
 
         await adapter.clear_typing("conv_group")
 
@@ -287,8 +388,122 @@ class TestTypingLifecycle:
         adapter._session_webhooks["conv_private"] = "https://fake-webhook"
 
         await adapter.send_typing("conv_private")
-        assert "conv_private" not in adapter._thinking_cards
+        sk = _sk("conv_private")
+        assert sk not in adapter._thinking_cards
 
         msg = OutgoingMessage.text("conv_private", "normal text")
         result = await adapter.send_message(msg)
         assert result.startswith("webhook_")
+
+
+class TestPatchCardContent:
+    """Test _patch_card_content for thinking-to-card progress patching."""
+
+    @pytest.mark.asyncio
+    async def test_standard_card_patch(self, adapter):
+        card_state = _CardState(card_id="biz_patch_01", is_ai_card=False)
+        adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
+
+        result = await adapter._patch_card_content(card_state, "💭 思考中...")
+        assert result is True
+        adapter._http_client.put.assert_called_once()
+        body = adapter._http_client.put.call_args.kwargs["json"]
+        assert body["cardBizId"] == "biz_patch_01"
+        card_data = json.loads(body["cardData"])
+        assert "💭 思考中..." in card_data["contents"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_ai_card_patch(self, adapter):
+        card_state = _CardState(card_id="ai_patch_01", is_ai_card=True)
+        adapter._http_client.put = AsyncMock(return_value=_mock_ai_card_stream_response())
+
+        result = await adapter._patch_card_content(card_state, "💭 深度推理中...")
+        assert result is True
+        adapter._http_client.put.assert_called_once()
+        body = adapter._http_client.put.call_args.kwargs["json"]
+        assert body["outTrackId"] == "ai_patch_01"
+
+    @pytest.mark.asyncio
+    async def test_patch_failure_returns_false(self, adapter):
+        card_state = _CardState(card_id="biz_fail", is_ai_card=False)
+        adapter._http_client.put = AsyncMock(side_effect=Exception("network"))
+
+        result = await adapter._patch_card_content(card_state, "text")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_none_card_state_returns_false(self, adapter):
+        result = await adapter._patch_card_content(None, "text")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_empty_card_id_returns_false(self, adapter):
+        card_state = _CardState(card_id="", is_ai_card=False)
+        result = await adapter._patch_card_content(card_state, "text")
+        assert result is False
+
+
+class TestStopMonkeyPatch:
+    """Test that stop() prevents SDK reconnection."""
+
+    @pytest.mark.asyncio
+    async def test_stop_patches_open_connection(self, adapter):
+        mock_client = MagicMock()
+        mock_client.websocket = None
+        original_open = mock_client.open_connection
+        adapter._stream_client = mock_client
+        adapter._running = True
+
+        await adapter.stop()
+
+        assert mock_client.open_connection is not original_open
+        assert mock_client.open_connection() is None
+
+    @pytest.mark.asyncio
+    async def test_stop_clears_main_loop(self, adapter):
+        loop = MagicMock()
+        adapter._main_loop = loop
+        adapter._running = True
+
+        await adapter.stop()
+
+        assert adapter._main_loop is None
+
+    @pytest.mark.asyncio
+    async def test_stop_sets_running_false(self, adapter):
+        adapter._running = True
+        await adapter.stop()
+        assert adapter._running is False
+
+
+class TestTextChunking:
+    """Test _chunk_markdown_text."""
+
+    def test_short_text_no_split(self):
+        chunks = DingTalkAdapter._chunk_markdown_text("hello world")
+        assert chunks == ["hello world"]
+
+    def test_exact_limit(self):
+        text = "a" * 4000
+        chunks = DingTalkAdapter._chunk_markdown_text(text, 4000)
+        assert len(chunks) == 1
+
+    def test_long_text_splits(self):
+        text = ("paragraph one\n\n" * 200).strip()
+        chunks = DingTalkAdapter._chunk_markdown_text(text, 100)
+        for c in chunks:
+            assert len(c) <= 100
+        assert "".join(chunks) == text
+
+    def test_preserves_code_blocks(self):
+        text = "before\n\n```python\n" + "x = 1\n" * 500 + "```\n\nafter"
+        chunks = DingTalkAdapter._chunk_markdown_text(text, 200)
+        for c in chunks:
+            assert len(c) <= 200
+        full = "".join(chunks)
+        fence_count = full.count("```")
+        assert fence_count % 2 == 0
+
+    def test_empty_text(self):
+        chunks = DingTalkAdapter._chunk_markdown_text("")
+        assert chunks == [""]

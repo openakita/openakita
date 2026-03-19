@@ -80,10 +80,32 @@ class ContextManager:
     def get_max_context_tokens(self, conversation_id: str | None = None) -> int:
         """动态获取当前模型的可用上下文 token 数。
 
+        Fallback 链（从精确到宽泛）：
+        1. 按端点名精确匹配 → 读取 context_window 并计算可用预算
+        2. 名称匹配失败时，取最高优先级端点的 context_window 计算
+        3. 以上均失败时返回 DEFAULT_MAX_CONTEXT_TOKENS (160K)
+
+        计算公式：(context_window - output_reserve) * 0.95
+        - context_window < 8192 视为无效，使用兜底值 200000
+        - output_reserve = min(max_tokens or 4096, context_window / 3)
+
         Args:
             conversation_id: 对话 ID（用于识别 per-conversation 端点覆盖）
         """
         return _shared_get_max_context_tokens(self._brain, conversation_id=conversation_id)
+
+    @staticmethod
+    def _calc_context_budget(ep, fallback_window: int) -> int:
+        """从端点配置计算可用上下文预算。"""
+        ctx = getattr(ep, "context_window", 0) or 0
+        if ctx < 8192:
+            ctx = fallback_window
+        output_reserve = ep.max_tokens or 4096
+        output_reserve = min(output_reserve, ctx // 3)
+        result = int((ctx - output_reserve) * 0.95)
+        if result < 4096:
+            return DEFAULT_MAX_CONTEXT_TOKENS
+        return result
 
     def estimate_tokens(self, text: str) -> int:
         """估算文本的 token 数量（中英文感知）。"""

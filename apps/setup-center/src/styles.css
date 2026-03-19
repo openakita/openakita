@@ -1462,6 +1462,7 @@ button.btnApplyRestart:hover {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  pointer-events: auto;
   animation: fadeIn 0.15s ease-out;
 }
 @keyframes fadeIn {
@@ -2335,186 +2336,12 @@ button.btnApplyRestart:hover {
   flex-direction: column;
 }
 
-.imSectionTitle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px 6px 12px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted2);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.imRefreshBtn {
-  padding: 2px 4px !important;
-  border-radius: 6px !important;
-  border: none !important;
-  background: transparent !important;
-  cursor: pointer;
-  color: var(--muted2);
-}
-
-.imRefreshBtn:hover {
-  background: rgba(37, 99, 235, 0.08) !important;
-  color: var(--text);
-}
-
-.imChannelList, .imSessionList {
-  padding: 0 6px;
-}
-
-.imChannelItem, .imSessionItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 13px;
-  transition: background 0.15s;
-}
-
-.imChannelItem:hover, .imSessionItem:hover {
-  background: var(--nav-hover);
-}
-
-.imChannelItemActive, .imSessionItemActive {
-  background: var(--nav-active);
-}
-
-.imChannelName {
-  font-weight: 600;
-}
-
-.imChannelCount {
-  font-size: 11px;
-  color: var(--muted2);
-  background: var(--nav-active);
-  padding: 1px 6px;
-  border-radius: 8px;
-}
-
-.imSessionItem {
-  gap: 8px;
-}
-
-.imSessionLeft {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.imSessionName {
-  font-size: 13px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.imSessionRight {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.imSessionCount {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--primary, #2563eb);
-  background: rgba(37, 99, 235, 0.1);
-  padding: 1px 7px;
-  border-radius: 8px;
-  min-width: 16px;
-  text-align: center;
-}
-
-.imSessionTime {
-  font-size: 11px;
-  color: var(--muted2);
-  white-space: nowrap;
-}
-
-.imViewEmpty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--muted2);
-}
-
-.imEmptyHint {
-  padding: 16px;
-  text-align: center;
-  color: var(--muted2);
-  font-size: 12px;
-}
-
-.imMessages {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.imMessagesHeader {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-}
-
-.imMessagesList {
-  flex: 1;
-  overflow: auto;
-  padding: 12px 16px;
-}
-
-.imMsg {
-  margin-bottom: 12px;
-}
-
-.imMsgRole {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted2);
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.imMsgTime {
-  font-weight: 400;
-  color: var(--muted2);
-  font-size: 10px;
-}
-
-.imMsgUser .imMsgRole {
-  color: var(--brand);
-}
-
-.imMsgContent {
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--panel2);
-  border: 1px solid var(--line);
-  color: var(--text);
-}
-
-.imMsgUser .imMsgContent {
-  background: rgba(37, 99, 235, 0.04);
-  border-color: rgba(37, 99, 235, 0.12);
-}
+/* Removed: imSectionTitle, imRefreshBtn, imChannelList, imSessionList,
+   imChannelItem, imSessionItem, imChannelName, imChannelCount,
+   imSessionLeft, imSessionName, imSessionRight, imSessionCount,
+   imSessionTime, imViewEmpty, imEmptyHint, imMessages, imMessagesHeader,
+   imMessagesList, imMsg, imMsgRole, imMsgTime, imMsgContent
+   — replaced by shadcn/ui components + Tailwind in IMView.tsx */
 
 .imMediaCard {
   display: inline-flex;
@@ -3210,64 +3037,6 @@ button.btnApplyRestart:hover {
 .chatInputIconBtnOff {
   color: rgba(156, 163, 175, 0.7) !important;
   background: rgba(156, 163, 175, 0.06) !important;
-}
-
-/* 深度思考下拉菜单 */
-.chatThinkingMenu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  min-width: 200px;
-  background: var(--bg-app);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  padding: 6px;
-  z-index: 200;
-  animation: thinkingMenuFadeIn 0.15s ease;
-}
-
-@keyframes thinkingMenuFadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.chatThinkingMenuSection {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary, #6b7280);
-  padding: 6px 10px 4px;
-  opacity: 0.6;
-}
-
-.chatThinkingMenuItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: background 0.12s;
-}
-
-.chatThinkingMenuItem:hover {
-  background: rgba(37, 99, 235, 0.12);
-}
-
-.chatThinkingMenuItemActive {
-  background: rgba(124, 58, 237, 0.15) !important;
-  color: rgba(124, 58, 237, 0.95);
-  font-weight: 600;
-}
-
-.chatThinkingMenuDivider {
-  height: 1px;
-  background: var(--line, #e5e7eb);
-  margin: 4px 8px;
 }
 
 /* 思维链 & 模式切换 按钮 */

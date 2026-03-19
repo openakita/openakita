@@ -11,7 +11,7 @@ base64 = "0.22.1"
 flate2 = "1.0.35"
 
 [dependencies]
-tauri = { version = "2.10.1", features = ["tray-icon"] }
+tauri = { version = "2.10.1", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }

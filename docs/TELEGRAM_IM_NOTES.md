@@ -753,3 +753,112 @@ stop()
 - Telegram Bot API 本地服务器（解除限制）: https://core.telegram.org/bots/api#using-a-local-bot-api-server
 - koishi Telegram 适配器 (satorijs): https://github.com/satorijs/satori (`adapters/telegram/`)
 - AstrBot Telegram 适配器: https://github.com/Soulter/AstrBot (`astrbot/core/platform/sources/telegram/`)
+
+---
+
+## 十三、问题记录：图片双发与 300s 超时取消（2026-03-18 实证）
+
+### 现象
+
+1. 用户请求生成图片后，Bot 先发送了 **photo**，紧接着又以 **document**（文件卡片）形式发送同一张图片
+2. 随后 Bot 发送 "🚫 请求已取消"，后续请求也返回相同取消消息
+
+### 日志实证时间线
+
+```
+16:35:24  收到消息："生成一张可爱的英国长毛猫"
+16:35:40  generate_image 调用（Iter 1）
+16:36:02  图片生成成功（22s），保存到 data/generated_images/
+16:36:06  deliver_artifacts 调用，artifacts=[{type=image, ...}]（仅 image，无 file）
+16:36:26  [IM] send_image failed for telegram:telegram-bot-main: Timed out（20s 超时）
+16:36:47  deliver_artifacts 返回 ok=false, status=failed
+16:36:51  Iter 3 final_answer → ArtifactValidator FAILED → LLM verify INCOMPLETE
+16:38:50  Iter 4 final_answer → ArtifactValidator FAILED → 继续循环
+16:40:24  dispatch_cancelled, elapsed_ms=300000（精确 300s = AGENT_HANDLER_TIMEOUT 默认值）
+```
+
+### 根因分析
+
+**问题一：photo + document 双发**
+
+`_send_image`（im_channel.py）先调用 `adapter.send_image`（→ send_photo），失败后无条件降级到 `adapter.send_file`（→ send_document）。当 send_photo 在 Telegram 服务端成功但客户端 HTTP 响应超时时，photo 已投递但异常触发了 send_document 降级，导致双发。
+
+贡献因素：日志显示大量 `Conflict: terminated by other getUpdates request` 错误，表明有多个 Bot 实例使用同一 token 进行长轮询，导致网络不稳定和 API 超时。
+
+**问题二：ArtifactValidator 无限重试 → 300s 超时取消**
+
+deliver_artifacts 返回 `ok=false` 后，ArtifactValidator 检测到 `delivery_receipts` 中有 `status=failed`，返回 FAIL。LLM 验证也判定 INCOMPLETE。Agent 进入无限重试循环（每轮产出 final_answer → ArtifactValidator FAIL → LLM INCOMPLETE → 继续），直到 Gateway 的 `AGENT_HANDLER_TIMEOUT`（默认 300s）触发任务取消。
+
+delegation_logs 确认：`dispatch_cancelled, elapsed_ms=300000`。
+
+### 修复措施
+
+1. **`_send_image` 超时不降级**（im_channel.py）：区分超时与其他错误，超时时直接返回 "⚠️ 图片发送超时（可能已发送成功）" 而非降级到 send_document
+2. **ArtifactValidator FAIL 降级为 PASS**（response_handler.py）：交付失败是基础设施问题而非 Agent 过错，不应阻塞任务完成
+3. **去重 key 去除 art_type 前缀**（im_channel.py）：`dedupe_key` 从 `{art_type}:{sha256}` 改为 `content:{sha256}`，同一文件无论以 image 还是 file 类型发送都被去重
+4. **generate_image hint 加强**（system.py）：明确指导"仅需调用一次，不要以 file 类型重复发送"
+
+### Bot 多实例冲突说明
+
+日志中持续出现的 `Conflict: terminated by other getUpdates request` 说明存在多个进程使用同一 Bot Token 进行长轮询。可能原因：
+- 旧进程未完全退出，新进程已启动
+- 配置中同时启用了 `TELEGRAM_ENABLED`（全局 env）和 `im_bots` 中的 telegram bot
+
+解决方法：确保同一 Token 只有一个 Bot 实例运行。重启前先确认旧进程已停止。
+
+## 十四、问题记录：文本消息被 LLM 误判为语音命令（2026-03-19 实证）
+
+### 现象
+
+用户发送纯文本消息 "v6 策略昨天没有修复的是哪部分，继续完成修复"，Bot 回复"我收到语音命令：v6 策略昨天没有修复的是哪部分，继续完成修复。请确认以上识别结果是否准确..."，要求用户确认。
+
+Bot 将纯文本消息当作语音转写来处理，并主动走了一个不必要的"语音确认"流程。
+
+### 根因分析
+
+**关键事实**："我收到语音命令" 文本在代码库中不存在任何位置——这完全是 LLM 自主生成的回复，而非系统标记。
+
+**原因一：会话历史中 `[语音转文字:]` 标签的误导**
+
+- `MessageContent.to_plain_text()` 将语音消息格式化为 `[语音转文字: <transcription>]`
+- 该 `plain_text` 在 `_handle_message` 中被原样记录到会话历史（`session.add_message`）
+- 但发给 Agent 处理的 `input_text` 会将此标签替换为纯转写文字（无标签）
+- 结果：历史中有大量 `[语音转文字:]` 标签，当前消息无标签 → LLM 无法区分来源
+- 系统提示词说"你收到的消息中，语音内容已经被转写为文字了" → 进一步误导 LLM 认为所有文本可能是语音转写
+
+**原因二：`pending_audio` 元数据泄漏 BUG**
+
+- `_call_agent` 中 `pending_audio` 的清理代码（`session.set_metadata("pending_audio", None)`）不在 `finally` 块中
+- 如果上一次语音消息的 Agent 调用因异常失败（非 TimeoutError），清理被跳过
+- 下一条纯文本消息进来时，`pending_audio` 仍残留在 session 中
+- `_build_messages_for_llm` 读取到残留的旧 `pending_audio` → LLM 收到过期的音频数据
+
+**原因三：`message.audio` 错误分类为 `content.voices`**
+
+- `telegram.py` 的 `_convert_message` 将 Telegram 音频文件（`message.audio`，如 MP3/FLAC）归入 `content.voices`
+- 这导致音频文件走了 STT 转写流程，在历史中留下 `[语音转文字:]` 标签
+- 进一步加剧了原因一中标签泛滥的问题
+
+### 修复措施
+
+1. **`pending_audio` 清理移至 `finally` 块**（gateway.py `_call_agent`）：
+   - 将 `session.set_metadata("pending_*", None)` 等 8 项清理操作从 `try` 正常路径移到 `finally` 块
+   - 确保无论成功、异常还是取消，临时数据都会被清理
+
+2. **`message.audio` 重新分类为文件**（telegram.py `_convert_message`）：
+   - `content.voices.append(media)` → `content.files.append(media)`
+   - 音频文件不再走 STT 转写流程，避免在历史中产生误导性的 `[语音转文字:]` 标签
+
+3. **为语音转写添加来源标记**（gateway.py `_call_agent`）：
+   - 语音转写替换 `input_text` 时，添加 `[来源:语音转写]` 前缀
+   - LLM 可以明确判断：有前缀 = 语音消息，无前缀 = 文本消息
+
+4. **更新系统提示词**（agent.py 系统提示）：
+   - 新增"消息来源判断规则"：明确列出三种语音标记 vs 无标记 = 文本
+   - 添加"绝对禁止"条款：禁止将无标记的文本当作语音命令处理
+   - 更新语音处理流程说明，强调无标记 = 文本输入
+
+### 影响范围
+
+- 所有 IM 通道（Telegram、WeWork、DingTalk、Feishu 等）共享 gateway 和 agent 代码，修复均有效
+- `message.audio` 分类修复仅影响 Telegram 适配器（其他适配器需各自检查）

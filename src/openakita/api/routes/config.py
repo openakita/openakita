@@ -36,6 +36,9 @@ def _project_root() -> Path:
 
 def _parse_env(content: str) -> dict[str, str]:
     """Parse .env file content into a dict (same logic as Tauri bridge)."""
+    # Strip UTF-8 BOM if present (e.g. files saved by Windows Notepad)
+    if content.startswith("\ufeff"):
+        content = content[1:]
     env: dict[str, str] = {}
     for line in content.splitlines():
         line = line.strip()
@@ -258,6 +261,112 @@ async def write_endpoints(body: EndpointsWriteRequest):
     )
     logger.info("[Config API] Updated llm_endpoints.json")
     return {"status": "ok"}
+
+
+def _get_endpoint_manager():
+    """Get or create the EndpointManager singleton for the current workspace."""
+    from openakita.llm.endpoint_manager import EndpointManager
+    root = _project_root()
+    _mgr = getattr(_get_endpoint_manager, "_instance", None)
+    if _mgr is None or _mgr._ws_dir != root:
+        _mgr = EndpointManager(root)
+        _get_endpoint_manager._instance = _mgr
+    return _mgr
+
+
+class SaveEndpointRequest(BaseModel):
+    endpoint: dict
+    api_key: str | None = None
+    endpoint_type: str = "endpoints"
+    expected_version: str | None = None
+
+
+class DeleteEndpointRequest(BaseModel):
+    endpoint_type: str = "endpoints"
+    clean_env: bool = True
+
+
+@router.post("/api/config/save-endpoint")
+async def save_endpoint(body: SaveEndpointRequest, request: Request):
+    """Save or update an LLM endpoint atomically.
+
+    Writes the API key to .env and the endpoint config to llm_endpoints.json
+    in a single coordinated operation. Then triggers hot-reload.
+    """
+    from openakita.llm.endpoint_manager import ConflictError
+
+    mgr = _get_endpoint_manager()
+    try:
+        result = mgr.save_endpoint(
+            endpoint=body.endpoint,
+            api_key=body.api_key,
+            endpoint_type=body.endpoint_type,
+            expected_version=body.expected_version,
+        )
+    except ConflictError as e:
+        return {"status": "conflict", "error": str(e), "current_version": e.current_version}
+    except (ValueError, Exception) as e:
+        logger.error("[Config API] save-endpoint failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+    # Auto-reload running clients
+    _trigger_reload(request)
+
+    return {
+        "status": "ok",
+        "endpoint": result,
+        "version": mgr.get_version(),
+    }
+
+
+@router.delete("/api/config/endpoint/{name}")
+async def delete_endpoint_by_name(
+    name: str, request: Request, endpoint_type: str = "endpoints", clean_env: bool = True
+):
+    """Delete an LLM endpoint by name. Cleans up the .env key if no longer used."""
+    mgr = _get_endpoint_manager()
+    removed = mgr.delete_endpoint(name, endpoint_type=endpoint_type, clean_env=clean_env)
+    if removed is None:
+        return {"status": "not_found", "name": name}
+
+    _trigger_reload(request)
+    return {"status": "ok", "removed": removed, "version": mgr.get_version()}
+
+
+@router.get("/api/config/endpoint-status")
+async def endpoint_status():
+    """Return key presence status for all configured endpoints."""
+    mgr = _get_endpoint_manager()
+    return {"endpoints": mgr.get_endpoint_status()}
+
+
+def _trigger_reload(request: Request) -> bool:
+    """Trigger hot-reload of LLM clients after config change."""
+    agent = getattr(request.app.state, "agent", None)
+    if agent is None:
+        return False
+    brain = getattr(agent, "brain", None) or getattr(agent, "_local_agent", None)
+    if brain and hasattr(brain, "brain"):
+        brain = brain.brain
+    llm_client = getattr(brain, "_llm_client", None) if brain else None
+    if llm_client is None:
+        llm_client = getattr(agent, "_llm_client", None)
+    if llm_client is None:
+        return False
+    try:
+        llm_client.reload()
+        if brain and hasattr(brain, "reload_compiler_client"):
+            brain.reload_compiler_client()
+        gateway = getattr(request.app.state, "gateway", None)
+        if gateway and hasattr(gateway, "stt_client") and gateway.stt_client:
+            from openakita.llm.config import load_endpoints_config
+            _, _, stt_eps, _ = load_endpoints_config()
+            gateway.stt_client.reload(stt_eps)
+        logger.info("[Config API] Hot-reload triggered after config change")
+        return True
+    except Exception as e:
+        logger.error("[Config API] Hot-reload failed: %s", e, exc_info=True)
+        return False
 
 
 @router.post("/api/config/reload")
@@ -545,7 +654,7 @@ async def list_models_api(body: ListModelsRequest):
         if not api_key:
             api_key = "local"  # placeholder for local providers
 
-        if api_type == "openai":
+        if api_type in ("openai", "openai_responses"):
             models = await _list_models_openai(api_key, base_url, provider_slug)
         elif api_type == "anthropic":
             models = await _list_models_anthropic(api_key, base_url, provider_slug)
