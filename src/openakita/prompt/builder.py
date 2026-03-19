@@ -231,9 +231,9 @@ def build_system_prompt(
             budget_tokens=budget_config.identity_budget,
         )
 
-        # 多 Agent 委派优先声明
+        # 多 Agent 委派优先声明（仅 Agent 模式 — Plan/Ask 模式不注入，因为这些工具不可用）
         from ..config import settings as _settings
-        if _settings.multi_agent_enabled and not is_sub_agent:
+        if _settings.multi_agent_enabled and not is_sub_agent and mode == "agent":
             delegation_preamble = (
                 "## 协作优先原则（最高优先级）\n\n"
                 "你拥有一支专业 Agent 团队。执行任务前，先判断是否有更合适的专业 Agent：\n"
