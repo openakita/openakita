@@ -277,6 +277,8 @@ class PlanHandler:
         "update_plan_step",
         "get_plan_status",
         "complete_plan",
+        "create_plan_file",
+        "exit_plan_mode",
     ]
 
     def __init__(self, agent: "Agent"):
@@ -327,6 +329,10 @@ class PlanHandler:
             return self._get_status()
         elif tool_name == "complete_plan":
             return await self._complete_plan(params)
+        elif tool_name == "create_plan_file":
+            return await self._create_plan_file(params)
+        elif tool_name == "exit_plan_mode":
+            return await self._exit_plan_mode(params)
         else:
             return f"❌ Unknown plan tool: {tool_name}"
 
@@ -589,6 +595,133 @@ class PlanHandler:
             unregister_active_plan(conversation_id)
 
         return f"✅ 计划 {plan_id} 已完成\n\n{complete_message}"
+
+    async def _create_plan_file(self, params: dict) -> str:
+        """创建 Cursor 风格的 .plan.md 文件（YAML frontmatter + Markdown body）。
+
+        用于 Plan 模式下生成结构化的计划文件。
+        """
+        name = params.get("name", "Untitled Plan")
+        overview = params.get("overview", "")
+        todos = params.get("todos", [])
+        body = params.get("body", "")
+
+        if isinstance(todos, str):
+            try:
+                todos = json.loads(todos)
+            except (json.JSONDecodeError, TypeError):
+                return "❌ todos 参数格式错误，需要 JSON 数组"
+
+        # Generate a plan file ID
+        import hashlib as _hashlib
+        _slug = name[:30].replace(" ", "_").replace("/", "_")
+        _hash = _hashlib.md5(name.encode()).hexdigest()[:8]
+        filename = f"{_slug}_{_hash}.plan.md"
+
+        plan_file = self.plan_dir / filename
+
+        # Build YAML frontmatter
+        yaml_lines = ["---"]
+        yaml_lines.append(f"name: {name}")
+        if overview:
+            yaml_lines.append(f"overview: {overview}")
+        if todos:
+            yaml_lines.append("todos:")
+            for todo in todos:
+                todo_id = todo.get("id", f"step_{secrets.token_hex(3)}")
+                content = todo.get("content", "")
+                status = todo.get("status", "pending")
+                yaml_lines.append(f"  - id: {todo_id}")
+                yaml_lines.append(f"    content: \"{content}\"")
+                yaml_lines.append(f"    status: {status}")
+        yaml_lines.append("isProject: true")
+        yaml_lines.append("---")
+
+        # Combine frontmatter + body
+        content = "\n".join(yaml_lines) + "\n\n" + body
+
+        plan_file.write_text(content, encoding="utf-8")
+        logger.info(f"[Plan] Created plan file: {plan_file}")
+
+        # Also register as active plan internally
+        plan_id = f"planfile_{_hash}"
+        steps = []
+        for todo in todos:
+            steps.append({
+                "id": todo.get("id", f"step_{secrets.token_hex(3)}"),
+                "description": todo.get("content", ""),
+                "status": todo.get("status", "pending"),
+                "result": "",
+                "started_at": None,
+                "completed_at": None,
+                "skills": [],
+            })
+
+        _new_plan = {
+            "id": plan_id,
+            "task_summary": name,
+            "steps": steps,
+            "status": "in_progress",
+            "created_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "logs": [],
+            "plan_file": str(plan_file),
+        }
+        self._set_current_plan(_new_plan)
+
+        conversation_id = self._get_conversation_id()
+        if conversation_id:
+            register_active_plan(conversation_id, plan_id)
+            register_plan_handler(conversation_id, self)
+
+        self._add_log(f"Plan 文件创建：{name}")
+
+        return (
+            f"✅ Plan 文件已创建: {plan_file}\n\n"
+            f"包含 {len(todos)} 个步骤。\n\n"
+            f"⚠️ 下一步：请调用 exit_plan_mode 通知用户规划完成。\n"
+            f"不要尝试执行计划中的任何步骤 — 用户需要先审批计划。"
+        )
+
+    async def _exit_plan_mode(self, params: dict) -> str:
+        """退出 Plan 模式，通知系统规划已完成。
+
+        这是一个信号工具：触发前端展示 Plan 审批 UI。
+        """
+        summary = params.get("summary", "规划完成")
+
+        try:
+            session = getattr(self.agent, "_current_session", None)
+            gateway = (
+                session.get_metadata("_gateway")
+                if session and hasattr(session, "get_metadata")
+                else None
+            )
+            if gateway and hasattr(gateway, "emit_progress_event"):
+                await gateway.emit_progress_event(
+                    session,
+                    f"📋 **Plan 模式完成**\n{summary}\n\n等待用户审批后执行...",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to emit exit_plan_mode event: {e}")
+
+        # Emit SSE event for frontend
+        try:
+            from ...api.routes.websocket import broadcast_event
+            conversation_id = self._get_conversation_id()
+            await broadcast_event("plan:ready_for_approval", {
+                "conversation_id": conversation_id,
+                "summary": summary,
+                "plan_id": self._get_current_plan().get("id", "") if self._get_current_plan() else "",
+            })
+        except Exception:
+            pass
+
+        return (
+            f"✅ Plan 模式已完成。\n\n"
+            f"{summary}\n\n"
+            f"请用户查看计划并决定是否执行。"
+        )
 
     def _format_plan_message(self) -> str:
         """格式化计划展示消息"""
