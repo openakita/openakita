@@ -706,7 +706,7 @@ class TelegramAdapter(ChannelAdapter):
             media.duration = voice.duration
             content.voices.append(media)
 
-        # 音频
+        # 音频文件（非语音条，作为附件处理，避免走 STT 转写流程）
         if message.audio:
             audio = message.audio
             media = await self._create_media_from_file(
@@ -716,7 +716,7 @@ class TelegramAdapter(ChannelAdapter):
                 audio.file_size or 0,
             )
             media.duration = audio.duration
-            content.voices.append(media)
+            content.files.append(media)
 
         # 视频
         if message.video:

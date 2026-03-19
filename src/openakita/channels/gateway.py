@@ -2827,6 +2827,7 @@ class MessageGateway:
         try:
             # 构建输入（文本 + 图片 + 语音）
             input_text = message.plain_text
+            _has_voice = bool(message.content.voices)
 
             # 处理语音文件 - 双路策略：保留原始音频 + Whisper 转写
             audio_data_list = []
@@ -2843,7 +2844,7 @@ class MessageGateway:
                 if voice.transcription and voice.transcription not in ("[语音识别失败]", ""):
                     # 语音已转写，用转写文字作为输入（保底）
                     if not input_text.strip() or "[语音:" in input_text:
-                        input_text = voice.transcription
+                        input_text = f"[来源:语音转写] {voice.transcription}"
                         logger.info(f"Using voice transcription as input: {input_text}")
                     else:
                         input_text = f"{input_text}\n\n[语音内容: {voice.transcription}]"
@@ -3024,7 +3025,12 @@ class MessageGateway:
                     logger.error(f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s")
                     response = f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），请稍后重试或简化您的问题。"
 
-            # 清除临时数据
+            return (response, streamed_ok)
+
+        except Exception as e:
+            logger.error(f"Agent error: {e}", exc_info=True)
+            return (f"处理出错: {str(e)}", False)
+        finally:
             session.set_metadata("pending_images", None)
             session.set_metadata("pending_videos", None)
             session.set_metadata("pending_audio", None)
@@ -3033,12 +3039,6 @@ class MessageGateway:
             session.set_metadata("_gateway", None)
             session.set_metadata("_session_key", None)
             session.set_metadata("_current_message", None)
-
-            return (response, streamed_ok)
-
-        except Exception as e:
-            logger.error(f"Agent error: {e}", exc_info=True)
-            return (f"处理出错: {str(e)}", False)
 
     async def _call_agent_streaming(
         self, session: Session, input_text: str,
