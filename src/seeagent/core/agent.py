@@ -3604,7 +3604,17 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         # 连续 user 角色消息 → API 报错 / 模型混乱 / 工具重复执行
         session_messages = list(session_messages)
         topic_changed = False
-        if session and len(session_messages) >= 4:
+        # BP 活跃时跳过话题切换检测：用户回答 BP ask_user 不是新话题
+        _skip_topic_detect = False
+        try:
+            from seeagent.bestpractice.facade import get_bp_state_manager
+            _bp_sm = get_bp_state_manager()
+            if _bp_sm and session and _bp_sm.get_active(session.id):
+                _skip_topic_detect = True
+                logger.debug(f"[Session:{session_id}] Skipping topic detection: active BP instance")
+        except Exception:
+            pass
+        if session and len(session_messages) >= 4 and not _skip_topic_detect:
             try:
                 topic_changed = await asyncio.wait_for(
                     self._detect_topic_change(session_messages, message, session),

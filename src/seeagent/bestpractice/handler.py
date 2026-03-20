@@ -83,6 +83,23 @@ class BPToolHandler:
             available = ", ".join(self.config_registry.keys())
             return f"❌ Best Practice '{bp_id}' 不存在。可用: {available}"
 
+        # Prevent duplicate: check for existing active instance
+        existing = self.state_manager.get_active(session.id)
+        if existing:
+            if existing.bp_id == bp_id:
+                # Same BP already active — guide LLM to continue
+                return (
+                    f"✅ 「{bp_config.name}」已在运行中 (instance={existing.instance_id})。"
+                    f"请直接使用 bp_continue(instance_id=\"{existing.instance_id}\") 继续执行，"
+                    f"无需重复启动。"
+                )
+            else:
+                # Different BP — suspend old, proceed to create new
+                old_name = existing.bp_config.name if existing.bp_config else existing.bp_id
+                self.state_manager.suspend(existing.instance_id)
+                logger.info(f"[BP] Suspended existing instance {existing.instance_id} "
+                            f"({old_name}) to start {bp_id}")
+
         input_data = params.get("input_data", {})
         run_mode_str = params.get("run_mode", bp_config.default_run_mode.value)
         run_mode = RunMode(run_mode_str) if run_mode_str in ("manual", "auto") else RunMode.MANUAL

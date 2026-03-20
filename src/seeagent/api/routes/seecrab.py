@@ -147,6 +147,78 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
             if not user_messages and body.message:
                 user_messages = [body.message]
 
+            # BP trigger check: MUST run before raw_stream creation
+            # because engine_stream() immediately starts the LLM in a background pump
+            bp_matched = False
+            try:
+                from seeagent.bestpractice.facade import match_bp_from_message
+                bp_session_id = session.id if session else conversation_id
+                bp_match = match_bp_from_message(body.message or "", bp_session_id)
+                if bp_match:
+                    bp_matched = True
+                    bp_name = bp_match["bp_name"]
+                    bp_id = bp_match["bp_id"]
+                    subtask_names = " → ".join(
+                        s["name"] for s in bp_match.get("subtasks", [])
+                    )
+                    question = (
+                        f"检测到您的需求匹配最佳实践「{bp_name}」，"
+                        f"该任务包含 {bp_match['subtask_count']} 个子任务："
+                        f"{subtask_names}。是否使用最佳实践流程？"
+                    )
+
+                    # Emit session_title for first message
+                    is_first_message = len(user_messages) <= 1
+                    if is_first_message and body.message:
+                        title = body.message[:30] + ("..." if len(body.message) > 30 else "")
+                        title_event = json.dumps({
+                            "type": "session_title",
+                            "session_id": conversation_id,
+                            "title": title,
+                        }, ensure_ascii=False)
+                        yield f"data: {title_event}\n\n"
+                        if session:
+                            session.metadata["title"] = title
+                            session_manager.mark_dirty()
+
+                    ask_event = json.dumps({
+                        "type": "ask_user",
+                        "ask_id": f"bp_trigger_{bp_id}",
+                        "question": question,
+                        "options": [
+                            {"label": "自由模式", "value": "free"},
+                            {
+                                "label": "最佳实践模式",
+                                "value": bp_id,
+                            },
+                        ],
+                    }, ensure_ascii=False)
+                    yield f"data: {ask_event}\n\n"
+
+                    # Mark this BP as offered so it won't re-trigger in this session
+                    from seeagent.bestpractice.facade import get_bp_state_manager
+                    bp_sm = get_bp_state_manager()
+                    if bp_sm:
+                        bp_sm.mark_bp_offered(bp_session_id, bp_id)
+
+                    # Save assistant message so LLM has context on next turn
+                    if session:
+                        session.add_message(
+                            "assistant", question,
+                            reply_state={"ask_user": {
+                                "question": question,
+                                "bp_id": bp_id,
+                                "bp_name": bp_name,
+                            }},
+                        )
+                        if session_manager:
+                            session_manager.mark_dirty()
+
+                    yield 'data: {"type": "done"}\n\n'
+                    return  # Skip LLM stream — wait for user choice
+            except Exception:
+                pass  # Non-critical, don't block chat
+
             brain = getattr(agent, "brain", None)
             adapter = SeeCrabAdapter(brain=brain, user_messages=user_messages)
             event_bus = asyncio.Queue()
@@ -189,53 +261,6 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                 if session:
                     session.metadata["title"] = title
                     session_manager.mark_dirty()
-
-            # BP trigger check: detect matching BP before LLM stream
-            try:
-                from seeagent.bestpractice.facade import match_bp_from_message
-                bp_match = match_bp_from_message(body.message or "", conversation_id)
-                if bp_match:
-                    bp_name = bp_match["bp_name"]
-                    bp_id = bp_match["bp_id"]
-                    subtask_names = " → ".join(
-                        s["name"] for s in bp_match.get("subtasks", [])
-                    )
-                    question = (
-                        f"检测到您的需求匹配最佳实践「{bp_name}」，"
-                        f"该任务包含 {bp_match['subtask_count']} 个子任务："
-                        f"{subtask_names}。是否使用最佳实践流程？"
-                    )
-                    ask_event = json.dumps({
-                        "type": "ask_user",
-                        "ask_id": f"bp_trigger_{bp_id}",
-                        "question": question,
-                        "options": [
-                            {"label": "自由模式", "value": "free"},
-                            {
-                                "label": "最佳实践模式",
-                                "value": bp_id,
-                            },
-                        ],
-                    }, ensure_ascii=False)
-                    yield f"data: {ask_event}\n\n"
-
-                    # Save assistant message so LLM has context on next turn
-                    if session:
-                        session.add_message(
-                            "assistant", question,
-                            reply_state={"ask_user": {
-                                "question": question,
-                                "bp_id": bp_id,
-                                "bp_name": bp_name,
-                            }},
-                        )
-                        if session_manager:
-                            session_manager.mark_dirty()
-
-                    yield 'data: {"type": "done"}\n\n'
-                    return  # Skip LLM stream — wait for user choice
-            except Exception:
-                pass  # Non-critical, don't block chat
 
             full_reply = ""
             reply_state = {

@@ -6,6 +6,7 @@ defineProps<{
   isLastSubtask: boolean
   subtaskIndex: number
   summary?: string
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +32,7 @@ const emit = defineEmits<{
       <button
         v-if="!isLastSubtask"
         class="action-btn primary"
+        :disabled="disabled"
         @click="emit('continue')"
       >
         <span class="material-symbols-rounded">arrow_forward</span>
@@ -126,5 +128,10 @@ const emit = defineEmits<{
 }
 .action-btn.primary:hover {
   background: rgba(74, 108, 247, 0.2);
+}
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
 }
 </style>

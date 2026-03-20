@@ -35,6 +35,7 @@ class BPStateManager:
         self._instances: dict[str, BPInstanceSnapshot] = {}
         self._pending_switches: dict[str, PendingContextSwitch] = {}  # session_id → switch
         self._cooldowns: dict[str, int] = {}  # session_id → remaining turns
+        self._offered_bps: dict[str, set[str]] = {}  # session_id → set of offered bp_ids
 
     # ── Instance lifecycle ─────────────────────────────────────
 
@@ -198,6 +199,16 @@ class BPStateManager:
 
     def get_cooldown(self, session_id: str) -> int:
         return self._cooldowns.get(session_id, 0)
+
+    # ── Offered BPs (prevent duplicate trigger per session) ───
+
+    def mark_bp_offered(self, session_id: str, bp_id: str) -> None:
+        """记录该 session 已向用户提示过此 bp_id。"""
+        self._offered_bps.setdefault(session_id, set()).add(bp_id)
+
+    def is_bp_offered(self, session_id: str, bp_id: str) -> bool:
+        """该 bp_id 是否已在此 session 中提示过。"""
+        return bp_id in self._offered_bps.get(session_id, set())
 
     # ── Persistence ────────────────────────────────────────────
 

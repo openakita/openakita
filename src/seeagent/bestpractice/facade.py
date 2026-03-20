@@ -173,6 +173,9 @@ def match_bp_from_message(user_message: str, session_id: str) -> dict | None:
         return None
 
     for bp_id, config in _bp_config_loader.configs.items():
+        # Skip if already offered in this session
+        if _bp_state_manager.is_bp_offered(session_id, bp_id):
+            continue
         for trigger in config.triggers:
             if trigger.type == TriggerType.CONTEXT:
                 if any(kw in user_message for kw in trigger.conditions):

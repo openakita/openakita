@@ -29,7 +29,6 @@ export const useChatStore = defineStore('chat', () => {
       askUser: null,
       bpProgress: null,
       bpSubtaskOutput: null,
-      bpTrigger: null,
       isDone: false,
     }
     isStreaming.value = true
@@ -254,7 +253,6 @@ export const useChatStore = defineStore('chat', () => {
           askUser: null,
           bpProgress: null,
           bpSubtaskOutput: null,
-          bpTrigger: null,
           isDone: true,
         }
       }

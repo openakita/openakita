@@ -5,7 +5,7 @@ export type SSEEventType =
   | 'ask_user' | 'agent_header'
   | 'timer_update' | 'heartbeat' | 'done' | 'error'
   | 'session_title'
-  | 'bp_progress' | 'bp_subtask_output' | 'bp_stale' | 'bp_trigger'
+  | 'bp_progress' | 'bp_subtask_output' | 'bp_stale'
 
 export interface SSEEvent {
   type: SSEEventType
@@ -35,13 +35,6 @@ export interface ReplyState {
   isDone: boolean
   bpProgress: BPInstanceState | null
   bpSubtaskOutput: { subtaskId: string; output: Record<string, unknown>; summary?: string } | null
-  bpTrigger?: {
-    bpId: string
-    bpName: string
-    description: string
-    subtaskCount: number
-    subtasks: { id: string; name: string }[]
-  } | null
 }
 
 export interface StepCard {

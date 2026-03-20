@@ -19,6 +19,7 @@
       :is-last-subtask="(reply.bpProgress?.currentSubtaskIndex ?? 0) >= (reply.bpProgress?.subtasks.length ?? 1) - 1"
       :subtask-index="Math.max(0, reply.bpProgress?.subtasks.findIndex(s => s.id === reply.bpSubtaskOutput?.subtaskId) ?? 0)"
       :summary="reply.bpSubtaskOutput.summary"
+      :disabled="!reply.isDone"
       @view-output="handleViewOutput"
       @continue="handleContinue"
       @edit="handleEdit"
