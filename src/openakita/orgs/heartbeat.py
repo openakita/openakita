@@ -125,7 +125,10 @@ class OrgHeartbeat:
                 await asyncio.sleep(interval)
 
                 current = self._runtime.get_org(org.id)
-                if not current or current.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
+                if not current:
+                    logger.info(f"[Heartbeat] Org {org.id} no longer exists, stopping heartbeat")
+                    break
+                if current.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
                     continue
                 if not current.heartbeat_enabled:
                     break
@@ -283,7 +286,10 @@ class OrgHeartbeat:
                 await asyncio.sleep(60)
 
                 current = self._runtime.get_org(org.id)
-                if not current or current.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
+                if not current:
+                    logger.info(f"[Heartbeat] Org {org.id} no longer exists, stopping standup")
+                    break
+                if current.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
                     continue
                 if not current.standup_enabled:
                     break

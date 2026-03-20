@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 def _get_stores():
     """Resolve profile_store, skills_dir, project_root from config."""
-    from ...agents.profile import ProfileStore
+    from ...agents.profile import get_profile_store
     from ...config import settings
 
     root = Path(settings.project_root)
-    profile_store = ProfileStore(root / "data" / "agents")
+    profile_store = get_profile_store()
     skills_dir = Path(settings.skills_path)
     return profile_store, skills_dir, root
 

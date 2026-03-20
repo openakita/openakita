@@ -329,9 +329,8 @@ class OrgIdentity:
         except (ImportError, AttributeError):
             pass
         try:
-            from openakita.agents.profile import ProfileStore
-            from openakita.config import settings
-            store = ProfileStore(settings.data_dir / "agents")
+            from openakita.agents.profile import get_profile_store
+            store = get_profile_store()
             profile = store.get(profile_id)
             return profile.custom_prompt if profile else None
         except Exception:

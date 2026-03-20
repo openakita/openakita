@@ -135,6 +135,20 @@ class OrgManager:
         logger.info(f"[OrgManager] Updated org: {org.id}")
         return org
 
+    def save_direct(self, org: Organization) -> bool:
+        """Write an Organization directly to disk without load-merge.
+
+        Returns True on success, False if the org directory no longer exists
+        (i.e. org was already deleted).  Unlike update(), this never triggers
+        a disk reload and will NOT re-create a deleted org directory.
+        """
+        d = self._org_dir(org.id)
+        if not d.exists():
+            self._cache.pop(org.id, None)
+            return False
+        self._save(org)
+        return True
+
     def delete(self, org_id: str) -> bool:
         """Permanently delete an organization and all its data."""
         d = self._org_dir(org_id)

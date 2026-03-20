@@ -110,11 +110,11 @@ class AgentHubHandler:
             )
 
         from ...agents.packager import AgentInstaller
-        from ...agents.profile import ProfileStore
+        from ...agents.profile import get_profile_store
         from ...config import settings
 
         root = Path(settings.project_root)
-        profile_store = ProfileStore(root / "data" / "agents")
+        profile_store = get_profile_store()
         skills_dir = Path(settings.skills_path)
 
         installer = AgentInstaller(
@@ -155,11 +155,11 @@ class AgentHubHandler:
             return "❌ 需要指定 profile_id"
 
         from ...agents.packager import AgentPackager
-        from ...agents.profile import ProfileStore
+        from ...agents.profile import get_profile_store
         from ...config import settings
 
         root = Path(settings.project_root)
-        profile_store = ProfileStore(root / "data" / "agents")
+        profile_store = get_profile_store()
         skills_dir = Path(settings.skills_path)
         output_dir = root / "data" / "agent_packages"
 

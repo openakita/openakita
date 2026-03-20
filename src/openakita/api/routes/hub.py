@@ -44,9 +44,8 @@ def _get_stores():
     from openakita.config import settings
     root = Path(settings.project_root)
 
-    from openakita.agents.profile import ProfileStore
-    agents_dir = root / "data" / "agents"
-    profile_store = ProfileStore(agents_dir)
+    from openakita.agents.profile import get_profile_store
+    profile_store = get_profile_store()
 
     skills_dir = Path(settings.skills_path)
     return profile_store, skills_dir, root

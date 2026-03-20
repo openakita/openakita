@@ -260,20 +260,18 @@ class CategoryCreateRequest(BaseModel):
 @router.get("/api/agents/categories")
 async def list_categories():
     """Return all agent categories (builtin + custom) with agent counts."""
-    from openakita.agents.profile import ProfileStore
-    from openakita.config import settings
+    from openakita.agents.profile import get_profile_store
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     return {"categories": store.list_categories()}
 
 
 @router.post("/api/agents/categories")
 async def create_category(body: CategoryCreateRequest):
     """Create a custom agent category."""
-    from openakita.agents.profile import ProfileStore
-    from openakita.config import settings
+    from openakita.agents.profile import get_profile_store
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     try:
         cat = store.add_category(body.id, body.label, body.color)
     except ValueError as e:
@@ -286,10 +284,9 @@ async def create_category(body: CategoryCreateRequest):
 @router.delete("/api/agents/categories/{category_id}")
 async def delete_category(category_id: str):
     """Delete a custom agent category. Rejects if builtin or has agents."""
-    from openakita.agents.profile import ProfileStore
-    from openakita.config import settings
+    from openakita.agents.profile import get_profile_store
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     try:
         removed = store.remove_category(category_id)
     except PermissionError as e:
@@ -315,13 +312,13 @@ async def list_agent_profiles(include_hidden: bool = False):
         include_hidden: if True, also return hidden profiles (default False).
     """
     from openakita.agents.presets import SYSTEM_PRESETS
-    from openakita.agents.profile import ProfileStore
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     if not settings.multi_agent_enabled:
         return {"profiles": [], "multi_agent_enabled": False}
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     stored_map = {p.id: p for p in store.list_all(include_hidden=True)}
 
     preset_order = [p.id for p in SYSTEM_PRESETS]
@@ -352,7 +349,7 @@ async def list_agent_profiles(include_hidden: bool = False):
 @router.post("/api/agents/profiles")
 async def create_agent_profile(body: ProfileCreateRequest):
     """Create a new custom agent profile."""
-    from openakita.agents.profile import AgentProfile, AgentType, ProfileStore, SkillsMode
+    from openakita.agents.profile import AgentProfile, AgentType, SkillsMode, get_profile_store
     from openakita.config import settings
 
     if not settings.multi_agent_enabled:
@@ -362,7 +359,7 @@ async def create_agent_profile(body: ProfileCreateRequest):
     if body.skills_mode not in valid_modes:
         raise HTTPException(status_code=400, detail=f"skills_mode must be one of: {', '.join(valid_modes)}")
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
 
     if store.exists(body.id):
         raise HTTPException(status_code=400, detail=f"Profile '{body.id}' already exists")
@@ -390,7 +387,7 @@ async def create_agent_profile(body: ProfileCreateRequest):
 @router.put("/api/agents/profiles/{profile_id}")
 async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest):
     """Update a custom agent profile (system profiles have restricted updates)."""
-    from openakita.agents.profile import ProfileStore
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     if not settings.multi_agent_enabled:
@@ -401,7 +398,7 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest):
         if body.skills_mode not in valid_modes:
             raise HTTPException(status_code=400, detail=f"skills_mode must be one of: {', '.join(valid_modes)}")
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     update_data = body.model_dump(exclude_unset=True)
 
     try:
@@ -418,13 +415,13 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest):
 @router.delete("/api/agents/profiles/{profile_id}")
 async def delete_agent_profile(profile_id: str):
     """Delete a custom agent profile."""
-    from openakita.agents.profile import ProfileStore
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     if not settings.multi_agent_enabled:
         raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
 
     try:
         deleted = store.delete(profile_id)
@@ -442,7 +439,7 @@ async def delete_agent_profile(profile_id: str):
 async def reset_agent_profile(profile_id: str):
     """Reset a system agent profile to its factory defaults."""
     from openakita.agents.presets import get_preset_by_id
-    from openakita.agents.profile import ProfileStore
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     if not settings.multi_agent_enabled:
@@ -452,7 +449,7 @@ async def reset_agent_profile(profile_id: str):
     if preset is None:
         raise HTTPException(status_code=404, detail=f"No system preset found for '{profile_id}'")
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     existing = store.get(profile_id)
     if existing is None:
         store.save(preset)
@@ -475,13 +472,13 @@ async def reset_agent_profile(profile_id: str):
 @router.patch("/api/agents/profiles/{profile_id}/visibility")
 async def update_profile_visibility(profile_id: str, body: ProfileVisibilityRequest):
     """Show or hide an agent profile (works for both SYSTEM and CUSTOM)."""
-    from openakita.agents.profile import ProfileStore
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     if not settings.multi_agent_enabled:
         raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
-    store = ProfileStore(settings.data_dir / "agents")
+    store = get_profile_store()
     try:
         updated = store.update(profile_id, {"hidden": body.hidden})
     except KeyError:
@@ -510,7 +507,7 @@ async def get_topology(request: Request):
     Single endpoint for the neural-network dashboard to poll.
     """
     from openakita.agents.presets import SYSTEM_PRESETS
-    from openakita.agents.profile import ProfileStore
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     pool = getattr(request.app.state, "agent_pool", None)
@@ -527,7 +524,7 @@ async def get_topology(request: Request):
     hidden_profile_ids: set[str] = set()
     stored_profiles: dict[str, object] = {}
     try:
-        store = ProfileStore(settings.data_dir / "agents")
+        store = get_profile_store()
         stored_profiles = {p.id: p for p in store.list_all(include_hidden=True)}
     except Exception:
         pass

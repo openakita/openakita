@@ -93,8 +93,7 @@ def _is_multi_agent_enabled() -> bool:
 def _resolve_profile(agent_profile_id: str | None):
     """Resolve an AgentProfile by id, falling back to 'default'."""
     from openakita.agents.presets import SYSTEM_PRESETS
-    from openakita.agents.profile import AgentProfile, ProfileStore
-    from openakita.config import settings
+    from openakita.agents.profile import AgentProfile, get_profile_store
 
     pid = agent_profile_id or "default"
 
@@ -103,7 +102,7 @@ def _resolve_profile(agent_profile_id: str | None):
             return p
 
     try:
-        store = ProfileStore(settings.data_dir / "agents")
+        store = get_profile_store()
         profile = store.get(pid)
         if profile:
             return profile
@@ -153,12 +152,11 @@ def _apply_agent_profile(session: object, new_profile_id: str) -> bool:
     # Validate that profile exists
     try:
         from openakita.agents.presets import SYSTEM_PRESETS
-        from openakita.agents.profile import ProfileStore
-        from openakita.config import settings
+        from openakita.agents.profile import get_profile_store
 
         known_ids = {p.id for p in SYSTEM_PRESETS}
         if new_profile_id not in known_ids:
-            store = ProfileStore(settings.data_dir / "agents")
+            store = get_profile_store()
             if store.get(new_profile_id) is None:
                 logger.warning(f"[Chat API] Unknown agent profile: {new_profile_id!r}")
                 return False

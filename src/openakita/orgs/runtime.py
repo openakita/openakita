@@ -321,24 +321,43 @@ class OrgRuntime:
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
 
+        # 1. Graceful stop (best-effort)
         if org.status in (OrgStatus.ACTIVE, OrgStatus.RUNNING, OrgStatus.PAUSED):
             try:
                 await self.stop_org(org_id)
             except Exception as e:
                 logger.warning(f"[OrgRuntime] stop_org before delete failed for {org_id}: {e}")
 
-        await self._deactivate_org(org_id)
+        # 2. Force-stop all background tasks regardless of stop_org result.
+        #    Each call is idempotent — safe even if stop_org already cleaned them.
+        try:
+            await self._heartbeat.stop_for_org(org_id)
+        except Exception:
+            pass
+        try:
+            await self._scheduler.stop_for_org(org_id)
+        except Exception:
+            pass
 
-        self._org_semaphores.pop(org_id, None)
-        self._save_locks.pop(org_id, None)
+        org_tasks = self._running_tasks.pop(org_id, {})
+        for task in org_tasks.values():
+            if not task.done():
+                task.cancel()
 
         idle_task = self._idle_tasks.pop(org_id, None)
         if idle_task and not idle_task.done():
             idle_task.cancel()
+
         watchdog_task = self._watchdog_tasks.pop(org_id, None)
         if watchdog_task and not watchdog_task.done():
             watchdog_task.cancel()
 
+        # 3. Remove in-memory references
+        await self._deactivate_org(org_id)
+        self._org_semaphores.pop(org_id, None)
+        self._save_locks.pop(org_id, None)
+
+        # 4. Delete disk data
         self._manager.delete(org_id)
 
         await self._broadcast_ws("org:status_change", {
@@ -574,6 +593,9 @@ class OrgRuntime:
         self._set_node_status(org, node, NodeStatus.BUSY, "task_started")
         await self._save_org(org)
 
+        if org.id not in self._active_orgs:
+            return {"node_id": node.id, "error": "org deleted during activation"}
+
         self.get_event_store(org.id).emit(
             "node_activated", node.id, {"prompt": prompt[:200]},
         )
@@ -592,10 +614,16 @@ class OrgRuntime:
                 agent, prompt, session_id, org, node,
             )
 
+            if org.id not in self._active_orgs:
+                return {"node_id": node.id, "result": result_text}
+
             self._set_node_status(org, node, NodeStatus.IDLE, "task_completed")
             org.total_tasks_completed += 1
             await self._save_org(org)
             self._heartbeat.record_activity(org.id)
+
+            if org.id not in self._active_orgs:
+                return {"node_id": node.id, "result": result_text}
 
             self.get_event_store(org.id).emit(
                 "task_completed", node.id,
@@ -616,15 +644,27 @@ class OrgRuntime:
 
         except Exception as e:
             logger.error(f"[OrgRuntime] Task error on {node.id}: {e}")
-            self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
-            await self._save_org(org)
-            self.get_event_store(org.id).emit(
-                "task_failed", node.id, {"error": str(e)[:200]},
-            )
-            await self._broadcast_ws("org:node_status", {
-                "org_id": org.id, "node_id": node.id, "status": "error",
-                "current_task": "",
-            })
+            try:
+                self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
+            except Exception:
+                node.status = NodeStatus.ERROR
+            try:
+                await self._save_org(org)
+            except Exception as save_err:
+                logger.warning(f"[OrgRuntime] Failed to save error state for {node.id}: {save_err}")
+            try:
+                es = self.get_event_store(org.id)
+                if es:
+                    es.emit("task_failed", node.id, {"error": str(e)[:200]})
+            except Exception:
+                pass
+            try:
+                await self._broadcast_ws("org:node_status", {
+                    "org_id": org.id, "node_id": node.id, "status": "error",
+                    "current_task": "",
+                })
+            except Exception:
+                pass
             return {"node_id": node.id, "error": str(e)}
 
         finally:
@@ -945,9 +985,8 @@ class OrgRuntime:
         except (ImportError, AttributeError):
             pass
         try:
-            from openakita.agents.profile import ProfileStore
-            from openakita.config import settings
-            store = ProfileStore(settings.data_dir / "agents")
+            from openakita.agents.profile import get_profile_store
+            store = get_profile_store()
             return store.get(profile_id)
         except Exception:
             pass
@@ -1255,7 +1294,17 @@ class OrgRuntime:
     async def _save_org(self, org: Organization) -> None:
         async with self._get_save_lock(org.id):
             org.updated_at = _now_iso()
-            self._manager.update(org.id, org.to_dict())
+            try:
+                if not self._manager.save_direct(org):
+                    logger.warning(
+                        f"[OrgRuntime] _save_org skipped — org {org.id} no longer on disk"
+                    )
+                    self._active_orgs.pop(org.id, None)
+            except FileNotFoundError:
+                logger.warning(
+                    f"[OrgRuntime] _save_org race — org {org.id} disappeared mid-write"
+                )
+                self._active_orgs.pop(org.id, None)
 
     def _save_state(self, org_id: str) -> None:
         org = self._active_orgs.get(org_id)
@@ -1450,11 +1499,17 @@ class OrgRuntime:
         while True:
             try:
                 org = self.get_org(org_id)
+                if not org:
+                    logger.info(f"[OrgRuntime] Org {org_id} no longer exists, stopping watchdog")
+                    break
                 interval = getattr(org, "watchdog_interval_s", 30) or 30
                 await asyncio.sleep(interval)
 
                 org = self.get_org(org_id)
-                if not org or org.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
+                if not org:
+                    logger.info(f"[OrgRuntime] Org {org_id} no longer exists, stopping watchdog")
+                    break
+                if org.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
                     continue
                 if not getattr(org, "watchdog_enabled", False):
                     break

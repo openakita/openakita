@@ -2071,8 +2071,8 @@ search_github → install_skill → 使用
         try:
             store_dir = settings.data_dir / "agents"
             if store_dir.exists():
-                from ..agents.profile import ProfileStore
-                store = ProfileStore(store_dir)
+                from ..agents.profile import get_profile_store
+                store = get_profile_store()
                 preset_ids = {sp.id for sp in SYSTEM_PRESETS}
                 for p in store.list_all(include_ephemeral=False):
                     if p.id == my_id or p.id in preset_ids:

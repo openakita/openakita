@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .profile import AgentProfile, AgentType, ProfileStore, SkillsMode
+from .profile import AgentProfile, AgentType, ProfileStore, SkillsMode, get_profile_store
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -673,7 +673,7 @@ def ensure_presets_on_mode_enable(agents_dir: str | Path) -> None:
     from pathlib import Path
 
     agents_dir = Path(agents_dir)
-    store = ProfileStore(agents_dir)
+    store = get_profile_store(agents_dir)
     deployed = deploy_system_presets(store)
     if deployed:
         logger.info(

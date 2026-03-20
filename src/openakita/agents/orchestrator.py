@@ -132,10 +132,9 @@ class AgentOrchestrator:
         """
         try:
             if self._profile_store is None:
-                from openakita.agents.profile import ProfileStore
-                from openakita.config import settings
+                from openakita.agents.profile import get_profile_store
 
-                self._profile_store = ProfileStore(settings.data_dir / "agents")
+                self._profile_store = get_profile_store()
 
             if self._pool is None:
                 from openakita.agents.factory import AgentFactory, AgentInstancePool

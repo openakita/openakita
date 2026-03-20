@@ -131,6 +131,31 @@ class AgentProfile:
         return cls(**filtered)
 
 
+_global_store: ProfileStore | None = None
+_global_store_lock = threading.Lock()
+
+
+def get_profile_store(base_dir: str | Path | None = None) -> ProfileStore:
+    """Return a shared ProfileStore singleton.
+
+    On first call the store is created (reading all profiles from disk);
+    subsequent calls return the cached instance.  Pass *base_dir* only on the
+    first call (e.g. from startup code); omit it to let the function resolve
+    ``settings.data_dir / "agents"`` automatically.
+    """
+    global _global_store
+    if _global_store is not None:
+        return _global_store
+    with _global_store_lock:
+        if _global_store is not None:
+            return _global_store
+        if base_dir is None:
+            from openakita.config import settings
+            base_dir = settings.data_dir / "agents"
+        _global_store = ProfileStore(base_dir)
+        return _global_store
+
+
 class ProfileStore:
     """
     AgentProfile 持久化存储 + 临时 (ephemeral) 内存存储。

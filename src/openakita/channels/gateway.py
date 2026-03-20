@@ -1092,12 +1092,11 @@ class MessageGateway:
         from datetime import datetime
 
         from openakita.agents.presets import SYSTEM_PRESETS
-        from openakita.agents.profile import ProfileStore
-        from openakita.config import settings
+        from openakita.agents.profile import get_profile_store
 
         all_profiles = list(SYSTEM_PRESETS)
         try:
-            store = ProfileStore(settings.data_dir / "agents")
+            store = get_profile_store()
             preset_ids = {p.id for p in SYSTEM_PRESETS}
             all_profiles.extend(p for p in store.list_all() if p.id not in preset_ids)
         except Exception:
@@ -1166,12 +1165,11 @@ class MessageGateway:
     def _format_agent_status(self, session: Session) -> str:
         """格式化 /状态 输出"""
         from openakita.agents.presets import SYSTEM_PRESETS
-        from openakita.agents.profile import ProfileStore
-        from openakita.config import settings
+        from openakita.agents.profile import get_profile_store
 
         all_profiles = list(SYSTEM_PRESETS)
         try:
-            store = ProfileStore(settings.data_dir / "agents")
+            store = get_profile_store()
             preset_ids = {p.id for p in SYSTEM_PRESETS}
             all_profiles.extend(p for p in store.list_all() if p.id not in preset_ids)
         except Exception:

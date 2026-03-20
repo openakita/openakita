@@ -2076,7 +2076,7 @@ export function App() {
                 system: !!s?.system, enabled: typeof s?.enabled === "boolean" ? s.enabled : undefined,
                 tool_name: s?.tool_name ?? null, category: s?.category ?? null, path: s?.path ?? null,
               })));
-            } catch { setSkillSummary(null); setSkillsDetail(null); }
+            } catch { /* keep existing skill data on failure */ }
           }
         }
 
@@ -2159,8 +2159,7 @@ export function App() {
           })),
         );
       } catch {
-        setSkillSummary(null);
-        setSkillsDetail(null);
+        /* keep existing skill data on failure */
       }
 
       // Local mode (HTTP not reachable): check PID-based service status
