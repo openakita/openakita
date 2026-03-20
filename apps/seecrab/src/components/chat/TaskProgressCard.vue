@@ -8,120 +8,191 @@ const emit = defineEmits<{
   (e: 'view-output', subtaskId: string): void
 }>()
 
-const progressPercent = computed(() => {
-  const done = props.bp.subtasks.filter(s => s.status === 'done').length
-  return Math.round((done / Math.max(props.bp.subtasks.length, 1)) * 100)
-})
-
-const statusIcon: Record<string, string> = {
-  pending: '○',
-  current: '◉',
-  done: '✓',
-  failed: '✗',
-  stale: '⟳',
+function toggleMode() {
+  emit('toggle-mode', props.bp.runMode === 'manual' ? 'auto' : 'manual')
 }
 
-const statusClass: Record<string, string> = {
-  pending: 'step-pending',
-  current: 'step-current',
-  done: 'step-done',
-  failed: 'step-failed',
-  stale: 'step-stale',
+function onCardClick() {
+  // Open the current or last-done subtask output
+  const current = props.bp.subtasks[props.bp.currentSubtaskIndex]
+  const lastDone = [...props.bp.subtasks].reverse().find(s => s.status === 'done')
+  const target = current ?? lastDone
+  if (target) emit('view-output', target.id)
+}
+
+function onStepClick(index: number, event: Event) {
+  event.stopPropagation()
+  const st = props.bp.subtasks[index]
+  if (st?.status === 'done') emit('view-output', st.id)
+}
+
+function stepClass(status: string) {
+  return status === 'done' ? 'done'
+    : status === 'current' ? 'current'
+    : status === 'failed' ? 'failed'
+    : status === 'stale' ? 'stale'
+    : 'pending'
+}
+
+function connectorClass(index: number) {
+  const left = props.bp.subtasks[index]
+  const right = props.bp.subtasks[index + 1]
+  if (!left || !right) return 'pending'
+  if (left.status === 'done' && right.status === 'done') return 'done'
+  if (left.status === 'done' && right.status === 'current') return 'active'
+  if (left.status === 'done') return 'done'
+  return 'pending'
 }
 </script>
 
 <template>
-  <div class="task-progress-card">
-    <div class="task-header">
-      <span class="task-title">{{ bp.bpName }}</span>
-      <div class="mode-toggle">
-        <button
-          :class="{ active: bp.runMode === 'manual' }"
-          @click="emit('toggle-mode', 'manual')"
-        >手动</button>
-        <button
-          :class="{ active: bp.runMode === 'auto' }"
-          @click="emit('toggle-mode', 'auto')"
-        >自动</button>
-      </div>
-    </div>
-    <div class="progress-bar-container">
-      <div class="progress-bar" :style="{ width: progressPercent + '%' }"></div>
-    </div>
-    <div class="step-list">
+  <div class="task-card" @click="onCardClick">
+    <div class="task-card-header">
+      <span class="material-symbols-rounded task-icon">assignment</span>
+      <span class="task-name">{{ bp.bpName }}</span>
       <div
-        v-for="(st, i) in bp.subtasks"
-        :key="st.id"
-        :class="['step-item', statusClass[st.status] || 'step-pending']"
-        @click="st.status === 'done' ? emit('view-output', st.id) : undefined"
+        :class="['task-mode-toggle', { auto: bp.runMode === 'auto' }]"
+        @click.stop="toggleMode"
       >
-        <span class="step-icon">{{ statusIcon[st.status] || '○' }}</span>
-        <span class="step-name">{{ st.name || `步骤 ${i + 1}` }}</span>
+        <span class="mode-dot"></span>
+        <span class="mode-text">{{ bp.runMode === 'auto' ? '自动' : '手动' }}</span>
       </div>
+    </div>
+    <div class="task-steps-bar">
+      <template v-for="(st, i) in bp.subtasks" :key="st.id">
+        <div
+          :class="['task-step-item', stepClass(st.status)]"
+          @click="onStepClick(i, $event)"
+        >
+          <span class="step-dot"></span>
+          <span class="step-label">{{ i + 1 }}. {{ st.name || `步骤 ${i + 1}` }}</span>
+        </div>
+        <div
+          v-if="i < bp.subtasks.length - 1"
+          :class="['task-step-connector', connectorClass(i)]"
+        ></div>
+      </template>
     </div>
   </div>
 </template>
 
 <style scoped>
-.task-progress-card {
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px solid var(--border-color, #2a2a4a);
+.task-card {
+  padding: 14px 16px;
+  background: var(--bg-surface, #1a1a2e);
+  border: 1px solid var(--border-subtle, #2a2a4a);
   border-radius: 8px;
-  padding: 12px 16px;
   margin: 8px 0;
-}
-.task-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.task-title {
-  font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
-}
-.mode-toggle button {
-  padding: 2px 10px;
-  font-size: 12px;
-  border: 1px solid var(--border-color, #2a2a4a);
-  background: transparent;
-  color: var(--text-secondary, #888);
   cursor: pointer;
-  border-radius: 4px;
-  margin-left: 4px;
+  transition: all 0.15s ease;
 }
-.mode-toggle button.active {
-  background: var(--accent-color, #4a6cf7);
-  color: #fff;
+.task-card:hover {
   border-color: var(--accent-color, #4a6cf7);
+  background: var(--bg-elevated, #1e1e38);
 }
-.progress-bar-container {
-  height: 4px;
-  background: var(--bg-tertiary, #2a2a4a);
-  border-radius: 2px;
-  margin-bottom: 10px;
-}
-.progress-bar {
-  height: 100%;
-  background: var(--accent-color, #4a6cf7);
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-.step-list { display: flex; flex-direction: column; gap: 4px; }
-.step-item {
+
+.task-card-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 13px;
-  color: var(--text-secondary, #888);
 }
-.step-item.step-done { cursor: pointer; }
-.step-item.step-done:hover { background: var(--bg-tertiary, #2a2a4a); }
-.step-icon { width: 16px; text-align: center; }
-.step-current { color: var(--accent-color, #4a6cf7); font-weight: 500; }
-.step-done { color: var(--success-color, #4caf50); }
-.step-failed { color: var(--error-color, #f44336); }
-.step-stale { color: var(--warning-color, #ff9800); }
+.task-icon {
+  font-size: 18px;
+  color: var(--accent-color, #4a6cf7);
+}
+.task-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  flex: 1;
+}
+
+.task-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--bg-elevated, #1e1e38);
+  border: 1px solid var(--border-color, #2a2a4a);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.task-mode-toggle:hover {
+  border-color: var(--text-secondary, #888);
+}
+.mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-ghost, #555);
+  transition: background 0.2s;
+}
+.task-mode-toggle.auto .mode-dot {
+  background: var(--accent-color, #4a6cf7);
+}
+.mode-text {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary, #888);
+  transition: color 0.2s;
+}
+.task-mode-toggle.auto .mode-text {
+  color: var(--accent-color, #4a6cf7);
+}
+
+.task-steps-bar {
+  display: flex;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.task-step-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 0;
+}
+.task-step-item.done { cursor: pointer; }
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: all 0.3s;
+}
+.step-label {
+  transition: color 0.3s;
+  white-space: nowrap;
+}
+
+/* Step states */
+.task-step-item.pending .step-dot { background: var(--text-ghost, #555); }
+.task-step-item.pending .step-label { color: var(--text-ghost, #555); }
+.task-step-item.current .step-dot { background: var(--accent-color, #4a6cf7); animation: pulse 1.5s infinite; }
+.task-step-item.current .step-label { color: var(--accent-color, #4a6cf7); }
+.task-step-item.done .step-dot { background: var(--success-color, #4caf50); }
+.task-step-item.done .step-label { color: var(--success-color, #4caf50); }
+.task-step-item.failed .step-dot { background: var(--error-color, #f44336); }
+.task-step-item.failed .step-label { color: var(--error-color, #f44336); }
+.task-step-item.stale .step-dot { background: var(--warning-color, #ff9800); }
+.task-step-item.stale .step-label { color: var(--warning-color, #ff9800); }
+
+/* Connector lines */
+.task-step-connector {
+  width: 24px;
+  height: 1px;
+  margin: 0 4px;
+  transition: background 0.3s;
+}
+.task-step-connector.done { background: var(--success-color, #4caf50); }
+.task-step-connector.active { background: var(--accent-color, #4a6cf7); }
+.task-step-connector.pending { background: var(--text-ghost, #555); opacity: 0.3; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 </style>

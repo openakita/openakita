@@ -1088,7 +1088,10 @@ class Agent:
             if init_bp_system():
                 bp_handler = get_bp_handler()
                 if bp_handler:
-                    from ..bestpractice.tool_definitions import get_bp_tool_names
+                    from ..bestpractice.tool_definitions import (
+                        BP_TOOL_DEFINITIONS,
+                        get_bp_tool_names,
+                    )
                     agent_ref = self
 
                     async def _bp_handle(tool_name: str, params: dict) -> str:
@@ -1098,6 +1101,16 @@ class Agent:
                         "bestpractice",
                         _bp_handle,
                         get_bp_tool_names(),
+                    )
+
+                    # Register BP tool definitions in LLM tool list and catalog
+                    # so the LLM can actually see and call bp_* tools
+                    for bp_tool in BP_TOOL_DEFINITIONS:
+                        self._tools.append(bp_tool)
+                        self.tool_catalog.add_tool(bp_tool)
+                    logger.info(
+                        f"[BP] Registered {len(BP_TOOL_DEFINITIONS)} BP tools "
+                        f"in LLM tool list and catalog"
                     )
         except Exception as e:
             logger.debug(f"[BP] Best Practice handler not loaded: {e}")

@@ -17,10 +17,11 @@ class MockOrchestrator:
         self.calls: list[dict] = []
         self.responses = responses or {}
 
-    async def delegate(self, *, session, from_agent, to_agent, message, reason=""):
+    async def delegate(self, *, session, from_agent, to_agent, message, reason="", session_messages=None):
         self.calls.append({
             "from_agent": from_agent, "to_agent": to_agent,
             "message": message, "reason": reason,
+            "session_messages": session_messages,
         })
         return self.responses.get(to_agent, '{"result": "ok"}')
 
@@ -338,3 +339,149 @@ class TestPersistence:
         # Session.metadata should have bp_state
         assert "bp_state" in session.metadata
         assert len(session.metadata["bp_state"]["instances"]) == 1
+
+
+# ── A1: Context isolation ────────────────────────────────────
+
+
+class CapturingOrchestrator:
+    """Mock orchestrator that captures ALL kwargs passed to delegate()."""
+
+    def __init__(self, responses: dict[str, str] | None = None):
+        self.calls: list[dict] = []
+        self.responses = responses or {}
+
+    async def delegate(self, **kwargs):
+        self.calls.append(kwargs)
+        to_agent = kwargs.get("to_agent", "")
+        return self.responses.get(to_agent, '{"result": "ok"}')
+
+
+class TestContextIsolation:
+    """A1: execute_subtask must pass session_messages=[] to orchestrator.delegate."""
+
+    @pytest.mark.asyncio
+    async def test_delegate_receives_empty_session_messages(self, engine, bp_config):
+        orch = CapturingOrchestrator(responses={
+            "researcher": json.dumps({"findings": ["data1"]}),
+        })
+        session = MockSession()
+        inst_id = engine.state_manager.create_instance(bp_config, session.id, {"topic": "AI"})
+
+        await engine.execute_subtask(inst_id, bp_config, orch, session)
+
+        assert len(orch.calls) == 1
+        call = orch.calls[0]
+        # A1: session_messages must be empty list for context isolation
+        assert "session_messages" in call, "delegate() was not called with session_messages"
+        assert call["session_messages"] == [], (
+            f"Expected session_messages=[], got {call['session_messages']}"
+        )
+
+
+# ── A2: _emit_progress subtasks array ────────────────────────
+
+
+class MockEventBus:
+    """Captures events put onto the SSE bus."""
+
+    def __init__(self):
+        self.events: list[dict] = []
+
+    async def put(self, event: dict):
+        self.events.append(event)
+
+
+class TestEmitProgressSubtasks:
+    """A2: _emit_progress should include subtasks array with id+name."""
+
+    @pytest.mark.asyncio
+    async def test_emit_progress_includes_subtasks_array(self, engine, bp_config):
+        inst_id = engine.state_manager.create_instance(bp_config, "sess-1", {"topic": "AI"})
+        bus = MockEventBus()
+        session = MockSession()
+        session.context._sse_event_bus = bus
+
+        await engine._emit_progress(inst_id, session)
+
+        assert len(bus.events) == 1
+        data = bus.events[0]["data"]
+        assert "subtasks" in data, "_emit_progress missing 'subtasks' array"
+        assert isinstance(data["subtasks"], list)
+        assert len(data["subtasks"]) == 3
+        assert data["subtasks"][0] == {"id": "s1", "name": "调研"}
+        assert data["subtasks"][1] == {"id": "s2", "name": "分析"}
+        assert data["subtasks"][2] == {"id": "s3", "name": "报告"}
+
+
+# ── C2: _emit_subtask_output extra fields ─────────────────────
+
+
+class TestEmitSubtaskOutputFields:
+    """C2: _emit_subtask_output should include subtask_name, output_schema, summary."""
+
+    @pytest.mark.asyncio
+    async def test_includes_subtask_name(self, engine, bp_config):
+        inst_id = engine.state_manager.create_instance(bp_config, "sess-1", {"topic": "AI"})
+        bus = MockEventBus()
+        session = MockSession()
+        session.context._sse_event_bus = bus
+
+        output = {"findings": ["data1", "data2"]}
+        await engine._emit_subtask_output(
+            inst_id, "s1", output, session, bp_config=bp_config,
+        )
+
+        data = bus.events[0]["data"]
+        assert data["subtask_name"] == "调研"
+
+    @pytest.mark.asyncio
+    async def test_includes_output_schema(self, engine, bp_config):
+        """output_schema should be the NEXT subtask's input_schema."""
+        inst_id = engine.state_manager.create_instance(bp_config, "sess-1", {"topic": "AI"})
+        bus = MockEventBus()
+        session = MockSession()
+        session.context._sse_event_bus = bus
+
+        output = {"findings": ["data1"]}
+        await engine._emit_subtask_output(
+            inst_id, "s1", output, session, bp_config=bp_config,
+        )
+
+        data = bus.events[0]["data"]
+        assert "output_schema" in data
+        # s1's output_schema = s2's input_schema
+        assert data["output_schema"] == bp_config.subtasks[1].input_schema
+
+    @pytest.mark.asyncio
+    async def test_last_subtask_has_no_output_schema(self, engine, bp_config):
+        """Last subtask has no downstream, output_schema should be None."""
+        inst_id = engine.state_manager.create_instance(bp_config, "sess-1", {"topic": "AI"})
+        bus = MockEventBus()
+        session = MockSession()
+        session.context._sse_event_bus = bus
+
+        await engine._emit_subtask_output(
+            inst_id, "s3", {"report": "done"}, session, bp_config=bp_config,
+        )
+
+        data = bus.events[0]["data"]
+        assert data["output_schema"] is None
+
+    @pytest.mark.asyncio
+    async def test_includes_summary(self, engine, bp_config):
+        inst_id = engine.state_manager.create_instance(bp_config, "sess-1", {"topic": "AI"})
+        bus = MockEventBus()
+        session = MockSession()
+        session.context._sse_event_bus = bus
+
+        output = {"key1": "value1", "key2": {"nested": True}}
+        await engine._emit_subtask_output(
+            inst_id, "s1", output, session, bp_config=bp_config,
+        )
+
+        data = bus.events[0]["data"]
+        assert "summary" in data
+        assert isinstance(data["summary"], str)
+        assert "key1" in data["summary"]
+        assert "key2" in data["summary"]

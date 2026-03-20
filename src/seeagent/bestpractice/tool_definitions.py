@@ -1,12 +1,16 @@
-"""BP 工具定义 — 注册到 ToolCatalog 的 7 个 BP 工具。"""
+"""BP 工具定义 — 注册到 ToolCatalog 的 7 个 BP 工具。
+
+格式遵循 tool-definition-spec.md 规范，使用 input_schema（非 parameters）。
+"""
 
 from __future__ import annotations
 
 BP_TOOL_DEFINITIONS: list[dict] = [
     {
         "name": "bp_start",
+        "category": "Best Practice",
         "description": "启动一个最佳实践 (Best Practice) 任务流程",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "bp_id": {
@@ -28,8 +32,9 @@ BP_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "bp_continue",
+        "category": "Best Practice",
         "description": "继续执行当前最佳实践的下一个子任务",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "instance_id": {
@@ -41,8 +46,9 @@ BP_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "bp_edit_output",
+        "category": "Best Practice",
         "description": "修改已完成子任务的输出 (Chat-to-Edit 模式)",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "instance_id": {
@@ -63,8 +69,9 @@ BP_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "bp_switch_task",
+        "category": "Best Practice",
         "description": "切换到另一个 BP 实例 (暂停当前任务，恢复目标任务)",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "target_instance_id": {
@@ -77,8 +84,9 @@ BP_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "bp_get_output",
+        "category": "Best Practice",
         "description": "获取子任务的完整输出内容",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "instance_id": {
@@ -95,8 +103,9 @@ BP_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "bp_cancel",
+        "category": "Best Practice",
         "description": "取消一个 BP 实例",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "instance_id": {
@@ -108,8 +117,9 @@ BP_TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "bp_supplement_input",
+        "category": "Best Practice",
         "description": "补充子任务缺失的输入数据 (用于输入不完整时)",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "instance_id": {

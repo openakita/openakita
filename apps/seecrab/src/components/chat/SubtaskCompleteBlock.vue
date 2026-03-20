@@ -4,6 +4,7 @@ defineProps<{
   subtaskId: string
   instanceId: string
   isLastSubtask: boolean
+  summary?: string
 }>()
 
 const emit = defineEmits<{
@@ -19,6 +20,7 @@ const emit = defineEmits<{
       <span class="check-icon">✓</span>
       <span>「{{ subtaskName }}」已完成</span>
     </div>
+    <div v-if="summary" class="summary-text">{{ summary }}</div>
     <div class="complete-actions">
       <button class="action-btn" @click="emit('view-output', subtaskId)">
         查看结果
@@ -54,6 +56,17 @@ const emit = defineEmits<{
   font-weight: 500;
 }
 .check-icon { font-size: 16px; }
+.summary-text {
+  font-size: 13px;
+  color: var(--text-secondary, #888);
+  margin-bottom: 10px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
 .complete-actions {
   display: flex;
   gap: 8px;

@@ -34,7 +34,7 @@ export interface ReplyState {
   askUser: AskUserState | null
   isDone: boolean
   bpProgress: BPInstanceState | null
-  bpSubtaskOutput: { subtaskId: string; output: Record<string, unknown> } | null
+  bpSubtaskOutput: { subtaskId: string; output: Record<string, unknown>; summary?: string } | null
 }
 
 export interface StepCard {
@@ -103,6 +103,8 @@ export interface BPSubtaskInfo {
   name: string
   status: BPSubtaskStatus
   output?: Record<string, unknown>
+  outputSchema?: Record<string, unknown>
+  summary?: string
 }
 
 export interface BPInstanceState {
@@ -120,6 +122,7 @@ export interface BPProgressEvent {
   instance_id: string
   bp_name: string
   statuses: Record<string, string>
+  subtasks: { id: string; name: string }[]
   current_subtask_index: number
   run_mode: string
   status: string
@@ -129,7 +132,10 @@ export interface BPSubtaskOutputEvent {
   type: 'bp_subtask_output'
   instance_id: string
   subtask_id: string
+  subtask_name: string
   output: Record<string, unknown>
+  output_schema?: Record<string, unknown>
+  summary?: string
 }
 
 export interface BPStaleEvent {

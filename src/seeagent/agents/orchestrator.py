@@ -287,6 +287,7 @@ class AgentOrchestrator:
         agent_profile_id: str,
         depth: int,
         from_agent: str | None = None,
+        session_messages: list[dict] | None = None,
     ) -> str:
         """Dispatch a message to a specific agent with progress-aware timeout."""
         if depth >= MAX_DELEGATION_DEPTH:
@@ -322,6 +323,7 @@ class AgentOrchestrator:
                 session, message, agent_profile_id,
                 pass_gateway=(depth == 0),
                 depth=depth,
+                session_messages=session_messages,
             )
             elapsed_ms = (time.monotonic() - start) * 1000
             health.successful += 1
@@ -414,6 +416,7 @@ class AgentOrchestrator:
         *,
         pass_gateway: bool = False,
         depth: int = 0,
+        session_messages: list[dict] | None = None,
     ) -> str:
         """Run an agent with progress-aware timeout instead of a hard wall-clock limit.
 
@@ -444,7 +447,11 @@ class AgentOrchestrator:
         gw = self._gateway if pass_gateway else None
 
         task = asyncio.create_task(
-            self._call_agent(agent, session, message, gateway=gw, is_sub_agent=(depth > 0))
+            self._call_agent(
+                agent, session, message, gateway=gw,
+                is_sub_agent=(depth > 0),
+                session_messages=session_messages,
+            )
         )
 
         start = time.monotonic()
@@ -672,6 +679,7 @@ class AgentOrchestrator:
     async def _call_agent(
         agent: Any, session: Any, message: str, *,
         gateway: Any = None, is_sub_agent: bool = True,
+        session_messages: list[dict] | None = None,
     ) -> str:
         """Thin wrapper around agent.chat_with_session for use as a task target.
 
@@ -693,9 +701,11 @@ class AgentOrchestrator:
             if event_bus is not None and is_sub_agent:
                 result = await _call_agent_streaming(
                     agent, session, message, event_bus, gateway,
+                    session_messages=session_messages,
                 )
             else:
-                session_messages = session.context.get_messages()
+                if session_messages is None:
+                    session_messages = session.context.get_messages()
                 result = await agent.chat_with_session(
                     message=message,
                     session_messages=session_messages,
@@ -817,6 +827,7 @@ class AgentOrchestrator:
         message: str,
         depth: int = 0,
         reason: str = "",
+        session_messages: list[dict] | None = None,
     ) -> str:
         """
         Delegate work from one agent to another.
@@ -883,7 +894,8 @@ class AgentOrchestrator:
             if len(session.context.handoff_events) > _MAX_HANDOFF_EVENTS:
                 session.context.handoff_events = session.context.handoff_events[-_MAX_HANDOFF_EVENTS:]
         return await self._dispatch(
-            session, message, to_agent, depth + 1, from_agent=from_agent
+            session, message, to_agent, depth + 1, from_agent=from_agent,
+            session_messages=session_messages,
         )
 
     # ------------------------------------------------------------------
@@ -1065,7 +1077,8 @@ def _build_work_summary(record: dict) -> str:
     return "\n".join(lines)
 
 
-async def _call_agent_streaming(agent, session, message, event_bus, gateway=None):
+async def _call_agent_streaming(agent, session, message, event_bus, gateway=None,
+                                session_messages=None):
     """Stream sub-agent events into event_bus for SeeCrab real-time display."""
     profile = getattr(agent, "_agent_profile", None)
     agent_id = profile.id if profile else "sub_agent"
@@ -1081,7 +1094,8 @@ async def _call_agent_streaming(agent, session, message, event_bus, gateway=None
     })
 
     full_text = ""
-    session_messages = session.context.get_messages()
+    if session_messages is None:
+        session_messages = session.context.get_messages()
 
     try:
         async for event in agent.chat_with_session_stream(

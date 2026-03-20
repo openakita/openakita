@@ -17,6 +17,7 @@
       :subtask-id="reply.bpSubtaskOutput.subtaskId"
       :instance-id="reply.bpProgress?.instanceId ?? ''"
       :is-last-subtask="(reply.bpProgress?.currentSubtaskIndex ?? 0) >= (reply.bpProgress?.subtasks.length ?? 1) - 1"
+      :summary="reply.bpSubtaskOutput.summary"
       @view-output="handleViewOutput"
       @continue="handleContinue"
       @edit="handleEdit"
@@ -59,7 +60,7 @@ function handleViewOutput(subtaskId: string) {
 
 function handleContinue() {
   const chatStore = useChatStore()
-  chatStore.addUserMessage('继续执行下一步')
+  chatStore.addUserMessage('进入下一步')
 }
 
 function handleEdit(subtaskId: string) {

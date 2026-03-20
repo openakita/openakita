@@ -19,11 +19,13 @@
 import { computed } from 'vue'
 import { useUIStore } from '@/stores/ui'
 import { useChatStore } from '@/stores/chat'
+import { useBestPracticeStore } from '@/stores/bestpractice'
 import StepDetail from '@/components/detail/StepDetail.vue'
 import SubtaskOutputPanel from '@/components/panel/SubtaskOutputPanel.vue'
 
 const uiStore = useUIStore()
 const chatStore = useChatStore()
+const bpStore = useBestPracticeStore()
 
 function findStep() {
   if (!uiStore.selectedStepId) return null
@@ -42,9 +44,19 @@ function findStep() {
   return null
 }
 
-const stepTitle = computed(() => findStep()?.title ?? '步骤详情')
+const stepTitle = computed(() => {
+  if (uiStore.rightPanelMode === 'subtask-output') {
+    const inst = uiStore.selectedBPInstanceId ? bpStore.instances.get(uiStore.selectedBPInstanceId) : null
+    const st = inst?.subtasks.find(s => s.id === uiStore.selectedSubtaskId)
+    return st?.name ?? '子任务输出'
+  }
+  return findStep()?.title ?? '步骤详情'
+})
 
 const stepTypeIcon = computed(() => {
+  if (uiStore.rightPanelMode === 'subtask-output') {
+    return 'checklist'
+  }
   const step = findStep()
   if (!step) return 'info'
   const map: Record<string, string> = {

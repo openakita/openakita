@@ -105,9 +105,17 @@ export const useChatStore = defineStore('chat', () => {
       case 'bp_subtask_output': {
         const bpStore = useBestPracticeStore()
         const e = event as any
-        bpStore.updateSubtaskOutput(e.instance_id, e.subtask_id, e.output)
+        bpStore.updateSubtaskOutput(e.instance_id, e.subtask_id, e.output, {
+          summary: e.summary,
+          outputSchema: e.output_schema,
+          subtaskName: e.subtask_name,
+        })
         if (reply) {
-          reply.bpSubtaskOutput = { subtaskId: e.subtask_id, output: e.output }
+          reply.bpSubtaskOutput = {
+            subtaskId: e.subtask_id,
+            output: e.output,
+            summary: e.summary,
+          }
         }
         break
       }

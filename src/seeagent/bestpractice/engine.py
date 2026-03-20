@@ -94,6 +94,7 @@ class BPEngine:
                     to_agent=subtask.agent_profile,
                     message=message,
                     reason=f"BP:{bp_config.name} / {subtask.name}",
+                    session_messages=[],  # C-1: 上下文隔离
                 ),
                 timeout=timeout,
             )
@@ -122,7 +123,7 @@ class BPEngine:
         self.state_manager.update_subtask_status(instance_id, subtask.id, SubtaskStatus.DONE)
 
         # 9. 发射子任务完成事件
-        await self._emit_subtask_output(instance_id, subtask.id, output, session)
+        await self._emit_subtask_output(instance_id, subtask.id, output, session, bp_config=bp_config)
 
         # 10. 持久化到 Session.metadata
         self._persist(instance_id, session)
@@ -412,6 +413,10 @@ class BPEngine:
                         "instance_id": instance_id,
                         "bp_name": bp_name,
                         "statuses": dict(snap.subtask_statuses),
+                        "subtasks": [
+                            {"id": st.id, "name": st.name}
+                            for st in snap.bp_config.subtasks
+                        ] if snap.bp_config else [],
                         "current_subtask_index": snap.current_subtask_index,
                         "run_mode": snap.run_mode.value,
                         "status": snap.status.value,
@@ -422,21 +427,46 @@ class BPEngine:
 
     async def _emit_subtask_output(
         self, instance_id: str, subtask_id: str, output: dict, session: Any,
+        *, bp_config: BestPracticeConfig | None = None,
     ) -> None:
         bus = getattr(getattr(session, "context", None), "_sse_event_bus", None)
         if not bus:
             return
         try:
+            snap = self.state_manager.get(instance_id)
+            subtask_name = subtask_id
+            output_schema: dict | None = None
+            cfg = bp_config or (snap.bp_config if snap else None)
+            if cfg:
+                for i, st in enumerate(cfg.subtasks):
+                    if st.id == subtask_id:
+                        subtask_name = st.name
+                        if i + 1 < len(cfg.subtasks):
+                            output_schema = cfg.subtasks[i + 1].input_schema
+                        break
+
             await bus.put({
                 "type": "bp_subtask_output",
                 "data": {
                     "instance_id": instance_id,
                     "subtask_id": subtask_id,
+                    "subtask_name": subtask_name,
                     "output": output,
+                    "output_schema": output_schema,
+                    "summary": self._build_summary(output),
                 },
             })
         except Exception:
             pass
+
+    @staticmethod
+    def _build_summary(output: dict) -> str:
+        """构建输出摘要：key 列表 + 前 200 字符预览。"""
+        if not output:
+            return ""
+        keys = list(output.keys())
+        preview = json.dumps(output, ensure_ascii=False)[:200]
+        return f"字段: {', '.join(keys)} | {preview}"
 
     async def _emit_stale(
         self, instance_id: str, stale_ids: list[str], reason: str, session: Any,
