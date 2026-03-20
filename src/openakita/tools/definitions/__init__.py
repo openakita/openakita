@@ -9,20 +9,28 @@
 结构：
 - base.py         # 基础类型、验证器、构建器
 - browser.py      # Browser 工具（11 个）
-- filesystem.py   # File System 工具（4 个）
+- filesystem.py   # File System 工具（8 个）
 - skills.py       # Skills 工具（7 个）
 - memory.py       # Memory 工具（3 个）
 - scheduled.py    # Scheduled Tasks 工具（5 个）
 - im_channel.py   # IM Channel 工具（4 个）
 - profile.py      # User Profile 工具（3 个）
-- system.py       # System 工具（5 个）
+- system.py       # System 工具（7 个）
 - mcp.py          # MCP 工具（8 个）
 - plan.py         # Todo & Plan 工具（6 个）
 - web_search.py   # Web Search 工具（2 个）
+- web_fetch.py    # Web Fetch 工具（1 个）
+- code_quality.py # Code Quality 工具（1 个）
+- search.py       # Search 工具（1 个）
+- mode.py         # Mode 工具（1 个）
+- notebook.py     # Notebook 工具（1 个）
 - config.py       # Config 工具（1 个，统一配置管理）
 """
 
 # 基础模块
+from .agent import AGENT_TOOLS
+from .agent_hub import AGENT_HUB_TOOLS
+from .agent_package import AGENT_PACKAGE_TOOLS
 from .base import (
     Prerequisite,
     RelatedTool,
@@ -39,6 +47,7 @@ from .base import (
     validate_tool_name,
 )
 from .browser import BROWSER_TOOLS
+from .code_quality import CODE_QUALITY_TOOLS
 
 # 工具定义
 from .config import CONFIG_TOOLS
@@ -46,18 +55,19 @@ from .filesystem import FILESYSTEM_TOOLS
 from .im_channel import IM_CHANNEL_TOOLS
 from .mcp import MCP_TOOLS
 from .memory import MEMORY_TOOLS
+from .mode import MODE_TOOLS
+from .notebook import NOTEBOOK_TOOLS
+from .org_setup import ORG_SETUP_TOOLS
 from .persona import PERSONA_TOOLS
 from .plan import PLAN_TOOLS
 from .profile import PROFILE_TOOLS
 from .scheduled import SCHEDULED_TOOLS
+from .search import SEARCH_TOOLS
+from .skill_store import SKILL_STORE_TOOLS
 from .skills import SKILLS_TOOLS
 from .sticker import STICKER_TOOLS
 from .system import SYSTEM_TOOLS
-from .agent import AGENT_TOOLS
-from .agent_hub import AGENT_HUB_TOOLS
-from .org_setup import ORG_SETUP_TOOLS
-from .agent_package import AGENT_PACKAGE_TOOLS
-from .skill_store import SKILL_STORE_TOOLS
+from .web_fetch import WEB_FETCH_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
 
 # 合并所有工具定义
@@ -73,6 +83,11 @@ BASE_TOOLS = (
     + MCP_TOOLS
     + PLAN_TOOLS
     + WEB_SEARCH_TOOLS
+    + WEB_FETCH_TOOLS
+    + CODE_QUALITY_TOOLS
+    + SEARCH_TOOLS
+    + MODE_TOOLS
+    + NOTEBOOK_TOOLS
     + PERSONA_TOOLS
     + STICKER_TOOLS
     + CONFIG_TOOLS
@@ -104,15 +119,20 @@ __all__ = [
     "AGENT_PACKAGE_TOOLS",
     "SKILL_STORE_TOOLS",
     "BROWSER_TOOLS",
+    "CODE_QUALITY_TOOLS",
     "FILESYSTEM_TOOLS",
+    "MODE_TOOLS",
+    "NOTEBOOK_TOOLS",
     "SKILLS_TOOLS",
     "MEMORY_TOOLS",
     "SCHEDULED_TOOLS",
+    "SEARCH_TOOLS",
     "IM_CHANNEL_TOOLS",
     "PROFILE_TOOLS",
     "SYSTEM_TOOLS",
     "MCP_TOOLS",
     "PLAN_TOOLS",
+    "WEB_FETCH_TOOLS",
     "WEB_SEARCH_TOOLS",
     "PERSONA_TOOLS",
     "STICKER_TOOLS",

@@ -16,7 +16,21 @@ PLAN_TOOLS = [
     {
         "name": "create_todo",
         "category": "Todo",
-        "description": "⚠️ MUST CALL FIRST for multi-step tasks! If user request needs 2+ tool calls (like 'open + search + screenshot'), call create_todo BEFORE any other tool. Examples: '打开百度搜索天气截图' → create_todo first!",
+        "description": (
+            "Create a structured task plan for multi-step tasks. "
+            "If user request needs 2+ tool calls (like 'open + search + screenshot'), "
+            "call create_todo BEFORE any other tool.\n\n"
+            "When to use:\n"
+            "- 3+ distinct steps needed\n"
+            "- User provides multiple tasks\n"
+            "- Complex task requiring careful planning\n\n"
+            "When NOT to use:\n"
+            "- Single straightforward tasks completable in 1-2 steps\n"
+            "- Trivial tasks with no organizational benefit\n"
+            "- Purely conversational/informational requests\n\n"
+            "IMPORTANT: Mark steps complete IMMEDIATELY after finishing each one. "
+            "Only ONE step should be in_progress at a time."
+        ),
         "detail": """创建任务执行计划。
 
 **何时使用**：
@@ -133,7 +147,14 @@ PLAN_TOOLS = [
     {
         "name": "create_plan_file",
         "category": "Plan",
-        "description": "Create a structured plan file (.plan.md) with YAML frontmatter and detailed Markdown body. Used in Plan mode to produce a reviewable plan document.",
+        "description": (
+            "Create a structured plan file (.plan.md) with YAML frontmatter and detailed "
+            "Markdown body. Used in Plan mode to produce a reviewable plan document.\n\n"
+            "This tool creates a NEW plan file each time it is called. To update an existing "
+            "plan, use edit_file directly on the plan file — do NOT call create_plan_file again.\n\n"
+            "The plan name should only be specified on the first call. On subsequent updates "
+            "via edit_file, the filename stays stable."
+        ),
         "detail": """创建结构化 Plan 文件（YAML frontmatter + Markdown body）。
 
 **用于 Plan 模式**：生成一个用户可审阅的计划文件。

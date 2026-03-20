@@ -10,7 +10,21 @@ WEB_SEARCH_TOOLS = [
     {
         "name": "web_search",
         "category": "Web Search",
-        "description": "Search the web using DuckDuckGo. Use when you need to find current information, verify facts, look up documentation, or answer questions requiring up-to-date knowledge. Returns titles, URLs, and snippets.",
+        "description": (
+            "Search the web for real-time information. Returns titles, URLs, and snippets.\n\n"
+            "Use when you need:\n"
+            "- Up-to-date information not in your training data\n"
+            "- Current documentation for libraries/frameworks\n"
+            "- News, events, or technology updates\n"
+            "- Verification of facts\n\n"
+            "IMPORTANT — Use the correct year in search queries:\n"
+            "- You MUST use the current year when searching for recent information, "
+            "e.g., 'React documentation 2026' not 'React documentation 2025'\n\n"
+            "When to use web_search vs web_fetch vs browser:\n"
+            "- web_search: Find information when you don't have a specific URL\n"
+            "- web_fetch: Read content from a known URL (docs, articles)\n"
+            "- browser: Interactive web tasks (login, form filling, screenshots)"
+        ),
         "related_tools": [
             {"name": "browser_navigate", "relation": "需要打开网页查看完整内容或截图时改用 browser_navigate"},
             {"name": "news_search", "relation": "专门搜索新闻时改用 news_search"},

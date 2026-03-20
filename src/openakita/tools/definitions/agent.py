@@ -19,7 +19,14 @@ AGENT_TOOLS = [
             "This is the PREFERRED way to use multi-agent collaboration. "
             "Use when: (1) An existing agent profile matches the task, "
             "(2) You need domain expertise (code, data, browser, docs), "
-            "(3) The task can be fully handled by an existing agent without customization."
+            "(3) The task can be fully handled by an existing agent without customization.\n\n"
+            "IMPORTANT:\n"
+            "- Launch multiple agents concurrently whenever possible for independent tasks\n"
+            "- Do NOT launch more than 4 concurrent agents\n"
+            "- Sub-agent results are not directly visible to the user — summarize them in "
+            "your response\n"
+            "- Prefer 'fast' model for quick, straightforward sub-tasks to minimize cost\n"
+            "- Use 'capable' only when the task requires deep reasoning"
         ),
         "detail": (
             "将任务委派给已有的专业 Agent。这是多 Agent 协作的**首选**方式。\n\n"
@@ -46,6 +53,20 @@ AGENT_TOOLS = [
                 "reason": {
                     "type": "string",
                     "description": "委派原因（可选，用于日志和追踪）",
+                },
+                "model": {
+                    "type": "string",
+                    "enum": ["fast", "default", "capable"],
+                    "description": (
+                        "子代理使用的模型。fast=便宜快速（适合简单任务），"
+                        "default=与主代理相同，capable=更强模型（适合复杂推理）"
+                    ),
+                    "default": "default",
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "是否后台运行。后台子代理不阻塞主代理，结果稍后可查。",
+                    "default": False,
                 },
             },
             "required": ["agent_id", "message"],

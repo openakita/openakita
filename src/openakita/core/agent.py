@@ -67,6 +67,11 @@ from ..tools.handlers.agent import create_handler as create_agent_tool_handler
 from ..tools.handlers.agent_hub import create_handler as create_agent_hub_handler
 from ..tools.handlers.agent_package import create_handler as create_agent_package_handler
 from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
+from ..tools.handlers.code_quality import create_handler as create_code_quality_handler
+from ..tools.handlers.mode import create_handler as create_mode_handler
+from ..tools.handlers.notebook import create_handler as create_notebook_handler
+from ..tools.handlers.search import create_handler as create_search_handler
+from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
 
 # MCP 系统
@@ -1071,6 +1076,41 @@ class Agent:
             ["web_search", "news_search"],
         )
 
+        # Web Fetch（轻量 URL 内容获取）
+        self.handler_registry.register(
+            "web_fetch",
+            create_web_fetch_handler(self),
+            ["web_fetch"],
+        )
+
+        # Code Quality（linter 诊断）
+        self.handler_registry.register(
+            "code_quality",
+            create_code_quality_handler(self),
+            ["read_lints"],
+        )
+
+        # Semantic Search
+        self.handler_registry.register(
+            "search",
+            create_search_handler(self),
+            ["semantic_search"],
+        )
+
+        # Mode Switch
+        self.handler_registry.register(
+            "mode",
+            create_mode_handler(self),
+            ["switch_mode"],
+        )
+
+        # Notebook
+        self.handler_registry.register(
+            "notebook",
+            create_notebook_handler(self),
+            ["edit_notebook"],
+        )
+
         # 人格系统
         self.handler_registry.register(
             "persona",
@@ -1192,24 +1232,21 @@ class Agent:
         self._update_skill_tools()
 
     def _update_shell_tool_description(self) -> None:
-        """动态更新 shell 工具描述，包含当前操作系统信息"""
+        """在 run_shell 描述末尾追加当前操作系统信息（不覆盖原始描述）"""
         import platform
 
         if os.name == "nt":
-            os_info = f"Windows {platform.release()} (使用 PowerShell/cmd 命令，如: dir, type, tasklist, Get-Process, findstr)"
+            os_info = f"Windows {platform.release()} (PowerShell/cmd)"
         else:
-            os_info = f"{platform.system()} (使用 bash 命令，如: ls, cat, ps aux, grep)"
+            os_info = f"{platform.system()} (bash)"
 
-        # 更新 run_shell 工具的描述
+        os_hint = f"\n\nCurrent OS: {os_info}"
+
         for tool in self._tools:
             if tool.get("name") == "run_shell":
-                tool["description"] = (
-                    f"执行Shell命令。当前操作系统: {os_info}。"
-                    "注意：请使用当前操作系统支持的命令；如果命令连续失败，请尝试不同的命令或放弃该方法。"
-                )
-                tool["input_schema"]["properties"]["command"]["description"] = (
-                    f"要执行的Shell命令（当前系统: {os.name}）"
-                )
+                desc = tool.get("description", "")
+                if "Current OS:" not in desc:
+                    tool["description"] = desc + os_hint
                 break
 
     def _update_skill_tools(self) -> None:

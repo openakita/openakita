@@ -15,7 +15,22 @@ SYSTEM_TOOLS = [
     {
         "name": "ask_user",
         "category": "System",
-        "description": "Ask the user one or more questions and PAUSE execution until they reply. Use when: (1) critical information is missing, (2) task is ambiguous and needs clarification, (3) user confirmation is required before proceeding. Do NOT put questions in plain text — only this tool triggers a real pause. When questions have choices, ALWAYS provide options. Supports both single-select and multi-select via allow_multiple. For multiple related questions, use the questions array to ask them all at once.",
+        "description": (
+            "Ask the user one or more questions and PAUSE execution until they reply. "
+            "Use when: (1) critical information is missing, (2) task is ambiguous and needs "
+            "clarification, (3) user confirmation is required before proceeding.\n\n"
+            "Do NOT put questions in plain text — only this tool triggers a real pause. "
+            "When questions have choices, ALWAYS provide options. Supports both single-select "
+            "and multi-select via allow_multiple. For multiple related questions, use the "
+            "questions array to ask them all at once.\n\n"
+            "Do NOT ask questions when:\n"
+            "- The task is clear enough to proceed\n"
+            "- You can make a reasonable assumption and proceed\n"
+            "- The question is trivial (e.g., confirming obvious next steps)\n"
+            "- You're in the middle of execution and asking would break flow\n\n"
+            "NEVER put questions in plain text responses — only this tool triggers a real "
+            "pause and waits for user reply. Questions in text will be ignored."
+        ),
         "detail": """向用户提问并暂停执行，等待用户回复。支持单个问题和多个问题。
 
 **何时使用**：
@@ -198,7 +213,16 @@ SYSTEM_TOOLS = [
     {
         "name": "generate_image",
         "category": "System",
-        "description": "Generate an image from a text prompt using the configured image model API, saving to a local .png file. Use when user asks for image generation, posters, illustrations, or visual concepts that must be rendered as an actual image file.",
+        "description": (
+            "Generate an image from a text prompt using the configured image model API, "
+            "saving to a local .png file.\n\n"
+            "STRICT: Only use this tool when the user explicitly asks for an image. "
+            "Do NOT generate images 'just to be helpful'.\n\n"
+            "Use when user asks for image generation, posters, illustrations, or visual "
+            "concepts that must be rendered as an actual image file. "
+            "Do NOT use for data visualizations (charts, plots, tables) — generate those "
+            "via code instead."
+        ),
         "detail": """文生图：根据提示词生成图片并保存为本地 PNG 文件。
 
 说明：

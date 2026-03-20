@@ -2,7 +2,7 @@
 文件系统处理器
 
 处理文件系统相关的系统技能：
-- run_shell: 执行 Shell 命令
+- run_shell: 执行 Shell 命令（持久会话 + 后台进程支持）
 - write_file: 写入文件
 - read_file: 读取文件
 - edit_file: 精确字符串替换编辑
@@ -14,6 +14,7 @@
 
 import logging
 import re
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,31 @@ if TYPE_CHECKING:
     from ...core.agent import Agent
 
 logger = logging.getLogger(__name__)
+
+_terminal_managers: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+_terminal_mgr_strong_refs: dict[int, Any] = {}
+
+
+def _get_terminal_manager(agent: "Agent") -> Any:
+    """Get or create a TerminalSessionManager for this agent instance.
+
+    Uses agent object id as key. A strong reference is stored alongside the agent
+    so the manager lives as long as the agent does. When the agent is GC'd,
+    clean up on next access.
+    """
+    from ..terminal import TerminalSessionManager
+    agent_id = id(agent)
+    mgr = _terminal_mgr_strong_refs.get(agent_id)
+    if mgr is not None:
+        return mgr
+    cwd = getattr(agent, "default_cwd", None) or str(Path.cwd())
+    mgr = TerminalSessionManager(default_cwd=cwd)
+    _terminal_mgr_strong_refs[agent_id] = mgr
+    try:
+        weakref.finalize(agent, _terminal_mgr_strong_refs.pop, agent_id, None)
+    except TypeError:
+        pass
+    return mgr
 
 
 class FilesystemHandler:
@@ -167,10 +193,10 @@ class FilesystemHandler:
     SHELL_MAX_LINES = 200
 
     async def _run_shell(self, params: dict) -> str:
-        """执行 Shell 命令（大输出自动截断 + 溢出文件）"""
-        command = params["command"]
-        timeout = params.get("timeout", 60)
-        timeout = max(10, min(timeout, 600))
+        """Execute shell command with persistent session + background support."""
+        command = params.get("command", "")
+        if not command:
+            return "❌ run_shell 缺少必要参数 'command'。"
 
         policy = self._get_fix_policy()
         if policy:
@@ -187,21 +213,38 @@ class FilesystemHandler:
                 except re.error:
                     continue
 
-        # Windows 多行 python -c 修复
         import platform
         if platform.system() == "Windows":
             command = self._fix_windows_python_c(command)
 
-        result = await self.agent.shell_tool.run(
+        working_directory = params.get("working_directory") or params.get("cwd")
+
+        block_timeout_ms = params.get("block_timeout_ms")
+        if block_timeout_ms is None:
+            timeout_s = params.get("timeout", 60)
+            timeout_s = max(10, min(timeout_s, 600))
+            block_timeout_ms = timeout_s * 1000
+
+        session_id = params.get("session_id", 1)
+
+        terminal_mgr = _get_terminal_manager(self.agent)
+        result = await terminal_mgr.execute(
             command,
-            cwd=params.get("cwd"),
-            timeout=timeout,
+            session_id=session_id,
+            block_timeout_ms=block_timeout_ms,
+            working_directory=working_directory,
         )
 
-        # 记录到日志
         from ...logging import get_session_log_buffer
-
         log_buffer = get_session_log_buffer()
+
+        if result.backgrounded:
+            log_buffer.add_log(
+                level="INFO",
+                module="shell",
+                message=f"$ {command}\n[backgrounded, pid: {result.pid}]",
+            )
+            return result.stdout
 
         if result.success:
             log_buffer.add_log(
@@ -214,7 +257,6 @@ class FilesystemHandler:
             if result.stderr:
                 output += f"\n[警告]:\n{result.stderr}"
 
-            # 成功输出截断 + 溢出文件
             full_text = f"命令执行成功 (exit code: 0):\n{output}"
             return self._truncate_shell_output(full_text)
         else:
@@ -225,7 +267,6 @@ class FilesystemHandler:
             )
 
             def _tail(text: str, max_chars: int = 4000, max_lines: int = 120) -> str:
-                """失败时强限长：只保留尾部，避免注入过多终端日志。"""
                 if not text:
                     return ""
                 lines = text.splitlines()
@@ -240,7 +281,6 @@ class FilesystemHandler:
 
             output_parts = [f"命令执行失败 (exit code: {result.returncode})"]
 
-            # Windows 9009 = 命令未找到，给出明确诊断
             if result.returncode == 9009:
                 cmd_lower = command.strip().lower()
                 if cmd_lower.startswith(("python", "python3")):
@@ -263,7 +303,6 @@ class FilesystemHandler:
             if not result.stdout and not result.stderr and result.returncode != 9009:
                 output_parts.append("(无输出，可能命令不存在或语法错误)")
 
-            # 失败输出也可能很大，使用同样的溢出机制
             full_error = "\n".join(output_parts)
             truncated_result = self._truncate_shell_output(full_error)
             truncated_result += (
