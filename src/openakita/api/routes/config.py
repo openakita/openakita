@@ -34,6 +34,19 @@ def _project_root() -> Path:
         return Path.cwd()
 
 
+def _endpoints_config_path() -> Path:
+    """Return the canonical llm_endpoints.json path.
+
+    Uses the same resolution logic as LLMClient so the Config API
+    reads/writes the SAME file that the LLM runtime actually loads.
+    """
+    try:
+        from openakita.llm.config import get_default_config_path
+        return get_default_config_path()
+    except Exception:
+        return _project_root() / "data" / "llm_endpoints.json"
+
+
 def _parse_env(content: str) -> dict[str, str]:
     """Parse .env file content into a dict (same logic as Tauri bridge)."""
     # Strip UTF-8 BOM if present (e.g. files saved by Windows Notepad)
@@ -177,11 +190,13 @@ class ListModelsRequest(BaseModel):
 async def workspace_info():
     """Return current workspace path and basic info."""
     root = _project_root()
+    ep_path = _endpoints_config_path()
     return {
         "workspace_path": str(root),
         "workspace_name": root.name,
         "env_exists": (root / ".env").exists(),
-        "endpoints_exists": (root / "data" / "llm_endpoints.json").exists(),
+        "endpoints_exists": ep_path.exists(),
+        "endpoints_path": str(ep_path),
     }
 
 
@@ -226,7 +241,7 @@ async def write_env(body: EnvUpdateRequest):
 @router.get("/api/config/endpoints")
 async def read_endpoints():
     """Read data/llm_endpoints.json."""
-    ep_path = _project_root() / "data" / "llm_endpoints.json"
+    ep_path = _endpoints_config_path()
     if not ep_path.exists():
         return {"endpoints": [], "raw": {}}
     try:
@@ -239,13 +254,13 @@ async def read_endpoints():
 @router.post("/api/config/endpoints")
 async def write_endpoints(body: EndpointsWriteRequest):
     """Write data/llm_endpoints.json."""
-    ep_path = _project_root() / "data" / "llm_endpoints.json"
+    ep_path = _endpoints_config_path()
     ep_path.parent.mkdir(parents=True, exist_ok=True)
     ep_path.write_text(
         json.dumps(body.content, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    logger.info("[Config API] Updated llm_endpoints.json")
+    logger.info("[Config API] Updated llm_endpoints.json (%s)", ep_path)
     return {"status": "ok"}
 
 

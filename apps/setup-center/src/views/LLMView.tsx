@@ -55,6 +55,7 @@ export interface LLMViewProps {
   writeWorkspaceFile: (path: string, content: string) => Promise<void>;
   venvDir: string;
   ensureEnvLoaded: (wsId: string) => Promise<EnvMap>;
+  serviceRunning?: boolean;
 }
 
 export function LLMView(props: LLMViewProps) {
@@ -67,7 +68,7 @@ export function LLMView(props: LLMViewProps) {
     shouldUseHttpApi, httpApiBase, askConfirm,
     providers, doLoadProviders, loadSavedEndpoints,
     readWorkspaceFile, writeWorkspaceFile,
-    venvDir, ensureEnvLoaded,
+    venvDir, ensureEnvLoaded, serviceRunning,
   } = props;
 
   const { t } = useTranslation();
@@ -220,7 +221,7 @@ export function LLMView(props: LLMViewProps) {
   useEffect(() => {
     loadSavedEndpoints().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWorkspaceId, dataMode]);
+  }, [currentWorkspaceId, dataMode, serviceRunning]);
 
   useEffect(() => {
     if (!selectedProvider) return;
