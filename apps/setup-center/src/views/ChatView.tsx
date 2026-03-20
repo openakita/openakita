@@ -841,7 +841,7 @@ function AskQuestionItem({
               onChange={(e) => onOtherText(e.target.value)}
               placeholder={t("chat.askPlaceholder")}
               style={{ fontSize: 13, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(124,58,237,0.25)", outline: "none" }}
-              onKeyDown={(e) => { if (e.key === "Escape") onToggleOther(); if (e.key === "Enter" && otherText.trim()) onSubmit?.(); }}
+              onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === "Escape") onToggleOther(); if (e.key === "Enter" && otherText.trim()) onSubmit?.(); }}
             />
           )}
         </div>
@@ -852,7 +852,7 @@ function AskQuestionItem({
           onChange={(e) => onOtherText(e.target.value)}
           placeholder={t("chat.askPlaceholder")}
           style={{ width: "100%", fontSize: 13, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(124,58,237,0.25)", outline: "none", boxSizing: "border-box" }}
-          onKeyDown={(e) => { if (e.key === "Enter" && otherText.trim()) onSubmit?.(); }}
+          onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === "Enter" && otherText.trim()) onSubmit?.(); }}
         />
       )}
     </div>
@@ -3948,6 +3948,7 @@ export function ChatView({
               value={renameText}
               onChange={(e) => setRenameText(e.target.value)}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                 if (e.key === "Enter") confirmRename(conv.id, renameText);
                 if (e.key === "Escape") { setRenamingId(null); setRenameText(""); }
               }}
