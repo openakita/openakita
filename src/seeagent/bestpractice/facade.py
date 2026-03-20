@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .models import TriggerType
 
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from .engine import BPEngine
     from .handler import BPToolHandler
     from .prompt_loader import PromptTemplateLoader
-    from .schema_chain import SchemaChain
     from .state_manager import BPStateManager
 
 logger = logging.getLogger(__name__)
@@ -149,6 +148,45 @@ def get_bp_config_loader() -> BPConfigLoader | None:
     if not _initialized:
         init_bp_system()
     return _bp_config_loader
+
+
+# ── Trigger matching ───────────────────────────────────────────
+
+
+def match_bp_from_message(user_message: str, session_id: str) -> dict | None:
+    """Check user message against CONTEXT triggers of registered BPs.
+
+    Returns match metadata dict or None.
+    Respects cooldown and skips if an active BP instance already exists.
+    """
+    if not _initialized:
+        init_bp_system()
+    if not _bp_config_loader or not _bp_state_manager:
+        return None
+
+    # Respect cooldown period
+    if _bp_state_manager.get_cooldown(session_id) > 0:
+        return None
+
+    # Skip if active instance exists
+    if _bp_state_manager.get_active(session_id):
+        return None
+
+    for bp_id, config in _bp_config_loader.configs.items():
+        for trigger in config.triggers:
+            if trigger.type == TriggerType.CONTEXT:
+                if any(kw in user_message for kw in trigger.conditions):
+                    return {
+                        "bp_id": bp_id,
+                        "bp_name": config.name,
+                        "description": config.description,
+                        "subtask_count": len(config.subtasks),
+                        "subtasks": [
+                            {"id": s.id, "name": s.name}
+                            for s in config.subtasks
+                        ],
+                    }
+    return None
 
 
 # ── Prompt injection ───────────────────────────────────────────
