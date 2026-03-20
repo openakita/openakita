@@ -595,6 +595,16 @@ class LifecycleManager:
                 "cancelled": cancelled,
             })
 
+        # All batches failed → LLM completely unavailable, re-raise so the
+        # scheduler can mark_failed() and trigger its existing notification.
+        # Partial failure (some batches OK) is tolerated: succeeded batches
+        # take effect, failed ones keep memories as-is.
+        if not cancelled and report["errors"] >= total_batches > 0:
+            from ..llm.types import AllEndpointsFailedError
+            raise AllEndpointsFailedError(
+                f"LLM review failed: all {total_batches} batches errored"
+            )
+
         logger.info(
             f"[Lifecycle] Memory review complete: "
             f"deleted={report['deleted']}, updated={report['updated']}, "

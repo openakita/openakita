@@ -929,6 +929,10 @@ class MemoryManager:
             )
             result = await lifecycle.consolidate_daily()
         except Exception as e:
+            from ..llm.types import LLMError
+            if isinstance(e, LLMError):
+                self._reload_from_sqlite()
+                raise  # LLM unavailable — legacy fallback would fail too
             logger.error(f"[Manager] Daily consolidation failed, using legacy: {e}")
             from ..config import settings
             from .daily_consolidator import DailyConsolidator
