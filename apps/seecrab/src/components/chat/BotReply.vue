@@ -17,6 +17,7 @@
       :subtask-id="reply.bpSubtaskOutput.subtaskId"
       :instance-id="reply.bpProgress?.instanceId ?? ''"
       :is-last-subtask="(reply.bpProgress?.currentSubtaskIndex ?? 0) >= (reply.bpProgress?.subtasks.length ?? 1) - 1"
+      :subtask-index="reply.bpProgress?.subtasks.findIndex(s => s.id === reply.bpSubtaskOutput?.subtaskId) ?? 0"
       :summary="reply.bpSubtaskOutput.summary"
       @view-output="handleViewOutput"
       @continue="handleContinue"
