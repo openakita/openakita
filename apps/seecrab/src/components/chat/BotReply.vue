@@ -6,6 +6,7 @@
       @toggle-mode="handleToggleMode"
       @view-output="handleViewOutput"
     />
+    <BPTriggerCard v-if="reply.bpTrigger" :trigger="reply.bpTrigger" />
     <ReplyHeader :reply="reply" />
     <ThinkingBlock v-if="reply.thinking" :content="reply.thinking" :done="reply.thinkingDone" />
     <PlanChecklist v-if="reply.planChecklist" :steps="reply.planChecklist" />
@@ -36,6 +37,7 @@ import StepCardList from './StepCardList.vue'
 import SummaryOutput from './SummaryOutput.vue'
 import AskUserBlock from './AskUserBlock.vue'
 import TaskProgressCard from './TaskProgressCard.vue'
+import BPTriggerCard from './BPTriggerCard.vue'
 import SubtaskCompleteBlock from './SubtaskCompleteBlock.vue'
 import { useBestPracticeStore } from '@/stores/bestpractice'
 import { useUIStore } from '@/stores/ui'

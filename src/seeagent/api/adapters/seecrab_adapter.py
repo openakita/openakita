@@ -147,7 +147,7 @@ class SeeCrabAdapter:
             return [event]
 
         # BP events — flatten data wrapper for frontend consumption
-        if etype in ("bp_progress", "bp_subtask_output", "bp_stale"):
+        if etype in ("bp_progress", "bp_subtask_output", "bp_stale", "bp_trigger"):
             return [{"type": etype, **event.get("data", {})}]
 
         if etype == "heartbeat":

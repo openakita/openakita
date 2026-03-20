@@ -187,6 +187,19 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                     session.metadata["title"] = title
                     session_manager.mark_dirty()
 
+            # BP trigger check: detect matching BP before LLM stream
+            try:
+                from seeagent.bestpractice.facade import match_bp_from_message
+                bp_match = match_bp_from_message(body.message or "", conversation_id)
+                if bp_match:
+                    trigger_event = json.dumps(
+                        {"type": "bp_trigger", **bp_match},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {trigger_event}\n\n"
+            except Exception:
+                pass  # Non-critical, don't block chat
+
             full_reply = ""
             reply_state = {
                 "thinking": "",
