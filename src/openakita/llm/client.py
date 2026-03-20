@@ -999,24 +999,94 @@ class LLMClient:
                     return response
 
                 except AuthenticationError as e:
-                    # 认证/配额错误：长冷静期，直接切换（不重试当前端点）
+                    # 认证/配额错误处理
                     error_str = str(e)
                     # 区分配额耗尽和真正的认证错误
                     from .providers.base import LLMProvider as _BaseProvider
                     error_cat = _BaseProvider._classify_error(error_str)
-                    if error_cat == "quota":
+
+                    # ── Issue #21: 403 错误指数退避重试 ──
+                    # 对于 403 认证错误（非配额耗尽），先重试 3 次再切换端点
+                    # 重试间隔：1s, 2s, 4s（指数退避）
+                    if error_cat == "auth":
+                        # 从配置读取重试次数和基础间隔
+                        auth_retry_count = self._settings.get("auth_retry_count", 3)
+                        auth_retry_base_delay = self._settings.get("auth_retry_base_delay", 1)
+
+                        for retry_attempt in range(auth_retry_count):
+                            if retry_attempt > 0:
+                                # 指数退避：1s, 2s, 4s, 8s...
+                                wait_time = auth_retry_base_delay * (2 ** (retry_attempt - 1))
+                                logger.info(
+                                    f"[LLM] endpoint={provider.name} 403_auth_retry={retry_attempt}/{auth_retry_count-1} "
+                                    f"wait={wait_time}s (exponential backoff)"
+                                )
+                                await asyncio.sleep(wait_time)
+
+                            try:
+                                response = await provider.chat(request)
+                                # 重试成功
+                                provider.record_success()
+                                logger.info(
+                                    f"[LLM] endpoint={provider.name} model={provider.model} "
+                                    f"action=response tokens_in={response.usage.input_tokens} "
+                                    f"tokens_out={response.usage.output_tokens} "
+                                    f"(recovered from 403 after {retry_attempt} retries)"
+                                )
+                                self._last_success_endpoint = provider.name
+                                response.endpoint_name = provider.name
+                                return response
+                            except AuthenticationError as retry_e:
+                                retry_error_str = str(retry_e)
+                                retry_error_cat = _BaseProvider._classify_error(retry_error_str)
+                                # 如果重试中遇到配额耗尽，立即停止重试
+                                if retry_error_cat == "quota":
+                                    logger.error(
+                                        f"[LLM] endpoint={provider.name} quota_exhausted during 403 retry: {retry_e}"
+                                    )
+                                    provider.mark_unhealthy(retry_error_str, category="quota")
+                                    errors.append(f"{provider.name}: {retry_e}")
+                                    failed_providers.append(provider)
+                                    logger.warning(
+                                        f"[LLM] endpoint={provider.name} cooldown={provider.cooldown_remaining}s "
+                                        f"(category={provider.error_category})"
+                                    )
+                                    break
+                                # 其他错误继续重试
+                                logger.warning(
+                                    f"[LLM] endpoint={provider.name} 403_retry_failed={retry_attempt+1}/{auth_retry_count} "
+                                    f"error={retry_e}"
+                                )
+                            except Exception as retry_e:
+                                # 重试中出现其他异常，记录并继续重试
+                                logger.warning(
+                                    f"[LLM] endpoint={provider.name} 403_retry_unexpected_error={retry_attempt+1}/{auth_retry_count} "
+                                    f"error={retry_e}"
+                                )
+                                continue
+
+                        # 所有重试都失败，标记不健康并切换到下一个端点
+                        if error_cat == "auth":
+                            logger.error(f"[LLM] endpoint={provider.name} auth_error after {auth_retry_count} retries: {e}")
+                            provider.mark_unhealthy(error_str, category="auth")
+                            errors.append(f"{provider.name}: {e}")
+                            failed_providers.append(provider)
+                            logger.warning(
+                                f"[LLM] endpoint={provider.name} cooldown={provider.cooldown_remaining}s "
+                                f"(category={provider.error_category})"
+                            )
+                            break
+                    elif error_cat == "quota":
+                        # 配额耗尽：不可恢复，立即跳过
                         logger.error(f"[LLM] endpoint={provider.name} quota_exhausted={e}")
                         provider.mark_unhealthy(error_str, category="quota")
-                    else:
-                        logger.error(f"[LLM] endpoint={provider.name} auth_error={e}")
-                        provider.mark_unhealthy(error_str, category="auth")
-                    errors.append(f"{provider.name}: {e}")
-                    failed_providers.append(provider)
-                    logger.warning(
-                        f"[LLM] endpoint={provider.name} cooldown={provider.cooldown_remaining}s "
-                        f"(category={provider.error_category})"
-                    )
-                    break
+                        errors.append(f"{provider.name}: {e}")
+                        failed_providers.append(provider)
+                        logger.warning(
+                            f"[LLM] endpoint={provider.name} cooldown={provider.cooldown_remaining}s "
+                            f"(category={provider.error_category})"
+                        )
+                        break
 
                 except LLMError as e:
                     error_str = str(e)
