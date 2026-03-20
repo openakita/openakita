@@ -29,6 +29,66 @@ from .unified_store import UnifiedStore
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level helpers (shared by LifecycleManager methods)
+# ---------------------------------------------------------------------------
+
+_jieba_mod: object | None = None
+_jieba_loaded = False
+
+
+def _tokenize_for_dedup(text: str) -> set[str]:
+    """Tokenize *text* for word-overlap comparison.
+
+    Uses jieba ``cut_for_search`` for Chinese-aware segmentation;
+    falls back to whitespace split when jieba is unavailable.
+    Tokens shorter than 2 chars are discarded to reduce noise.
+    """
+    global _jieba_mod, _jieba_loaded  # noqa: PLW0603
+    if not _jieba_loaded:
+        try:
+            import jieba
+            jieba.setLogLevel(logging.WARNING)
+            _jieba_mod = jieba
+        except ImportError:
+            pass
+        _jieba_loaded = True
+
+    lowered = text.lower()
+    if _jieba_mod is not None:
+        tokens = set(_jieba_mod.cut_for_search(lowered))
+    else:
+        tokens = set(lowered.split())
+    return {t for t in tokens if len(t) >= 2}
+
+
+def _fast_content_dedup(new: str, existing: str) -> str:
+    """Fast local content similarity check.
+
+    Returns
+    -------
+    "exact"  – definitely duplicate (safe to merge without LLM)
+    "likely" – might be duplicate (would need LLM to confirm)
+    "no"     – not duplicate
+    """
+    if not new or not existing:
+        return "no"
+    a, b = new.lower().strip(), existing.lower().strip()
+    if a == b:
+        return "exact"
+    if len(a) > 15 and len(b) > 15 and (a in b or b in a):
+        return "exact"
+    if len(a) >= 10 and len(b) >= 10:
+        bigrams_a = {a[i : i + 2] for i in range(len(a) - 1)}
+        bigrams_b = {b[i : i + 2] for i in range(len(b) - 1)}
+        if bigrams_a and bigrams_b:
+            overlap = len(bigrams_a & bigrams_b) / len(bigrams_a | bigrams_b)
+            if overlap > 0.8:
+                return "exact"
+            if overlap > 0.3:
+                return "likely"
+    return "no"
+
 
 def _safe_write_with_backup(path: Path, content: str) -> None:
     """安全写入文件：先备份再写入，写失败则恢复"""
@@ -196,6 +256,9 @@ class LifecycleManager:
         }
         mem_type = type_map.get(item.get("type", "FACT"), MemoryType.FACT)
         importance = item.get("importance", 0.5)
+        content = (item.get("content") or "").strip()
+        subject = item.get("subject", "")
+        predicate = item.get("predicate", "")
 
         if importance >= 0.85 or mem_type == MemoryType.RULE:
             priority = MemoryPriority.PERMANENT
@@ -204,25 +267,56 @@ class LifecycleManager:
         else:
             priority = MemoryPriority.SHORT_TERM
 
-        if item.get("is_update"):
-            existing = self.store.find_similar(
-                item.get("subject", ""), item.get("predicate", "")
-            )
-            if existing:
-                self.store.update_semantic(existing.id, {
-                    "content": item["content"],
+        # --- Dedup layer 1: subject+predicate match (always, not only is_update) ---
+        if subject and predicate:
+            existing = self.store.find_similar(subject, predicate)
+            if existing and not existing.superseded_by:
+                updates: dict = {
                     "importance_score": max(existing.importance_score, importance),
                     "confidence": min(1.0, existing.confidence + 0.1),
-                })
+                }
+                should_update = (
+                    item.get("is_update")
+                    or importance > existing.importance_score
+                    or (importance >= existing.importance_score
+                        and len(content) > len(existing.content or ""))
+                )
+                if should_update:
+                    updates["content"] = content
+                self.store.update_semantic(existing.id, updates)
+                logger.debug(
+                    f"[Lifecycle] Dedup L1: evolved {existing.id[:8]} (subject+predicate)"
+                )
                 return
 
+        # --- Dedup layer 2: content similarity via search backend ---
+        if content and len(content) >= 10:
+            try:
+                similar = self.store.search_semantic(content, limit=5)
+                for s in similar:
+                    if s.superseded_by or s.type != mem_type:
+                        continue
+                    level = _fast_content_dedup(content, s.content or "")
+                    if level == "exact":
+                        self.store.update_semantic(s.id, {
+                            "importance_score": max(s.importance_score, importance),
+                            "confidence": min(1.0, s.confidence + 0.1),
+                        })
+                        logger.debug(
+                            f"[Lifecycle] Dedup L2: evolved {s.id[:8]} (content match)"
+                        )
+                        return
+            except Exception as e:
+                logger.debug(f"[Lifecycle] Dedup search failed: {e}")
+
+        # --- No duplicate found — save new memory ---
         mem = SemanticMemory(
             type=mem_type,
             priority=priority,
-            content=item["content"],
+            content=content,
             source="daily_consolidation",
-            subject=item.get("subject", ""),
-            predicate=item.get("predicate", ""),
+            subject=subject,
+            predicate=predicate,
             importance_score=importance,
             source_episode_id=episode_id,
             tags=[item.get("type", "fact").lower()],
@@ -266,9 +360,18 @@ class LifecycleManager:
     def _cluster_by_content(
         self, memories: list[SemanticMemory], threshold: float = 0.7
     ) -> list[list[SemanticMemory]]:
-        """Simple clustering by content similarity (word overlap)."""
+        """Clustering by token-overlap similarity.
+
+        Uses jieba segmentation (via ``_tokenize_for_dedup``) so that
+        Chinese text is properly tokenised instead of being treated as a
+        single whitespace-delimited "word".
+        """
         clusters: list[list[SemanticMemory]] = []
         assigned: set[str] = set()
+
+        token_cache: dict[str, set[str]] = {}
+        for mem in memories:
+            token_cache[mem.id] = _tokenize_for_dedup(mem.content)
 
         for i, mem_a in enumerate(memories):
             if mem_a.id in assigned:
@@ -276,12 +379,12 @@ class LifecycleManager:
             cluster = [mem_a]
             assigned.add(mem_a.id)
 
-            words_a = set(mem_a.content.lower().split())
+            words_a = token_cache[mem_a.id]
             for j in range(i + 1, len(memories)):
                 mem_b = memories[j]
                 if mem_b.id in assigned:
                     continue
-                words_b = set(mem_b.content.lower().split())
+                words_b = token_cache[mem_b.id]
                 if not words_a or not words_b:
                     continue
                 overlap = len(words_a & words_b) / min(len(words_a), len(words_b))
@@ -687,6 +790,27 @@ class LifecycleManager:
                 content = (synth.get("content") or "").strip()
                 source_ids = synth.get("synthesized_from", [])
                 if len(content) < 10 or len(source_ids) < 2:
+                    continue
+
+                # Dedup: skip if a similar experience already exists
+                dup_target: SemanticMemory | None = None
+                try:
+                    similar = self.store.search_semantic(content, limit=3)
+                    for s in similar:
+                        if s.superseded_by:
+                            continue
+                        if _fast_content_dedup(content, s.content or "") == "exact":
+                            dup_target = s
+                            break
+                except Exception:
+                    pass
+
+                if dup_target is not None:
+                    for sid in source_ids:
+                        self.store.update_semantic(sid, {"superseded_by": dup_target.id})
+                    logger.debug(
+                        f"[Lifecycle] Synthesis dedup: reused {dup_target.id[:8]}"
+                    )
                     continue
 
                 mem = SemanticMemory(
