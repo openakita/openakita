@@ -131,7 +131,6 @@ export function LLMView(props: LLMViewProps) {
     name: string; priority: number; providerSlug: string;
     apiType: "openai" | "openai_responses" | "anthropic";
     baseUrl: string; apiKeyEnv: string; apiKeyValue: string;
-    apiKeyDirty: boolean;
     modelId: string; caps: string[]; maxTokens: number;
     contextWindow: number; timeout: number; rpmLimit: number;
     pricingTiers: { max_input: number; input_price: number; output_price: number }[];
@@ -855,7 +854,6 @@ export function LLMView(props: LLMViewProps) {
       baseUrl: ep.base_url || "",
       apiKeyEnv: ep.api_key_env || "",
       apiKeyValue: envDraft[ep.api_key_env || ""] || "",
-      apiKeyDirty: false,
       modelId: ep.model || "",
       caps: Array.isArray(ep.capabilities) && ep.capabilities.length ? ep.capabilities : ["text"],
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
@@ -974,13 +972,13 @@ export function LLMView(props: LLMViewProps) {
             { method: "DELETE" },
           );
         }
-        const effectiveKey = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
+        const keyToSave = editDraft.apiKeyValue.trim() || null;
         const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             endpoint,
-            api_key: effectiveKey,
+            api_key: keyToSave,
             endpoint_type: "endpoints",
           }),
         });
@@ -989,15 +987,14 @@ export function LLMView(props: LLMViewProps) {
           notifyError(data.error || "保存失败");
           return;
         }
-        if (effectiveKey && data.endpoint?.api_key_env) {
-          setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveKey));
+        if (keyToSave && data.endpoint?.api_key_env) {
+          setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, keyToSave));
         }
       } else {
         if (nameChanged) {
           await deleteEndpointLocal(editingOriginalName, "endpoints");
         }
-        const effectiveKeyLocal = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
-        await saveEndpointLocal(endpoint, effectiveKeyLocal, "endpoints");
+        await saveEndpointLocal(endpoint, editDraft.apiKeyValue.trim() || null, "endpoints");
       }
 
       notifySuccess("端点已更新");
@@ -1557,7 +1554,7 @@ export function LLMView(props: LLMViewProps) {
                 {(() => { const url = getProviderApplyUrl(editDraft.providerSlug); const ep = providers.find((p) => p.slug === editDraft.providerSlug); return url && !isLocalProvider(ep) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>{t("llm.getApiKey")}</Button> : null; })()}
               </Label>
               <div className="relative">
-                <Input value={editDraft.apiKeyValue} onChange={(e) => { setEditDraft((d) => d ? { ...d, apiKeyValue: e.target.value, apiKeyDirty: true } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : t("llm.apiKeyPlaceholder")} />
+                <Input value={editDraft.apiKeyValue} onChange={(e) => { setEditDraft((d) => d ? { ...d, apiKeyValue: e.target.value } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : t("llm.apiKeyPlaceholder")} />
                 {!IS_WEB && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1.5 top-1/2 -translate-y-1/2" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? t("llm.hideSecret") : t("llm.showSecret")}>
                   {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                 </Button>}
