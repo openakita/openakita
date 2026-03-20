@@ -240,19 +240,31 @@ async def write_env(body: EnvUpdateRequest):
     existing = ""
     if env_path.exists():
         existing = env_path.read_bytes().decode("utf-8", errors="replace")
+
+    _sensitive_key = re.compile(
+        r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY)", re.IGNORECASE,
+    )
+    safe_entries: dict[str, str] = {}
+    for key, value in body.entries.items():
+        if "***" in value and _sensitive_key.search(key):
+            logger.warning(
+                "[Config API] write_env: dropping masked value for %s", key,
+            )
+            continue
+        safe_entries[key] = value
+
     new_content = _update_env_content(
-        existing, body.entries, delete_keys=set(body.delete_keys)
+        existing, safe_entries, delete_keys=set(body.delete_keys)
     )
     env_path.write_text(new_content, encoding="utf-8")
-    # Sync into os.environ so the running process picks up new values immediately
-    for key, value in body.entries.items():
+    for key, value in safe_entries.items():
         if value:
             os.environ[key] = value
     for key in body.delete_keys:
         os.environ.pop(key, None)
-    count = len([v for v in body.entries.values() if v]) + len(body.delete_keys)
+    count = len([v for v in safe_entries.values() if v]) + len(body.delete_keys)
     logger.info(f"[Config API] Updated .env with {count} entries")
-    return {"status": "ok", "updated_keys": list(body.entries.keys())}
+    return {"status": "ok", "updated_keys": list(safe_entries.keys())}
 
 
 @router.get("/api/config/endpoints")
