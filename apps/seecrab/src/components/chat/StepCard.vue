@@ -21,7 +21,7 @@ const uiStore = useUIStore()
 const cardTypeIcon = computed(() => {
   const map: Record<string, string> = {
     search: 'search', code: 'code', file: 'description',
-    analysis: 'analytics', browser: 'language', default: 'build',
+    analysis: 'analytics', browser: 'language', delegate: 'smart_toy', default: 'build',
   }
   return map[props.card.cardType] ?? 'build'
 })

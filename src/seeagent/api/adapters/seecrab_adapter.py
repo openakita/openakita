@@ -142,6 +142,10 @@ class SeeCrabAdapter:
         if etype == "ask_user":
             return [self._map_ask_user(event)]
 
+        # Pre-built step_card from BP engine (delegate cards) — pass through
+        if etype == "step_card":
+            return [event]
+
         # BP events — flatten data wrapper for frontend consumption
         if etype in ("bp_progress", "bp_subtask_output", "bp_stale"):
             return [{"type": etype, **event.get("data", {})}]
@@ -282,6 +286,7 @@ class SeeCrabAdapter:
     async def _handle_agent_switch(self, event: dict) -> list[dict]:
         """Handle agent switch: flush current aggregator, switch to new agent."""
         agent_id = event.get("agent_id", "main") or "sub_agent"
+        logger.debug(f"[SeeCrab] Agent switch: {self._active_agent_id} → {agent_id}")
         events: list[dict] = []
         # Flush current aggregator
         current_agg = self._aggregators.get(self._active_agent_id)

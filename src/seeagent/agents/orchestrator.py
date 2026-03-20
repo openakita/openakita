@@ -1081,8 +1081,10 @@ async def _call_agent_streaming(agent, session, message, event_bus, gateway=None
                                 session_messages=None):
     """Stream sub-agent events into event_bus for SeeCrab real-time display."""
     profile = getattr(agent, "_agent_profile", None)
-    agent_id = profile.id if profile else "sub_agent"
-    agent_name = profile.get_display_name() if profile else agent_id
+    agent_name = profile.get_display_name() if profile else None
+    agent_id = profile.id if profile and profile.id else f"sub_{agent_name or 'agent'}"
+    if not agent_name:
+        agent_name = agent_id
     agent_desc = getattr(profile, "description", "") if profile else ""
 
     # Inject agent_header (sub-agent starts)

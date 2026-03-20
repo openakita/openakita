@@ -42,7 +42,7 @@ export interface StepCard {
   title: string
   status: 'running' | 'completed' | 'failed'
   sourceType: 'tool' | 'skill' | 'mcp' | 'plan_step'
-  cardType: 'search' | 'code' | 'file' | 'analysis' | 'browser' | 'default'
+  cardType: 'search' | 'code' | 'file' | 'analysis' | 'browser' | 'delegate' | 'default'
   duration: number | null
   planStepIndex: number | null
   agentId: string
