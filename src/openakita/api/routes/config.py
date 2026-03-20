@@ -202,21 +202,30 @@ async def workspace_info():
 
 @router.get("/api/config/env")
 async def read_env():
-    """Read .env file content as key-value pairs."""
+    """Read .env file content as key-value pairs.
+
+    Sensitive values (containing TOKEN, SECRET, PASSWORD, KEY in the name)
+    are masked before being returned.  The ``has_value`` map tells the
+    frontend which keys actually have a non-empty value without leaking
+    the real secret.
+    """
     env_path = _project_root() / ".env"
     if not env_path.exists():
-        return {"env": {}, "raw": ""}
+        return {"env": {}, "has_value": {}, "raw": ""}
     content = env_path.read_bytes().decode("utf-8", errors="replace")
     env = _parse_env(content)
-    # Mask sensitive values for display (keys containing TOKEN, SECRET, PASSWORD, KEY)
-    masked = {}
-    sensitive_pattern = re.compile(r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY)", re.IGNORECASE)
+    sensitive_pattern = re.compile(
+        r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY)", re.IGNORECASE,
+    )
+    masked: dict[str, str] = {}
+    has_value: dict[str, bool] = {}
     for k, v in env.items():
+        has_value[k] = bool(v and v.strip())
         if sensitive_pattern.search(k) and v:
             masked[k] = v[:4] + "***" + v[-2:] if len(v) > 6 else "***"
         else:
             masked[k] = v
-    return {"env": masked, "masked": masked, "raw": ""}
+    return {"env": masked, "masked": masked, "has_value": has_value, "raw": ""}
 
 
 @router.post("/api/config/env")
@@ -310,11 +319,20 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """
     from openakita.llm.endpoint_manager import ConflictError
 
+    api_key = body.api_key
+    if api_key is not None and "***" in api_key:
+        logger.warning(
+            "[Config API] save-endpoint: ignoring masked API key value "
+            "(len=%d) — treating as unchanged",
+            len(api_key),
+        )
+        api_key = None
+
     mgr = _get_endpoint_manager()
     try:
         result = mgr.save_endpoint(
             endpoint=body.endpoint,
-            api_key=body.api_key,
+            api_key=api_key,
             endpoint_type=body.endpoint_type,
             expected_version=body.expected_version,
         )
