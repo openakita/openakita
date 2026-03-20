@@ -128,20 +128,6 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
 
-      case 'bp_trigger': {
-        if (reply) {
-          const e = event as any
-          reply.bpTrigger = {
-            bpId: e.bp_id,
-            bpName: e.bp_name,
-            description: e.description,
-            subtaskCount: e.subtask_count,
-            subtasks: e.subtasks ?? [],
-          }
-        }
-        break
-      }
-
       case 'agent_header':
         reply.agentId = (event as any).agent_id ?? 'main'
         reply.agentName = (event as any).agent_name ?? 'Agent'

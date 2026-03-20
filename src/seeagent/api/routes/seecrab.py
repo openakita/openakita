@@ -195,11 +195,45 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                 from seeagent.bestpractice.facade import match_bp_from_message
                 bp_match = match_bp_from_message(body.message or "", conversation_id)
                 if bp_match:
-                    trigger_event = json.dumps(
-                        {"type": "bp_trigger", **bp_match},
-                        ensure_ascii=False,
+                    bp_name = bp_match["bp_name"]
+                    bp_id = bp_match["bp_id"]
+                    subtask_names = " → ".join(
+                        s["name"] for s in bp_match.get("subtasks", [])
                     )
-                    yield f"data: {trigger_event}\n\n"
+                    question = (
+                        f"检测到您的需求匹配最佳实践「{bp_name}」，"
+                        f"该任务包含 {bp_match['subtask_count']} 个子任务："
+                        f"{subtask_names}。是否使用最佳实践流程？"
+                    )
+                    ask_event = json.dumps({
+                        "type": "ask_user",
+                        "ask_id": f"bp_trigger_{bp_id}",
+                        "question": question,
+                        "options": [
+                            {"label": "自由模式", "value": "free"},
+                            {
+                                "label": "最佳实践模式",
+                                "value": bp_id,
+                            },
+                        ],
+                    }, ensure_ascii=False)
+                    yield f"data: {ask_event}\n\n"
+
+                    # Save assistant message so LLM has context on next turn
+                    if session:
+                        session.add_message(
+                            "assistant", question,
+                            reply_state={"ask_user": {
+                                "question": question,
+                                "bp_id": bp_id,
+                                "bp_name": bp_name,
+                            }},
+                        )
+                        if session_manager:
+                            session_manager.mark_dirty()
+
+                    yield 'data: {"type": "done"}\n\n'
+                    return  # Skip LLM stream — wait for user choice
             except Exception:
                 pass  # Non-critical, don't block chat
 

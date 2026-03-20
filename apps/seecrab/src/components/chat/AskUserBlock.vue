@@ -36,11 +36,18 @@ async function submitAnswer(label: string, value: string) {
   props.ask.answered = true
   props.ask.answer = value
 
+  // For BP trigger ask_user, send bp_id context so LLM knows which BP to start
+  const isBpTrigger = props.ask.ask_id?.startsWith('bp_trigger_')
+  const displayText = label
+  const backendMsg = isBpTrigger && value !== 'free'
+    ? `请启用最佳实践 (${value})`
+    : label
+
   // Send as a new user message to continue the conversation
   const convId = sessionStore.activeSessionId
-  chatStore.addUserMessage(label)
+  chatStore.addUserMessage(displayText)
   if (convId) {
-    await sseClient.sendMessage(label, convId, { thinking_mode: 'auto' })
+    await sseClient.sendMessage(backendMsg, convId, { thinking_mode: 'auto' })
   }
 }
 </script>
