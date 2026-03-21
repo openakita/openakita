@@ -39,6 +39,41 @@ class BPEngine:
     ) -> None:
         self.state_manager = state_manager
         self.schema_chain = schema_chain
+        self._orchestrator = None
+
+    # ── Orchestrator injection ────────────────────────────────
+
+    def set_orchestrator(self, orchestrator) -> None:
+        """由 facade 或 server.py 在启动时注入。"""
+        self._orchestrator = orchestrator
+
+    def _get_orchestrator(self):
+        """获取 orchestrator，fallback 到全局实例。"""
+        if self._orchestrator:
+            return self._orchestrator
+        try:
+            import seeagent.main
+            return getattr(seeagent.main, "_orchestrator", None)
+        except ImportError:
+            return None
+
+    def _get_scheduler(self, bp_config, snap):
+        """工厂方法: 根据 config 返回合适的 scheduler。"""
+        from .scheduler import LinearScheduler
+        return LinearScheduler(bp_config, snap)
+
+    def _get_config(self, snap):
+        """获取实例对应的 BP 配置。"""
+        if snap.bp_config:
+            return snap.bp_config
+        try:
+            from .facade import get_bp_config_loader
+            loader = get_bp_config_loader()
+            if loader and loader.configs:
+                return loader.configs.get(snap.bp_id)
+            return None
+        except Exception:
+            return None
 
     # ── Core execution ─────────────────────────────────────────
 
