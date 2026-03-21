@@ -111,18 +111,25 @@ class BPToolHandler:
         )
         logger.info(f"[BP-DEBUG] bp_start: created instance {inst_id}")
 
-        orchestrator = self._get_orchestrator(agent)
-        if not orchestrator:
-            return "❌ Orchestrator not available"
+        # Push event to SSE event_bus for frontend to take over (R6, R14)
+        if hasattr(session, "context") and hasattr(session.context, "_sse_event_bus"):
+            bus = session.context._sse_event_bus
+            if bus:
+                await bus.put({
+                    "type": "bp_instance_created",
+                    "instance_id": inst_id,
+                    "bp_id": bp_id,
+                    "bp_name": bp_config.name,
+                    "run_mode": run_mode.value,
+                    "subtasks": [
+                        {"id": s.id, "name": s.name} for s in bp_config.subtasks
+                    ],
+                })
 
-        result = await self.engine.execute_subtask(inst_id, bp_config, orchestrator, session)
-        # 验证 advance 后的状态
-        snap_after = self.state_manager.get(inst_id)
-        if snap_after:
-            logger.info(f"[BP-DEBUG] bp_start DONE: instance={inst_id}, "
-                         f"idx_after={snap_after.current_subtask_index}, "
-                         f"status={snap_after.status.value}")
-        return result
+        return (
+            f"✅ 已创建 BP 实例「{bp_config.name}」(id={inst_id})。"
+            f"前端将自动开始执行。"
+        )
 
     # ── bp_continue ────────────────────────────────────────────
 

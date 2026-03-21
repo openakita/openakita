@@ -67,7 +67,7 @@ class TestBPStart:
     async def test_start_creates_instance(self, handler):
         agent = MockAgent()
         result = await handler.handle("bp_start", {"bp_id": "test-bp", "input_data": {"q": "hello"}}, agent)
-        assert "S1" in result or "s1" in result.lower() or "完成" in result
+        assert "已创建" in result or "instance" in result.lower()
 
     @pytest.mark.asyncio
     async def test_start_unknown_bp(self, handler):
@@ -87,7 +87,7 @@ class TestBPStart:
         result = await handler.handle(
             "bp_start", {"bp_id": "test-bp", "run_mode": "auto", "input_data": {"q": "x"}}, agent,
         )
-        assert "bp_continue" in result
+        assert "已创建" in result or "instance" in result.lower()
 
 
 # ── bp_continue ────────────────────────────────────────────────
@@ -98,6 +98,15 @@ class TestBPContinue:
     async def test_continue_without_instance_id(self, handler):
         agent = MockAgent()
         await handler.handle("bp_start", {"bp_id": "test-bp", "input_data": {"q": "x"}}, agent)
+        active = handler.state_manager.get_active("test-session")
+        # Manually complete s1 so bp_continue can proceed to s2
+        handler.state_manager.update_subtask_output(
+            active.instance_id, "s1", {"result": "ok"}
+        )
+        handler.state_manager.update_subtask_status(
+            active.instance_id, "s1", SubtaskStatus.DONE
+        )
+        handler.state_manager.advance_subtask(active.instance_id)
         result = await handler.handle("bp_continue", {}, agent)
         assert "S2" in result or "完成" in result
 
@@ -117,6 +126,13 @@ class TestBPEditOutput:
         agent = MockAgent()
         await handler.handle("bp_start", {"bp_id": "test-bp", "input_data": {"q": "x"}}, agent)
         active = handler.state_manager.get_active("test-session")
+        # Manually populate subtask output (bp_start no longer executes subtasks)
+        handler.state_manager.update_subtask_output(
+            active.instance_id, "s1", {"result": "original"}
+        )
+        handler.state_manager.update_subtask_status(
+            active.instance_id, "s1", SubtaskStatus.DONE
+        )
         result = await handler.handle("bp_edit_output", {
             "instance_id": active.instance_id,
             "subtask_id": "s1",
@@ -164,11 +180,14 @@ class TestBPGetOutput:
         agent = MockAgent()
         await handler.handle("bp_start", {"bp_id": "test-bp", "input_data": {"q": "x"}}, agent)
         active = handler.state_manager.get_active("test-session")
+        # Manually populate subtask output (bp_start no longer executes subtasks)
+        handler.state_manager.update_subtask_output(
+            active.instance_id, "s1", {"result": "ok"}
+        )
         result = await handler.handle("bp_get_output", {
             "instance_id": active.instance_id,
             "subtask_id": "s1",
         }, agent)
-        # s1 should have output from execution
         assert "result" in result or "ok" in result
 
     @pytest.mark.asyncio
