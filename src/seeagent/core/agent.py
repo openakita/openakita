@@ -459,9 +459,11 @@ class Agent:
 
         # Sub-agent call flag: set by orchestrator._call_agent()
         self._is_sub_agent_call = False
-        # Agent tool names to exclude when running as sub-agent
+        # Tool names to exclude when running as sub-agent
         self._agent_tool_names = frozenset(
-            {"delegate_to_agent", "delegate_parallel", "create_agent", "spawn_agent"}
+            {"delegate_to_agent", "delegate_parallel", "create_agent", "spawn_agent",
+             "bp_start", "bp_continue", "bp_edit_output", "bp_switch_task",
+             "bp_get_output", "bp_cancel", "bp_supplement_input"}
         )
 
         # 当前任务监控器（仅在 IM 任务执行期间设置；供 system 工具动态调整超时策略）
