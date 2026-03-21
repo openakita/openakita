@@ -144,6 +144,13 @@ def get_bp_context_bridge() -> ContextBridge | None:
     return _bp_context_bridge
 
 
+def set_bp_orchestrator(orchestrator) -> None:
+    """注入 orchestrator 到 BPEngine，供 server.py 启动时调用。"""
+    global _bp_engine
+    if _bp_engine:
+        _bp_engine.set_orchestrator(orchestrator)
+
+
 def get_bp_config_loader() -> BPConfigLoader | None:
     if not _initialized:
         init_bp_system()

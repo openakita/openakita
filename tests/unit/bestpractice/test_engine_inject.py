@@ -68,3 +68,14 @@ class TestGetConfig:
         # This test just verifies no crash when bp_config is None
         # The actual fallback depends on facade.get_bp_config_loader()
         engine._get_config(mock_snap)
+
+
+def test_facade_set_orchestrator():
+    """facade.set_bp_orchestrator() delegates to engine.set_orchestrator()."""
+    from unittest.mock import patch
+    mock_engine = MagicMock()
+    with patch("seeagent.bestpractice.facade._bp_engine", mock_engine):
+        from seeagent.bestpractice.facade import set_bp_orchestrator
+        mock_orch = MagicMock()
+        set_bp_orchestrator(mock_orch)
+        mock_engine.set_orchestrator.assert_called_once_with(mock_orch)

@@ -259,6 +259,14 @@ def create_app(
     app.state.orchestrator = orchestrator
     app.state.agent_pool = agent_pool
 
+    # Inject orchestrator into BPEngine for /bp/* API routes (R10)
+    try:
+        from seeagent.bestpractice.facade import set_bp_orchestrator
+        if orchestrator:
+            set_bp_orchestrator(orchestrator)
+    except Exception:
+        pass
+
     # Initialize OrgManager & OrgRuntime
     from seeagent.orgs.manager import OrgManager
     from seeagent.orgs.runtime import OrgRuntime
