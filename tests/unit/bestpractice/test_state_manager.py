@@ -211,3 +211,89 @@ class TestPersistence:
         mgr2 = BPStateManager()
         count = mgr2.restore_from_dict("sess-1", filtered["bp_state"], {"test-bp": bp_config})
         assert count == 1
+
+
+class TestSupplementedInputsPersistence:
+    """supplemented_inputs round-trip through state_manager serialize/restore."""
+
+    def test_serialize_includes_supplemented_inputs(self, mgr, bp_config):
+        inst_id = mgr.create_instance(bp_config, "sess-1", {"q": "hello"}, RunMode.MANUAL)
+        snap = mgr.get(inst_id)
+        snap.supplemented_inputs["s1"] = {"extra_field": "value"}
+
+        data = mgr.serialize_for_session("sess-1")
+        inst_data = data["instances"][0]
+        assert "supplemented_inputs" in inst_data
+        assert inst_data["supplemented_inputs"] == {"s1": {"extra_field": "value"}}
+
+    def test_restore_preserves_supplemented_inputs(self, mgr, bp_config):
+        config_map = {"test-bp": bp_config}
+
+        serialized = {
+            "version": 1,
+            "instances": [{
+                "bp_id": "test-bp",
+                "instance_id": "bp-restore1",
+                "session_id": "sess-1",
+                "status": "active",
+                "created_at": 1.0,
+                "completed_at": None,
+                "suspended_at": None,
+                "current_subtask_index": 0,
+                "run_mode": "manual",
+                "subtask_statuses": {"s1": "pending", "s2": "pending", "s3": "pending"},
+                "initial_input": {},
+                "subtask_outputs": {},
+                "context_summary": "",
+                "supplemented_inputs": {"s1": {"field_x": 42}},
+            }],
+        }
+        count = mgr.restore_from_dict("sess-1", serialized, config_map)
+        assert count == 1
+        snap = mgr.get("bp-restore1")
+        assert snap is not None
+        assert snap.supplemented_inputs == {"s1": {"field_x": 42}}
+
+    def test_restore_without_supplemented_inputs_defaults_empty(self, mgr, bp_config):
+        """Backward compat: old serialized data without supplemented_inputs."""
+        config_map = {"test-bp": bp_config}
+
+        serialized = {
+            "version": 1,
+            "instances": [{
+                "bp_id": "test-bp",
+                "instance_id": "bp-old",
+                "session_id": "sess-1",
+                "status": "active",
+                "created_at": 1.0,
+                "completed_at": None,
+                "suspended_at": None,
+                "current_subtask_index": 0,
+                "run_mode": "manual",
+                "subtask_statuses": {"s1": "pending", "s2": "pending", "s3": "pending"},
+                "initial_input": {},
+                "subtask_outputs": {},
+                "context_summary": "",
+            }],
+        }
+        mgr.restore_from_dict("sess-1", serialized, config_map)
+        snap = mgr.get("bp-old")
+        assert snap.supplemented_inputs == {}
+
+    def test_serialize_restore_roundtrip_with_supplemented_inputs(self, mgr, bp_config):
+        """Full round-trip: create → mutate → serialize → restore → verify."""
+        inst_id = mgr.create_instance(bp_config, "sess-1", {"topic": "AI"})
+        snap = mgr.get(inst_id)
+        snap.supplemented_inputs["s1"] = {"clarification": "use GPT-4"}
+        snap.supplemented_inputs["s2"] = {"format": "markdown", "depth": 3}
+
+        data = mgr.serialize_for_session("sess-1")
+
+        mgr2 = BPStateManager()
+        mgr2.restore_from_dict("sess-1", data, config_map={"test-bp": bp_config})
+        restored = mgr2.get(inst_id)
+
+        assert restored.supplemented_inputs == {
+            "s1": {"clarification": "use GPT-4"},
+            "s2": {"format": "markdown", "depth": 3},
+        }
