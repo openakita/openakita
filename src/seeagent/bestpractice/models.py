@@ -30,6 +30,7 @@ class SubtaskStatus(Enum):
     DONE = "done"
     STALE = "stale"
     FAILED = "failed"
+    WAITING_INPUT = "waiting_input"
 
 
 class TriggerType(Enum):
@@ -110,6 +111,7 @@ class BPInstanceSnapshot:
     initial_input: dict[str, Any] = field(default_factory=dict)
     subtask_outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     context_summary: str = ""
+    supplemented_inputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     bp_config: BestPracticeConfig | None = field(default=None, repr=False)
 
     @staticmethod
@@ -132,6 +134,7 @@ class BPInstanceSnapshot:
             "initial_input": dict(self.initial_input),
             "subtask_outputs": {k: dict(v) for k, v in self.subtask_outputs.items()},
             "context_summary": self.context_summary,
+            "supplemented_inputs": {k: dict(v) for k, v in self.supplemented_inputs.items()},
         }
 
     @classmethod
@@ -151,5 +154,8 @@ class BPInstanceSnapshot:
             initial_input=dict(data.get("initial_input", {})),
             subtask_outputs={k: dict(v) for k, v in data.get("subtask_outputs", {}).items()},
             context_summary=data.get("context_summary", ""),
+            supplemented_inputs={
+                k: dict(v) for k, v in data.get("supplemented_inputs", {}).items()
+            },
             bp_config=None,
         )
