@@ -57,10 +57,21 @@ watch(() => [uiStore.selectedSubtaskId, selectedSubtask.value?.output], () => {
     const schema = selectedSubtask.value?.outputSchema as Record<string, any> | undefined
     const keys = Object.keys(out)
     if (keys.length === 1 && keys[0] === '_raw_output' && schema?.properties) {
-      // Schema 模式: 按 schema 字段初始化空值
+      // Schema 模式: try to extract field values from raw output text
+      const rawText = String(out['_raw_output'] ?? '')
       const init: Record<string, unknown> = {}
+
+      // Try to find a JSON object in the raw output text
+      let extractedJson: Record<string, unknown> | null = null
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        try {
+          extractedJson = JSON.parse(jsonMatch[0])
+        } catch { /* ignore */ }
+      }
+
       for (const key of Object.keys(schema.properties)) {
-        init[key] = ''
+        init[key] = extractedJson?.[key] ?? ''
       }
       editedData.value = init
       originalData.value = JSON.parse(JSON.stringify(init))

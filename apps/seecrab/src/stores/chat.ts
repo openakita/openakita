@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import { useSessionStore } from './session'
 import { httpClient } from '@/api/http-client'
 import { useBestPracticeStore } from './bestpractice'
-import type { Message, ReplyState, StepCard, PlanStep, SSEEvent } from '@/types'
+import type { Message, ReplyState, StepCard, PlanStep, SSEEvent, BPInstanceState } from '@/types'
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<Message[]>([])
@@ -165,6 +165,7 @@ export const useChatStore = defineStore('chat', () => {
         const e = event as any
         bpStore.updateSubtaskOutput(e.instance_id, e.subtask_id, e.output, {
           summary: e.summary,
+          outputSchema: e.output_schema,
           subtaskName: e.subtask_name,
         })
         reply.bpSubtaskOutput = {
@@ -289,6 +290,7 @@ export const useChatStore = defineStore('chat', () => {
       duration: card.duration ?? null,
       planStepIndex: card.plan_step_index ?? null,
       agentId: card.agent_id || 'main',
+      delegateAgentId: card.delegate_agent_id || undefined,
       input: card.input ?? null,
       output: card.output ?? null,
       absorbedCalls: card.absorbed_calls ?? [],
@@ -338,15 +340,25 @@ export const useChatStore = defineStore('chat', () => {
           stepCards: (rs?.step_cards ?? []).map(_mapStepCard),
           summaryText: m.content,
           agentSummaries: rs?.agent_summaries ?? {},
-          agentThinking: rs?.agent_thinking ?? {},
+          agentThinking: _mapAgentThinking(rs?.agent_thinking),
           timer: {
             ttft: { state: 'done' as const, value: rs?.timer?.ttft ?? null },
             total: { state: 'done' as const, value: rs?.timer?.total ?? null },
           },
           askUser: null,
-          bpProgress: null,
-          bpSubtaskOutput: null,
-          bpInstanceCreated: null,
+          bpProgress: _mapBPProgress(rs?.bp_progress),
+          bpSubtaskOutput: rs?.bp_subtask_output ? {
+            subtaskId: rs.bp_subtask_output.subtask_id,
+            output: rs.bp_subtask_output.output,
+            summary: rs.bp_subtask_output.summary,
+          } : null,
+          bpInstanceCreated: rs?.bp_instance_created ? {
+            instanceId: rs.bp_instance_created.instance_id,
+            bpId: rs.bp_instance_created.bp_id,
+            bpName: rs.bp_instance_created.bp_name,
+            runMode: rs.bp_instance_created.run_mode,
+            subtasks: rs.bp_instance_created.subtasks ?? [],
+          } : null,
           bpAskUser: null,
           bpOffer: null,
           isDone: true,
@@ -354,6 +366,32 @@ export const useChatStore = defineStore('chat', () => {
       }
       return msg
     })
+  }
+
+  function _mapAgentThinking(raw: Record<string, any> | undefined): Record<string, { content: string; done: boolean }> {
+    if (!raw) return {}
+    const result: Record<string, { content: string; done: boolean }> = {}
+    for (const [key, val] of Object.entries(raw)) {
+      result[key] = { content: val?.content ?? '', done: true }
+    }
+    return result
+  }
+
+  function _mapBPProgress(raw: any): BPInstanceState | null {
+    if (!raw) return null
+    return {
+      instanceId: raw.instance_id ?? '',
+      bpId: raw.bp_id ?? '',
+      bpName: raw.bp_name ?? '',
+      status: raw.status ?? 'active',
+      runMode: raw.run_mode ?? 'manual',
+      subtasks: (raw.subtasks ?? []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        status: raw.statuses?.[s.id] ?? 'pending',
+      })),
+      currentSubtaskIndex: raw.current_subtask_index ?? 0,
+    }
   }
 
   function _mapStepCard(raw: any): StepCard {
@@ -366,6 +404,7 @@ export const useChatStore = defineStore('chat', () => {
       duration: raw.duration ?? null,
       planStepIndex: raw.plan_step_index ?? null,
       agentId: raw.agent_id ?? 'main',
+      delegateAgentId: raw.delegate_agent_id || undefined,
       input: raw.input ?? null,
       output: raw.output ?? null,
       absorbedCalls: raw.absorbed_calls ?? [],
@@ -376,6 +415,34 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const data = await httpClient.getSession(sessionId)
       messages.value = _mapHistoryMessages(data.messages || [])
+
+      // Restore BP store from persisted messages
+      const bpStore = useBestPracticeStore()
+      bpStore.clear()
+      for (const msg of messages.value) {
+        if (msg.reply?.bpProgress) {
+          const bp = msg.reply.bpProgress
+          bpStore.updateFromProgress({
+            instance_id: bp.instanceId,
+            bp_name: bp.bpName,
+            statuses: Object.fromEntries(
+              bp.subtasks.map(s => [s.id, s.status])
+            ),
+            subtasks: bp.subtasks.map(s => ({ id: s.id, name: s.name })),
+            current_subtask_index: bp.currentSubtaskIndex,
+            run_mode: bp.runMode,
+            status: bp.status,
+          })
+        }
+        if (msg.reply?.bpSubtaskOutput && msg.reply.bpProgress) {
+          bpStore.updateSubtaskOutput(
+            msg.reply.bpProgress.instanceId,
+            msg.reply.bpSubtaskOutput.subtaskId,
+            msg.reply.bpSubtaskOutput.output,
+            { summary: msg.reply.bpSubtaskOutput.summary },
+          )
+        }
+      }
     } catch {
       messages.value = []
     }

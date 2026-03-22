@@ -144,26 +144,18 @@ class BPEngine:
                     "subtask_name": subtask.name,
                 }
 
-                # Gap 5: yield delegate card (running)
                 delegate_step_id = f"delegate_{subtask.id}"
-                yield {
-                    "type": "step_card",
-                    "step_id": delegate_step_id,
-                    "title": f"委派 {subtask.agent_profile}: {subtask.name}",
-                    "status": "running",
-                    "source_type": "tool",
-                    "card_type": "delegate",
-                    "agent_id": "main",
-                    "duration": None,
-                }
                 delegate_start = time.monotonic()
 
                 # Execute via _run_subtask_stream with error handling (R20)
+                # Delegate card is yielded INSIDE _run_subtask_stream after
+                # thinking events so that thinking appears first in timeline.
                 output = None
                 raw_result_text = ""
                 try:
                     async for event in self._run_subtask_stream(
                         instance_id, subtask, input_data, bp_config, session,
+                        delegate_step_id=delegate_step_id,
                     ):
                         if event.get("type") == "_internal_output":
                             output = event.get("data", {})
@@ -202,6 +194,7 @@ class BPEngine:
                     "source_type": "tool",
                     "card_type": "delegate",
                     "agent_id": "main",
+                    "delegate_agent_id": subtask.agent_profile,
                     "duration": delegate_duration,
                 }
 
@@ -217,6 +210,7 @@ class BPEngine:
                     "subtask_id": subtask.id,
                     "subtask_name": subtask.name,
                     "output": output,
+                    "output_schema": scheduler.derive_output_schema(subtask.id),
                     "summary": (
                         self._extract_summary_from_result(raw_result_text, output)
                         if raw_result_text
@@ -298,11 +292,16 @@ class BPEngine:
         input_data: dict[str, Any],
         bp_config: BestPracticeConfig,
         session: Any,
+        *,
+        delegate_step_id: str = "",
     ) -> AsyncIterator[dict]:
         """Execute a single subtask, yield SubAgent streaming events.
 
         Uses orchestrator.delegate() + temporary event_bus to capture streaming
         events. The final output is yielded as an ``_internal_output`` event.
+
+        The delegate card (running) is yielded AFTER thinking events so that
+        thinking blocks appear before the delegate card in the timeline.
 
         R17: delegate_task is exposed on session.context._bp_delegate_task for
         disconnect watcher cancellation.
@@ -364,6 +363,23 @@ class BPEngine:
                 agent_id=sub_agent_id,
             )
 
+            # Deferred delegate card: yield thinking first, then delegate card
+            # before the first non-thinking event arrives.
+            delegate_card_yielded = False
+
+            def _make_delegate_card(status: str, duration=None):
+                return {
+                    "type": "step_card",
+                    "step_id": delegate_step_id,
+                    "title": f"委派 {subtask.agent_profile}: {subtask.name}",
+                    "status": status,
+                    "source_type": "tool",
+                    "card_type": "delegate",
+                    "agent_id": "main",
+                    "delegate_agent_id": sub_agent_id,
+                    "duration": duration,
+                }
+
             while True:
                 try:
                     event = await asyncio.wait_for(event_bus.get(), timeout=1.0)
@@ -383,6 +399,23 @@ class BPEngine:
                         sub_agent_id = aid
                         aggregator._agent_id = aid
                     continue
+
+                # Forward thinking content BEFORE delegate card
+                if etype == "thinking_delta":
+                    yield {
+                        "type": "thinking",
+                        "content": event.get("content", ""),
+                        "agent_id": sub_agent_id,
+                    }
+                    continue
+
+                if etype in ("thinking_start", "thinking_end"):
+                    continue
+
+                # For any non-thinking event, ensure delegate card is yielded first
+                if not delegate_card_yielded:
+                    yield _make_delegate_card("running")
+                    delegate_card_yielded = True
 
                 # Tool call start → filter + aggregate
                 if etype == "tool_call_start":
@@ -425,19 +458,9 @@ class BPEngine:
                     yield event
                     continue
 
-                # Forward thinking content for frontend display
-                if etype == "thinking_delta":
-                    yield {
-                        "type": "thinking",
-                        "content": event.get("content", ""),
-                        "agent_id": sub_agent_id,
-                    }
-                    continue
-
-                if etype in ("thinking_start", "thinking_end"):
-                    continue
-
-                # Skip other raw events
+            # Ensure delegate card was yielded (edge case: only thinking events)
+            if not delegate_card_yielded:
+                yield _make_delegate_card("running")
 
             # Flush any pending aggregation
             for ev in await aggregator.flush():
@@ -574,16 +597,38 @@ class BPEngine:
     @staticmethod
     def _parse_output(result: str) -> dict[str, Any]:
         """从委派结果中提取 JSON 输出。"""
+        # Strategy 1: entire string is JSON
         try:
             return json.loads(result)
         except (json.JSONDecodeError, TypeError):
             pass
+
+        # Strategy 2: ```json ... ``` code block
         match = re.search(r"```json\s*(.*?)\s*```", result, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group(1))
             except json.JSONDecodeError:
                 pass
+
+        # Strategy 3: find last JSON object in text (agents often output JSON at the end)
+        last_brace = result.rfind("{")
+        if last_brace >= 0:
+            depth = 0
+            for i in range(last_brace, len(result)):
+                if result[i] == "{":
+                    depth += 1
+                elif result[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            parsed = json.loads(result[last_brace : i + 1])
+                            if isinstance(parsed, dict) and len(parsed) > 1:
+                                return parsed
+                        except json.JSONDecodeError:
+                            pass
+                        break
+
         return {"_raw_output": str(result)}
 
     def _validate_output_soft(
@@ -667,6 +712,9 @@ class BPEngine:
                         subtask_name = st.name
                         if i + 1 < len(cfg.subtasks):
                             output_schema = cfg.subtasks[i + 1].input_schema
+                        else:
+                            # Last subtask: use the overall BP's final_output_schema
+                            output_schema = getattr(cfg, "final_output_schema", None)
                         break
 
             await bus.put({

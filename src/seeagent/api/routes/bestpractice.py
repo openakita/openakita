@@ -156,6 +156,74 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+# ── Reply state collection helpers ─────────────────────────────
+
+
+def _new_reply_state() -> dict:
+    """Create empty reply_state dict."""
+    return {
+        "thinking": "",
+        "step_cards": [],
+        "agent_thinking": {},
+        "agent_summaries": {},
+        "plan_checklist": None,
+        "timer": {"ttft": None, "total": None},
+        "bp_progress": None,
+        "bp_subtask_output": None,
+        "bp_subtask_complete": None,
+        "bp_instance_created": None,
+    }
+
+
+def _upsert_step_card(cards: list, event: dict) -> None:
+    """Upsert step card by step_id."""
+    step_id = event.get("step_id")
+    for i, c in enumerate(cards):
+        if c.get("step_id") == step_id:
+            cards[i] = event
+            return
+    cards.append(event)
+
+
+def _collect_reply_state(event: dict, reply_state: dict, full_reply: list) -> None:
+    """Collect SSE event data into reply_state for persistence."""
+    etype = event.get("type")
+    if etype == "thinking":
+        agent_id = event.get("agent_id")
+        if agent_id and agent_id != "main":
+            at = reply_state["agent_thinking"].setdefault(
+                agent_id, {"content": "", "done": False},
+            )
+            at["content"] += event.get("content", "")
+        else:
+            reply_state["thinking"] += event.get("content", "")
+    elif etype == "step_card":
+        _upsert_step_card(reply_state["step_cards"], event)
+    elif etype == "ai_text":
+        agent_id = event.get("agent_id")
+        if agent_id and agent_id != "main":
+            reply_state["agent_summaries"][agent_id] = (
+                reply_state["agent_summaries"].get(agent_id, "")
+                + event.get("content", "")
+            )
+        else:
+            full_reply.append(event.get("content", ""))
+    elif etype == "bp_progress":
+        reply_state["bp_progress"] = event
+    elif etype == "bp_subtask_output":
+        reply_state["bp_subtask_output"] = event
+    elif etype == "bp_subtask_complete":
+        reply_state["bp_subtask_complete"] = event
+    elif etype == "bp_instance_created":
+        reply_state["bp_instance_created"] = event
+    elif etype == "plan_checklist":
+        reply_state["plan_checklist"] = event.get("steps")
+    elif etype == "timer_update":
+        phase = event.get("phase")
+        if phase in reply_state["timer"] and event.get("state") == "done":
+            reply_state["timer"][phase] = event.get("value")
+
+
 # ── Session resolution (R15) ──────────────────────────────────
 
 
@@ -175,7 +243,10 @@ def _resolve_session(request: Request, session_id: str, *, create_if_missing: bo
 # ── State persistence (R12, R18) ──────────────────────────────
 
 
-def _persist_bp_to_session(session, instance_id: str, sm) -> None:
+def _persist_bp_to_session(
+    session, instance_id: str, sm,
+    *, reply_state: dict | None = None, full_reply: str = "",
+) -> None:
     """Persist BP state to session (R12, R18).
     Two layers: metadata for recovery + add_message for history.
     """
@@ -191,14 +262,15 @@ def _persist_bp_to_session(session, instance_id: str, sm) -> None:
     try:
         bp_config = snap.bp_config
         bp_name = bp_config.name if bp_config else snap.bp_id
-        done_count = sum(1 for s in snap.subtask_statuses.values() if s == "done")
+        done_count = sum(
+            1 for s in snap.subtask_statuses.values()
+            if (s.value if hasattr(s, "value") else s) == "done"
+        )
         total = len(snap.subtask_statuses)
-        summary = f"[BP] 「{bp_name}」进度: {done_count}/{total}"
-        session.add_message("assistant", summary, reply_state={
-            "bp_instance_id": instance_id,
-            "bp_id": snap.bp_id,
-            "subtask_statuses": snap.subtask_statuses,
-        })
+        summary = full_reply or f"[BP] 「{bp_name}」进度: {done_count}/{total}"
+
+        rs = reply_state or {}
+        session.add_message("assistant", summary, reply_state=rs)
     except Exception:
         pass
 
@@ -238,6 +310,8 @@ async def bp_start(request: Request):
 
     async def generate():
         disconnect_event = asyncio.Event()
+        reply_state = _new_reply_state()
+        full_reply: list[str] = []
 
         async def _disconnect_watcher():
             while not disconnect_event.is_set():
@@ -253,17 +327,22 @@ async def bp_start(request: Request):
         watcher = asyncio.create_task(_disconnect_watcher())
 
         try:
-            yield _sse({"type": "bp_instance_created",
-                        "instance_id": instance_id, "bp_id": bp_id})
+            created_event = {"type": "bp_instance_created",
+                             "instance_id": instance_id, "bp_id": bp_id}
+            yield _sse(created_event)
+            _collect_reply_state(created_event, reply_state, full_reply)
 
             async for event in engine.advance(instance_id, session):
                 if disconnect_event.is_set():
                     break
                 yield _sse(event)
+                _collect_reply_state(event, reply_state, full_reply)
                 if event.get("type") in ("bp_subtask_complete", "bp_progress"):
                     _bp_renew_busy(session_id)
 
-            _persist_bp_to_session(session, instance_id, sm)
+            _persist_bp_to_session(session, instance_id, sm,
+                                   reply_state=reply_state,
+                                   full_reply="".join(full_reply))
             yield _sse({"type": "done"})
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})
@@ -295,6 +374,8 @@ async def bp_next(request: Request):
 
     async def generate():
         disconnect_event = asyncio.Event()
+        reply_state = _new_reply_state()
+        full_reply: list[str] = []
 
         async def _disconnect_watcher():
             while not disconnect_event.is_set():
@@ -314,10 +395,13 @@ async def bp_next(request: Request):
                 if disconnect_event.is_set():
                     break
                 yield _sse(event)
+                _collect_reply_state(event, reply_state, full_reply)
                 if event.get("type") in ("bp_subtask_complete", "bp_progress"):
                     _bp_renew_busy(session_id)
 
-            _persist_bp_to_session(session, instance_id, get_bp_state_manager())
+            _persist_bp_to_session(session, instance_id, get_bp_state_manager(),
+                                   reply_state=reply_state,
+                                   full_reply="".join(full_reply))
             yield _sse({"type": "done"})
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})
@@ -351,6 +435,8 @@ async def bp_answer(request: Request):
 
     async def generate():
         disconnect_event = asyncio.Event()
+        reply_state = _new_reply_state()
+        full_reply: list[str] = []
 
         async def _disconnect_watcher():
             while not disconnect_event.is_set():
@@ -370,8 +456,11 @@ async def bp_answer(request: Request):
                 if disconnect_event.is_set():
                     break
                 yield _sse(event)
+                _collect_reply_state(event, reply_state, full_reply)
 
-            _persist_bp_to_session(session, instance_id, get_bp_state_manager())
+            _persist_bp_to_session(session, instance_id, get_bp_state_manager(),
+                                   reply_state=reply_state,
+                                   full_reply="".join(full_reply))
             yield _sse({"type": "done"})
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})

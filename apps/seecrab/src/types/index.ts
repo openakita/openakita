@@ -66,6 +66,7 @@ export interface StepCard {
   duration: number | null
   planStepIndex: number | null
   agentId: string
+  delegateAgentId?: string
   input: Record<string, unknown> | null
   output: string | null
   absorbedCalls: AbsorbedCall[]
@@ -75,6 +76,7 @@ export interface StepCard {
   card_type?: string
   plan_step_index?: number | null
   agent_id?: string
+  delegate_agent_id?: string
   absorbed_calls?: AbsorbedCall[]
 }
 

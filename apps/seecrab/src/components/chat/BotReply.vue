@@ -8,15 +8,16 @@
     />
     <ReplyHeader :reply="reply" />
     <ThinkingBlock v-if="reply.thinking" :content="reply.thinking" :done="reply.thinkingDone" />
+    <ThinkingBlock v-if="preCardThinking" :content="preCardThinking.content" :done="preCardThinking.done" />
     <PlanChecklist v-if="reply.planChecklist" :steps="reply.planChecklist" />
     <StepCardList v-if="reply.stepCards.length" :cards="reply.stepCards" :agent-summaries="reply.agentSummaries" :agent-thinking="reply.agentThinking" />
     <SummaryOutput v-if="reply.summaryText && !reply.bpSubtaskOutput" :content="reply.summaryText" />
     <SubtaskCompleteBlock
-      v-if="reply.bpSubtaskOutput && reply.bpProgress?.runMode === 'manual'"
+      v-if="reply.bpSubtaskOutput && (reply.bpProgress?.runMode === 'manual' || isLastSubtask)"
       :subtask-name="reply.bpProgress?.subtasks.find(s => s.id === reply.bpSubtaskOutput?.subtaskId)?.name ?? ''"
       :subtask-id="reply.bpSubtaskOutput.subtaskId"
       :instance-id="reply.bpProgress?.instanceId ?? ''"
-      :is-last-subtask="(reply.bpProgress?.subtasks.findIndex(s => s.id === reply.bpSubtaskOutput?.subtaskId) ?? 0) >= (reply.bpProgress?.subtasks.length ?? 1) - 1"
+      :is-last-subtask="isLastSubtask"
       :subtask-index="Math.max(0, reply.bpProgress?.subtasks.findIndex(s => s.id === reply.bpSubtaskOutput?.subtaskId) ?? 0)"
       :summary="reply.bpSubtaskOutput.summary"
       :disabled="!reply.isDone"
@@ -50,6 +51,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ReplyState } from '@/types'
 import ReplyHeader from './ReplyHeader.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -73,6 +75,26 @@ const props = defineProps<{ reply: ReplyState }>()
 
 const bpStore = useBestPracticeStore()
 const uiStore = useUIStore()
+
+// Task 1: Sub-agent thinking visible before delegate card arrives
+const preCardThinking = computed(() => {
+  const reply = props.reply
+  if (reply.stepCards.length > 0) return null
+  for (const [, thinking] of Object.entries(reply.agentThinking)) {
+    if (thinking.content) return thinking
+  }
+  return null
+})
+
+// Task 2: Show SubtaskCompleteBlock for last subtask regardless of run mode
+const isLastSubtask = computed(() => {
+  const reply = props.reply
+  if (!reply.bpSubtaskOutput || !reply.bpProgress) return false
+  const idx = reply.bpProgress.subtasks.findIndex(
+    s => s.id === reply.bpSubtaskOutput?.subtaskId
+  )
+  return idx >= 0 && idx >= reply.bpProgress.subtasks.length - 1
+})
 
 function handleToggleMode(mode: 'manual' | 'auto') {
   const inst = bpStore.activeInstance

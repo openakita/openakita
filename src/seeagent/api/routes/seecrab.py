@@ -260,8 +260,12 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
             reply_state = {
                 "thinking": "",
                 "step_cards": [],
+                "agent_thinking": {},
+                "agent_summaries": {},
                 "plan_checklist": None,
                 "timer": {"ttft": None, "total": None},
+                "bp_progress": None,
+                "bp_subtask_output": None,
             }
 
             async for event in adapter.transform(raw_stream, reply_id=reply_id, event_bus=event_bus):
@@ -273,9 +277,23 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                 # Collect reply_state for persistence
                 etype = event.get("type")
                 if etype == "ai_text":
-                    full_reply += event.get("content", "")
+                    aid = event.get("agent_id")
+                    if aid and aid != "main":
+                        reply_state["agent_summaries"][aid] = (
+                            reply_state["agent_summaries"].get(aid, "")
+                            + event.get("content", "")
+                        )
+                    else:
+                        full_reply += event.get("content", "")
                 elif etype == "thinking":
-                    reply_state["thinking"] += event.get("content", "")
+                    aid = event.get("agent_id")
+                    if aid and aid != "main":
+                        at = reply_state["agent_thinking"].setdefault(
+                            aid, {"content": "", "done": False},
+                        )
+                        at["content"] += event.get("content", "")
+                    else:
+                        reply_state["thinking"] += event.get("content", "")
                 elif etype == "step_card":
                     _upsert_step_card(reply_state["step_cards"], event)
                 elif etype == "plan_checklist":
@@ -284,6 +302,10 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                     phase = event.get("phase")
                     if phase in reply_state["timer"] and event.get("state") == "done":
                         reply_state["timer"][phase] = event.get("value")
+                elif etype == "bp_progress":
+                    reply_state["bp_progress"] = event
+                elif etype in ("bp_subtask_output", "bp_subtask_complete"):
+                    reply_state["bp_subtask_output"] = event
 
             # Save assistant reply with reply_state to session
             if session and full_reply:

@@ -43,20 +43,22 @@ const renderItems = computed<RenderItem[]>(() => {
   const items: RenderItem[] = []
   const summaries = props.agentSummaries ?? {}
   const thinking = props.agentThinking ?? {}
+  const emittedThinking = new Set<string>()
 
   for (let i = 0; i < props.cards.length; i++) {
     const card = props.cards[i]
 
-    // Insert thinking block before delegate card that starts an agent group
-    if (card.cardType === 'delegate') {
-      // Look ahead: find the sub-agent that follows this delegate
-      const next = props.cards[i + 1]
-      if (next && next.agentId && next.agentId !== 'main') {
-        const at = thinking[next.agentId]
+    // Insert thinking block before delegate card using delegateAgentId
+    if (card.cardType === 'delegate' && card.delegateAgentId) {
+      const dedupKey = card.stepId  // unique per subtask delegation
+      if (!emittedThinking.has(dedupKey)) {
+        const aid = card.delegateAgentId
+        const at = thinking[aid]
         if (at && at.content) {
+          emittedThinking.add(dedupKey)
           items.push({
             type: 'thinking',
-            key: `thinking_${next.agentId}_${i}`,
+            key: `thinking_${aid}_${i}`,
             thinkingContent: at.content,
             thinkingDone: at.done,
           })
@@ -65,11 +67,12 @@ const renderItems = computed<RenderItem[]>(() => {
     }
 
     // For non-BP sub-agents (no preceding delegate card), insert thinking before first card of group
-    if (card.agentId && card.agentId !== 'main') {
+    if (card.agentId && card.agentId !== 'main' && !emittedThinking.has(card.agentId)) {
       const prev = props.cards[i - 1]
       if (!prev || (prev.agentId !== card.agentId && prev.cardType !== 'delegate')) {
         const at = thinking[card.agentId]
         if (at && at.content) {
+          emittedThinking.add(card.agentId)
           items.push({
             type: 'thinking',
             key: `thinking_${card.agentId}_${i}`,
