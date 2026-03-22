@@ -2749,6 +2749,8 @@ fn main() {
             openakita_qqbot_onboard_create,
             openakita_qqbot_onboard_poll_and_create,
             openakita_qqbot_validate,
+            openakita_wechat_onboard_start,
+            openakita_wechat_onboard_poll,
             fetch_pypi_versions,
             http_get_json,
             http_proxy_request,
@@ -5376,6 +5378,31 @@ async fn openakita_qqbot_validate(
             "--app-secret",
             &app_secret,
         ];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Start WeChat iLink Bot QR code login.
+/// Returns JSON with qrcode + qrcode_url.
+#[tauri::command]
+async fn openakita_wechat_onboard_start(venv_dir: String) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["wechat-onboard-start"];
+        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
+    })
+    .await
+}
+
+/// Poll WeChat QR code login status (long-poll).
+/// Returns JSON with status (wait/scaned/confirmed/expired) + token.
+#[tauri::command]
+async fn openakita_wechat_onboard_poll(
+    venv_dir: String,
+    qrcode: String,
+) -> Result<String, String> {
+    spawn_blocking_result(move || {
+        let args = vec!["wechat-onboard-poll", "--qrcode", &qrcode];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })
     .await

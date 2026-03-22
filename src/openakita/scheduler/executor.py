@@ -129,7 +129,7 @@ class TaskExecutor:
                     chat_id=task.chat_id,
                     text=message,
                 )
-                if not msg_id:
+                if msg_id is None:
                     raise RuntimeError(
                         f"Reminder send failed (no message_id) for {task.channel_id}/{task.chat_id}"
                     )

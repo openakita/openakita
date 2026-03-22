@@ -195,6 +195,8 @@ def _collect_system_info() -> dict:
             channels.append("onebot")
         if getattr(settings, "qqbot_enabled", False):
             channels.append("qqbot")
+        if getattr(settings, "wechat_enabled", False):
+            channels.append("wechat")
         info["im_channels"] = channels
     except Exception:
         pass
@@ -332,7 +334,8 @@ def _collect_sanitized_config() -> dict:
     sanitized: dict = {}
     for k, v in sorted(os.environ.items()):
         if not k.startswith(("OPENAKITA", "ANTHROPIC", "OPENAI", "FEISHU",
-                             "TELEGRAM", "DINGTALK", "WEWORK", "ONEBOT", "QQ")):
+                             "TELEGRAM", "DINGTALK", "WEWORK", "WECHAT",
+                             "ONEBOT", "QQ")):
             continue
         sanitized[k] = "***" if _SENSITIVE_KEY_RE.search(k) else v
 

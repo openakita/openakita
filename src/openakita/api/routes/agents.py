@@ -14,7 +14,7 @@ _deleting_bot_ids: set[str] = set()
 _deleting_lock = asyncio.Lock()
 
 # Valid IM bot types
-VALID_BOT_TYPES = frozenset({"feishu", "telegram", "dingtalk", "wework", "wework_ws", "onebot", "onebot_reverse", "qqbot"})
+VALID_BOT_TYPES = frozenset({"feishu", "telegram", "dingtalk", "wework", "wework_ws", "onebot", "onebot_reverse", "qqbot", "wechat"})
 
 
 def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:

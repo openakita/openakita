@@ -15,12 +15,19 @@ interface WecomQRModalProps {
 }
 
 async function onboardStart(venvDir: string, apiBaseUrl?: string): Promise<Record<string, any>> {
+  if (apiBaseUrl) {
+    const res = await safeFetch(`${apiBaseUrl}/api/wecom/onboard/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    return res.json();
+  }
   if (IS_TAURI) {
     const raw = await invoke<string>("openakita_wecom_onboard_start", { venvDir });
     return JSON.parse(raw);
   }
-  const base = apiBaseUrl || "";
-  const res = await safeFetch(`${base}/api/wecom/onboard/start`, {
+  const res = await safeFetch(`/api/wecom/onboard/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -29,12 +36,19 @@ async function onboardStart(venvDir: string, apiBaseUrl?: string): Promise<Recor
 }
 
 async function onboardPoll(venvDir: string, scode: string, apiBaseUrl?: string): Promise<Record<string, any>> {
+  if (apiBaseUrl) {
+    const res = await safeFetch(`${apiBaseUrl}/api/wecom/onboard/poll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scode }),
+    });
+    return res.json();
+  }
   if (IS_TAURI) {
     const raw = await invoke<string>("openakita_wecom_onboard_poll", { venvDir, scode });
     return JSON.parse(raw);
   }
-  const base = apiBaseUrl || "";
-  const res = await safeFetch(`${base}/api/wecom/onboard/poll`, {
+  const res = await safeFetch(`/api/wecom/onboard/poll`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scode }),

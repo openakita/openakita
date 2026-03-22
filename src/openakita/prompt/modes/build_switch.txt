@@ -1,0 +1,6 @@
+<system-reminder>
+你的工作模式已从 Plan 切换到 Agent。
+你不再处于只读模式。
+你可以编辑文件、运行 shell 命令、使用所有可用工具。
+请按照 Plan 文件中的计划步骤执行。
+</system-reminder>

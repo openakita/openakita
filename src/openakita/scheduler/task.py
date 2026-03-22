@@ -292,6 +292,7 @@ class ScheduledTask:
         """标记执行完成"""
         self.last_run = datetime.now()
         self.run_count += 1
+        self.fail_count = 0
         self.updated_at = datetime.now()
 
         if self.trigger_type == TriggerType.ONCE:

@@ -169,7 +169,9 @@ class StickerEngine:
         limit: int = 5,
     ) -> list[dict]:
         """
-        关键词搜索表情包
+        关键词搜索表情包（带相关性评分）
+
+        匹配优先级：精确匹配 > query是kw子串 > kw是query子串(len>=2) > 单字回退
 
         Args:
             query: 搜索关键词
@@ -185,19 +187,25 @@ class StickerEngine:
         if not self._stickers:
             return []
 
-        # 收集候选 sticker 索引
-        candidate_indices: set[int] = set()
+        scored: dict[int, float] = {}
 
-        # 关键词匹配
         for kw, indices in self._keyword_index.items():
-            if query in kw or kw in query:
-                candidate_indices.update(indices)
+            if kw == query:
+                score = 3.0
+            elif query in kw:
+                score = 2.0
+            elif kw in query and len(kw) >= 2:
+                score = 1.0
+            else:
+                continue
+            for idx in indices:
+                scored[idx] = max(scored.get(idx, 0), score)
 
-        # 如果没有找到，尝试单字匹配
-        if not candidate_indices:
+        if not scored:
             for char in query:
                 if char in self._keyword_index:
-                    candidate_indices.update(self._keyword_index[char])
+                    for idx in self._keyword_index[char]:
+                        scored[idx] = max(scored.get(idx, 0), 0.5)
 
         # 分类过滤
         if category:
@@ -206,19 +214,19 @@ class StickerEngine:
                 if category in cat_name or cat_name in category:
                     cat_indices.update(indices)
             if cat_indices:
-                if candidate_indices:
-                    candidate_indices &= cat_indices
-                else:
-                    candidate_indices = cat_indices
+                scored = {idx: s for idx, s in scored.items() if idx in cat_indices}
+                if not scored:
+                    for idx in cat_indices:
+                        scored[idx] = 0.1
 
-        # 转换为 sticker 列表
-        results = [self._stickers[i] for i in candidate_indices if i < len(self._stickers)]
+        # 按分数分组，同分组内随机打散，高分优先
+        sorted_indices = sorted(
+            scored.keys(),
+            key=lambda i: (-scored[i], random.random()),
+        )
 
-        # 随机选取
-        if len(results) > limit:
-            results = random.sample(results, limit)
-
-        return results
+        results = [self._stickers[i] for i in sorted_indices if i < len(self._stickers)]
+        return results[:limit]
 
     async def get_random_by_mood(self, mood: str) -> dict | None:
         """

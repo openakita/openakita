@@ -388,6 +388,19 @@ async def list_channels(request: Request):
                 if a:
                     entry["alias"] = a
 
+    # Enrich with bot display names from settings
+    from openakita.config import settings
+    bot_name_map: dict[str, str] = {}
+    for b in getattr(settings, "im_bots", []):
+        if isinstance(b, dict) and b.get("id") and b.get("name"):
+            bot_name_map[b["id"]] = b["name"]
+    for entry in results:
+        ch = entry.get("channel_id", "")
+        parts = ch.split(":", 1)
+        bot_id = parts[1] if len(parts) > 1 else ch
+        if bot_id in bot_name_map:
+            entry["bot_display_name"] = bot_name_map[bot_id]
+
     return {"channels": results}
 
 

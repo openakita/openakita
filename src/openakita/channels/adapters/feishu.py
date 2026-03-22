@@ -182,6 +182,8 @@ class FeishuAdapter(ChannelAdapter):
         self._thinking_cards: dict[str, str] = {}
         # 最近一条用户消息 ID：session_key → user_msg_id（供 send_typing 回复定位）
         self._last_user_msg: dict[str, str] = {}
+        # 已消耗过 thinking card 的 session_key 集合，阻止 _keep_typing 重建卡片
+        self._typing_suppressed: set[str] = set()
 
         # 流式输出状态（构造参数优先，None 时 fallback 到 env）
         self._streaming_enabled = streaming_enabled if streaming_enabled is not None else (
@@ -1019,6 +1021,8 @@ class FeishuAdapter(ChannelAdapter):
         self._streaming_thinking.pop(sk, None)
         self._streaming_thinking_ms.pop(sk, None)
         self._streaming_chain.pop(sk, None)
+        if sk in self._typing_suppressed:
+            return
         if sk in self._thinking_cards:
             return
         if not self._client:
@@ -1035,6 +1039,7 @@ class FeishuAdapter(ChannelAdapter):
         任何事。仅在异常路径或 _keep_typing 重建卡片后未被消费时触发。
         """
         sk = self._make_session_key(chat_id, thread_id)
+        self._typing_suppressed.discard(sk)
         card_id = self._thinking_cards.pop(sk, None)
         if card_id:
             logger.debug(f"Feishu: clear_typing removing leftover card {card_id}")
@@ -1300,6 +1305,7 @@ class FeishuAdapter(ChannelAdapter):
             if success:
                 self._streaming_finalized.add(sk)
                 self._thinking_cards.pop(sk, None)
+                self._typing_suppressed.add(sk)
                 return True
         except Exception as e:
             logger.warning(f"Feishu: finalize_stream patch failed: {e}")
@@ -1308,6 +1314,7 @@ class FeishuAdapter(ChannelAdapter):
         with contextlib.suppress(Exception):
             await self._delete_feishu_message(card_id)
         self._thinking_cards.pop(sk, None)
+        self._typing_suppressed.add(sk)
         return False
 
     # ── /feishu command helpers ─────────────────────────────────────────
@@ -1847,21 +1854,25 @@ class FeishuAdapter(ChannelAdapter):
             card_id = self._thinking_cards.get(sk)
             self._streaming_finalized.discard(sk)
             self._thinking_cards.pop(sk, None)
+            self._typing_suppressed.add(sk)
             self._streaming_buffers.pop(sk, None)
             self._streaming_last_patch.pop(sk, None)
             return card_id or sk
         if sk not in self._streaming_buffers:
-            thinking_card_id = self._thinking_cards.pop(sk, None)
-            if thinking_card_id:
-                text = message.content.text or ""
-                if text and not message.content.has_media:
+            text = message.content.text or ""
+            # 仅对纯文本消息（最终回复）消耗 thinking card；
+            # media 消息（如工具中间发送的表情包/图片）不应消耗，保留卡片给最终回复使用
+            if text and not message.content.has_media:
+                thinking_card_id = self._thinking_cards.pop(sk, None)
+                if thinking_card_id:
+                    self._typing_suppressed.add(sk)
                     try:
                         if await self._patch_card_content(thinking_card_id, text):
                             return thinking_card_id
                     except Exception as e:
                         logger.warning(f"Feishu: patch thinking card failed: {e}")
-                with contextlib.suppress(Exception):
-                    await self._delete_feishu_message(thinking_card_id)
+                    with contextlib.suppress(Exception):
+                        await self._delete_feishu_message(thinking_card_id)
 
         reply_target = message.reply_to or message.thread_id
 

@@ -1291,11 +1291,10 @@ class WeWorkBotAdapter(ChannelAdapter):
                 self._remove_url_from_msgid_map(url)
 
         if not url:
-            logger.debug(
+            raise RuntimeError(
                 f"WeWorkBot: No response_url for chat_id={chat_id}, "
                 f"already consumed or expired"
             )
-            return ""
 
         data = {
             "msgtype": "markdown",
@@ -1311,11 +1310,10 @@ class WeWorkBotAdapter(ChannelAdapter):
             result = response.json()
 
             if result.get("errcode", 0) != 0:
-                logger.error(
+                raise RuntimeError(
                     f"WeWorkBot: response_url reply failed: "
                     f"errcode={result.get('errcode')}, errmsg={result.get('errmsg')}"
                 )
-                return ""
 
             logger.info(
                 f"WeWorkBot: Sent via response_url fallback ({len(text)} chars)"
@@ -1323,8 +1321,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             return "response_url_sent"
 
         except Exception as e:
-            logger.error(f"WeWorkBot: response_url request failed: {e}")
-            return ""
+            raise RuntimeError(f"WeWorkBot: response_url request failed: {e}") from e
 
     def _pop_response_url(self, chat_id: str) -> str | None:
         """从 chat_key 备用队列中弹出一个可用的 response_url"""

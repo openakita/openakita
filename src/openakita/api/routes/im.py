@@ -53,6 +53,13 @@ async def list_channels(request: Request):
     if gateway is None:
         return JSONResponse(content={"channels": channels})
 
+    # Build bot_id -> bot_name lookup from settings
+    from openakita.config import settings
+    bot_name_map: dict[str, str] = {}
+    for b in getattr(settings, "im_bots", []):
+        if isinstance(b, dict) and b.get("id") and b.get("name"):
+            bot_name_map[b["id"]] = b["name"]
+
     # _adapters is a dict {name: adapter} in MessageGateway
     adapters_dict = getattr(gateway, "_adapters", None) or {}
     adapters_list = getattr(gateway, "adapters", [])
@@ -78,10 +85,17 @@ async def list_channels(request: Request):
                 times = [t for t in times if t is not None]
                 if times:
                     last_active = str(max(times))
+        bot_id = getattr(adapter, "bot_id", None) or name
+        display_name = (
+            getattr(adapter, "display_name", None)
+            or bot_name_map.get(bot_id)
+            or bot_name_map.get(name)
+            or name
+        )
         channels.append({
             "channel": name,
             "channel_type": getattr(adapter, "channel_type", name.split(":")[0]),
-            "name": getattr(adapter, "display_name", name),
+            "name": display_name,
             "status": status,
             "sessionCount": session_count,
             "lastActive": last_active,

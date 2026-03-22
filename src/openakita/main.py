@@ -109,16 +109,7 @@ async def _init_orchestrator():
 
 # ==================== IM 通道依赖自动安装 ====================
 
-# 通道名 → [(import_name, pip_package), ...]
-_CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
-    "feishu": [("lark_oapi", "lark-oapi")],
-    "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
-    "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
-    "wework_ws": [("websockets", "websockets"), ("cryptography", "cryptography")],
-    "onebot": [("websockets", "websockets")],
-    "onebot_reverse": [("websockets", "websockets")],
-    "qqbot": [("botpy", "qq-botpy"), ("pilk", "pilk")],
-}
+from .channels.deps import CHANNEL_DEPS as _CHANNEL_DEPS
 
 
 def _patch_backports_zstd() -> None:
@@ -247,6 +238,8 @@ def _ensure_channel_deps() -> None:
         enabled_channels.append("onebot")
     if settings.qqbot_enabled:
         enabled_channels.append("qqbot")
+    if settings.wechat_enabled:
+        enabled_channels.append("wechat")
 
     # 补充从 im_bots 中提取已启用的通道类型，确保依赖检测覆盖 UI 创建的 Bot
     for bot_cfg in (settings.im_bots or []):
@@ -609,6 +602,7 @@ async def start_im_channels(agent_or_master):
         or settings.dingtalk_enabled
         or settings.onebot_enabled
         or settings.qqbot_enabled
+        or settings.wechat_enabled
         or any(b.get("enabled", True) for b in (settings.im_bots or []))
     )
 
@@ -853,6 +847,30 @@ async def start_im_channels(agent_or_master):
             except Exception as e:
                 logger.error(f"Failed to start QQ Official Bot adapter: {e}")
 
+    # 微信个人号
+    if settings.wechat_enabled and settings.wechat_token:
+        _wc_dup = any(
+            b.get("type") == "wechat"
+            and b.get("credentials", {}).get("token") == settings.wechat_token
+            and b.get("enabled", True)
+            for b in (settings.im_bots or [])
+        )
+        if _wc_dup:
+            logger.info(
+                "WeChat adapter skipped: im_bots already contains a wechat bot "
+                f"with the same token ({settings.wechat_token[:8]}...)"
+            )
+        else:
+            try:
+                from .channels.adapters import WeChatAdapter
+
+                wc = WeChatAdapter(token=settings.wechat_token)
+                await _message_gateway.register_adapter(wc)
+                adapters_started.append("wechat")
+                logger.info("WeChat adapter registered")
+            except Exception as e:
+                logger.error(f"Failed to start WeChat adapter: {e}")
+
     # Multi-bot: create additional adapters from im_bots config
     if settings.im_bots:
         for bot_cfg in settings.im_bots:
@@ -1046,6 +1064,7 @@ def show_channels():
          settings.onebot_ws_url if settings.onebot_mode == "forward"
          else f"{settings.onebot_reverse_host}:{settings.onebot_reverse_port}"),
         ("QQ 官方机器人", settings.qqbot_enabled, settings.qqbot_app_id),
+        ("微信", settings.wechat_enabled, settings.wechat_token),
     ]
 
     for name, enabled, token in channels:
