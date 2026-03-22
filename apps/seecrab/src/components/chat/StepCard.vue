@@ -5,13 +5,13 @@
     </span>
     <span class="card-type-icon material-symbols-rounded">{{ cardTypeIcon }}</span>
     <span class="title">{{ card.title }}</span>
-    <span v-if="card.duration != null" class="duration">{{ card.duration }}s</span>
+    <span v-if="displayDuration" :class="['duration', { 'live': isRunningTimer }]">{{ displayDuration }}</span>
     <span class="arrow material-symbols-rounded">chevron_right</span>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useUIStore } from '@/stores/ui'
 import type { StepCard } from '@/types'
 
@@ -25,6 +25,45 @@ const cardTypeIcon = computed(() => {
   }
   return map[props.card.cardType] ?? 'build'
 })
+
+// Gap 6: client-side live timer
+const startTime = ref<number | null>(null)
+const liveSeconds = ref(0)
+let rafId: number | null = null
+
+function stopTimer() {
+  if (rafId != null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
+  }
+}
+
+watch(() => props.card.status, (status) => {
+  if (status === 'running' && !startTime.value) {
+    startTime.value = Date.now()
+    const tick = () => {
+      liveSeconds.value = (Date.now() - startTime.value!) / 1000
+      rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+  } else if (status !== 'running') {
+    stopTimer()
+  }
+}, { immediate: true })
+
+onBeforeUnmount(stopTimer)
+
+const displayDuration = computed(() => {
+  if (props.card.status === 'running') {
+    return liveSeconds.value.toFixed(1) + 's'
+  }
+  if (props.card.duration != null) {
+    return props.card.duration + 's'
+  }
+  return null
+})
+
+const isRunningTimer = computed(() => props.card.status === 'running' && startTime.value != null)
 </script>
 
 <style scoped>
@@ -87,6 +126,10 @@ const cardTypeIcon = computed(() => {
   font-size: 11px;
   font-family: 'JetBrains Mono', monospace;
   font-variant-numeric: tabular-nums;
+}
+.duration.live {
+  color: var(--accent);
+  animation: pulse 1.5s infinite;
 }
 .arrow {
   color: var(--text-ghost);
