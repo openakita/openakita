@@ -9,7 +9,7 @@
     <ReplyHeader :reply="reply" />
     <ThinkingBlock v-if="reply.thinking" :content="reply.thinking" :done="reply.thinkingDone" />
     <PlanChecklist v-if="reply.planChecklist" :steps="reply.planChecklist" />
-    <StepCardList v-if="reply.stepCards.length" :cards="reply.stepCards" :agent-summaries="reply.agentSummaries" />
+    <StepCardList v-if="reply.stepCards.length" :cards="reply.stepCards" :agent-summaries="reply.agentSummaries" :agent-thinking="reply.agentThinking" />
     <SummaryOutput v-if="reply.summaryText && !reply.bpSubtaskOutput" :content="reply.summaryText" />
     <SubtaskCompleteBlock
       v-if="reply.bpSubtaskOutput && reply.bpProgress?.runMode === 'manual'"

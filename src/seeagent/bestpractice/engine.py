@@ -160,12 +160,14 @@ class BPEngine:
 
                 # Execute via _run_subtask_stream with error handling (R20)
                 output = None
+                raw_result_text = ""
                 try:
                     async for event in self._run_subtask_stream(
                         instance_id, subtask, input_data, bp_config, session,
                     ):
                         if event.get("type") == "_internal_output":
                             output = event.get("data", {})
+                            raw_result_text = event.get("raw_result", "")
                         elif event.get("type") == "bp_ask_user":
                             self.state_manager.update_subtask_status(
                                 instance_id, subtask.id, SubtaskStatus.WAITING_INPUT,
@@ -215,7 +217,11 @@ class BPEngine:
                     "subtask_id": subtask.id,
                     "subtask_name": subtask.name,
                     "output": output,
-                    "summary": self._extract_summary(output),
+                    "summary": (
+                        self._extract_summary_from_result(raw_result_text, output)
+                        if raw_result_text
+                        else self._extract_summary(output)
+                    ),
                 }
                 yield self._build_progress_event(instance_id, snap, bp_config)
 
@@ -317,9 +323,14 @@ class BPEngine:
         # Temporary event_bus to capture SubAgent streaming events
         event_bus: asyncio.Queue = asyncio.Queue()
         old_bus = None
+        old_thinking_mode = None
         if hasattr(session, "context"):
             old_bus = getattr(session.context, "_sse_event_bus", None)
             session.context._sse_event_bus = event_bus
+        # Enable thinking for sub-agent so frontend can display thinking blocks
+        if hasattr(session, "metadata"):
+            old_thinking_mode = session.metadata.get("thinking_mode")
+            session.metadata["thinking_mode"] = "on"
 
         try:
             # Launch SubAgent (non-blocking)
@@ -414,7 +425,19 @@ class BPEngine:
                     yield event
                     continue
 
-                # Skip other raw events (thinking, etc.)
+                # Forward thinking content for frontend display
+                if etype == "thinking_delta":
+                    yield {
+                        "type": "thinking",
+                        "content": event.get("content", ""),
+                        "agent_id": sub_agent_id,
+                    }
+                    continue
+
+                if etype in ("thinking_start", "thinking_end"):
+                    continue
+
+                # Skip other raw events
 
             # Flush any pending aggregation
             for ev in await aggregator.flush():
@@ -428,12 +451,17 @@ class BPEngine:
             # Get final result
             raw_result = await delegate_task
             output = self._parse_output(raw_result)
-            yield {"type": "_internal_output", "data": output}
+            yield {"type": "_internal_output", "data": output, "raw_result": raw_result}
 
         finally:
             if hasattr(session, "context"):
                 session.context._sse_event_bus = old_bus
                 session.context._bp_delegate_task = None  # Clean up reference
+            if hasattr(session, "metadata"):
+                if old_thinking_mode is not None:
+                    session.metadata["thinking_mode"] = old_thinking_mode
+                else:
+                    session.metadata.pop("thinking_mode", None)
 
     # ── Answer (user response to bp_ask_user) ─────────────────
 

@@ -22,6 +22,7 @@ export const useChatStore = defineStore('chat', () => {
       stepCards: [],
       summaryText: '',
       agentSummaries: {},
+      agentThinking: {},
       timer: {
         ttft: { state: 'idle', value: null },
         total: { state: 'idle', value: null },
@@ -55,9 +56,18 @@ export const useChatStore = defineStore('chat', () => {
     const reply = currentReply.value!
 
     switch (event.type) {
-      case 'thinking':
-        reply.thinking += (event as any).content ?? ''
+      case 'thinking': {
+        const aid = (event as any).agent_id
+        if (aid && aid !== 'main') {
+          if (!reply.agentThinking[aid]) {
+            reply.agentThinking[aid] = { content: '', done: false }
+          }
+          reply.agentThinking[aid].content += (event as any).content ?? ''
+        } else {
+          reply.thinking += (event as any).content ?? ''
+        }
         break
+      }
 
       case 'step_card': {
         _upsertStepCard(reply, event as any)
@@ -217,6 +227,9 @@ export const useChatStore = defineStore('chat', () => {
           'bpSubtaskOutput:', !!reply.bpSubtaskOutput, 'summaryText:', reply.summaryText?.slice(0, 100))
         reply.isDone = true
         reply.thinkingDone = true
+        for (const at of Object.values(reply.agentThinking)) {
+          at.done = true
+        }
         isStreaming.value = false
         messages.value.push({
           id: reply.replyId,
@@ -325,6 +338,7 @@ export const useChatStore = defineStore('chat', () => {
           stepCards: (rs?.step_cards ?? []).map(_mapStepCard),
           summaryText: m.content,
           agentSummaries: rs?.agent_summaries ?? {},
+          agentThinking: rs?.agent_thinking ?? {},
           timer: {
             ttft: { state: 'done' as const, value: rs?.timer?.ttft ?? null },
             total: { state: 'done' as const, value: rs?.timer?.total ?? null },

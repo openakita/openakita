@@ -1,5 +1,8 @@
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+import { useMarkdown } from '@/composables/useMarkdown'
+
+const props = defineProps<{
   subtaskName: string
   subtaskId: string
   instanceId: string
@@ -14,16 +17,18 @@ const emit = defineEmits<{
   (e: 'continue'): void
   (e: 'edit', subtaskId: string): void
 }>()
+
+const { render } = useMarkdown()
+const renderedSummary = computed(() => props.summary ? render(props.summary) : '')
 </script>
 
 <template>
   <div class="subtask-complete-block">
-    <div class="complete-header">
-      <span class="material-symbols-rounded check-icon">task_alt</span>
-      <span class="name">子任务 {{ subtaskIndex + 1 }}「{{ subtaskName }}」</span>
-      <span class="badge">已完成</span>
+    <div class="complete-label">
+      <span class="material-symbols-rounded done-icon">check_circle</span>
+      <span class="label-text">子任务 {{ subtaskIndex + 1 }}「{{ subtaskName }}」已完成</span>
     </div>
-    <div v-if="summary" class="summary-text">{{ summary }}</div>
+    <div v-if="summary" class="summary-content" v-html="renderedSummary"></div>
     <div class="complete-actions">
       <button class="action-btn secondary" @click="emit('view-output', subtaskId)">
         <span class="material-symbols-rounded">visibility</span>
@@ -48,53 +53,91 @@ const emit = defineEmits<{
 
 <style scoped>
 .subtask-complete-block {
-  background: var(--bg-surface, #171d2a);
-  border: 1px solid var(--border-subtle, #252d40);
-  border-left: 3px solid var(--success, #4caf50);
-  border-radius: var(--radius-md, 10px);
-  padding: 14px 16px;
+  padding: 8px 0;
   margin: 10px 0;
   animation: fadeIn 0.35s var(--ease-out) both;
 }
-.complete-header {
+
+.complete-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-muted, #556174);
 }
-.check-icon {
-  font-size: 18px;
+.done-icon {
+  font-size: 15px;
   color: var(--success, #4caf50);
 }
-.name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-bright, #e8edf5);
-}
-.badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 8px;
-  background: var(--success-dim, rgba(61, 214, 140, 0.12));
-  color: var(--success, #4caf50);
+.label-text {
   font-weight: 500;
 }
-.summary-text {
-  font-size: 13px;
-  color: var(--text-secondary, #8494a7);
-  line-height: 1.6;
-  margin-bottom: 12px;
-  padding-left: 26px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+
+/* ── Markdown summary (reuse SummaryOutput styles) ── */
+.summary-content {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-primary, #c4cdd9);
+  margin-bottom: 14px;
 }
+.summary-content :deep(p) { margin-bottom: 12px; }
+.summary-content :deep(p:last-child) { margin-bottom: 0; }
+.summary-content :deep(strong) { color: var(--text-bright, #e8edf5); font-weight: 600; }
+.summary-content :deep(em) { color: var(--text-secondary, #8494a7); }
+.summary-content :deep(a) {
+  color: var(--accent, #4a6cf7);
+  text-decoration: none;
+  border-bottom: 1px solid var(--accent-dim, rgba(74, 108, 247, 0.2));
+  transition: border-color 0.15s;
+}
+.summary-content :deep(a:hover) { border-color: var(--accent); }
+.summary-content :deep(pre) {
+  background: var(--bg-deep, #0d1117);
+  border: 1px solid var(--border, rgba(56, 189, 204, 0.08));
+  padding: 14px 16px;
+  border-radius: var(--radius-md, 10px);
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 10px 0;
+  line-height: 1.6;
+}
+.summary-content :deep(code) {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.88em;
+}
+.summary-content :deep(:not(pre) > code) {
+  background: var(--bg-elevated, #1e2536);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent, #4a6cf7);
+}
+.summary-content :deep(ul), .summary-content :deep(ol) {
+  padding-left: 20px;
+  margin-bottom: 12px;
+}
+.summary-content :deep(li) { margin-bottom: 4px; }
+.summary-content :deep(blockquote) {
+  border-left: 3px solid var(--accent, #4a6cf7);
+  padding-left: 14px;
+  color: var(--text-secondary, #8494a7);
+  margin: 10px 0;
+}
+.summary-content :deep(h1), .summary-content :deep(h2), .summary-content :deep(h3) {
+  color: var(--text-bright, #e8edf5);
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+.summary-content :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border, rgba(56, 189, 204, 0.08));
+  margin: 16px 0;
+}
+
+/* ── Action buttons ── */
 .complete-actions {
   display: flex;
   gap: 10px;
-  padding-left: 26px;
   flex-wrap: wrap;
 }
 .action-btn {

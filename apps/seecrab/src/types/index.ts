@@ -33,6 +33,7 @@ export interface ReplyState {
   stepCards: StepCard[]
   summaryText: string
   agentSummaries: Record<string, string>
+  agentThinking: Record<string, { content: string; done: boolean }>
   timer: TimerState
   askUser: AskUserState | null
   isDone: boolean
