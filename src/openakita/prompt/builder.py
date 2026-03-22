@@ -760,20 +760,20 @@ def _build_catalogs_section(
     """构建 Catalogs 层（工具/技能/MCP 清单）"""
     parts = []
 
-    # 工具清单（预算的 33%）
+    # 工具清单（预算的 30%）
     # 高频工具 (run_shell, read_file, write_file, list_directory, ask_user) 已通过
     # LLM tools 参数直接注入完整 schema，文本清单默认排除以节省 token
     if tool_catalog:
         tools_text = tool_catalog.get_catalog()  # exclude_high_freq=True by default
-        tools_result = apply_budget(tools_text, budget_tokens // 3, "tools")
+        tools_result = apply_budget(tools_text, budget_tokens * 30 // 100, "tools")
         parts.append(tools_result.content)
 
-    # 技能清单（预算的 55%）— 统一三级渐进式披露
+    # 技能清单（预算的 50%）— 统一三级渐进式披露
     if skill_catalog:
         # Level 1: 全量索引（仅名称，保证所有技能名可见）+ 预算内详情（名称+描述）
         # Level 2: get_skill_info → 完整 SKILL.md 指令（按需加载）
         # Level 3: 资源文件（按需加载）
-        skills_budget = budget_tokens * 55 // 100
+        skills_budget = budget_tokens * 50 // 100
         skills_index = skill_catalog.get_index_catalog()
 
         index_tokens = estimate_tokens(skills_index)
@@ -792,11 +792,11 @@ def _build_catalogs_section(
 
         parts.append("\n\n".join([skills_index, skills_rule, skills_detail_result.content]).strip())
 
-    # MCP 清单（预算的 10%）
+    # MCP 清单（预算的 20%）
     if mcp_catalog:
         mcp_text = mcp_catalog.get_catalog()
         if mcp_text:
-            mcp_result = apply_budget(mcp_text, budget_tokens // 10, "mcp")
+            mcp_result = apply_budget(mcp_text, budget_tokens * 20 // 100, "mcp")
             parts.append(mcp_result.content)
 
     # 工具使用指南（可选，向后兼容）

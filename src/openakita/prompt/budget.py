@@ -9,7 +9,7 @@ Prompt Budget - Token 预算裁剪模块
   - agent.core（~720, 12%）：手写的核心执行原则精简版
   - agent.tooling（~480, 8%）：手写的工具使用原则精简版
   - policies（~1200, 20%）：系统策略 + 用户策略
-- catalogs_budget: 12000 tokens (tools 33% + skills 55% + mcp 10%)
+- catalogs_budget: 12000 tokens (tools 30% + skills 50% + mcp 20%)
 - user_budget: 300 tokens (user.summary + runtime_facts)
 - memory_budget: 2500 tokens (retriever 输出)
 
@@ -32,7 +32,7 @@ class BudgetConfig:
 
     # 各部分预算（tokens）
     identity_budget: int = 6000   # SOUL全文 + agent.core + agent.tooling + policies
-    catalogs_budget: int = 12000  # tools(33%) + skills(55%) + mcp(10%) 全量注入
+    catalogs_budget: int = 12000  # tools(30%) + skills(50%) + mcp(20%) 全量注入
     user_budget: int = 300        # user.summary + runtime_facts
     memory_budget: int = 2500     # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
 
@@ -296,9 +296,9 @@ def apply_budget_to_sections(
         "agent_core": config.identity_budget * 12 // 100,
         "agent_tooling": config.identity_budget * 8 // 100,
         "policies": config.identity_budget * 20 // 100,
-        "tools": config.catalogs_budget // 3,            # 33%
-        "skills": config.catalogs_budget * 55 // 100,    # 55%
-        "mcp": config.catalogs_budget // 10,             # 10%
+        "tools": config.catalogs_budget * 30 // 100,    # 30%
+        "skills": config.catalogs_budget * 50 // 100,    # 50%
+        "mcp": config.catalogs_budget * 20 // 100,       # 20%
         "user": config.user_budget // 2,
         "runtime_facts": config.user_budget // 2,
         "memory": config.memory_budget,

@@ -71,7 +71,7 @@ from ..tools.handlers.web_search import create_handler as create_web_search_hand
 
 # MCP 系统
 from ..tools.mcp import mcp_client
-from ..tools.mcp_catalog import MCPCatalog, mcp_catalog as _shared_mcp_catalog
+from ..tools.mcp_catalog import mcp_catalog as _shared_mcp_catalog
 from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 from .agent_state import AgentState
@@ -1262,7 +1262,6 @@ class Agent:
         只加载项目本地的 MCP，不加载 Cursor 的（因为无法实际调用）
         """
         if not settings.mcp_enabled:
-            self._mcp_catalog_text = ""
             logger.info("MCP disabled via MCP_ENABLED=false")
             await self._start_builtin_mcp_servers()
             return
@@ -1316,8 +1315,8 @@ class Agent:
         # 启动内置浏览器服务
         await self._start_builtin_mcp_servers()
 
-        # 始终生成 catalog（即使服务器暂无工具也应列出，方便 AI 发现并连接）
-        self._mcp_catalog_text = self.mcp_catalog.generate_catalog()
+        # 预热 catalog 缓存（即使服务器暂无工具也应列出，方便 AI 发现并连接）
+        self.mcp_catalog.generate_catalog()
         if total_count > 0:
             logger.info(f"Total MCP servers: {total_count}")
         else:
@@ -1357,7 +1356,6 @@ class Agent:
                     logger.warning(f"Auto-connect to MCP server {server_name} failed: {e}")
 
             if synced_any:
-                self._mcp_catalog_text = self.mcp_catalog.generate_catalog()
                 logger.info("MCP catalog refreshed after auto-connect tool discovery")
 
     async def _start_builtin_mcp_servers(self) -> None:
@@ -1645,10 +1643,8 @@ class Agent:
         # 技能清单 (Agent Skills 规范) - 每次动态生成，确保新创建的技能被包含
         skill_catalog = self.skill_catalog.generate_catalog()
 
-        # MCP 清单 (Model Context Protocol 规范)
-        # pool agent (lightweight=True) 跳过 _load_mcp_servers()，
-        # 但共享全局 mcp_catalog，因此从共享实例动态获取。
-        mcp_catalog = getattr(self, "_mcp_catalog_text", "") or self.mcp_catalog.get_catalog()
+        # MCP 清单（从全局共享的 MCPCatalog 获取，内部自动缓存和失效）
+        mcp_catalog = self.mcp_catalog.get_catalog()
 
         # 相关记忆 (按任务相关性注入)
         memory_context = self.memory_manager.get_injection_context(task_description)

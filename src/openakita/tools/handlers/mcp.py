@@ -82,15 +82,17 @@ class MCPHandler:
         arguments = params.get("arguments", {})
         client = self.agent.mcp_client
 
+        auto_connected = False
         if not client.is_connected(server):
             result = await client.connect(server)
             if not result.success:
                 return f"❌ 无法连接到 MCP 服务器 {server}: {result.error}"
+            auto_connected = True
 
         result = await client.call_tool(server, mcp_tool_name, arguments)
 
-        if result.reconnected:
-            self._sync_and_refresh(server)
+        if auto_connected or result.reconnected:
+            self._sync_catalog(server)
 
         if result.success:
             return f"✅ MCP 工具调用成功:\n{result.data}"
@@ -98,7 +100,7 @@ class MCPHandler:
             return f"❌ MCP 工具调用失败: {result.error}"
 
     async def _list_servers(self, params: dict) -> str:
-        """列出 MCP 服务器"""
+        """列出 MCP 服务器及其工具"""
         catalog_servers = self.agent.mcp_catalog.list_servers()
         client_servers = self.agent.mcp_client.list_servers()
         connected = self.agent.mcp_client.list_connected()
@@ -115,18 +117,33 @@ class MCPHandler:
         output = f"已配置 {len(all_ids)} 个 MCP 服务器:\n\n"
 
         for server_id in all_ids:
-            status = "🟢 已连接" if server_id in connected else "⚪ 未连接"
-            tools = self.agent.mcp_client.list_tools(server_id)
-            tool_info = f" ({len(tools)} 工具)" if tools else ""
+            is_connected = server_id in connected
+            status = "🟢 已连接" if is_connected else "⚪ 未连接"
 
             workspace_dir = settings.mcp_config_path / server_id
             source = "📁 工作区" if workspace_dir.exists() else "📦 内置"
-            output += f"- **{server_id}** {status}{tool_info} [{source}]\n"
+            output += f"### {server_id} {status} [{source}]\n"
+
+            tools = self.agent.mcp_client.list_tools(server_id)
+            if tools:
+                for t in tools:
+                    output += f"- **{t.name}**: {t.description}\n"
+            elif is_connected:
+                output += "- *(无工具)*\n"
+            else:
+                catalog_tools = self.agent.mcp_catalog.list_tools(server_id)
+                if catalog_tools:
+                    for t in catalog_tools:
+                        output += f"- **{t.name}**: {t.description}\n"
+                else:
+                    output += "- *(未连接，使用 `connect_mcp_server` 连接后发现工具)*\n"
+            output += "\n"
 
         output += (
-            "\n**可用操作**:\n"
+            "**可用操作**:\n"
             "- `call_mcp_tool(server, tool_name, arguments)` 调用工具\n"
             "- `connect_mcp_server(server)` 连接服务器\n"
+            "- `get_mcp_instructions(server)` 获取详细使用说明\n"
             "- `add_mcp_server(name, ...)` 添加新服务器\n"
             "- `remove_mcp_server(name)` 移除服务器"
         )
@@ -142,11 +159,10 @@ class MCPHandler:
         else:
             return f"❌ 未找到服务器 {server} 的使用说明，或服务器不存在"
 
-    def _sync_and_refresh(self, server: str) -> None:
-        """同步工具到 catalog 并刷新系统提示"""
+    def _sync_catalog(self, server: str) -> None:
+        """同步运行时工具到 catalog（MCPCatalog 内部缓存会自动失效）"""
         sync_tools_after_connect(server, self.agent.mcp_client, self.agent.mcp_catalog)
-        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
-        logger.info("MCP catalog refreshed for %s", server)
+        logger.info("MCP catalog synced for %s", server)
 
     # ==================== 连接管理工具 ====================
 
@@ -164,7 +180,7 @@ class MCPHandler:
 
         result = await client.connect(server)
         if result.success:
-            self._sync_and_refresh(server)
+            self._sync_catalog(server)
             tools = client.list_tools(server)
             tool_names = [t.name for t in tools]
             return (
@@ -229,8 +245,6 @@ class MCPHandler:
             catalog=self.agent.mcp_catalog,
         )
 
-        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
-
         cr = result.get("connect_result") or {}
         if cr.get("connected"):
             tools = self.agent.mcp_client.list_tools(name)
@@ -265,8 +279,6 @@ class MCPHandler:
             catalog=self.agent.mcp_catalog,
         )
 
-        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
-
         if result["status"] == "error":
             return f"❌ {result['message']}"
         return f"✅ 已移除 MCP 服务器: {name}"
@@ -291,8 +303,6 @@ class MCPHandler:
             catalog=self.agent.mcp_catalog,
             scan_dirs=scan_dirs,
         )
-
-        self.agent._mcp_catalog_text = self.agent.mcp_catalog.generate_catalog()
 
         return (
             f"✅ MCP 配置已重新加载\n"

@@ -43,18 +43,18 @@ MCP_TOOLS = [
     {
         "name": "list_mcp_servers",
         "category": "MCP",
-        "description": "List all configured MCP servers and their connection status. When you need to: (1) Check available MCP servers, (2) Verify server connections.",
-        "detail": """列出所有配置的 MCP 服务器及其连接状态。
+        "description": "List all configured MCP servers, their connection status, and available tool names with descriptions. When you need to: (1) Discover available MCP tools, (2) Check server connections.",
+        "detail": """列出所有配置的 MCP 服务器及其完整工具清单。
 
 **返回信息**：
-- 服务器标识符
-- 服务器名称
-- 连接状态
-- 可用工具数量
+- 服务器标识符和连接状态
+- 每个服务器的工具名称和描述（已连接或预加载时）
+- 未连接服务器的连接提示
 
 **适用场景**：
-- 查看可用的 MCP 服务器
-- 验证服务器连接""",
+- 查看可用的 MCP 服务器和工具
+- 发现某个服务器提供的具体工具名
+- 验证服务器连接状态""",
         "input_schema": {"type": "object", "properties": {}},
     },
     {

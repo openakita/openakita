@@ -44,16 +44,6 @@ class PromptAssembler:
         self._brain = brain
         self._persona_manager = persona_manager
 
-        self._mcp_catalog_text: str = ""
-
-    @property
-    def mcp_catalog_text(self) -> str:
-        return self._mcp_catalog_text
-
-    @mcp_catalog_text.setter
-    def mcp_catalog_text(self, value: str) -> None:
-        self._mcp_catalog_text = value
-
     def build_system_prompt(
         self,
         base_prompt: str,
@@ -84,8 +74,8 @@ class PromptAssembler:
         # 技能清单
         skill_catalog = skill_catalog_text or self._skill_catalog.generate_catalog()
 
-        # MCP 清单
-        mcp_catalog = self._mcp_catalog_text
+        # MCP 清单（从 MCPCatalog 获取，内部自动缓存和失效）
+        mcp_catalog = self._mcp_catalog.get_catalog() if self._mcp_catalog else ""
 
         # 相关记忆
         memory_context = self._memory_manager.get_injection_context(task_description)
