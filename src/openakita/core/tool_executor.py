@@ -138,6 +138,7 @@ class ToolExecutor:
         "org_broadcast": 300,
         "delegate_to_agent": 0,
         "delegate_parallel": 0,
+        "spawn_agent": 0,
         "browser_navigate": 300,
         "browser_use": 300,
         "run_shell": 300,
@@ -174,6 +175,7 @@ class ToolExecutor:
         timeout_task: asyncio.Future | None = None
         if hard_timeout > 0:
             timeout_task = asyncio.ensure_future(asyncio.sleep(hard_timeout))
+
 
         wait_set: set[asyncio.Future] = {tool_task}
         if timeout_task is not None:

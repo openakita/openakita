@@ -11,10 +11,12 @@ Telegram 适配器
 
 import asyncio
 import contextlib
+import html as _html
 import json
 import logging
 import os
 import secrets
+import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -270,7 +272,7 @@ class TelegramAdapter(ChannelAdapter):
     channel_name = "telegram"
 
     capabilities = {
-        "streaming": False,
+        "streaming": True,
         "send_image": True,
         "send_file": True,
         "send_voice": True,
@@ -336,6 +338,17 @@ class TelegramAdapter(ChannelAdapter):
         # 消息去重（防止 webhook 重试或网络抖动导致重复处理）
         self._seen_update_ids: OrderedDict[int, None] = OrderedDict()
         self._seen_update_ids_max = 500
+
+        # 思考占位消息：session_key -> (chat_id_int, message_id)
+        self._thinking_cards: dict[str, tuple[int, int]] = {}
+        # 流式输出状态
+        self._streaming_buffers: dict[str, str] = {}
+        self._streaming_thinking: dict[str, str] = {}
+        self._streaming_thinking_ms: dict[str, int] = {}
+        self._streaming_chain: dict[str, list[str]] = {}
+        self._streaming_last_patch: dict[str, float] = {}
+        self._streaming_finalized: set[str] = set()
+        self._streaming_throttle_ms: int = 1500
 
     async def start(self) -> None:
         """启动 Telegram Bot"""
@@ -858,6 +871,234 @@ class TelegramAdapter(ChannelAdapter):
             size=size,
         )
 
+    # ==================== 流式思考 / 回复 ====================
+
+    async def stream_thinking(
+        self,
+        chat_id: str,
+        thinking_text: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+        duration_ms: int = 0,
+    ) -> None:
+        """接收思考内容，Edit-in-Place 更新思考占位消息。"""
+        sk = self._make_session_key(chat_id, thread_id)
+        self._streaming_thinking[sk] = thinking_text
+        if duration_ms:
+            self._streaming_thinking_ms[sk] = duration_ms
+
+        card_ref = self._thinking_cards.get(sk)
+        if not card_ref:
+            return
+
+        now = time.time()
+        last_t = self._streaming_last_patch.get(sk, 0.0)
+        if now - last_t < self._streaming_throttle_ms / 1000.0:
+            return
+
+        display = self._compose_thinking_display(sk)
+        try:
+            await self._bot.edit_message_text(
+                chat_id=card_ref[0], message_id=card_ref[1],
+                text=display, parse_mode=None,
+            )
+            self._streaming_last_patch[sk] = now
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                logger.debug(f"Telegram: stream_thinking edit failed: {e}")
+
+    async def stream_chain_text(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+    ) -> None:
+        """将工具调用描述/结果摘要等 chain 文本追加到思考占位消息。"""
+        sk = self._make_session_key(chat_id, thread_id)
+        self._streaming_chain.setdefault(sk, []).append(text)
+
+        card_ref = self._thinking_cards.get(sk)
+        if not card_ref:
+            return
+
+        now = time.time()
+        last_t = self._streaming_last_patch.get(sk, 0.0)
+        if now - last_t < self._streaming_throttle_ms / 1000.0:
+            return
+
+        display = self._compose_thinking_display(sk)
+        try:
+            await self._bot.edit_message_text(
+                chat_id=card_ref[0], message_id=card_ref[1],
+                text=display, parse_mode=None,
+            )
+            self._streaming_last_patch[sk] = now
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                logger.debug(f"Telegram: stream_chain_text edit failed: {e}")
+
+    async def stream_token(
+        self,
+        chat_id: str,
+        token: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+    ) -> None:
+        """累积回复 token；有思考/chain 内容时定期刷新占位消息。"""
+        sk = self._make_session_key(chat_id, thread_id)
+        self._streaming_buffers[sk] = self._streaming_buffers.get(sk, "") + token
+
+        card_ref = self._thinking_cards.get(sk)
+        if not card_ref:
+            return
+        has_thinking = sk in self._streaming_thinking or sk in self._streaming_chain
+        if not has_thinking:
+            return
+
+        now = time.time()
+        last_t = self._streaming_last_patch.get(sk, 0.0)
+        if now - last_t < self._streaming_throttle_ms / 1000.0:
+            return
+
+        display = self._compose_thinking_display(sk)
+        try:
+            await self._bot.edit_message_text(
+                chat_id=card_ref[0], message_id=card_ref[1],
+                text=display, parse_mode=None,
+            )
+            self._streaming_last_patch[sk] = now
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                logger.debug(f"Telegram: stream_token edit failed: {e}")
+
+    def _compose_thinking_display(self, sk: str) -> str:
+        """构建思考过程的实时显示文本（纯文本，用于编辑占位消息）。"""
+        thinking = self._streaming_thinking.get(sk, "")
+        reply = self._streaming_buffers.get(sk, "")
+        dur_ms = self._streaming_thinking_ms.get(sk, 0)
+        chain_lines = self._streaming_chain.get(sk, [])
+
+        parts: list[str] = []
+        if thinking:
+            dur_str = f" ({dur_ms / 1000:.1f}s)" if dur_ms else ""
+            preview = thinking.strip()
+            if len(preview) > 600:
+                preview = preview[:600] + "..."
+            parts.append(f"💭 思考过程{dur_str}\n> " + preview.replace("\n", "\n> "))
+
+        if chain_lines:
+            visible = chain_lines[-8:]
+            parts.append("\n".join(visible))
+
+        if reply:
+            if parts:
+                parts.append("─" * 16)
+            parts.append(reply[:300] + " ▍" if len(reply) > 300 else reply + " ▍")
+        elif not thinking and not chain_lines:
+            parts.append("💭 思考中...")
+
+        text = "\n".join(parts)
+        if len(text) > 4000:
+            text = text[:4000] + "\n..."
+        return text
+
+    async def finalize_stream(
+        self,
+        chat_id: str,
+        final_text: str,
+        *,
+        thread_id: str | None = None,
+    ) -> bool:
+        """流式结束：将思考内容折叠为 Expandable Blockquote，回复另发。
+
+        Returns:
+            True — 思考占位消息已被替换为完整回复（无需 send_message）。
+            False — 思考占位消息已编辑为折叠摘要（回复由 send_message 正常发送）。
+        """
+        sk = self._make_session_key(chat_id, thread_id)
+        card_ref = self._thinking_cards.get(sk)
+
+        thinking = self._streaming_thinking.pop(sk, "")
+        dur_ms = self._streaming_thinking_ms.pop(sk, 0)
+        chain_lines = self._streaming_chain.pop(sk, [])
+        self._streaming_buffers.pop(sk, None)
+        self._streaming_last_patch.pop(sk, None)
+
+        if not card_ref:
+            return False
+
+        has_progress = bool(thinking or chain_lines)
+
+        if has_progress:
+            # 有思考/chain → 编辑为 Expandable Blockquote 摘要，回复另发
+            summary_html = self._build_thinking_summary_html(thinking, dur_ms, chain_lines)
+            try:
+                await self._bot.edit_message_text(
+                    chat_id=card_ref[0], message_id=card_ref[1],
+                    text=summary_html,
+                    parse_mode=telegram.constants.ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.debug(f"Telegram: finalize thinking summary failed: {e}")
+                with contextlib.suppress(Exception):
+                    await self._bot.delete_message(chat_id=card_ref[0], message_id=card_ref[1])
+            self._thinking_cards.pop(sk, None)
+            return False
+
+        # 无思考/chain → 直接用回复替换占位消息
+        if final_text and len(final_text) <= 4000:
+            text_to_send = self._convert_to_telegram_markdown(final_text)
+            try:
+                await self._bot.edit_message_text(
+                    chat_id=card_ref[0], message_id=card_ref[1],
+                    text=text_to_send,
+                    parse_mode=telegram.constants.ParseMode.MARKDOWN,
+                )
+                self._streaming_finalized.add(sk)
+                self._thinking_cards.pop(sk, None)
+                return True
+            except telegram.error.BadRequest:
+                with contextlib.suppress(Exception):
+                    await self._bot.edit_message_text(
+                        chat_id=card_ref[0], message_id=card_ref[1],
+                        text=final_text, parse_mode=None,
+                    )
+                self._streaming_finalized.add(sk)
+                self._thinking_cards.pop(sk, None)
+                return True
+            except Exception:
+                pass
+
+        # 回退：删除占位消息，走正常 send_message
+        with contextlib.suppress(Exception):
+            await self._bot.delete_message(chat_id=card_ref[0], message_id=card_ref[1])
+        self._thinking_cards.pop(sk, None)
+        return False
+
+    def _build_thinking_summary_html(
+        self, thinking: str, dur_ms: int, chain_lines: list[str],
+    ) -> str:
+        """构建 Expandable Blockquote HTML（思考摘要折叠展示）。"""
+        parts: list[str] = []
+        if thinking:
+            dur_str = f" ({dur_ms / 1000:.1f}s)" if dur_ms else ""
+            header = f"💭 思考过程{dur_str}"
+            preview = thinking.strip()
+            if len(preview) > 2500:
+                preview = preview[:2500] + "..."
+            parts.append(f"{_html.escape(header)}\n\n{_html.escape(preview)}")
+
+        if chain_lines:
+            visible = chain_lines[-12:]
+            parts.append("\n".join(_html.escape(ln) for ln in visible))
+
+        inner = "\n\n".join(parts) if parts else "💭 思考完成"
+        return f"<blockquote expandable>{inner}</blockquote>"
+
     def _convert_to_telegram_markdown(self, text: str) -> str:
         """
         将标准 Markdown 转换为 Telegram 兼容格式
@@ -933,6 +1174,31 @@ class TelegramAdapter(ChannelAdapter):
         """发送消息"""
         if not self._bot:
             raise RuntimeError("Telegram bot not started")
+
+        # ── 思考占位消息处理 ──
+        sk = self._make_session_key(message.chat_id, message.thread_id)
+        if sk in self._streaming_finalized:
+            card_ref = self._thinking_cards.pop(sk, None)
+            self._streaming_finalized.discard(sk)
+            self._streaming_buffers.pop(sk, None)
+            self._streaming_last_patch.pop(sk, None)
+            return str(card_ref[1]) if card_ref else sk
+        if sk not in self._streaming_buffers:
+            card_ref = self._thinking_cards.pop(sk, None)
+            if card_ref:
+                text = message.content.text or ""
+                if text and not message.content.has_media and len(text) <= 4000:
+                    try:
+                        t = self._convert_to_telegram_markdown(text)
+                        await self._bot.edit_message_text(
+                            chat_id=card_ref[0], message_id=card_ref[1],
+                            text=t, parse_mode=telegram.constants.ParseMode.MARKDOWN,
+                        )
+                        return str(card_ref[1])
+                    except Exception:
+                        pass
+                with contextlib.suppress(Exception):
+                    await self._bot.delete_message(chat_id=card_ref[0], message_id=card_ref[1])
 
         chat_id = int(message.chat_id)
         sent_message = None
@@ -1107,7 +1373,9 @@ class TelegramAdapter(ChannelAdapter):
             except Exception as e:
                 logger.warning(f"Telegram: fallback text send failed: {e}")
 
-        return str(sent_message.message_id) if sent_message else ""
+        if not sent_message:
+            raise RuntimeError("Telegram: no message was sent")
+        return str(sent_message.message_id)
 
     async def download_media(self, media: MediaFile) -> Path:
         """下载媒体文件"""
@@ -1280,13 +1548,84 @@ class TelegramAdapter(ChannelAdapter):
         logger.debug(f"Sent voice to {chat_id}: {voice_path}")
         return str(sent.message_id)
 
+    # ==================== 会话级 key / 流式辅助 ====================
+
+    @staticmethod
+    def _make_session_key(chat_id: str, thread_id: str | None = None) -> str:
+        return f"{chat_id}:{thread_id}" if thread_id else chat_id
+
+    def is_streaming_enabled(self, is_group: bool = False) -> bool:
+        return self._bot is not None
+
+    # ==================== 思考状态指示器 ====================
+
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
-        """发送正在输入状态"""
-        if self._bot:
+        """发送 typing 状态；首次调用还会创建思考占位消息。"""
+        if not self._bot:
+            return
+
+        _tid = int(thread_id) if thread_id and str(thread_id).strip() else None
+
+        with contextlib.suppress(Exception):
+            await self._bot.send_chat_action(
+                chat_id=int(chat_id),
+                action=telegram.constants.ChatAction.TYPING,
+                message_thread_id=_tid,
+            )
+
+        sk = self._make_session_key(chat_id, thread_id)
+        if sk in self._thinking_cards:
+            return
+
+        self._streaming_finalized.discard(sk)
+        self._streaming_thinking.pop(sk, None)
+        self._streaming_thinking_ms.pop(sk, None)
+        self._streaming_chain.pop(sk, None)
+        self._streaming_buffers.pop(sk, None)
+        self._streaming_last_patch.pop(sk, None)
+
+        try:
+            sent = await self._bot.send_message(
+                chat_id=int(chat_id),
+                text="💭 思考中...",
+                message_thread_id=_tid,
+            )
+            self._thinking_cards[sk] = (int(chat_id), sent.message_id)
+        except Exception as e:
+            logger.debug(f"Telegram: create thinking placeholder failed: {e}")
+
+    async def clear_typing(self, chat_id: str, thread_id: str | None = None) -> None:
+        """清理残留的思考占位消息（安全网）。"""
+        sk = self._make_session_key(chat_id, thread_id)
+        card_ref = self._thinking_cards.pop(sk, None)
+        self._streaming_finalized.discard(sk)
+        self._streaming_thinking.pop(sk, None)
+        self._streaming_thinking_ms.pop(sk, None)
+        self._streaming_chain.pop(sk, None)
+        self._streaming_buffers.pop(sk, None)
+        self._streaming_last_patch.pop(sk, None)
+        if card_ref and self._bot:
             with contextlib.suppress(Exception):
-                _tid = int(thread_id) if thread_id and str(thread_id).strip() else None
-                await self._bot.send_chat_action(
-                    chat_id=int(chat_id),
-                    action=telegram.constants.ChatAction.TYPING,
-                    message_thread_id=_tid,
-                )
+                await self._bot.delete_message(chat_id=card_ref[0], message_id=card_ref[1])
+
+    async def _patch_card_content(self, card_ref: tuple[int, int], text: str) -> bool:
+        """编辑思考占位消息内容（供 gateway _try_patch_progress_to_card 调用）。"""
+        if not self._bot or not card_ref:
+            return False
+        _chat_id, _msg_id = card_ref
+        if len(text) > 4000:
+            text = text[:4000] + "\n..."
+        try:
+            await self._bot.edit_message_text(
+                chat_id=_chat_id, message_id=_msg_id,
+                text=text, parse_mode=None,
+            )
+            return True
+        except telegram.error.BadRequest as e:
+            if "Message is not modified" in str(e):
+                return True
+            logger.debug(f"Telegram: _patch_card_content failed: {e}")
+            return False
+        except Exception as e:
+            logger.debug(f"Telegram: _patch_card_content failed: {e}")
+            return False

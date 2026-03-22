@@ -16,12 +16,19 @@ interface FeishuQRModalProps {
 }
 
 async function onboardStart(venvDir: string, domain: string, apiBaseUrl?: string): Promise<Record<string, any>> {
+  if (apiBaseUrl) {
+    const res = await safeFetch(`${apiBaseUrl}/api/feishu/onboard/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain }),
+    });
+    return res.json();
+  }
   if (IS_TAURI) {
     const raw = await invoke<string>("openakita_feishu_onboard_start", { venvDir, domain });
     return JSON.parse(raw);
   }
-  const base = apiBaseUrl || "";
-  const res = await safeFetch(`${base}/api/feishu/onboard/start`, {
+  const res = await safeFetch(`/api/feishu/onboard/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ domain }),
@@ -30,12 +37,19 @@ async function onboardStart(venvDir: string, domain: string, apiBaseUrl?: string
 }
 
 async function onboardPoll(venvDir: string, domain: string, deviceCode: string, apiBaseUrl?: string): Promise<Record<string, any>> {
+  if (apiBaseUrl) {
+    const res = await safeFetch(`${apiBaseUrl}/api/feishu/onboard/poll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain, device_code: deviceCode }),
+    });
+    return res.json();
+  }
   if (IS_TAURI) {
     const raw = await invoke<string>("openakita_feishu_onboard_poll", { venvDir, domain, deviceCode });
     return JSON.parse(raw);
   }
-  const base = apiBaseUrl || "";
-  const res = await safeFetch(`${base}/api/feishu/onboard/poll`, {
+  const res = await safeFetch(`/api/feishu/onboard/poll`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ domain, device_code: deviceCode }),

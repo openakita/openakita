@@ -53,6 +53,7 @@ type IMChannel = {
   chat_type?: string;
   display_name?: string;
   alias?: string;
+  bot_display_name?: string;
 };
 
 // Frontend-only schedule mode; maps to backend trigger_type (once/interval/cron)
@@ -156,8 +157,8 @@ function groupChannelsByPlatform(channels: IMChannel[]): Record<string, IMChanne
   const groups: Record<string, IMChannel[]> = {};
   for (const ch of channels) {
     const platform = extractPlatformLabel(ch.channel_id);
-    const botName = extractBotName(ch.channel_id);
-    const key = botName ? `${platform} · ${botName}` : platform;
+    const botLabel = ch.bot_display_name || extractBotName(ch.channel_id);
+    const key = botLabel ? `${platform} · ${botLabel}` : platform;
     if (!groups[key]) groups[key] = [];
     groups[key].push(ch);
   }

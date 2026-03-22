@@ -321,6 +321,10 @@ class Settings(BaseSettings):
     qqbot_webhook_port: int = Field(default=9890, description="QQ Webhook 回调服务端口")
     qqbot_webhook_path: str = Field(default="/qqbot/callback", description="QQ Webhook 回调路径")
 
+    # 微信个人号 (iLink Bot API)
+    wechat_enabled: bool = Field(default=False, description="是否启用微信个人号")
+    wechat_token: str = Field(default="", description="微信 iLink Bot Token（扫码登录获取）")
+
     # === 会话配置 ===
     session_timeout_minutes: int = Field(default=30, description="会话超时时间（分钟）")
     session_max_history: int = Field(default=50, description="会话最大历史消息数")

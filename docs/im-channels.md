@@ -10,6 +10,7 @@ OpenAkita 支持多个即时通讯平台，每个平台通过独立的适配器 
 | 飞书 | ✅ 稳定 | WebSocket 长连接 | ❌ 不需要 | `pip install openakita[feishu]` |
 | 钉钉 | ✅ 稳定 | Stream 模式 (WebSocket) | ❌ 不需要 | `pip install openakita[dingtalk]` |
 | 企业微信 | ✅ 稳定 | HTTP 回调（智能机器人） | ⚠️ 需要公网 IP | `pip install openakita[wework]` |
+| 微信个人号 | ✅ 实验性 | HTTP 长轮询 (iLink Bot API) | ❌ 不需要 | `pip install openakita[wechat]` |
 | QQ 官方机器人 | ✅ 稳定 | QQ 开放平台 API (WebSocket) | ❌ 不需要 | `pip install openakita[qqbot]` |
 | OneBot | ✅ 稳定 | OneBot v11 (WebSocket) | ❌ 不需要 | `pip install openakita[onebot]` |
 
@@ -17,22 +18,22 @@ OpenAkita 支持多个即时通讯平台，每个平台通过独立的适配器 
 
 ### 接收消息 (平台 → OpenAkita)
 
-| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ 官方机器人 | OneBot |
-|------|----------|------|------|---------|-------------|--------|
-| 文字 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 图片 | ✅ | ✅ | ✅ | ⚠️ 仅单聊 | ✅ | ✅ |
-| 语音 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
-| 文件 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
-| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ |
+| 类型 | Telegram | 飞书 | 钉钉 | 企业微信 | 微信 | QQ 官方机器人 | OneBot |
+|------|----------|------|------|---------|------|-------------|--------|
+| 文字 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 图片 | ✅ | ✅ | ✅ | ⚠️ 仅单聊 | ✅ | ✅ | ✅ |
+| 语音 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ | ✅ |
+| 文件 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ | ✅ |
+| 视频 | ✅ | ✅ | ✅ | ❌ 不支持 | ✅ | ✅ | ✅ |
 
 ### 发送消息 (OpenAkita → 平台)
 
-| 方法 | Telegram | 飞书 | 钉钉 | 企业微信 | QQ 官方机器人 | OneBot |
-|------|----------|------|------|---------|-------------|--------|
-| send_text | ✅ | ✅ | ✅ | ✅ (stream 被动回复) | ✅ | ✅ |
-| send_image | ✅ | ✅ | ✅ | ✅ (stream msg_item, base64+md5) | ✅ (需公网URL) | ✅ |
-| send_file | ✅ | ✅ | ✅ (降级为链接) | ❌ 降级为文本 | ❌ 暂未开放 | ✅ (upload_file API) |
-| send_voice | ✅ | ✅ | ✅ (降级为文件) | ❌ 不支持 | ⚠️ 需silk+URL | ✅ (record) |
+| 方法 | Telegram | 飞书 | 钉钉 | 企业微信 | 微信 | QQ 官方机器人 | OneBot |
+|------|----------|------|------|---------|------|-------------|--------|
+| send_text | ✅ | ✅ | ✅ | ✅ (stream 被动回复) | ✅ | ✅ | ✅ |
+| send_image | ✅ | ✅ | ✅ | ✅ (stream msg_item, base64+md5) | ✅ (CDN+AES) | ✅ (需公网URL) | ✅ |
+| send_file | ✅ | ✅ | ✅ (降级为链接) | ❌ 降级为文本 | ✅ (CDN+AES) | ❌ 暂未开放 | ✅ (upload_file API) |
+| send_voice | ✅ | ✅ | ✅ (降级为文件) | ❌ 不支持 | ✅ (CDN+AES) | ⚠️ 需silk+URL | ✅ (record) |
 
 > **企业微信限制说明**：智能机器人通过 stream 流式被动回复发送文本和图片（JPG/PNG，≤10MB，单条最多 10 张）。**不支持语音、文件和视频的收发**。接收端仅支持文字、图文混排和图片（图片仅单聊）。response_url 作为 stream 不可用时的降级方案（仅文本）。
 
@@ -355,6 +356,94 @@ cpolar http 9880
 
 ---
 
+## 微信个人号 (iLink Bot API)
+
+通过 iLink Bot API 接入微信个人号，使用 HTTP 长轮询接收消息，无需公网 IP。与 OpenClaw 使用的微信接入方式相同。
+
+### 前置条件
+
+- 一个微信个人号
+- 网络能访问 `ilinkai.weixin.qq.com`
+
+### 获取 Token
+
+通过 **扫码登录** 获取 Bearer Token：
+
+1. **桌面端**: 在 Setup Center 中选择微信通道 → 点击「扫码登录」→ 用微信扫描二维码 → 手机确认 → Token 自动填入
+2. **API 方式**: 调用 `/api/wechat/onboard/start` 获取二维码 → 调用 `/api/wechat/onboard/poll` 轮询状态 → 确认后返回 Token
+3. **CLI 方式**: 运行 `python -m openakita.setup_center.bridge wechat-onboard-start` 获取二维码
+
+### OpenAkita 配置
+
+```bash
+# 安装微信依赖
+pip install openakita[wechat]
+
+# .env
+WECHAT_ENABLED=true
+WECHAT_TOKEN=你的Bearer Token（扫码登录获取）
+```
+
+### 接入方式
+
+- **HTTP 长轮询**: 通过 `ilink/bot/getupdates` 端点轮询消息，无需公网 IP
+- 动态超时调整（3~30 秒），指数退避重试
+- 自动处理 Session 过期（errcode=-14）暂停轮询
+
+### 媒体处理
+
+微信媒体文件通过 CDN 传输，使用 **AES-128-ECB** 加密：
+
+- **下载**: 从 CDN 下载加密文件 → AES 解密 → 得到原始文件
+- **上传**: 原始文件 → AES 加密 → 上传到 CDN → 获取 CDN Key
+- CDN 基础 URL: `https://novac2c.cdn.weixin.qq.com/c2c`
+- 加密密钥从 Token 中提取（base64 解码后取后 16 字节）
+
+### 支持的消息类型
+
+**接收消息** (用户 → 机器人):
+
+| 类型 | 支持 | 说明 |
+|------|------|------|
+| 文本 | ✅ | |
+| 图片 | ✅ | CDN 下载 + AES 解密 |
+| 语音 | ✅ | SILK 格式，含 ASR 转文字 |
+| 文件 | ✅ | CDN 下载 + AES 解密 |
+| 视频 | ✅ | CDN 下载 + AES 解密 |
+
+**发送消息** (机器人 → 用户):
+
+| 类型 | 支持 | 说明 |
+|------|------|------|
+| 文本 | ✅ | Markdown 自动转纯文本 |
+| 图片 | ✅ | AES 加密 + CDN 上传 |
+| 文件 | ✅ | AES 加密 + CDN 上传 |
+| 语音 | ✅ | AES 加密 + CDN 上传 |
+
+### 特有功能
+
+- **消息状态**: 支持 NEW → GENERATING → FINISH 三段式消息状态
+- **打字指示器**: 通过 typing_ticket 显示「正在输入」
+- **上下文延续**: 通过 context_token 维持对话上下文
+- **消息去重**: 基于 msg_id 避免重复处理
+- **同步游标持久化**: get_updates_buf 保存在 data/ 目录
+
+### 验证方法
+
+1. 通过扫码登录获取 Token，配置 `.env`
+2. 启动 OpenAkita，日志应显示 `WeChat adapter: poll loop started`
+3. 用另一个微信账号向机器人号发送消息
+4. 观察日志和机器人回复
+
+### 常见问题
+
+- **Token 过期**: 重新扫码登录获取新 Token，errcode=-14 会自动暂停轮询
+- **媒体解密失败**: 确认 Token 正确，AES 密钥从 Token 中提取
+- **长轮询超时**: 正常行为，适配器会自动重试
+- **Markdown 不显示**: 微信不支持 Markdown，适配器会自动转为纯文本
+
+---
+
 ## QQ 官方机器人
 
 ### 前置条件
@@ -491,11 +580,12 @@ pip install openakita[all]
 pip install openakita[feishu]      # 飞书
 pip install openakita[dingtalk]    # 钉钉
 pip install openakita[wework]      # 企业微信
+pip install openakita[wechat]      # 微信个人号
 pip install openakita[qqbot]       # QQ 官方机器人
 pip install openakita[onebot]      # OneBot（通用协议）
 
 # 组合安装
-pip install openakita[feishu,dingtalk,qqbot]
+pip install openakita[feishu,dingtalk,wechat,qqbot]
 ```
 
 ---

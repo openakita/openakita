@@ -135,6 +135,16 @@ def _create_qqbot(creds: dict, *, channel_name: str, bot_id: str, agent_profile_
     )
 
 
+def _create_wechat(creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str):
+    from .adapters import WeChatAdapter
+    return WeChatAdapter(
+        token=creds.get("token", ""),
+        base_url=creds.get("base_url", ""),
+        cdn_base_url=creds.get("cdn_base_url", ""),
+        channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id,
+    )
+
+
 # 自动注册所有内置适配器
 register_adapter("feishu", _create_feishu)
 register_adapter("telegram", _create_telegram)
@@ -144,3 +154,4 @@ register_adapter("wework_ws", _create_wework_ws)
 register_adapter("onebot", _create_onebot)
 register_adapter("onebot_reverse", _create_onebot_reverse)
 register_adapter("qqbot", _create_qqbot)
+register_adapter("wechat", _create_wechat)

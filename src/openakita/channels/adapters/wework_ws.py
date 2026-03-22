@@ -1549,7 +1549,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                         ok = await self._response_url_fallback(req_id, text)
                         if not ok:
                             self._enqueue_pending_reply(req_id, text, message)
-                    return ""
+                    raise RuntimeError(
+                        f"WeWorkWS: stream reply failed at chunk {i}"
+                    ) from e
         finally:
             keepalive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

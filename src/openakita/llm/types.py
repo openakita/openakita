@@ -482,6 +482,7 @@ class EndpointConfig:
     pricing_tiers: list[dict] | None = None  # 阶梯定价 [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
     price_currency: str = "CNY"  # 价格货币单位
     enabled: bool = True  # 是否启用 (false=停用，不参与调用但保留配置)
+    stream_only: bool = False  # 仅流式模式 (某些中转站/relay 要求 stream=true)
 
     def __post_init__(self):
         if self.capabilities is None:
@@ -583,6 +584,7 @@ class EndpointConfig:
             pricing_tiers=data.get("pricing_tiers"),
             price_currency=data.get("price_currency", "CNY"),
             enabled=data.get("enabled", True),
+            stream_only=data.get("stream_only", False),
         )
 
     def to_dict(self) -> dict:
@@ -616,6 +618,8 @@ class EndpointConfig:
             result["price_currency"] = self.price_currency
         if not self.enabled:
             result["enabled"] = False
+        if self.stream_only:
+            result["stream_only"] = True
         return result
 
 

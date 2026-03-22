@@ -373,14 +373,34 @@ class AgentOrchestrator:
             )
 
         except asyncio.CancelledError:
+            elapsed_ms = round((time.monotonic() - start) * 1000)
             health.failed += 1
-            health.last_error = "cancelled"
-            self._log_delegation({
-                **log_base,
-                "event": "dispatch_cancelled",
-                "elapsed_ms": round((time.monotonic() - start) * 1000),
-            })
-            return "🚫 请求已取消"
+
+            _main_agent = (
+                getattr(self._gateway, "agent_handler", None)
+                if self._gateway else None
+            )
+            _user_cancelled = (
+                _main_agent is not None
+                and getattr(_main_agent, "_task_cancelled", False)
+            )
+
+            if _user_cancelled:
+                health.last_error = "user_cancelled"
+                self._log_delegation({
+                    **log_base,
+                    "event": "dispatch_user_cancelled",
+                    "elapsed_ms": elapsed_ms,
+                })
+                return "🚫 请求已取消"
+            else:
+                health.last_error = "system_cancelled"
+                self._log_delegation({
+                    **log_base,
+                    "event": "dispatch_system_cancelled",
+                    "elapsed_ms": elapsed_ms,
+                })
+                return "⚠️ 任务被系统中断，请稍后重试。"
 
         except Exception as e:
             health.failed += 1

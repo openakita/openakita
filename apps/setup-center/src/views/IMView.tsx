@@ -18,6 +18,7 @@ import { IS_WEB, onWsEvent } from "../platform";
 import { FeishuQRModal } from "../components/FeishuQRModal";
 import { QQBotQRModal } from "../components/QQBotQRModal";
 import { WecomQRModal } from "../components/WecomQRModal";
+import { WechatQRModal } from "../components/WechatQRModal";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +27,12 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Bot, BotOff, Loader2, MoreHorizontal, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ, LogoOneBot, LogoWechat } from "../icons";
+import { AlertCircle, ArrowLeft, ArrowRight, Bot, BotOff, Check, Dices, Loader2, MoreHorizontal, Pencil, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -97,7 +99,7 @@ type AgentProfile = {
 
 const DEFAULT_API = "http://127.0.0.1:18900";
 
-const BOT_TYPES = ["wework", "wework_ws", "qqbot", "feishu", "dingtalk", "telegram", "onebot", "onebot_reverse"] as const;
+const BOT_TYPES = ["wechat", "wework", "wework_ws", "qqbot", "feishu", "dingtalk", "telegram", "onebot", "onebot_reverse"] as const;
 
 const BOT_TYPE_LABEL_KEYS: Record<string, string> = {
   feishu: "im.botTypeFeishu",
@@ -108,6 +110,7 @@ const BOT_TYPE_LABEL_KEYS: Record<string, string> = {
   onebot: "im.botTypeOnebotForward",
   onebot_reverse: "im.botTypeOnebotReverse",
   qqbot: "im.botTypeQQBot",
+  wechat: "im.botTypeWechat",
 };
 
 const WEWORK_TYPES = new Set(["wework", "wework_ws"]);
@@ -152,6 +155,9 @@ const CREDENTIAL_FIELDS: Record<string, { key: string; label: string; secret?: b
     { key: "app_id", label: "App ID" },
     { key: "app_secret", label: "App Secret", secret: true },
   ],
+  wechat: [
+    { key: "token", label: "Token", secret: true, placeholder: "wechat.tokenHint" },
+  ],
 };
 
 const EMPTY_BOT: IMBot = {
@@ -162,6 +168,42 @@ const EMPTY_BOT: IMBot = {
   enabled: true,
   credentials: {},
 };
+
+const BOT_ID_PREFIX: Record<string, string> = {
+  feishu: "feishu", telegram: "telegram", dingtalk: "dingtalk",
+  wework: "wecom", wework_ws: "wecom", qqbot: "qq",
+  onebot: "onebot", onebot_reverse: "onebot", wechat: "wechat",
+};
+
+function generateBotId(type: string): string {
+  const prefix = BOT_ID_PREFIX[type] || type;
+  const suffix = Math.random().toString(36).slice(2, 7);
+  return `${prefix}-${suffix}`;
+}
+
+function generateBotName(
+  type: string,
+  agentProfileId: string,
+  profiles: { id: string; name: string }[],
+  labelKeys: Record<string, string>,
+  t: (k: string, opts?: Record<string, unknown>) => string,
+): string {
+  const agent = agentProfileId === "default"
+    ? t("im.botAgentDefault")
+    : (profiles.find((p) => p.id === agentProfileId)?.name || agentProfileId);
+  const channel = t(labelKeys[type] || "", { defaultValue: type });
+  const suffix = Math.random().toString(36).slice(2, 7);
+  return `${agent} ${channel} ${suffix}`;
+}
+
+const TG_CORE_FIELDS = ["bot_token"];
+const TG_ADVANCED_FIELDS = ["proxy", "webhook_url"];
+
+function generatePairingCode(): string {
+  let code = "";
+  for (let i = 0; i < 6; i++) code += Math.floor(Math.random() * 10);
+  return code;
+}
 
 // ─── Main Component ─────────────────────────────────────────────────────
 
@@ -272,7 +314,9 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
   }, [openMenuSessionId]);
 
   const getChannelDisplayName = useCallback((ch: IMChannel): string => {
-    const key = `status.${(ch.channel || "").toLowerCase()}`;
+    if (ch.name && ch.name !== ch.channel) return ch.name;
+    const base = (ch.channel || "").split(":")[0].toLowerCase();
+    const key = `status.${base}`;
     const translated = t(key);
     return translated && translated !== key ? translated : (ch.name || ch.channel);
   }, [t]);
@@ -1043,7 +1087,9 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
   }, [apiBase, selectedChannel]);
 
   const getChannelDisplayName = useCallback((ch: IMChannel): string => {
-    const key = `status.${(ch.channel || "").toLowerCase()}`;
+    if (ch.name && ch.name !== ch.channel) return ch.name;
+    const base = (ch.channel || "").split(":")[0].toLowerCase();
+    const key = `status.${base}`;
     const translated = t(key);
     return translated && translated !== key ? translated : (ch.name || ch.channel);
   }, [t]);
@@ -1129,7 +1175,7 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
 
 // ─── Bot Configuration Tab ──────────────────────────────────────────────
 
-export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, venvDir, apiBaseUrl, enabledChannels }: { apiBase: string; multiAgentEnabled: boolean; onRequestRestart?: () => void; venvDir?: string; apiBaseUrl?: string; enabledChannels?: string[] }) {
+export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, venvDir, apiBaseUrl }: { apiBase: string; multiAgentEnabled?: boolean; onRequestRestart?: () => void; venvDir?: string; apiBaseUrl?: string; enabledChannels?: string[] }) {
   const { t } = useTranslation();
   const [bots, setBots] = useState<IMBot[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
@@ -1143,8 +1189,11 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
   const [showFeishuQR, setShowFeishuQR] = useState(false);
   const [showQQBotQR, setShowQQBotQR] = useState(false);
   const [showWecomQR, setShowWecomQR] = useState(false);
+  const [showWechatQR, setShowWechatQR] = useState(false);
   const [tgPairingCode, setTgPairingCode] = useState<string | null>(null);
   const [tgPairingLoading, setTgPairingLoading] = useState(false);
+  const [isAutoId, setIsAutoId] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const loadTgPairingCode = useCallback(async () => {
     setTgPairingLoading(true);
@@ -1159,14 +1208,19 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
     }
   }, [apiBase]);
 
-  const fetchBots = useCallback(async () => {
+  const fetchBots = useCallback(async (): Promise<boolean> => {
     setLoading(true);
     try {
       const res = await safeFetch(`${apiBase}/api/agents/bots`);
       const data = await res.json();
       setBots(data.bots || []);
-    } catch (e) { logger.warn("IM", "Failed to fetch bots", { error: String(e) }); }
-    setLoading(false);
+      setLoading(false);
+      return true;
+    } catch (e) {
+      logger.warn("IM", "Failed to fetch bots", { error: String(e) });
+      setLoading(false);
+      return false;
+    }
   }, [apiBase]);
 
   const fetchProfiles = useCallback(async () => {
@@ -1178,13 +1232,38 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
   }, [apiBase]);
 
   useEffect(() => {
-    fetchBots();
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const loadWithRetry = async (attempt = 0) => {
+      if (cancelled) return;
+      const ok = await fetchBots();
+      if (!ok && !cancelled && attempt < 3) {
+        retryTimer = setTimeout(() => loadWithRetry(attempt + 1), 2000 * (attempt + 1));
+      }
+    };
+    loadWithRetry();
     fetchProfiles();
-  }, [multiAgentEnabled, fetchBots, fetchProfiles]);
+    return () => { cancelled = true; clearTimeout(retryTimer); };
+  }, [fetchBots, fetchProfiles]);
+
+  useEffect(() => {
+    const timer = setInterval(fetchBots, IS_WEB ? 60_000 : 30_000);
+    return () => clearInterval(timer);
+  }, [fetchBots]);
+
+  useEffect(() => {
+    if (!IS_WEB) return;
+    return onWsEvent((event) => {
+      if (event === "im:bot_config_changed") fetchBots();
+    });
+  }, [fetchBots]);
 
   const openCreate = () => {
-    setEditingBot({ ...EMPTY_BOT });
+    const defaultName = generateBotName(EMPTY_BOT.type, EMPTY_BOT.agent_profile_id, profiles, BOT_TYPE_LABEL_KEYS, t);
+    const bot = { ...EMPTY_BOT, id: generateBotId(EMPTY_BOT.type), name: defaultName };
+    setEditingBot(bot);
     setIsCreating(true);
+    setIsAutoId(true);
     setEditorOpen(true);
     setRevealedSecrets(new Set());
   };
@@ -1192,6 +1271,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
   const openEdit = (bot: IMBot) => {
     setEditingBot({ ...bot, credentials: { ...bot.credentials } });
     setIsCreating(false);
+    setIsAutoId(false);
     setEditorOpen(true);
     setRevealedSecrets(new Set());
     if (bot.type === "telegram") loadTgPairingCode();
@@ -1315,15 +1395,6 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
   const streamingEnabled = editingBot.credentials.streaming_enabled === "true" || editingBot.credentials.streaming_enabled === true;
   const groupStreamingEnabled = editingBot.credentials.group_streaming === "true" || editingBot.credentials.group_streaming === true;
 
-  if (!multiAgentEnabled) {
-    return (
-      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground opacity-50">
-        <IconBot size={48} />
-        <div className="mt-3 font-bold">{t("im.needMultiAgent")}</div>
-      </div>
-    );
-  }
-
   return (
     <div className="p-5 relative">
       {/* Header */}
@@ -1336,9 +1407,13 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
         <Button variant="outline" size="icon-sm" onClick={fetchBots} disabled={loading}>
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </Button>
-        <Button size="sm" onClick={openCreate}>
+        <Button variant="outline" size="sm" onClick={openCreate}>
           <IconPlus size={14} />
           {t("im.createBot")}
+        </Button>
+        <Button size="sm" onClick={() => setWizardOpen(true)}>
+          <Sparkles size={14} />
+          {t("im.wizardGuide")}
         </Button>
       </div>
 
@@ -1354,7 +1429,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                 !bot.enabled && "opacity-55"
               )}
             >
-              <div className="absolute top-2 right-2 flex gap-1">
+              <div className="flex items-center justify-between mb-2">
                 <Badge variant="secondary" className="text-[10px] gap-1 px-1.5 py-0">
                   {IM_LOGO_MAP[bot.type]?.({ size: 12 })}
                   {t(BOT_TYPE_LABEL_KEYS[bot.type] || "", { defaultValue: bot.type })}
@@ -1363,12 +1438,11 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                   {bot.enabled ? t("im.botEnabled") : t("im.botDisabled")}
                 </Badge>
               </div>
-
-              <div className="flex items-center gap-2.5 mt-0.5 mb-1.5">
-                <span className="text-2xl leading-none">{agentProfile?.icon || "🤖"}</span>
+              <div className="flex items-center gap-2.5 mb-1.5">
+                <span className="text-2xl leading-none shrink-0">{agentProfile?.icon || "🤖"}</span>
                 <div className="min-w-0">
-                  <div className="font-bold text-sm truncate">{bot.name || bot.id}</div>
-                  <div className="text-[11px] text-muted-foreground/45 font-mono">{bot.id}</div>
+                  <div className="font-bold text-sm truncate" title={bot.name || bot.id}>{bot.name || bot.id}</div>
+                  <div className="text-[11px] text-muted-foreground/45 font-mono truncate" title={bot.id}>{bot.id}</div>
                 </div>
               </div>
               <p className="text-xs text-muted-foreground mb-2.5">
@@ -1418,51 +1492,68 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Editor Sheet */}
-      <Sheet open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }}>
-        <SheetContent side="right" className="sm:max-w-md flex flex-col"
-          onPointerDownOutside={(e) => { if (showFeishuQR || showQQBotQR || showWecomQR) e.preventDefault(); }}
-          onInteractOutside={(e) => { if (showFeishuQR || showQQBotQR || showWecomQR) e.preventDefault(); }}
+      {/* Editor Dialog */}
+      <Dialog open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }}>
+        <DialogContent
+          className="sm:max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
+          onPointerDownOutside={(e) => { if (showFeishuQR || showQQBotQR || showWecomQR || showWechatQR) e.preventDefault(); }}
+          onInteractOutside={(e) => { if (showFeishuQR || showQQBotQR || showWecomQR || showWechatQR) e.preventDefault(); }}
         >
-          <SheetHeader>
-            <SheetTitle>{isCreating ? t("im.createBot") : t("im.editBot")}</SheetTitle>
-          </SheetHeader>
+          <DialogHeader>
+            <DialogTitle>{isCreating ? t("im.createBot") : t("im.editBot")}</DialogTitle>
+          </DialogHeader>
 
-          <div className="flex-1 overflow-auto px-6 py-4 space-y-4">
-            {/* Bot ID */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-4 px-0.5 -mx-0.5">
+            {/* 1. Bot ID */}
             <div className="space-y-1.5">
-              <Label>{t("im.botId")}</Label>
+              <div className="flex items-baseline gap-2">
+                <Label>{t("im.botId")}</Label>
+                {isCreating && <span className="text-[11px] text-muted-foreground/50">{t("im.botIdHint")}</span>}
+              </div>
               <Input
                 value={editingBot.id}
-                onChange={(e) => setEditingBot((p) => ({ ...p, id: e.target.value.replace(/[^a-z0-9_-]/gi, "").toLowerCase() }))}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^a-z0-9_-]/gi, "").toLowerCase();
+                  setEditingBot((p) => ({ ...p, id: val }));
+                  setIsAutoId(false);
+                }}
                 disabled={!isCreating}
-                placeholder="my-feishu-bot"
+                className={cn(isCreating && isAutoId && "text-muted-foreground")}
               />
-              {isCreating && <p className="text-[11px] text-muted-foreground/40">{t("im.botIdHint")}</p>}
             </div>
 
-            {/* Bot Name */}
+            {/* 2. Agent Profile */}
             <div className="space-y-1.5">
-              <Label>{t("im.botName")}</Label>
-              <Input
-                value={editingBot.name}
-                onChange={(e) => setEditingBot((p) => ({ ...p, name: e.target.value }))}
-                placeholder="My Bot"
-              />
+              <Label>{t("im.botAgent")}</Label>
+              <Select value={editingBot.agent_profile_id} onValueChange={(v) => setEditingBot((p) => ({ ...p, agent_profile_id: v }))}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent position="popper" side="bottom" sideOffset={4}>
+                  <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            {/* Bot Type */}
+            {/* 3. IM Channel (Bot Type) */}
             <div className="space-y-1.5">
               <Label>{t("im.botType")}</Label>
               <Select
                 value={WEWORK_TYPES.has(editingBot.type) ? "wework_ws" : ONEBOT_TYPES.has(editingBot.type) ? "onebot_reverse" : editingBot.type}
-                onValueChange={(val) => setEditingBot((p) => ({ ...p, type: val, credentials: {} }))}
+                onValueChange={(val) => {
+                  setEditingBot((p) => ({
+                    ...p,
+                    type: val,
+                    credentials: {},
+                    ...(isCreating && isAutoId ? { id: generateBotId(val) } : {}),
+                  }));
+                }}
                 disabled={!isCreating}
               >
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
+                <SelectTrigger className="w-full"><SelectValue placeholder={t("im.botTypePlaceholder")} /></SelectTrigger>
+                <SelectContent position="popper" side="bottom" sideOffset={4}>
                   {BOT_TYPES.filter((bt) => bt !== "wework" && bt !== "onebot")
-                    .filter((bt) => !enabledChannels || enabledChannels.includes(bt))
                     .map((bt) => (
                     <SelectItem key={bt} value={bt}>
                       {bt === "wework_ws" ? t("im.botTypeWework") : bt === "onebot_reverse" ? t("im.botTypeOnebot") : t(BOT_TYPE_LABEL_KEYS[bt] || "", { defaultValue: bt })}
@@ -1472,27 +1563,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
               </Select>
             </div>
 
-            {/* Agent Profile */}
-            <div className="space-y-1.5">
-              <Label>{t("im.botAgent")}</Label>
-              <Select value={editingBot.agent_profile_id} onValueChange={(v) => setEditingBot((p) => ({ ...p, agent_profile_id: v }))}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
-                  {profiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Enabled */}
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <Switch checked={editingBot.enabled} onCheckedChange={(v) => setEditingBot((p) => ({ ...p, enabled: v }))} />
-              <span className="text-sm font-medium">{t("im.botEnabled")}</span>
-            </label>
-
-            {/* OneBot mode selector */}
+            {/* 4a. OneBot mode selector */}
             {ONEBOT_TYPES.has(editingBot.type) && (
               <div className="space-y-1.5">
                 <Label>{t("config.imOneBotMode")}</Label>
@@ -1508,7 +1579,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
               </div>
             )}
 
-            {/* WeWork mode selector */}
+            {/* 4b. WeWork mode selector */}
             {WEWORK_TYPES.has(editingBot.type) && (
               <div className="space-y-1.5">
                 <Label>{t("config.imWeworkMode")}</Label>
@@ -1524,29 +1595,89 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
               </div>
             )}
 
-            {/* WeCom WS: QR onboard */}
+            {/* 4c. QQ Bot mode selector */}
+            {editingBot.type === "qqbot" && (
+              <div className="space-y-1.5">
+                <Label>{t("config.imQQBotMode")}</Label>
+                <ToggleGroup type="single" variant="outline" size="sm" value={String(editingBot.credentials.mode || "websocket")} onValueChange={(v) => { if (v) updateCredential("mode", v); }} className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
+                  <ToggleGroupItem value="websocket">WebSocket</ToggleGroupItem>
+                  <ToggleGroupItem value="webhook">Webhook</ToggleGroupItem>
+                </ToggleGroup>
+                <p className="text-[11px] text-muted-foreground">
+                  {(String(editingBot.credentials.mode || "websocket")) === "websocket"
+                    ? t("config.imQQBotModeWsHint")
+                    : t("config.imQQBotModeWhHint")}
+                </p>
+              </div>
+            )}
+
+            {/* 5. Bot Name + auto-generate */}
+            <div className="space-y-1.5">
+              <Label>{t("im.botName")}</Label>
+              <div className="flex gap-1.5">
+                <Input
+                  value={editingBot.name}
+                  onChange={(e) => setEditingBot((p) => ({ ...p, name: e.target.value }))}
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline" size="icon"
+                  className="h-9 w-9 shrink-0"
+                  title={t("im.botAutoGenName")}
+                  onClick={() => {
+                    const name = generateBotName(editingBot.type, editingBot.agent_profile_id, profiles, BOT_TYPE_LABEL_KEYS, t);
+                    setEditingBot((p) => ({ ...p, name }));
+                  }}
+                >
+                  <Dices size={15} />
+                </Button>
+              </div>
+            </div>
+
+            {/* 6. QR scan buttons */}
+            {editingBot.type === "feishu" && venvDir && (
+              <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowFeishuQR(true)}>
+                {t("feishu.qrScanCreate")}
+              </Button>
+            )}
+            {editingBot.type === "qqbot" && venvDir && (
+              <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowQQBotQR(true)}>
+                {t("qqbot.qrScanCreate")}
+              </Button>
+            )}
             {editingBot.type === "wework_ws" && venvDir && (
               <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowWecomQR(true)}>
                 {t("wecom.qrScanCreate")}
               </Button>
             )}
+            {editingBot.type === "wechat" && (venvDir || apiBaseUrl) && (
+              <>
+                <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowWechatQR(true)}>
+                  {t("wechat.qrScanLogin")}
+                </Button>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">{t("wechat.hint")}</p>
+              </>
+            )}
 
-            {/* Credentials */}
+            {/* 7. Credentials */}
             <div className="space-y-2.5">
-              <Label className="text-xs font-semibold">{t("im.botCredentials")}</Label>
-              {credFields.map((field) => (
+              <Label>{t("im.botCredentials")}</Label>
+              {(editingBot.type === "telegram"
+                ? credFields.filter((f) => TG_CORE_FIELDS.includes(f.key))
+                : credFields
+              ).map((field) => (
                 <div key={field.key} className="space-y-1">
-                  <Label className="text-[11px] text-muted-foreground/60">{t(field.label, { defaultValue: field.label })}</Label>
-                  <div className="flex gap-1">
+                  <Label className="text-sm text-muted-foreground">{t(field.label, { defaultValue: field.label })}</Label>
+                  <div className="flex gap-1.5">
                     <Input
                       type={field.secret && !revealedSecrets.has(field.key) ? "password" : "text"}
                       value={String(editingBot.credentials[field.key] ?? "")}
                       onChange={(e) => updateCredential(field.key, e.target.value)}
                       placeholder={field.placeholder ? t(field.placeholder, { defaultValue: field.placeholder }) : undefined}
-                      className="flex-1 text-xs"
+                      className="flex-1 placeholder:text-foreground/40"
                     />
                     {field.secret && (
-                      <Button variant="outline" size="sm" className="h-9 px-2 text-[11px] shrink-0"
+                      <Button variant="outline" size="sm" className="h-9 px-2.5 text-xs shrink-0"
                         onClick={() => setRevealedSecrets((prev) => {
                           const next = new Set(prev);
                           if (next.has(field.key)) next.delete(field.key); else next.add(field.key);
@@ -1561,82 +1692,82 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
               ))}
             </div>
 
-            {/* Telegram extras */}
+            {/* 8. Telegram: pairing code + advanced */}
             {editingBot.type === "telegram" && (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <Checkbox
-                    checked={editingBot.credentials.require_pairing === "true" || editingBot.credentials.require_pairing === true || editingBot.credentials.require_pairing === undefined}
-                    onCheckedChange={(v) => updateCredential("require_pairing", v ? "true" : "false")}
-                  />
-                  <span className="text-xs">{t("config.imPairing")}</span>
-                </label>
-                <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-muted-foreground/70 leading-6">
-                  <span>🔑 {t("config.imCurrentPairingCode")}：</span>
-                  {tgPairingLoading ? (
-                    <span className="opacity-50">...</span>
-                  ) : tgPairingCode ? (
-                    <code className="bg-muted px-2 py-0.5 rounded text-xs font-semibold tracking-widest select-all">{tgPairingCode}</code>
-                  ) : (
-                    <span className="opacity-50">{t("config.imPairingCodeNotGenerated")}</span>
-                  )}
-                  <Button variant="outline" size="sm" className="h-5 px-2 text-[11px] gap-1" onClick={loadTgPairingCode} disabled={tgPairingLoading}>
-                    <IconRefresh size={11} /> {t("common.refresh")}
-                  </Button>
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-sm text-muted-foreground">{t("config.imPairingCode")}</Label>
+                  <div className="flex gap-1.5">
+                    <Input
+                      value={String(editingBot.credentials.pairing_code ?? "")}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, "");
+                        updateCredential("pairing_code", val);
+                      }}
+                      inputMode="numeric"
+                      placeholder={t("config.imPairingCodeHint", { defaultValue: "输入或点击随机生成" })}
+                      className="flex-1 font-mono tracking-wider placeholder:text-foreground/40"
+                    />
+                    <Button
+                      variant="outline" size="icon"
+                      className="h-9 w-9 shrink-0"
+                      title={t("im.botAutoGenName")}
+                      onClick={() => updateCredential("pairing_code", generatePairingCode())}
+                    >
+                      <Dices size={15} />
+                    </Button>
+                  </div>
                 </div>
+
+                <details className="group">
+                  <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+                    {t("im.botAdvancedConfig")} ▸
+                  </summary>
+                  <div className="mt-2 space-y-2.5 pl-1">
+                    {credFields.filter((f) => TG_ADVANCED_FIELDS.includes(f.key)).map((field) => (
+                      <div key={field.key} className="space-y-1">
+                        <Label className="text-sm text-muted-foreground">{t(field.label, { defaultValue: field.label })}</Label>
+                        <Input
+                          value={String(editingBot.credentials[field.key] ?? "")}
+                          onChange={(e) => updateCredential(field.key, e.target.value)}
+                          placeholder={field.placeholder ? t(field.placeholder, { defaultValue: field.placeholder }) : undefined}
+                          className="placeholder:text-foreground/40"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </details>
               </div>
             )}
 
             {/* QQ Bot extras */}
             {editingBot.type === "qqbot" && (
-              <div className="space-y-2.5">
-                {venvDir && (
-                  <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowQQBotQR(true)}>
-                    {t("qqbot.qrScanCreate")}
-                  </Button>
-                )}
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <Checkbox
-                    checked={editingBot.credentials.sandbox === "true" || editingBot.credentials.sandbox === true}
-                    onCheckedChange={(v) => updateCredential("sandbox", v ? "true" : "false")}
-                  />
-                  <span className="text-xs">{t("config.imQQBotSandbox")}</span>
-                </label>
-                <div className="space-y-1">
-                  <Label className="text-[11px] text-muted-foreground/60">{t("config.imQQBotMode")}</Label>
-                  <ToggleGroup type="single" variant="outline" size="sm" value={String(editingBot.credentials.mode || "websocket")} onValueChange={(v) => { if (v) updateCredential("mode", v); }} className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
-                    <ToggleGroupItem value="websocket">WebSocket</ToggleGroupItem>
-                    <ToggleGroupItem value="webhook">Webhook</ToggleGroupItem>
-                  </ToggleGroup>
-                  <p className="text-[11px] text-muted-foreground">
-                    {(String(editingBot.credentials.mode || "websocket")) === "websocket"
-                      ? t("config.imQQBotModeWsHint")
-                      : t("config.imQQBotModeWhHint")}
-                  </p>
-                </div>
-              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <Checkbox
+                  checked={editingBot.credentials.sandbox === "true" || editingBot.credentials.sandbox === true}
+                  onCheckedChange={(v) => updateCredential("sandbox", v ? "true" : "false")}
+                />
+                <span className="text-sm">{t("config.imQQBotSandbox")}</span>
+              </label>
             )}
 
             {/* Feishu extras */}
             {editingBot.type === "feishu" && (
-              <div className="space-y-3">
-                {venvDir && (
-                  <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowFeishuQR(true)}>
-                    {t("feishu.qrScanCreate")}
-                  </Button>
-                )}
+              <div className="space-y-4">
                 <div className="border-t" />
-                <Label className="text-xs font-semibold">{t("feishu.streaming")}</Label>
-                <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none">
-                  <span className="text-sm">{t("feishu.streaming")}</span>
-                  <Switch checked={streamingEnabled} onCheckedChange={(v) => updateCredential("streaming_enabled", v ? "true" : "false")} />
-                </label>
-                {streamingEnabled && (
-                  <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none ml-3">
-                    <span className="text-sm">{t("feishu.groupStreaming")}</span>
-                    <Switch checked={groupStreamingEnabled} onCheckedChange={(v) => updateCredential("group_streaming", v ? "true" : "false")} />
+                <div className="space-y-1.5">
+                  <Label>{t("feishu.streaming")}</Label>
+                  <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none">
+                    <span className="text-sm">{t("feishu.streaming")}</span>
+                    <Switch checked={streamingEnabled} onCheckedChange={(v) => updateCredential("streaming_enabled", v ? "true" : "false")} />
                   </label>
-                )}
+                  {streamingEnabled && (
+                    <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none ml-3">
+                      <span className="text-sm">{t("feishu.groupStreaming")}</span>
+                      <Switch checked={groupStreamingEnabled} onCheckedChange={(v) => updateCredential("group_streaming", v ? "true" : "false")} />
+                    </label>
+                  )}
+                </div>
                 <div className="space-y-1.5">
                   <Label>{t("feishu.groupMode")}</Label>
                   <ToggleGroup type="single" variant="outline" size="sm"
@@ -1657,7 +1788,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
           </div>
 
           {/* Footer */}
-          <SheetFooter className="border-t p-4">
+          <DialogFooter className="border-t pt-4 mt-2">
             <Button variant="outline" onClick={closeEditor}>{t("common.cancel")}</Button>
             <Button onClick={handleSave} disabled={saving || !editingBot.id.trim()}>
               {saving ? "..." : t("im.botSaveOnly")}
@@ -1665,9 +1796,9 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
             <Button className="btnApplyRestart" onClick={handleSaveAndRestart} disabled={saving || !editingBot.id.trim()} title={t("im.botApplyRestartHint")}>
               {saving ? "..." : t("im.botApplyRestart")}
             </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {showFeishuQR && venvDir && (
         <FeishuQRModal
@@ -1707,7 +1838,689 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
           }}
         />
       )}
+
+      {showWechatQR && (
+        <WechatQRModal
+          venvDir={venvDir}
+          apiBaseUrl={apiBaseUrl}
+          onClose={() => setShowWechatQR(false)}
+          onSuccess={(token) => {
+            updateCredential("token", token);
+            setShowWechatQR(false);
+          }}
+        />
+      )}
+
+      {/* Bot Creation Wizard */}
+      <BotCreationWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        apiBase={apiBase}
+        multiAgentEnabled={multiAgentEnabled}
+        profiles={profiles}
+        onRequestRestart={onRequestRestart}
+        venvDir={venvDir}
+        apiBaseUrl={apiBaseUrl}
+        onCreated={fetchBots}
+      />
     </div>
+  );
+}
+
+// ─── Bot Creation Wizard ─────────────────────────────────────────────────
+
+const WIZARD_PLATFORMS = [
+  { id: "wechat", botType: "wechat", title: "config.imWechat", logo: LogoWechat },
+  { id: "feishu", botType: "feishu", title: "config.imFeishu", logo: LogoFeishu },
+  { id: "dingtalk", botType: "dingtalk", title: "config.imDingtalk", logo: LogoDingtalk },
+  { id: "wework", botType: "wework_ws", title: "config.imWework", logo: LogoWework },
+  { id: "qqbot", botType: "qqbot", title: "config.imQQBot", logo: LogoQQ },
+  { id: "telegram", botType: "telegram", title: "Telegram", logo: LogoTelegram },
+  { id: "onebot", botType: "onebot_reverse", title: "OneBot", logo: LogoOneBot },
+] as const;
+
+type WizardStep = "platform" | "agent" | "mode" | "idname" | "credentials" | "extra" | "done";
+
+const ALL_WIZARD_STEPS: WizardStep[] = ["platform", "agent", "mode", "idname", "credentials", "extra", "done"];
+
+const STEP_LABELS: Record<WizardStep, string> = {
+  platform: "im.wizardStepPlatform",
+  agent: "im.wizardStepAgent",
+  mode: "im.wizardStepMode",
+  idname: "im.wizardStepIdName",
+  credentials: "im.wizardStepCredentials",
+  extra: "im.wizardStepExtra",
+  done: "im.wizardStepDone",
+};
+
+function hasMode(botType: string): boolean {
+  return ONEBOT_TYPES.has(botType) || WEWORK_TYPES.has(botType);
+}
+
+function hasExtra(botType: string): boolean {
+  return botType === "feishu" || botType === "qqbot";
+}
+
+function hasQrScan(botType: string): boolean {
+  return ["feishu", "qqbot", "wework_ws", "wechat"].includes(botType);
+}
+
+function getActiveSteps(botType: string): WizardStep[] {
+  return ALL_WIZARD_STEPS.filter((s) => {
+    if (s === "mode") return hasMode(botType);
+    if (s === "extra") return hasExtra(botType);
+    return true;
+  });
+}
+
+function getRequiredCredKeys(botType: string): string[] {
+  const fields = CREDENTIAL_FIELDS[botType] || [];
+  if (botType === "telegram") return fields.filter((f) => TG_CORE_FIELDS.includes(f.key)).map((f) => f.key);
+  return fields.map((f) => f.key);
+}
+
+function areCredsFilled(botType: string, creds: Record<string, unknown>): boolean {
+  const keys = getRequiredCredKeys(botType);
+  return keys.length === 0 || keys.some((k) => {
+    const v = creds[k];
+    return typeof v === "string" ? v.trim().length > 0 : !!v;
+  });
+}
+
+function BotCreationWizard({
+  open,
+  onClose,
+  apiBase,
+  multiAgentEnabled,
+  profiles,
+  onRequestRestart,
+  venvDir,
+  apiBaseUrl,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  apiBase: string;
+  multiAgentEnabled?: boolean;
+  profiles: AgentProfile[];
+  onRequestRestart?: () => void;
+  venvDir?: string;
+  apiBaseUrl?: string;
+  onCreated: () => void;
+}) {
+  const { t } = useTranslation();
+  const [step, setStep] = useState<WizardStep>("platform");
+  const [bot, setBot] = useState<IMBot>({ ...EMPTY_BOT, id: generateBotId("feishu") });
+  const [isAutoId, setIsAutoId] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
+  const [showFeishuQR, setShowFeishuQR] = useState(false);
+  const [showQQBotQR, setShowQQBotQR] = useState(false);
+  const [showWecomQR, setShowWecomQR] = useState(false);
+  const [showWechatQR, setShowWechatQR] = useState(false);
+
+  const activeSteps = getActiveSteps(bot.type);
+  const currentIdx = activeSteps.indexOf(step);
+
+  const resetWizard = useCallback(() => {
+    setStep("platform");
+    const defaultName = generateBotName(EMPTY_BOT.type, EMPTY_BOT.agent_profile_id, profiles, BOT_TYPE_LABEL_KEYS, t);
+    setBot({ ...EMPTY_BOT, id: generateBotId("feishu"), name: defaultName });
+    setIsAutoId(true);
+    setSaving(false);
+    setRevealedSecrets(new Set());
+  }, [profiles, t]);
+
+  useEffect(() => {
+    if (open) resetWizard();
+  }, [open, resetWizard]);
+
+  const goNext = () => {
+    const steps = getActiveSteps(bot.type);
+    const idx = steps.indexOf(step);
+    if (idx < steps.length - 1) setStep(steps[idx + 1]);
+  };
+
+  const goPrev = () => {
+    const steps = getActiveSteps(bot.type);
+    const idx = steps.indexOf(step);
+    if (idx > 0) setStep(steps[idx - 1]);
+  };
+
+  const selectPlatform = (platformId: string) => {
+    const p = WIZARD_PLATFORMS.find((wp) => wp.id === platformId);
+    if (!p) return;
+    const newId = generateBotId(p.botType);
+    const newName = generateBotName(p.botType, bot.agent_profile_id, profiles, BOT_TYPE_LABEL_KEYS, t);
+    setBot((prev) => ({ ...prev, type: p.botType, credentials: {}, id: newId, name: newName }));
+    setIsAutoId(true);
+  };
+
+  const updateCredential = (key: string, value: string) => {
+    setBot((prev) => ({
+      ...prev,
+      credentials: { ...prev.credentials, [key]: value },
+    }));
+    setCredWarning(false);
+  };
+
+  const handleSave = async (restart: boolean) => {
+    if (!bot.id.trim()) return;
+    setSaving(true);
+    try {
+      await safeFetch(`${apiBase}/api/agents/bots`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: bot.id,
+          type: bot.type,
+          name: bot.name,
+          agent_profile_id: bot.agent_profile_id,
+          enabled: true,
+          credentials: bot.credentials,
+        }),
+      });
+      toast.success(t("im.wizardSaved"));
+      onCreated();
+      onClose();
+      if (restart) onRequestRestart?.();
+    } catch (e) {
+      toast.error(String(e));
+    }
+    setSaving(false);
+  };
+
+  const credFields = CREDENTIAL_FIELDS[bot.type] || [];
+  const platformInfo = WIZARD_PLATFORMS.find((wp) => wp.botType === bot.type || wp.id === bot.type);
+  const platformTitle = platformInfo
+    ? (platformInfo.title.startsWith("config.") ? t(platformInfo.title) : platformInfo.title)
+    : bot.type;
+  const streamingEnabled = bot.credentials.streaming_enabled === "true" || bot.credentials.streaming_enabled === true;
+  const groupStreamingEnabled = bot.credentials.group_streaming === "true" || bot.credentials.group_streaming === true;
+  const credMissing = !areCredsFilled(bot.type, bot.credentials);
+  const [credWarning, setCredWarning] = useState(false);
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+        <DialogContent
+          className="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+          onPointerDownOutside={(e) => { if (showFeishuQR || showQQBotQR || showWecomQR || showWechatQR) e.preventDefault(); }}
+          onInteractOutside={(e) => { if (showFeishuQR || showQQBotQR || showWecomQR || showWechatQR) e.preventDefault(); }}
+        >
+          <DialogHeader>
+            <div className="flex items-center gap-2.5">
+              <DialogTitle>{t("im.wizardTitle")}</DialogTitle>
+              {platformInfo && step !== "platform" && (
+                <div className="flex items-center gap-1.5 rounded-full bg-primary/8 border border-primary/20 px-2.5 py-0.5">
+                  <platformInfo.logo size={16} />
+                  <span className="text-xs font-medium text-primary">{platformTitle}</span>
+                </div>
+              )}
+            </div>
+          </DialogHeader>
+
+          {/* Step indicator */}
+          <div className="flex items-center px-1 pb-3 pt-1">
+            {activeSteps.map((s, i) => {
+              const isCompleted = i < currentIdx;
+              const isCurrent = i === currentIdx;
+              return (
+                <div key={s} className="flex items-center" style={{ flex: i < activeSteps.length - 1 ? 1 : "none" }}>
+                  <button
+                    onClick={() => { if (isCompleted) setStep(s); }}
+                    className={cn(
+                      "flex flex-col items-center gap-1 select-none transition-all w-[72px] shrink-0",
+                      isCompleted && "cursor-pointer",
+                    )}
+                  >
+                    <div className={cn(
+                      "size-7 rounded-full flex items-center justify-center text-xs font-semibold transition-all border-2",
+                      isCompleted
+                        ? "bg-emerald-500 border-emerald-500 text-white"
+                        : isCurrent
+                          ? "bg-primary border-primary text-primary-foreground shadow-md shadow-primary/25"
+                          : "bg-muted border-border text-muted-foreground"
+                    )}>
+                      {isCompleted ? <Check size={14} strokeWidth={3} /> : i + 1}
+                    </div>
+                    <span className={cn(
+                      "text-[11px] leading-tight text-center font-medium whitespace-nowrap",
+                      isCompleted ? "text-emerald-600 dark:text-emerald-400"
+                        : isCurrent ? "text-primary" : "text-muted-foreground"
+                    )}>
+                      {t(STEP_LABELS[s])}
+                    </span>
+                  </button>
+                  {i < activeSteps.length - 1 && (
+                    <div className={cn(
+                      "h-0.5 flex-1 rounded-full transition-colors mx-0.5",
+                      i < currentIdx ? "bg-emerald-500" : "bg-border"
+                    )} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Step content */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 -mx-2 pb-2 min-h-[200px]">
+            {/* Step: Platform */}
+            {step === "platform" && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">{t("im.wizardSelectPlatformHint")}</p>
+                <div className="grid grid-cols-4 gap-3 p-1.5 -m-1.5">
+                  {WIZARD_PLATFORMS.map((p) => {
+                    const selected = bot.type === p.botType;
+                    const label = p.title.startsWith("config.") ? t(p.title) : p.title;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => selectPlatform(p.id)}
+                        className={cn(
+                          "relative flex flex-col items-center gap-2.5 rounded-xl border-2 p-5 transition-all cursor-pointer select-none",
+                          selected
+                            ? "border-primary bg-primary/8 shadow-md shadow-primary/15 ring-2 ring-primary/20 scale-[1.02]"
+                            : "border-transparent bg-muted/40 hover:bg-muted/80 hover:border-border hover:shadow-sm"
+                        )}
+                      >
+                        {selected && (
+                          <div className="absolute -top-1.5 -right-1.5 size-5 rounded-full bg-primary flex items-center justify-center shadow-sm">
+                            <Check size={12} strokeWidth={3} className="text-primary-foreground" />
+                          </div>
+                        )}
+                        <p.logo size={40} />
+                        <span className={cn("text-sm font-medium", selected ? "text-primary font-semibold" : "text-foreground")}>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Step: Agent */}
+            {step === "agent" && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">{t("im.wizardAgentHint")}</p>
+                <Select
+                  value={bot.agent_profile_id}
+                  onValueChange={(v) => setBot((prev) => ({ ...prev, agent_profile_id: v }))}
+                  disabled={!multiAgentEnabled}
+                >
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent position="popper" side="bottom" sideOffset={4}>
+                    <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
+                    {profiles.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!multiAgentEnabled && (
+                  <p className="text-[11px] text-muted-foreground">{t("im.needMultiAgent")}</p>
+                )}
+              </div>
+            )}
+
+            {/* Step: Mode */}
+            {step === "mode" && (
+              <div className="space-y-3">
+                {ONEBOT_TYPES.has(bot.type) && (
+                  <div className="space-y-1.5">
+                    <Label>{t("config.imOneBotMode")}</Label>
+                    <ToggleGroup type="single" variant="outline" size="sm" value={bot.type} onValueChange={(v) => {
+                      if (v && v !== bot.type) {
+                        setBot((prev) => ({ ...prev, type: v, credentials: {}, ...(isAutoId ? { id: generateBotId(v) } : {}) }));
+                      }
+                    }} className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
+                      <ToggleGroupItem value="onebot_reverse">{t("config.imOneBotModeReverse")}</ToggleGroupItem>
+                      <ToggleGroupItem value="onebot">{t("config.imOneBotModeForward")}</ToggleGroupItem>
+                    </ToggleGroup>
+                    <p className="text-[11px] text-muted-foreground">
+                      {bot.type === "onebot_reverse" ? t("config.imOneBotModeReverseHint") : t("config.imOneBotModeForwardHint")}
+                    </p>
+                  </div>
+                )}
+                {WEWORK_TYPES.has(bot.type) && (
+                  <div className="space-y-1.5">
+                    <Label>{t("config.imWeworkMode")}</Label>
+                    <ToggleGroup type="single" variant="outline" size="sm" value={bot.type} onValueChange={(v) => {
+                      if (v && v !== bot.type) {
+                        setBot((prev) => ({ ...prev, type: v, credentials: {}, ...(isAutoId ? { id: generateBotId(v) } : {}) }));
+                      }
+                    }} className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
+                      <ToggleGroupItem value="wework_ws">{t("config.imWeworkModeWs")}</ToggleGroupItem>
+                      <ToggleGroupItem value="wework">{t("config.imWeworkModeHttp")}</ToggleGroupItem>
+                    </ToggleGroup>
+                    <p className="text-[11px] text-muted-foreground">
+                      {bot.type === "wework_ws" ? t("config.imWeworkModeWsHint") : t("config.imWeworkModeHttpHint")}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step: ID & Name */}
+            {step === "idname" && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">{t("im.wizardIdNameHint")}</p>
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline gap-2">
+                    <Label>{t("im.botId")}</Label>
+                    <span className="text-[11px] text-muted-foreground/50">{t("im.botIdHint")}</span>
+                  </div>
+                  <Input
+                    value={bot.id}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^a-z0-9_-]/gi, "").toLowerCase();
+                      setBot((prev) => ({ ...prev, id: val }));
+                      setIsAutoId(false);
+                    }}
+                    className={cn(isAutoId && "text-muted-foreground")}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("im.botName")}</Label>
+                  <div className="flex gap-1.5">
+                    <Input
+                      value={bot.name}
+                      onChange={(e) => setBot((prev) => ({ ...prev, name: e.target.value }))}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="outline" size="icon"
+                      className="h-9 w-9 shrink-0"
+                      title={t("im.botAutoGenName")}
+                      onClick={() => {
+                        const name = generateBotName(bot.type, bot.agent_profile_id, profiles, BOT_TYPE_LABEL_KEYS, t);
+                        setBot((prev) => ({ ...prev, name }));
+                      }}
+                    >
+                      <Dices size={15} />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step: Credentials */}
+            {step === "credentials" && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">{t("im.wizardCredHint")}</p>
+
+                {/* QR scan */}
+                {hasQrScan(bot.type) && (
+                  <div className="space-y-2">
+                    {bot.type === "feishu" && venvDir && (
+                      <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowFeishuQR(true)}>
+                        {t("feishu.qrScanCreate")}
+                      </Button>
+                    )}
+                    {bot.type === "qqbot" && venvDir && (
+                      <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowQQBotQR(true)}>
+                        {t("qqbot.qrScanCreate")}
+                      </Button>
+                    )}
+                    {bot.type === "wework_ws" && venvDir && (
+                      <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowWecomQR(true)}>
+                        {t("wecom.qrScanCreate")}
+                      </Button>
+                    )}
+                    {bot.type === "wechat" && (venvDir || apiBaseUrl) && (
+                      <>
+                        <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowWechatQR(true)}>
+                          {t("wechat.qrScanLogin")}
+                        </Button>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">{t("wechat.hint")}</p>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Credential fields */}
+                <div className="space-y-2.5">
+                  {(bot.type === "telegram"
+                    ? credFields.filter((f) => TG_CORE_FIELDS.includes(f.key))
+                    : credFields
+                  ).map((field) => (
+                    <div key={field.key} className="space-y-1">
+                      <Label className="text-sm text-muted-foreground">{t(field.label, { defaultValue: field.label })}</Label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          type={field.secret && !revealedSecrets.has(field.key) ? "password" : "text"}
+                          value={String(bot.credentials[field.key] ?? "")}
+                          onChange={(e) => updateCredential(field.key, e.target.value)}
+                          placeholder={field.placeholder ? t(field.placeholder, { defaultValue: field.placeholder }) : undefined}
+                          className="flex-1 placeholder:text-foreground/40"
+                        />
+                        {field.secret && (
+                          <Button variant="outline" size="sm" className="h-9 px-2.5 text-xs shrink-0"
+                            onClick={() => setRevealedSecrets((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(field.key)) next.delete(field.key); else next.add(field.key);
+                              return next;
+                            })}
+                          >
+                            {revealedSecrets.has(field.key) ? t("skills.hide") : t("skills.show")}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Telegram pairing + advanced */}
+                {bot.type === "telegram" && (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-sm text-muted-foreground">{t("config.imPairingCode")}</Label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          value={String(bot.credentials.pairing_code ?? "")}
+                          onChange={(e) => updateCredential("pairing_code", e.target.value.replace(/\D/g, ""))}
+                          inputMode="numeric"
+                          placeholder={t("config.imPairingCodeHint")}
+                          className="flex-1 font-mono tracking-wider placeholder:text-foreground/40"
+                        />
+                        <Button variant="outline" size="icon" className="h-9 w-9 shrink-0"
+                          onClick={() => updateCredential("pairing_code", generatePairingCode())}
+                        >
+                          <Dices size={15} />
+                        </Button>
+                      </div>
+                    </div>
+                    <details className="group">
+                      <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+                        {t("im.botAdvancedConfig")} ▸
+                      </summary>
+                      <div className="mt-2 space-y-2.5 pl-1">
+                        {credFields.filter((f) => TG_ADVANCED_FIELDS.includes(f.key)).map((field) => (
+                          <div key={field.key} className="space-y-1">
+                            <Label className="text-sm text-muted-foreground">{t(field.label, { defaultValue: field.label })}</Label>
+                            <Input
+                              value={String(bot.credentials[field.key] ?? "")}
+                              onChange={(e) => updateCredential(field.key, e.target.value)}
+                              placeholder={field.placeholder ? t(field.placeholder, { defaultValue: field.placeholder }) : undefined}
+                              className="placeholder:text-foreground/40"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step: Extra config */}
+            {step === "extra" && (
+              <div className="space-y-4">
+                {bot.type === "feishu" && (
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label>{t("feishu.streaming")}</Label>
+                      <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none">
+                        <span className="text-sm">{t("feishu.streaming")}</span>
+                        <Switch checked={streamingEnabled} onCheckedChange={(v) => updateCredential("streaming_enabled", v ? "true" : "false")} />
+                      </label>
+                      {streamingEnabled && (
+                        <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none ml-3">
+                          <span className="text-sm">{t("feishu.groupStreaming")}</span>
+                          <Switch checked={groupStreamingEnabled} onCheckedChange={(v) => updateCredential("group_streaming", v ? "true" : "false")} />
+                        </label>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{t("feishu.groupMode")}</Label>
+                      <ToggleGroup type="single" variant="outline" size="sm"
+                        value={String(bot.credentials.group_response_mode || "mention_only")}
+                        onValueChange={(v) => { if (v) updateCredential("group_response_mode", v); }}
+                        className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground"
+                      >
+                        {(["mention_only", "smart", "always"] as const).map((m) => (
+                          <ToggleGroupItem key={m} value={m}>{t(`feishu.groupMode_${m}`)}</ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                      {(bot.credentials.group_response_mode === "smart" || bot.credentials.group_response_mode === "always") && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed">{t("feishu.groupModeHint")}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {bot.type === "qqbot" && (
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <Checkbox
+                        checked={bot.credentials.sandbox === "true" || bot.credentials.sandbox === true}
+                        onCheckedChange={(v) => updateCredential("sandbox", v ? "true" : "false")}
+                      />
+                      <span className="text-sm">{t("config.imQQBotSandbox")}</span>
+                    </label>
+                    <div className="space-y-1.5">
+                      <Label>{t("config.imQQBotMode")}</Label>
+                      <ToggleGroup type="single" variant="outline" size="sm"
+                        value={String(bot.credentials.mode || "websocket")}
+                        onValueChange={(v) => { if (v) updateCredential("mode", v); }}
+                        className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground"
+                      >
+                        <ToggleGroupItem value="websocket">WebSocket</ToggleGroupItem>
+                        <ToggleGroupItem value="webhook">Webhook</ToggleGroupItem>
+                      </ToggleGroup>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step: Done */}
+            {step === "done" && (
+              <div className="space-y-4 py-4">
+                <div className="flex items-center justify-center">
+                  <div className="size-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                    <Check size={32} className="text-emerald-600" />
+                  </div>
+                </div>
+                <p className="text-center text-sm text-muted-foreground">{t("im.wizardDoneSummary")}</p>
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t("im.wizardStepPlatform")}</span>
+                    <span className="font-medium">{platformTitle}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t("im.botAgent")}</span>
+                    <span className="font-medium">
+                      {bot.agent_profile_id === "default"
+                        ? t("im.botAgentDefault")
+                        : profiles.find((p) => p.id === bot.agent_profile_id)?.name || bot.agent_profile_id}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Bot ID</span>
+                    <span className="font-medium font-mono text-xs">{bot.id}</span>
+                  </div>
+                  {bot.name && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">{t("im.botName")}</span>
+                      <span className="font-medium">{bot.name}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <DialogFooter className="border-t pt-4 mt-2 sm:justify-between">
+            <div>
+              {currentIdx > 0 && step !== "done" && (
+                <Button variant="ghost" size="sm" onClick={goPrev}>
+                  <ArrowLeft size={14} className="mr-1" />
+                  {t("im.wizardPrev")}
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {credWarning && step === "credentials" && (
+                <span className="flex items-center gap-1 text-xs text-destructive mr-1">
+                  <AlertCircle size={13} />
+                  {t("im.wizardCredRequired")}
+                </span>
+              )}
+              {step === "done" ? (
+                <>
+                  <Button variant="outline" onClick={() => handleSave(false)} disabled={saving || !bot.id.trim()}>
+                    {saving ? "..." : t("im.botSaveOnly")}
+                  </Button>
+                  <Button onClick={() => handleSave(true)} disabled={saving || !bot.id.trim()}>
+                    {saving ? "..." : t("im.botApplyRestart")}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={onClose}>{t("common.cancel")}</Button>
+                  <Button onClick={() => {
+                    if (step === "credentials" && credMissing) {
+                      setCredWarning(true);
+                      return;
+                    }
+                    setCredWarning(false);
+                    goNext();
+                  }} disabled={step === "platform" && !bot.type}>
+                    {t("im.wizardNext")}
+                    <ArrowRight size={14} className="ml-1" />
+                  </Button>
+                </>
+              )}
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* QR Modals */}
+      {showFeishuQR && venvDir && (
+        <FeishuQRModal venvDir={venvDir} apiBaseUrl={apiBaseUrl}
+          onClose={() => setShowFeishuQR(false)}
+          onSuccess={(appId, appSecret) => { updateCredential("app_id", appId); updateCredential("app_secret", appSecret); setShowFeishuQR(false); }}
+        />
+      )}
+      {showQQBotQR && venvDir && (
+        <QQBotQRModal venvDir={venvDir} apiBaseUrl={apiBaseUrl}
+          onClose={() => setShowQQBotQR(false)}
+          onSuccess={(appId, appSecret) => { updateCredential("app_id", appId); updateCredential("app_secret", appSecret); setShowQQBotQR(false); }}
+        />
+      )}
+      {showWecomQR && venvDir && (
+        <WecomQRModal venvDir={venvDir} apiBaseUrl={apiBaseUrl}
+          onClose={() => setShowWecomQR(false)}
+          onSuccess={(botId, secret) => { updateCredential("bot_id", botId); updateCredential("secret", secret); setShowWecomQR(false); }}
+        />
+      )}
+      {showWechatQR && (
+        <WechatQRModal venvDir={venvDir} apiBaseUrl={apiBaseUrl}
+          onClose={() => setShowWechatQR(false)}
+          onSuccess={(token) => { updateCredential("token", token); setShowWechatQR(false); }}
+        />
+      )}
+    </>
   );
 }
 

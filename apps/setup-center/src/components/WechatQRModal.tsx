@@ -9,38 +9,37 @@ type OnboardState =
   | "idle"
   | "loading"
   | "scanning"
-  | "login_ok"
-  | "creating"
+  | "scaned"
   | "success"
-  | "partial"
+  | "expired"
   | "error";
 
-interface QQBotQRModalProps {
-  venvDir: string;
+interface WechatQRModalProps {
+  venvDir?: string;
   apiBaseUrl?: string;
   onClose: () => void;
-  onSuccess: (appId: string, appSecret: string) => void;
+  onSuccess: (token: string) => void;
 }
 
 async function onboardStart(
-  venvDir: string,
+  venvDir?: string,
   apiBaseUrl?: string,
 ): Promise<Record<string, any>> {
   if (apiBaseUrl) {
-    const res = await safeFetch(`${apiBaseUrl}/api/qqbot/onboard/start`, {
+    const res = await safeFetch(`${apiBaseUrl}/api/wechat/onboard/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
     return res.json();
   }
-  if (IS_TAURI) {
-    const raw = await invoke<string>("openakita_qqbot_onboard_start", {
+  if (IS_TAURI && venvDir) {
+    const raw = await invoke<string>("openakita_wechat_onboard_start", {
       venvDir,
     });
     return JSON.parse(raw);
   }
-  const res = await safeFetch(`/api/qqbot/onboard/start`, {
+  const res = await safeFetch(`/api/wechat/onboard/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -49,71 +48,43 @@ async function onboardStart(
 }
 
 async function onboardPoll(
-  venvDir: string,
-  sessionId: string,
+  qrcode: string,
+  venvDir?: string,
   apiBaseUrl?: string,
 ): Promise<Record<string, any>> {
   if (apiBaseUrl) {
-    const res = await safeFetch(`${apiBaseUrl}/api/qqbot/onboard/poll`, {
+    const res = await safeFetch(`${apiBaseUrl}/api/wechat/onboard/poll`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify({ qrcode }),
     });
     return res.json();
   }
-  if (IS_TAURI) {
-    const raw = await invoke<string>("openakita_qqbot_onboard_poll", {
+  if (IS_TAURI && venvDir) {
+    const raw = await invoke<string>("openakita_wechat_onboard_poll", {
       venvDir,
-      sessionId,
+      qrcode,
     });
     return JSON.parse(raw);
   }
-  const res = await safeFetch(`/api/qqbot/onboard/poll`, {
+  const res = await safeFetch(`/api/wechat/onboard/poll`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({ qrcode }),
   });
   return res.json();
 }
 
-async function onboardPollAndCreate(
-  venvDir: string,
-  sessionId: string,
-  apiBaseUrl?: string,
-): Promise<Record<string, any>> {
-  if (apiBaseUrl) {
-    const res = await safeFetch(`${apiBaseUrl}/api/qqbot/onboard/poll-and-create`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-    return res.json();
-  }
-  if (IS_TAURI) {
-    const raw = await invoke<string>(
-      "openakita_qqbot_onboard_poll_and_create",
-      { venvDir, sessionId },
-    );
-    return JSON.parse(raw);
-  }
-  const res = await safeFetch(`/api/qqbot/onboard/poll-and-create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
-  });
-  return res.json();
-}
-
-export function QQBotQRModal({
+export function WechatQRModal({
   venvDir,
   apiBaseUrl,
   onClose,
   onSuccess,
-}: QQBotQRModalProps) {
+}: WechatQRModalProps) {
   const { t } = useTranslation();
   const [state, setState] = useState<OnboardState>("idle");
   const [qrUrl, setQrUrl] = useState("");
-  const [sessionId, setSessionId] = useState("");
+  const [qrCode, setQrCode] = useState("");
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -132,13 +103,13 @@ export function QQBotQRModal({
     try {
       const data = await onboardStart(venvDir, apiBaseUrl);
       if (!mountedRef.current) return;
-      if (data.session_id && data.qr_url) {
-        setSessionId(data.session_id);
-        setQrUrl(data.qr_url);
+      if (data.qrcode && data.qrcode_url) {
+        setQrCode(data.qrcode);
+        setQrUrl(data.qrcode_url);
         setState("scanning");
-        startPolling(data.session_id);
+        startPolling(data.qrcode);
       } else {
-        setError(data.error || t("qqbot.qrInitFailed"));
+        setError(data.error || t("wechat.qrInitFailed"));
         setState("error");
       }
     } catch (e: unknown) {
@@ -149,7 +120,7 @@ export function QQBotQRModal({
   }, [venvDir, apiBaseUrl, t]);
 
   const startPolling = useCallback(
-    (sid: string) => {
+    (qrcode: string) => {
       let attempts = 0;
       const maxAttempts = 150;
 
@@ -158,54 +129,36 @@ export function QQBotQRModal({
         if (attempts > maxAttempts || !mountedRef.current) {
           if (pollRef.current) clearInterval(pollRef.current);
           if (mountedRef.current) {
-            setError(t("qqbot.qrTimeout"));
+            setError(t("wechat.qrTimeout"));
             setState("error");
           }
           return;
         }
         try {
-          const data = await onboardPoll(venvDir, sid, apiBaseUrl);
+          const data = await onboardPoll(qrcode, venvDir, apiBaseUrl);
           if (!mountedRef.current) return;
 
-          if (data.status === "ok" && data.developer_id) {
+          if (data.status === "confirmed" && data.token) {
             if (pollRef.current) clearInterval(pollRef.current);
-            setState("creating");
+            setState("success");
+            onSuccess(data.token);
+            return;
+          }
 
-            // login succeeded — use atomic poll+create to preserve cookies
-            try {
-              const bot = await onboardPollAndCreate(
-                venvDir,
-                sid,
-                apiBaseUrl,
-              );
-              if (!mountedRef.current) return;
+          if (data.status === "scaned") {
+            setState("scaned");
+            return;
+          }
 
-              if (bot.app_id && bot.app_secret) {
-                setState("success");
-                onSuccess(bot.app_id, bot.app_secret);
-              } else if (bot.app_id && bot.needs_secret) {
-                onSuccess(bot.app_id, "");
-                setState("partial");
-              } else {
-                setError(bot.error || t("qqbot.qrCreateFailed"));
-                setState("error");
-              }
-            } catch (createErr: unknown) {
-              if (!mountedRef.current) return;
-              const msg = String(createErr);
-              if (msg.includes("cookie") || msg.includes("凭证")) {
-                setError(t("qqbot.qrNeedBrowser"));
-              } else {
-                setError(msg);
-              }
-              setState("error");
-            }
+          if (data.status === "expired") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setState("expired");
             return;
           }
 
           if (data.status === "error") {
             if (pollRef.current) clearInterval(pollRef.current);
-            setError(data.message || t("qqbot.qrInitFailed"));
+            setError(data.message || t("wechat.qrInitFailed"));
             setState("error");
           }
         } catch {
@@ -249,10 +202,10 @@ export function QQBotQRModal({
 
         <div style={{ textAlign: "center", marginBottom: 16 }}>
           <div className="cardTitle" style={{ marginBottom: 4 }}>
-            {t("qqbot.qrTitle")}
+            {t("wechat.qrTitle")}
           </div>
           <div style={{ fontSize: 12, color: "var(--text3)" }}>
-            {t("qqbot.qrSubtitle")}
+            {t("wechat.qrSubtitle")}
           </div>
         </div>
 
@@ -269,12 +222,12 @@ export function QQBotQRModal({
                 color: "var(--text3)",
               }}
             >
-              {t("qqbot.qrLoading")}
+              {t("wechat.qrLoading")}
             </div>
           </div>
         )}
 
-        {state === "scanning" && qrUrl && (
+        {(state === "scanning" || state === "scaned") && qrUrl && (
           <div style={{ textAlign: "center" }}>
             <div
               style={{
@@ -290,11 +243,12 @@ export function QQBotQRModal({
             <div
               style={{
                 fontSize: 12,
-                color: "var(--text3)",
+                color: state === "scaned" ? "var(--success, #16a34a)" : "var(--text3)",
                 marginBottom: 6,
+                fontWeight: state === "scaned" ? 500 : 400,
               }}
             >
-              {t("qqbot.qrScanHint")}
+              {state === "scaned" ? t("wechat.qrScaned") : t("wechat.qrScanHint")}
             </div>
             <div
               style={{
@@ -308,37 +262,7 @@ export function QQBotQRModal({
                 textAlign: "left",
               }}
             >
-              {t("qqbot.qrScanNote")}
-            </div>
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--muted)",
-                wordBreak: "break-all",
-                padding: "4px 8px",
-                background: "var(--bg2)",
-                borderRadius: 4,
-              }}
-            >
-              {qrUrl}
-            </div>
-          </div>
-        )}
-
-        {(state === "login_ok" || state === "creating") && (
-          <div style={{ textAlign: "center", padding: 24 }}>
-            <div
-              className="spinner"
-              style={{ width: 32, height: 32, margin: "0 auto" }}
-            />
-            <div
-              style={{
-                marginTop: 12,
-                fontSize: 13,
-                color: "var(--text3)",
-              }}
-            >
-              {t("qqbot.qrLoginOk")}
+              {t("wechat.qrScanNote")}
             </div>
           </div>
         )}
@@ -352,17 +276,24 @@ export function QQBotQRModal({
             }}
           >
             <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
-            <div style={{ fontSize: 14 }}>{t("qqbot.qrSuccess")}</div>
+            <div style={{ fontSize: 14 }}>{t("wechat.qrSuccess")}</div>
           </div>
         )}
 
-        {state === "partial" && (
+        {state === "expired" && (
           <div style={{ textAlign: "center", padding: 20 }}>
-            <div style={{ fontSize: 28, marginBottom: 8, color: "var(--warning, #d97706)" }}>!</div>
-            <div style={{ fontSize: 13, color: "var(--text2)", marginBottom: 12, lineHeight: 1.5 }}>
-              {t("qqbot.qrPartialSuccess")}
+            <div
+              style={{
+                fontSize: 13,
+                color: "var(--text3)",
+                marginBottom: 12,
+              }}
+            >
+              {t("wechat.qrExpired")}
             </div>
-            <button className="btnSmall" onClick={onClose}>OK</button>
+            <button className="btnSmall" onClick={startOnboard}>
+              {t("wechat.qrRefresh")}
+            </button>
           </div>
         )}
 
@@ -378,7 +309,7 @@ export function QQBotQRModal({
               {error}
             </div>
             <button className="btnSmall" onClick={startOnboard}>
-              {t("qqbot.qrRetry")}
+              {t("wechat.qrRetry")}
             </button>
           </div>
         )}

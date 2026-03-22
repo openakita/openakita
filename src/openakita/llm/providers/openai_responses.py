@@ -45,11 +45,13 @@ class OpenAIResponsesProvider(OpenAIProvider):
     覆写以下方法以适配 Responses API，其余全部继承自 OpenAIProvider：
     - _api_url: 端点路径 (/responses)
     - _estimate_request_timeout: 基于 input items 估算超时
-    - chat: 非流式请求（验证 output 而非 choices）
+    - _chat_non_stream: 非流式请求（验证 output 而非 choices）
     - _build_request_body: 请求体格式
     - _parse_response: 响应解析
     - _convert_stream_event: 流式事件解析
-    - chat_stream: 流式请求（适配 SSE 事件格式）
+    - _iter_sse_events: SSE 传输（适配 named events 格式）
+
+    chat() 和 _chat_via_stream() 继承自 OpenAIProvider（统一的 stream-only 检测逻辑）。
     """
 
     def __init__(self, config: EndpointConfig):
@@ -95,13 +97,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
             pool=min(30.0, new_read),
         )
 
-    async def chat(self, request: LLMRequest) -> LLMResponse:
-        """非流式聊天 — 适配 Responses API 的响应格式。
+    async def _chat_non_stream(self, request: LLMRequest) -> LLMResponse:
+        """Responses API 非流式请求实现。调用方须已获取 rate limit。
 
-        父类 chat() 会检查 choices 字段，Responses API 返回 output 而非 choices，
-        因此需要独立实现响应验证逻辑。
+        Responses API 返回 output 而非 choices，因此需要独立的响应验证逻辑。
         """
-        await self.acquire_rate_limit()
         client = await self._get_client()
 
         body = self._build_request_body(request)
@@ -365,24 +365,34 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 "stop_reason": "length",
             }
 
-        # 其他事件（output_item.added, content_part.added 等）
+        # ── 新 output item（函数调用的首个事件，含 name 和 call_id）──
+        if event_type == "response.output_item.added":
+            item = event.get("item", {})
+            if item.get("type") == "function_call":
+                return {
+                    "type": "content_block_delta",
+                    "delta": {
+                        "type": "tool_use",
+                        "id": item.get("call_id"),
+                        "name": item.get("name"),
+                        "arguments": "",
+                    },
+                }
+
+        # 其他事件（content_part.added 等）
         return {"type": "ping"}
 
-    async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
-        """流式聊天请求 — 适配 Responses API 的 SSE 事件格式。
+    async def _iter_sse_events(self, body: dict) -> AsyncIterator[dict]:
+        """Responses API SSE 传输层。
 
-        Responses API 使用 named SSE events (event: + data:)，
-        与 Chat Completions 的纯 data: 行不同。
+        适配 Responses API 的 named SSE events (event: + data:) 格式，
+        并处理 Responses API 特有的流式错误事件。
         """
-        await self.acquire_rate_limit()
         client = await self._get_client()
-
-        body = self._build_request_body(request)
-        body["stream"] = True
-
         req_timeout = self._estimate_request_timeout(body)
 
         try:
+            import httpx
             async with client.stream(
                 "POST",
                 self._api_url,
@@ -392,21 +402,18 @@ class OpenAIResponsesProvider(OpenAIProvider):
             ) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
-                    body = error_body.decode(errors="replace")[:500]
-                    from ..types import AuthenticationError, LLMError, RateLimitError
+                    error_text = error_body.decode(errors="replace")[:500]
                     if response.status_code == 401:
-                        raise AuthenticationError(f"Authentication failed: {body}")
+                        raise AuthenticationError(f"Authentication failed: {error_text}")
                     if response.status_code == 429:
-                        raise RateLimitError(f"Rate limit exceeded: {body}")
-                    raise LLMError(f"API error ({response.status_code}): {body}")
+                        raise RateLimitError(f"Rate limit exceeded: {error_text}")
+                    raise LLMError(f"API error ({response.status_code}): {error_text}")
 
                 has_content = False
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
 
-                    # Responses API SSE: "event: <type>" 行后跟 "data: <json>" 行
-                    # 我们只需要 data: 行（event type 已包含在 data JSON 的 type 字段中）
                     if line.startswith("data: "):
                         data = line[6:]
                         if data.strip() and data != "[DONE]":
@@ -427,7 +434,6 @@ class OpenAIResponsesProvider(OpenAIProvider):
                             except json.JSONDecodeError:
                                 continue
                     elif line.startswith("event:"):
-                        # event: 行本身不需要处理，信息在 data: 的 type 字段中
                         continue
                     elif not has_content and not line.startswith(":"):
                         try:
@@ -439,11 +445,9 @@ class OpenAIResponsesProvider(OpenAIProvider):
                                     if isinstance(err_obj, dict)
                                     else str(err_obj)
                                 )
-                                from ..types import LLMError
                                 raise LLMError(f"Stream error from '{self.name}': {err_msg}")
                         except json.JSONDecodeError:
                             if "error" in line.lower():
-                                from ..types import LLMError
                                 raise LLMError(
                                     f"Stream error from '{self.name}': {line[:500]}"
                                 )
@@ -451,7 +455,6 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 if has_content:
                     self.mark_healthy()
                 else:
-                    from ..types import LLMError
                     self.mark_unhealthy(
                         f"Empty stream response (model={body.get('model', '?')})",
                         is_local=self._is_local_endpoint(),
@@ -463,8 +466,8 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
         except Exception as e:
             import httpx
-
-            from ..types import LLMError
+            if isinstance(e, (AuthenticationError, RateLimitError, LLMError)):
+                raise
             if isinstance(e, httpx.TimeoutException):
                 detail = f"{type(e).__name__}: {e}"
                 self.mark_unhealthy(
@@ -483,3 +486,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 )
                 raise LLMError(f"Stream request failed: {detail}")
             raise
+
+    async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
+        """流式聊天请求"""
+        await self.acquire_rate_limit()
+        body = self._build_request_body(request)
+        body["stream"] = True
+        async for event in self._iter_sse_events(body):
+            yield event

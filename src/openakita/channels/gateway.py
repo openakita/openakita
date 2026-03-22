@@ -3062,20 +3062,35 @@ class MessageGateway:
             )
 
             streamed_ok = False
+            _has_orchestrator = (
+                _cfg.multi_agent_enabled
+                and getattr(self, "_orchestrator_ref", None) is not None
+            )
             if use_streaming:
                 response, streamed_ok = await self._call_agent_streaming(
                     session, input_text, message, adapter,
                 )
+            elif _has_orchestrator:
+                # Orchestrator 自带 idle_timeout + hard_timeout 进度监控，
+                # 不再套 wait_for 墙钟超时，避免活跃任务被误杀
+                response = await self.agent_handler(session, input_text)
             else:
-                _AGENT_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "300"))
+                _AGENT_TIMEOUT = float(
+                    os.environ.get("AGENT_HANDLER_TIMEOUT", "1200")
+                )
                 try:
                     response = await asyncio.wait_for(
                         self.agent_handler(session, input_text),
                         timeout=_AGENT_TIMEOUT,
                     )
                 except TimeoutError:
-                    logger.error(f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s")
-                    response = f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），请稍后重试或简化您的问题。"
+                    logger.error(
+                        f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s"
+                    )
+                    response = (
+                        f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），"
+                        f"请稍后重试或简化您的问题。"
+                    )
 
             return (response, streamed_ok)
 
@@ -3116,7 +3131,7 @@ class MessageGateway:
             _sk = adapter._make_session_key(message.chat_id, message.thread_id)
             adapter._streaming_buffers.setdefault(_sk, "")
 
-        _STREAM_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "300"))
+        _STREAM_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "1200"))
 
         async def _consume_stream():
             nonlocal reply_text, _thinking_buf
@@ -3218,14 +3233,21 @@ class MessageGateway:
         "feishu":    28000,
         "onebot":    20000,
         "qqbot":     20000,
+        "wechat":    4000,
     }
     _DEFAULT_MAX_LENGTH = 4000
 
     # 分片间发送间隔（秒），避免触发平台限流
     _SPLIT_SEND_INTERVAL: dict[str, float] = {
         "telegram": 0.5,
+        "wechat":   1.5,
     }
     _DEFAULT_SPLIT_INTERVAL = 0.15
+
+    # 进度消息节流间隔（秒）— 不支持卡片更新的平台需要更高的节流间隔
+    _CHANNEL_PROGRESS_THROTTLE: dict[str, float] = {
+        "wechat": 8.0,
+    }
 
     @staticmethod
     def _split_text(text: str, max_length: int) -> list[str]:
@@ -3715,7 +3737,13 @@ class MessageGateway:
                 return
 
         session_key = session.session_key
-        throttle = self._progress_throttle_seconds if throttle_seconds is None else throttle_seconds
+        if throttle_seconds is not None:
+            throttle = throttle_seconds
+        else:
+            base_ch = session.channel.split(":")[0].split("_")[0]
+            throttle = self._CHANNEL_PROGRESS_THROTTLE.get(
+                base_ch, self._progress_throttle_seconds,
+            )
 
         buf = self._progress_buffers.setdefault(session_key, [])
         if buf and buf[-1] == text:

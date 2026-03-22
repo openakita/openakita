@@ -498,6 +498,12 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
             "enabled_key": "WEWORK_WS_ENABLED",
             "required_keys": ["WEWORK_WS_BOT_ID", "WEWORK_WS_SECRET"],
         },
+        {
+            "id": "wechat",
+            "name": "微信",
+            "enabled_key": "WECHAT_ENABLED",
+            "required_keys": ["WECHAT_TOKEN"],
+        },
     ]
 
     import time
@@ -620,6 +626,10 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                         if not secret:
                             missing_ws.append("WEWORK_WS_SECRET")
                         raise Exception(f"缺少必填参数: {', '.join(missing_ws)}")
+                elif ch["id"] == "wechat":
+                    token = env.get("WECHAT_TOKEN", "").strip()
+                    if not token:
+                        raise Exception("缺少必填参数: WECHAT_TOKEN")
 
             results.append({
                 "channel": ch["id"],
@@ -716,16 +726,8 @@ def ensure_channel_deps(workspace_dir: str) -> None:
             if eq > 0:
                 env[line[:eq].strip()] = line[eq + 1 :].strip()
 
-    # 通道 → [(import_name, pip_package), ...]
-    channel_deps: dict[str, list[tuple[str, str]]] = {
-        "feishu": [("lark_oapi", "lark-oapi")],
-        "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
-        "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
-        "wework_ws": [("websockets", "websockets"), ("cryptography", "cryptography")],
-        "onebot": [("websockets", "websockets")],
-        "onebot_reverse": [("websockets", "websockets")],
-        "qqbot": [("botpy", "qq-botpy"), ("pilk", "pilk")],
-    }
+    from openakita.channels.deps import CHANNEL_DEPS
+    channel_deps = CHANNEL_DEPS
 
     enabled_key_map = {
         "feishu": "FEISHU_ENABLED",
@@ -735,6 +737,7 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         "onebot": "ONEBOT_ENABLED",
         "onebot_reverse": "ONEBOT_ENABLED",
         "qqbot": "QQBOT_ENABLED",
+        "wechat": "WECHAT_ENABLED",
     }
 
     inject_module_paths_runtime()
@@ -999,6 +1002,30 @@ async def qqbot_validate(app_id: str, app_secret: str) -> None:
 
     result = await validate_credentials(app_id, app_secret)
     _json_print(result)
+
+
+async def wechat_onboard_start() -> None:
+    """获取微信 iLink Bot 登录二维码，返回 uuid 和 qrcode_url"""
+    from openakita.setup.wechat_onboard import WeChatOnboard
+
+    ob = WeChatOnboard()
+    try:
+        result = await ob.fetch_qrcode()
+        _json_print(result)
+    finally:
+        await ob.close()
+
+
+async def wechat_onboard_poll(qrcode: str) -> None:
+    """单次轮询微信扫码登录状态"""
+    from openakita.setup.wechat_onboard import WeChatOnboard
+
+    ob = WeChatOnboard()
+    try:
+        result = await ob.poll_status(qrcode)
+        _json_print(result)
+    finally:
+        await ob.close()
 
 
 def list_skills(workspace_dir: str) -> None:
@@ -1669,6 +1696,11 @@ def main(argv: list[str] | None = None) -> None:
     p_qv.add_argument("--app-id", required=True, help="QQ 机器人 App ID")
     p_qv.add_argument("--app-secret", required=True, help="QQ 机器人 App Secret")
 
+    sub.add_parser("wechat-onboard-start", help="获取微信登录二维码（JSON）")
+
+    p_wcp = sub.add_parser("wechat-onboard-poll", help="轮询微信扫码登录状态（JSON）")
+    p_wcp.add_argument("--qrcode", required=True, help="get_bot_qrcode 返回的 qrcode")
+
     args = p.parse_args(argv)
 
     if args.cmd == "list-providers":
@@ -1774,6 +1806,14 @@ def main(argv: list[str] | None = None) -> None:
             app_id=args.app_id,
             app_secret=args.app_secret,
         ))
+        return
+
+    if args.cmd == "wechat-onboard-start":
+        asyncio.run(wechat_onboard_start())
+        return
+
+    if args.cmd == "wechat-onboard-poll":
+        asyncio.run(wechat_onboard_poll(qrcode=args.qrcode))
         return
 
     raise SystemExit(2)

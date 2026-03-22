@@ -34,6 +34,7 @@ from ..types import (
     RateLimitError,
     StopReason,
     TextBlock,
+    ToolUseBlock,
     Usage,
     normalize_base_url,
 )
@@ -41,6 +42,16 @@ from .base import LLMProvider
 from .proxy_utils import build_httpx_timeout, get_httpx_transport, get_proxy_config
 
 logger = logging.getLogger(__name__)
+
+
+def _is_stream_only_error(error: str) -> bool:
+    """检测错误是否表明端点仅支持流式请求（stream-only relay/中转站）。"""
+    err_lower = error.lower()
+    return (
+        "stream must be set to true" in err_lower
+        or "stream is required" in err_lower
+        or ("text/event-stream" in err_lower and "invalid json" in err_lower)
+    )
 
 
 class _BearerAuth(httpx.Auth):
@@ -67,6 +78,7 @@ class OpenAIProvider(LLMProvider):
         super().__init__(config)
         self._client: httpx.AsyncClient | None = None
         self._client_loop_id: int | None = None  # 记录创建客户端时的事件循环 ID
+        self._stream_only: bool = config.stream_only
 
     @property
     def api_key(self) -> str:
@@ -208,19 +220,36 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
-        """发送聊天请求"""
+        """发送聊天请求（支持 stream-only 端点自动检测）"""
         await self.acquire_rate_limit()
+
+        if self._stream_only:
+            return await self._chat_via_stream(request)
+
+        try:
+            return await self._chat_non_stream(request)
+        except (AuthenticationError, RateLimitError):
+            raise
+        except LLMError as e:
+            if _is_stream_only_error(str(e)):
+                logger.info(
+                    f"[OpenAI] '{self.name}': detected stream-only endpoint, "
+                    f"retrying with streaming transport"
+                )
+                self._stream_only = True
+                return await self._chat_via_stream(request)
+            raise
+
+    async def _chat_non_stream(self, request: LLMRequest) -> LLMResponse:
+        """非流式请求实现（原始路径，逻辑完全不变）。调用方须已获取 rate limit。"""
         client = await self._get_client()
 
-        # 构建请求体
         body = self._build_request_body(request)
 
         logger.debug(f"OpenAI request to {self.base_url}: model={body.get('model')}")
 
-        # 大上下文场景动态调整超时
         req_timeout = self._estimate_request_timeout(body)
 
-        # 发送请求
         try:
             response = await client.post(
                 self._api_url,
@@ -260,7 +289,6 @@ class OpenAIProvider(LLMProvider):
                 raise LLMError(f"API error in response body: {err_msg}")
 
             # HTTP 200 但 choices 为空 —— 某些中转/兼容 API 的异常行为
-            # （正常推理不可能返回空 choices，这通常表示上游限流、模型不可用等问题）
             choices = data.get("choices")
             if not choices:
                 body_preview = json.dumps(data, ensure_ascii=False)[:500]
@@ -290,14 +318,13 @@ class OpenAIProvider(LLMProvider):
             self.mark_unhealthy(f"Request error: {detail}", is_local=self._is_local_endpoint())
             raise LLMError(f"Request failed: {detail}")
 
-    async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
-        """流式聊天请求"""
-        await self.acquire_rate_limit()
+    async def _iter_sse_events(self, body: dict) -> AsyncIterator[dict]:
+        """SSE 传输层：发送流式请求，解析 SSE 行，yield 转换后的事件。
+
+        body 须已包含 "stream": True。调用方须已获取 rate limit。
+        子类可覆写以适配不同 SSE 格式（如 Responses API 的 named events）。
+        """
         client = await self._get_client()
-
-        body = self._build_request_body(request)
-        body["stream"] = True
-
         req_timeout = self._estimate_request_timeout(body)
 
         try:
@@ -310,17 +337,17 @@ class OpenAIProvider(LLMProvider):
             ) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
-                    body = error_body.decode(errors="replace")[:500]
+                    error_text = error_body.decode(errors="replace")[:500]
                     if response.status_code == 401:
                         raise AuthenticationError(
-                            f"Authentication failed: {body}"
+                            f"Authentication failed: {error_text}"
                         )
                     if response.status_code == 429:
                         raise RateLimitError(
-                            f"Rate limit exceeded: {body}"
+                            f"Rate limit exceeded: {error_text}"
                         )
                     raise LLMError(
-                        f"API error ({response.status_code}): {body}"
+                        f"API error ({response.status_code}): {error_text}"
                     )
 
                 has_content = False
@@ -341,7 +368,6 @@ class OpenAIProvider(LLMProvider):
                             except json.JSONDecodeError:
                                 continue
                     elif not has_content and not line.startswith(":"):
-                        # 非 SSE 格式——可能是普通 JSON 错误响应
                         try:
                             err_data = json.loads(line)
                             if "error" in err_data:
@@ -377,6 +403,94 @@ class OpenAIProvider(LLMProvider):
             detail = f"{type(e).__name__}: {e}" if str(e) else f"{type(e).__name__}({repr(e)})"
             self.mark_unhealthy(f"Stream request error: {detail}", is_local=self._is_local_endpoint())
             raise LLMError(f"Stream request failed: {detail}")
+
+    async def _chat_via_stream(self, request: LLMRequest) -> LLMResponse:
+        """流式传输 → 同步响应适配器：收集流式事件，组装为 LLMResponse。
+
+        用于 stream-only 端点（如 Codex relay）。调用方须已获取 rate limit。
+        """
+        body = self._build_request_body(request)
+        body["stream"] = True
+
+        text_parts: list[str] = []
+        tool_calls: dict[str, dict] = {}
+        current_tool_id: str | None = None
+        stop_reason = StopReason.END_TURN
+        response_model = self.config.model
+
+        async for event in self._iter_sse_events(body):
+            event_type = event.get("type")
+
+            if event_type == "content_block_delta":
+                delta = event.get("delta", {})
+                delta_type = delta.get("type")
+
+                if delta_type == "text":
+                    text_parts.append(delta.get("text", ""))
+                elif delta_type == "tool_use":
+                    call_id = delta.get("id")
+                    if call_id:
+                        if call_id not in tool_calls:
+                            tool_calls[call_id] = {
+                                "name": delta.get("name") or "",
+                                "arguments": "",
+                            }
+                        elif delta.get("name") and not tool_calls[call_id]["name"]:
+                            tool_calls[call_id]["name"] = delta["name"]
+                        current_tool_id = call_id
+                    target_id = call_id or current_tool_id
+                    if target_id and target_id in tool_calls:
+                        tool_calls[target_id]["arguments"] += delta.get("arguments") or ""
+
+            elif event_type == "message_stop":
+                raw_reason = event.get("stop_reason", "stop")
+                _stop_map = {
+                    "stop": StopReason.END_TURN,
+                    "length": StopReason.MAX_TOKENS,
+                    "tool_calls": StopReason.TOOL_USE,
+                    "function_call": StopReason.TOOL_USE,
+                }
+                stop_reason = _stop_map.get(raw_reason, StopReason.END_TURN)
+
+            elif event_type == "error":
+                raise LLMError(
+                    f"Stream error from '{self.name}': {event.get('error', 'unknown')}"
+                )
+
+        content_blocks: list = []
+        text = "".join(text_parts)
+        if text:
+            content_blocks.append(TextBlock(text=text))
+
+        for call_id, tc in tool_calls.items():
+            try:
+                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {"_raw": tc["arguments"]}
+            content_blocks.append(ToolUseBlock(
+                id=call_id,
+                name=tc["name"],
+                input=args,
+            ))
+
+        if tool_calls:
+            stop_reason = StopReason.TOOL_USE
+
+        return LLMResponse(
+            id="",
+            content=content_blocks,
+            stop_reason=stop_reason,
+            usage=Usage(),
+            model=response_model,
+        )
+
+    async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
+        """流式聊天请求"""
+        await self.acquire_rate_limit()
+        body = self._build_request_body(request)
+        body["stream"] = True
+        async for event in self._iter_sse_events(body):
+            yield event
 
     def _is_local_endpoint(self) -> bool:
         """检查是否为本地端点（Ollama/LM Studio 等）"""
