@@ -65,6 +65,7 @@ class IntentResult:
     suggest_plan: bool = False
     complexity: ComplexitySignal = field(default_factory=ComplexitySignal)
     raw_output: str = ""
+    fast_reply: bool = False
 
 
 # Default fallback: behaves identically to the pre-optimization flow
@@ -165,6 +166,88 @@ def _strip_thinking_tags(text: str) -> str:
     return re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
 
 
+# ---------------------------------------------------------------------------
+# Rule-based fast-path for obvious chat messages
+# ---------------------------------------------------------------------------
+
+_GREETING_PATTERNS: set[str] = {
+    # Chinese greetings / confirmations / farewells
+    "你好", "您好", "你好呀", "你好啊", "嗨", "哈喽", "hello", "hi", "hey",
+    "嗯", "嗯嗯", "好", "好的", "行", "ok", "可以", "收到", "了解",
+    "谢谢", "谢了", "感谢", "thanks", "thank you", "thx",
+    "再见", "拜拜", "bye", "晚安", "早安", "早", "早上好", "下午好", "晚上好",
+    "在吗", "在不在", "你在吗",
+    "哈哈", "哈哈哈", "笑死", "666", "牛", "厉害",
+    "?", "？", "!", "！",
+}
+
+# When conversation history exists, only these unambiguous strings use the fast-path;
+# punctuation and short confirmations are analyzed by the LLM (may be follow-ups).
+_SAFE_WITH_HISTORY: frozenset[str] = frozenset({
+    "你好", "您好", "你好呀", "你好啊", "嗨", "哈喽", "hello", "hi", "hey",
+    "谢谢", "谢了", "感谢", "thanks", "thank you", "thx",
+    "再见", "拜拜", "bye", "晚安", "早安", "早", "早上好", "下午好", "晚上好",
+})
+
+_FAST_CHAT_MAX_LEN = 12
+
+
+def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentResult | None:
+    """Rule-based shortcut: if message is an obvious greeting/confirmation,
+    return CHAT intent immediately without LLM call.
+
+    Returns None if the message doesn't match (should go through normal LLM analysis).
+    """
+    stripped = message.strip()
+
+    if len(stripped) > _FAST_CHAT_MAX_LEN:
+        return None
+
+    normalized = stripped.lower().rstrip("~～。.!！?？、,，")
+
+    # If there's conversation history, only match unambiguous greetings,
+    # NOT punctuation or short confirmations that could be follow-ups
+    if has_history:
+        # With history, only pure greetings are safe to fast-path
+        # Things like "？", "!", "好的", "嗯" could be follow-ups
+        if normalized not in _SAFE_WITH_HISTORY:
+            return None  # Ambiguous with history → go through LLM
+
+    if normalized in _GREETING_PATTERNS:
+        logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as CHAT (rule-based)")
+        return IntentResult(
+            intent=IntentType.CHAT,
+            confidence=1.0,
+            task_definition="",
+            task_type="other",
+            tool_hints=[],
+            memory_keywords=[],
+            force_tool=False,
+            todo_required=False,
+            raw_output="[fast-chat-shortcut]",
+            fast_reply=True,
+        )
+
+    if not has_history and len(stripped) <= 6 and all(
+        not c.isalnum() or c in "0123456789" for c in stripped
+    ):
+        logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' is pure punctuation/emoji → CHAT")
+        return IntentResult(
+            intent=IntentType.CHAT,
+            confidence=0.9,
+            task_definition="",
+            task_type="other",
+            tool_hints=[],
+            memory_keywords=[],
+            force_tool=False,
+            todo_required=False,
+            raw_output="[fast-chat-shortcut-punctuation]",
+            fast_reply=True,
+        )
+
+    return None
+
+
 class IntentAnalyzer:
     """LLM-based intent analyzer. All messages go through LLM analysis."""
 
@@ -175,8 +258,14 @@ class IntentAnalyzer:
         self,
         message: str,
         session_context: Any = None,
+        has_history: bool = False,
     ) -> IntentResult:
-        """Analyze user message intent via LLM. No rule-based shortcuts."""
+        """Analyze user message intent. Rule-based shortcut for obvious greetings,
+        LLM analysis for everything else."""
+        fast_result = _try_fast_chat_shortcut(message, has_history=has_history)
+        if fast_result is not None:
+            return fast_result
+
         try:
             response = await self.brain.compiler_think(
                 prompt=message,
@@ -350,15 +439,13 @@ _MULTI_FILE_KEYWORDS = [
 ]
 
 
-def _analyze_complexity(message: str, intent_result: "IntentResult") -> ComplexitySignal:
+def _analyze_complexity(message: str, intent_result: IntentResult) -> ComplexitySignal:
     """Analyze message complexity to determine if Plan mode should be suggested."""
     msg = message.lower()
     signal = ComplexitySignal()
 
     # Multi-file change detection
-    if any(kw in msg for kw in _MULTI_FILE_KEYWORDS):
-        signal.multi_file_change = True
-    elif any(kw in msg for kw in _GLOBAL_KEYWORDS):
+    if any(kw in msg for kw in _MULTI_FILE_KEYWORDS) or any(kw in msg for kw in _GLOBAL_KEYWORDS):
         signal.multi_file_change = True
 
     # Cross-module detection
@@ -377,9 +464,7 @@ def _analyze_complexity(message: str, intent_result: "IntentResult") -> Complexi
         signal.destructive_potential = True
 
     # Multi-step required (from intent analysis)
-    if intent_result.task_type == "compound":
-        signal.multi_step_required = True
-    elif len(message) > 200:
+    if intent_result.task_type == "compound" or len(message) > 200:
         signal.multi_step_required = True
 
     return signal

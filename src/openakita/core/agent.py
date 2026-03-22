@@ -42,46 +42,45 @@ from ..tools.catalog import ToolCatalog
 
 # 系统工具定义（从 tools/definitions 导入）
 from ..tools.definitions import BASE_TOOLS
-from .context_utils import DEFAULT_MAX_CONTEXT_TOKENS  # noqa: E402
-from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
-from .context_utils import get_raw_context_window as _shared_get_raw_context_window
 from ..tools.file import FileTool
 
 # Handler Registry（模块化工具执行）
 from ..tools.handlers import SystemHandlerRegistry
+from ..tools.handlers.agent import create_handler as create_agent_tool_handler
+from ..tools.handlers.agent_hub import create_handler as create_agent_hub_handler
+from ..tools.handlers.agent_package import create_handler as create_agent_package_handler
 from ..tools.handlers.browser import create_handler as create_browser_handler
+from ..tools.handlers.code_quality import create_handler as create_code_quality_handler
 from ..tools.handlers.config import create_handler as create_config_handler
 from ..tools.handlers.desktop import create_handler as create_desktop_handler
 from ..tools.handlers.filesystem import create_handler as create_filesystem_handler
 from ..tools.handlers.im_channel import create_handler as create_im_channel_handler
 from ..tools.handlers.mcp import create_handler as create_mcp_handler
 from ..tools.handlers.memory import create_handler as create_memory_handler
+from ..tools.handlers.mode import create_handler as create_mode_handler
+from ..tools.handlers.notebook import create_handler as create_notebook_handler
 from ..tools.handlers.persona import create_handler as create_persona_handler
 from ..tools.handlers.plan import create_todo_handler
 from ..tools.handlers.profile import create_handler as create_profile_handler
 from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
+from ..tools.handlers.search import create_handler as create_search_handler
+from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
 from ..tools.handlers.sticker import create_handler as create_sticker_handler
 from ..tools.handlers.system import create_handler as create_system_handler
-from ..tools.handlers.agent import create_handler as create_agent_tool_handler
-from ..tools.handlers.agent_hub import create_handler as create_agent_hub_handler
-from ..tools.handlers.agent_package import create_handler as create_agent_package_handler
-from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
-from ..tools.handlers.code_quality import create_handler as create_code_quality_handler
-from ..tools.handlers.mode import create_handler as create_mode_handler
-from ..tools.handlers.notebook import create_handler as create_notebook_handler
-from ..tools.handlers.search import create_handler as create_search_handler
 from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
 
 # MCP 系统
 from ..tools.mcp import mcp_client
-from ..tools.mcp_catalog import MCPCatalog, mcp_catalog as _shared_mcp_catalog
+from ..tools.mcp_catalog import mcp_catalog as _shared_mcp_catalog
 from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 from .agent_state import AgentState
 from .brain import Brain, Context
 from .context_manager import ContextManager
+from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
+from .context_utils import get_raw_context_window as _shared_get_raw_context_window
 from .errors import UserCancelledError
 from .identity import Identity
 from .prompt_assembler import PromptAssembler
@@ -2489,11 +2488,18 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             if not hasattr(self, "_intent_analyzer"):
                 self._intent_analyzer = IntentAnalyzer(self.brain)
 
+            # session_messages includes the current user message as the last entry,
+            # so history exists if there are more than 1 message
+            _has_history = len(session_messages) > 1
+
             try:
                 intent_result = await asyncio.wait_for(
-                    self._intent_analyzer.analyze(message), timeout=15,
+                    self._intent_analyzer.analyze(
+                        message, session_context=None, has_history=_has_history
+                    ),
+                    timeout=15,
                 )
-            except (asyncio.TimeoutError, Exception) as e:
+            except (TimeoutError, Exception) as e:
                 logger.warning(f"[Session:{session_id}] Intent analysis failed/timed out: {e}")
                 from .intent_analyzer import _make_default
                 intent_result = _make_default(message)
@@ -2537,7 +2543,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     self._detect_topic_change(session_messages, message, session),
                     timeout=10,
                 )
-            except (asyncio.TimeoutError, Exception) as e:
+            except (TimeoutError, Exception) as e:
                 logger.warning(f"[Session:{session_id}] Topic change detection failed/timed out: {e}")
             if topic_changed:
                 _boundary_msg = {
@@ -3104,11 +3110,35 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             _intent = getattr(self, "_current_intent", None)
 
             if _intent and _intent.intent == _IT.CHAT:
-                # Lightweight path: no tools, slim system prompt
-                response_text = await self._chat_lightweight(
-                    messages, session_type=session_type,
-                    endpoint_override=endpoint_override,
-                )
+                if getattr(_intent, "fast_reply", False):
+                    # Ultra-fast path: compiler model for obvious greetings
+                    try:
+                        _identity_snippet = ""
+                        if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                            _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+
+                        _fast_system = (
+                            f"{_identity_snippet}\n\n"
+                            "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                            "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                        ).strip()
+
+                        _fast_resp = await self.brain.think_lightweight(
+                            prompt=message,
+                            system=_fast_system,
+                        )
+                        response_text = clean_llm_response(
+                            _fast_resp.content if _fast_resp.content else ""
+                        ) or "你好！有什么我可以帮你的吗？"
+                    except Exception as e:
+                        logger.error(f"[FastReply] Failed: {e}")
+                        response_text = "你好！有什么我可以帮你的吗？"
+                else:
+                    # Normal CHAT path: no tools, slim system prompt
+                    response_text = await self._chat_lightweight(
+                        messages, session_type=session_type,
+                        endpoint_override=endpoint_override,
+                    )
             elif _intent and _intent.intent == _IT.COMMAND:
                 response_text = await self._chat_with_tools_and_context(
                     messages, task_monitor=task_monitor, session_type=session_type,
@@ -3336,7 +3366,46 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
 
             if _intent and _intent.intent == _IT.CHAT:
-                # Lightweight streaming path for CHAT: single LLM call, no tools
+                if getattr(_intent, "fast_reply", False):
+                    # Ultra-fast path: use compiler/lightweight model for obvious greetings
+                    try:
+                        _identity_snippet = ""
+                        if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                            _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+
+                        _fast_system = (
+                            f"{_identity_snippet}\n\n"
+                            "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                            "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                        ).strip()
+
+                        _fast_response = await self.brain.think_lightweight(
+                            prompt=message,
+                            system=_fast_system,
+                        )
+                        _reply_text = clean_llm_response(
+                            _fast_response.content if _fast_response.content else ""
+                        )
+                        if _reply_text:
+                            yield {"type": "text_delta", "content": _reply_text}
+                        else:
+                            yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                            _reply_text = "你好！有什么我可以帮你的吗？"
+                    except Exception as e:
+                        logger.error(f"[FastReply] Failed: {e}")
+                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                        _reply_text = "你好！有什么我可以帮你的吗？"
+                    yield {"type": "done"}
+
+                    await self._finalize_session(
+                        response_text=_reply_text,
+                        session=session,
+                        session_id=session_id,
+                        task_monitor=task_monitor,
+                    )
+                    return
+
+                # Normal CHAT path (non-fast): uses main model, no tools
                 _chat_prompt = await self._build_system_prompt_compiled(
                     task_description="", session_type=session_type, tools_enabled=False,
                 )
