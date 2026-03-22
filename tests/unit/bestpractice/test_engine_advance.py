@@ -148,6 +148,39 @@ class TestAdvanceAskUser:
         ask_ev = next(e for e in events if e["type"] == "bp_ask_user")
         assert "data" in ask_ev["missing_fields"]
 
+    async def test_ask_user_includes_input_schema(self):
+        cfg = BestPracticeConfig(
+            id="test_bp", name="Test BP",
+            subtasks=[
+                SubtaskConfig(
+                    id="s1", name="Step 1", agent_profile="default",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "topic": {"type": "string", "description": "主题"},
+                        },
+                        "required": ["topic"],
+                    },
+                ),
+                SubtaskConfig(id="s2", name="Step 2", agent_profile="default"),
+            ],
+        )
+        snap = _make_snap(cfg, run_mode=RunMode.MANUAL)
+        snap.initial_input = {}  # topic 缺失
+        sm = MagicMock()
+        sm.get.return_value = snap
+        sm.update_subtask_status = MagicMock()
+        engine = BPEngine(sm)
+        engine._get_config = MagicMock(return_value=cfg)
+
+        session = MagicMock()
+        events = await _collect_events(engine, "bp-test", session)
+
+        ask_events = [e for e in events if e["type"] == "bp_ask_user"]
+        assert len(ask_events) == 1
+        assert "input_schema" in ask_events[0]
+        assert ask_events[0]["input_schema"]["properties"]["topic"]["description"] == "主题"
+
 
 @pytest.mark.asyncio
 class TestAdvanceErrorHandling:

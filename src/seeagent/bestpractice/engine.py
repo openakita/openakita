@@ -123,6 +123,7 @@ class BPEngine:
                         "subtask_id": subtask.id,
                         "subtask_name": subtask.name,
                         "missing_fields": missing,
+                        "input_schema": subtask.input_schema,
                     }
                     return
 
