@@ -21,6 +21,32 @@ const selectedSubtask = computed(() =>
 
 const hasOutput = computed(() => !!selectedSubtask.value?.output)
 
+// Schema 驱动模式：output 只有 _raw_output 且有 outputSchema
+const isSchemaMode = computed(() => {
+  const out = selectedSubtask.value?.output
+  const schema = selectedSubtask.value?.outputSchema as Record<string, any> | undefined
+  if (!out || !schema?.properties) return false
+  const keys = Object.keys(out)
+  return keys.length === 1 && keys[0] === '_raw_output'
+})
+
+const rawOutputText = computed(() =>
+  String(selectedSubtask.value?.output?.['_raw_output'] ?? '')
+)
+
+const schemaFields = computed(() => {
+  const schema = selectedSubtask.value?.outputSchema as Record<string, any> | undefined
+  if (!schema?.properties) return []
+  return Object.entries(schema.properties).map(([key, meta]: [string, any]) => ({
+    key,
+    type: meta.type ?? 'string',
+    description: meta.description ?? key,
+    required: (schema.required ?? []).includes(key),
+  }))
+})
+
+const rawOutputCollapsed = ref(false)
+
 // Deep clone of output for editing
 const editedData = ref<Record<string, unknown>>({})
 const originalData = ref<Record<string, unknown>>({})
@@ -28,13 +54,26 @@ const originalData = ref<Record<string, unknown>>({})
 watch(() => [uiStore.selectedSubtaskId, selectedSubtask.value?.output], () => {
   const out = selectedSubtask.value?.output
   if (out) {
-    editedData.value = JSON.parse(JSON.stringify(out))
-    originalData.value = JSON.parse(JSON.stringify(out))
+    const schema = selectedSubtask.value?.outputSchema as Record<string, any> | undefined
+    const keys = Object.keys(out)
+    if (keys.length === 1 && keys[0] === '_raw_output' && schema?.properties) {
+      // Schema 模式: 按 schema 字段初始化空值
+      const init: Record<string, unknown> = {}
+      for (const key of Object.keys(schema.properties)) {
+        init[key] = ''
+      }
+      editedData.value = init
+      originalData.value = JSON.parse(JSON.stringify(init))
+    } else {
+      editedData.value = JSON.parse(JSON.stringify(out))
+      originalData.value = JSON.parse(JSON.stringify(out))
+    }
   } else {
     editedData.value = {}
     originalData.value = {}
   }
   confirmStatus.value = 'idle'
+  rawOutputCollapsed.value = false
 }, { immediate: true })
 
 function pillClass(st: { id: string; status: string }) {
@@ -139,64 +178,117 @@ function resetData() {
     <div class="panel-content">
       <template v-if="hasOutput">
         <div class="output-section">
-          <div class="output-section-label">
-            <span class="material-symbols-rounded">edit_note</span>
-            输出数据（可编辑）
-          </div>
-          <div class="json-editor">
-            <div v-for="(value, key) in editedData" :key="String(key)" class="json-field">
-              <div class="field-key">{{ key }}</div>
-              <div class="field-value">
-                <!-- Array field -->
-                <div v-if="fieldType(String(key), value) === 'array'" class="array-field">
-                  <div v-for="(item, idx) in (value as unknown[])" :key="idx" class="array-item">
-                    <input
-                      class="field-input"
-                      :value="typeof item === 'object' ? JSON.stringify(item) : String(item)"
-                      @input="updateArrayItem(String(key), idx, ($event.target as HTMLInputElement).value)"
-                    />
-                    <button class="remove-btn" @click="removeArrayItem(String(key), idx)">
-                      <span class="material-symbols-rounded" style="font-size:14px">close</span>
-                    </button>
-                  </div>
-                  <div class="array-actions">
-                    <button class="add-btn" @click="addArrayItem(String(key))">
-                      <span class="material-symbols-rounded">add</span>新增
-                    </button>
-                  </div>
+          <!-- Schema 驱动模式: _raw_output + outputSchema -->
+          <template v-if="isSchemaMode">
+            <div class="raw-reference">
+              <div class="raw-ref-header" @click="rawOutputCollapsed = !rawOutputCollapsed">
+                <span class="material-symbols-rounded">{{ rawOutputCollapsed ? 'expand_more' : 'expand_less' }}</span>
+                <span>原始输出（参考）</span>
+              </div>
+              <pre v-show="!rawOutputCollapsed" class="raw-ref-content">{{ rawOutputText }}</pre>
+            </div>
+
+            <div class="output-section-label">
+              <span class="material-symbols-rounded">edit_note</span>
+              下一步所需数据（请根据上方原始输出填写）
+            </div>
+            <div class="json-editor">
+              <div v-for="field in schemaFields" :key="field.key" class="json-field">
+                <div class="field-key">
+                  {{ field.key }}
+                  <span v-if="field.required" class="required-mark">*</span>
                 </div>
-                <!-- Long text / textarea -->
-                <textarea
-                  v-else-if="fieldType(String(key), value) === 'string' && isLongText(value)"
-                  class="field-input"
-                  :value="String(value)"
-                  @input="updateField(String(key), ($event.target as HTMLTextAreaElement).value)"
-                ></textarea>
-                <!-- Object → JSON textarea -->
-                <textarea
-                  v-else-if="fieldType(String(key), value) === 'object'"
-                  class="field-input"
-                  :value="JSON.stringify(value, null, 2)"
-                  @input="tryParseJsonField(String(key), ($event.target as HTMLTextAreaElement).value)"
-                ></textarea>
-                <!-- Number -->
-                <input
-                  v-else-if="fieldType(String(key), value) === 'number'"
-                  class="field-input"
-                  type="number"
-                  :value="value"
-                  @input="updateField(String(key), Number(($event.target as HTMLInputElement).value))"
-                />
-                <!-- Default: string input -->
-                <input
-                  v-else
-                  class="field-input"
-                  :value="String(value ?? '')"
-                  @input="updateField(String(key), ($event.target as HTMLInputElement).value)"
-                />
+                <div class="field-value">
+                  <div class="field-desc">{{ field.description }}</div>
+                  <textarea
+                    v-if="field.type === 'object' || field.type === 'array'"
+                    class="field-input"
+                    :value="typeof editedData[field.key] === 'object'
+                      ? JSON.stringify(editedData[field.key], null, 2)
+                      : String(editedData[field.key] ?? '')"
+                    @input="tryParseJsonField(field.key, ($event.target as HTMLTextAreaElement).value)"
+                    :placeholder="field.type === 'array' ? '输入 JSON 数组...' : '输入 JSON 对象...'"
+                  ></textarea>
+                  <input
+                    v-else-if="field.type === 'number'"
+                    class="field-input"
+                    type="number"
+                    :value="editedData[field.key]"
+                    @input="updateField(field.key, Number(($event.target as HTMLInputElement).value))"
+                  />
+                  <textarea
+                    v-else
+                    class="field-input"
+                    :value="String(editedData[field.key] ?? '')"
+                    @input="updateField(field.key, ($event.target as HTMLTextAreaElement).value)"
+                    :placeholder="field.description"
+                  ></textarea>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
+
+          <!-- 普通模式: 直接编辑 output 字段 -->
+          <template v-else>
+            <div class="output-section-label">
+              <span class="material-symbols-rounded">edit_note</span>
+              输出数据（可编辑）
+            </div>
+            <div class="json-editor">
+              <div v-for="(value, key) in editedData" :key="String(key)" class="json-field">
+                <div class="field-key">{{ key }}</div>
+                <div class="field-value">
+                  <!-- Array field -->
+                  <div v-if="fieldType(String(key), value) === 'array'" class="array-field">
+                    <div v-for="(item, idx) in (value as unknown[])" :key="idx" class="array-item">
+                      <input
+                        class="field-input"
+                        :value="typeof item === 'object' ? JSON.stringify(item) : String(item)"
+                        @input="updateArrayItem(String(key), idx, ($event.target as HTMLInputElement).value)"
+                      />
+                      <button class="remove-btn" @click="removeArrayItem(String(key), idx)">
+                        <span class="material-symbols-rounded" style="font-size:14px">close</span>
+                      </button>
+                    </div>
+                    <div class="array-actions">
+                      <button class="add-btn" @click="addArrayItem(String(key))">
+                        <span class="material-symbols-rounded">add</span>新增
+                      </button>
+                    </div>
+                  </div>
+                  <!-- Long text / textarea -->
+                  <textarea
+                    v-else-if="fieldType(String(key), value) === 'string' && isLongText(value)"
+                    class="field-input"
+                    :value="String(value)"
+                    @input="updateField(String(key), ($event.target as HTMLTextAreaElement).value)"
+                  ></textarea>
+                  <!-- Object → JSON textarea -->
+                  <textarea
+                    v-else-if="fieldType(String(key), value) === 'object'"
+                    class="field-input"
+                    :value="JSON.stringify(value, null, 2)"
+                    @input="tryParseJsonField(String(key), ($event.target as HTMLTextAreaElement).value)"
+                  ></textarea>
+                  <!-- Number -->
+                  <input
+                    v-else-if="fieldType(String(key), value) === 'number'"
+                    class="field-input"
+                    type="number"
+                    :value="value"
+                    @input="updateField(String(key), Number(($event.target as HTMLInputElement).value))"
+                  />
+                  <!-- Default: string input -->
+                  <input
+                    v-else
+                    class="field-input"
+                    :value="String(value ?? '')"
+                    @input="updateField(String(key), ($event.target as HTMLInputElement).value)"
+                  />
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </template>
       <div v-else class="empty-state">
@@ -345,4 +437,41 @@ textarea.field-input { resize: vertical; min-height: 60px; line-height: 1.5; }
 .confirm-btn:hover { opacity: 0.9; }
 .confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .confirm-btn.saved { background: var(--success-color, #4caf50); }
+
+/* Raw Reference (schema mode) */
+.raw-reference {
+  margin-bottom: 14px;
+  border: 1px solid var(--border-subtle, #2a2a4a);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.raw-ref-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+  color: var(--text-secondary, #888);
+  background: var(--bg-surface, #1a1a2e);
+  transition: background 0.15s;
+}
+.raw-ref-header:hover { background: var(--bg-elevated, #1e1e38); }
+.raw-ref-header .material-symbols-rounded { font-size: 16px; }
+.raw-ref-content {
+  padding: 10px 14px; margin: 0;
+  font-size: 12px; line-height: 1.6;
+  color: var(--text-secondary, #888);
+  background: var(--bg-elevated, #1e1e38);
+  max-height: 200px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+  border-top: 1px solid var(--border-subtle, #2a2a4a);
+}
+.field-desc {
+  font-size: 11px;
+  color: var(--text-ghost, #555);
+  margin-bottom: 4px;
+}
+.required-mark {
+  color: var(--error-color, #f44336);
+  margin-left: 2px;
+  font-weight: 700;
+}
 </style>
