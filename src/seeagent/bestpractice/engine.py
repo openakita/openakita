@@ -19,6 +19,12 @@ import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from seeagent.api.adapters.card_builder import CardBuilder
+from seeagent.api.adapters.step_aggregator import StepAggregator
+from seeagent.api.adapters.step_filter import StepFilter
+from seeagent.api.adapters.timer_tracker import TimerTracker
+from seeagent.api.adapters.title_generator import TitleGenerator
+
 from .models import RunMode, SubtaskStatus
 
 if TYPE_CHECKING:
@@ -331,9 +337,21 @@ class BPEngine:
             if hasattr(session, "context"):
                 session.context._bp_delegate_task = delegate_task
 
-            # Consume events from event_bus, convert raw agent events to step_cards
+            # Initialize step card processing pipeline (reuse adapter components)
+            step_filter = StepFilter()
+            card_builder = CardBuilder()
+            timer = TimerTracker()
+            timer.start(f"bp_{instance_id}_{subtask.id}")
+            title_gen = TitleGenerator(brain=None, user_messages=[])
+            title_queue: asyncio.Queue = asyncio.Queue()
             sub_agent_id = subtask.agent_profile
-            tool_start_times: dict[str, float] = {}
+            aggregator = StepAggregator(
+                title_gen=title_gen,
+                card_builder=card_builder,
+                timer=timer,
+                title_update_queue=title_queue,
+                agent_id=sub_agent_id,
+            )
 
             while True:
                 try:
@@ -352,52 +370,60 @@ class BPEngine:
                     aid = event.get("agent_id")
                     if aid and aid != "main":
                         sub_agent_id = aid
+                        aggregator._agent_id = aid
                     continue
 
-                # Convert tool_call_start → step_card (running)
+                # Tool call start → filter + aggregate
                 if etype == "tool_call_start":
                     tool_name = event.get("tool", "")
+                    args = event.get("args", {})
                     tool_id = event.get("id", f"bp_tool_{id(event)}")
-                    title = tool_name
-                    tool_start_times[tool_id] = time.monotonic()
-                    yield {
-                        "type": "step_card",
-                        "step_id": tool_id,
-                        "title": title,
-                        "status": "running",
-                        "source_type": "tool",
-                        "card_type": self._infer_card_type(tool_name),
-                        "agent_id": sub_agent_id,
-                        "duration": None,
-                    }
+                    fr = step_filter.classify(tool_name, args)
+                    for ev in await aggregator.on_tool_call_start(
+                        tool_name, args, tool_id, fr
+                    ):
+                        yield ev
+                    # Drain title updates
+                    while not title_queue.empty():
+                        try:
+                            yield title_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                     continue
 
-                # Convert tool_call_end → step_card (completed/failed)
+                # Tool call end → update aggregated card
                 if etype == "tool_call_end":
                     tool_name = event.get("tool", "")
                     tool_id = event.get("id", "")
+                    result = event.get("result", "")
                     is_error = event.get("is_error", False)
-                    start_t = tool_start_times.pop(tool_id, None)
-                    duration = round(time.monotonic() - start_t, 1) if start_t else None
-                    yield {
-                        "type": "step_card",
-                        "step_id": tool_id,
-                        "title": tool_name,
-                        "status": "failed" if is_error else "completed",
-                        "source_type": "tool",
-                        "card_type": self._infer_card_type(tool_name),
-                        "agent_id": sub_agent_id,
-                        "duration": duration,
-                    }
+                    for ev in await aggregator.on_tool_call_end(
+                        tool_name, tool_id, result, is_error
+                    ):
+                        yield ev
                     continue
 
-                # Pass through step_card events as-is (e.g. from nested delegates)
+                # Text delta → close any active aggregation
+                if etype == "text_delta":
+                    for ev in await aggregator.on_text_delta():
+                        yield ev
+                    continue
+
+                # Pass through pre-built step_card events (e.g. from nested delegates)
                 if etype == "step_card":
                     yield event
                     continue
 
-                # Skip other raw events (thinking, text_delta, etc.)
-                # — these aren't rendered by the BP frontend
+                # Skip other raw events (thinking, etc.)
+
+            # Flush any pending aggregation
+            for ev in await aggregator.flush():
+                yield ev
+            while not title_queue.empty():
+                try:
+                    yield title_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
 
             # Get final result
             raw_result = await delegate_task
@@ -504,22 +530,6 @@ class BPEngine:
         return result
 
     # ── Input completeness ─────────────────────────────────────
-
-    _CARD_TYPE_PREFIXES: dict[str, str] = {
-        "web_search": "search", "news_search": "search", "search_": "search",
-        "code_execute": "code", "python_execute": "code", "shell_execute": "code",
-        "browser_": "browser", "navigate_": "browser",
-        "analyze_": "analysis", "chart_": "analysis",
-    }
-
-    @classmethod
-    def _infer_card_type(cls, tool_name: str) -> str:
-        if tool_name in cls._CARD_TYPE_PREFIXES:
-            return cls._CARD_TYPE_PREFIXES[tool_name]
-        for prefix, card_type in cls._CARD_TYPE_PREFIXES.items():
-            if prefix.endswith("_") and tool_name.startswith(prefix):
-                return card_type
-        return "default"
 
     def _check_input_completeness(
         self, subtask: SubtaskConfig, input_data: dict[str, Any],

@@ -115,21 +115,26 @@ class TestRunSubtaskStream:
         assert events[0]["type"] == "error"
 
     async def test_passthrough_events_from_event_bus(self):
-        """step_card events pass through; tool_call events are converted to step_cards;
-        raw events (thinking, done) are filtered out."""
+        """Whitelist tools generate step_cards; hidden tools are filtered;
+        raw events (thinking, done) are skipped."""
         cfg = _make_config()
         sm = MagicMock()
         engine = BPEngine(sm)
 
-        # Simulate delegate that puts events on the bus then returns
         async def fake_delegate(**kwargs):
             session = kwargs.get("session")
             bus = session.context._sse_event_bus
+            # step_card passes through directly
             await bus.put({"type": "step_card", "step_id": "card1", "title": "existing", "status": "completed"})
-            await bus.put({"type": "tool_call_start", "tool": "web_search", "id": "t1"})
+            # web_search is WHITELIST → generates step_card via aggregator
+            await bus.put({"type": "tool_call_start", "tool": "web_search", "id": "t1", "args": {"query": "test"}})
             await bus.put({"type": "tool_call_end", "tool": "web_search", "id": "t1", "is_error": False})
-            await bus.put({"type": "thinking", "data": "hmm"})  # should be filtered
-            await bus.put({"type": "done"})  # should be filtered
+            # read_file is HIDDEN → no step_card generated
+            await bus.put({"type": "tool_call_start", "tool": "read_file", "id": "t2", "args": {"path": "x"}})
+            await bus.put({"type": "tool_call_end", "tool": "read_file", "id": "t2", "is_error": False})
+            # Raw events filtered
+            await bus.put({"type": "thinking", "data": "hmm"})
+            await bus.put({"type": "done"})
             return '{"result": "ok"}'
 
         mock_orch = AsyncMock()
@@ -151,15 +156,71 @@ class TestRunSubtaskStream:
 
         event_types = [e["type"] for e in events]
         step_cards = [e for e in events if e["type"] == "step_card"]
+
         # Original step_card passes through
         assert any(c.get("step_id") == "card1" for c in step_cards)
-        # tool_call_start/end converted to step_cards
-        assert any(c.get("step_id") == "t1" and c["status"] == "running" for c in step_cards)
-        assert any(c.get("step_id") == "t1" and c["status"] == "completed" for c in step_cards)
+        # web_search generates step_card (WHITELIST) with humanized title
+        web_cards = [c for c in step_cards if "搜索" in (c.get("title") or "")]
+        assert len(web_cards) >= 1
+        # read_file does NOT generate step_card (HIDDEN)
+        assert not any("read_file" in (c.get("title") or "") for c in step_cards)
         # Raw events filtered
         assert "thinking" not in event_types
         assert "done" not in event_types
         assert "_internal_output" in event_types
+
+    async def test_skill_trigger_absorbs_inner_calls(self):
+        """Skill trigger creates one card, inner tool calls are absorbed."""
+        cfg = _make_config()
+        sm = MagicMock()
+        engine = BPEngine(sm)
+
+        async def fake_delegate(**kwargs):
+            session = kwargs.get("session")
+            bus = session.context._sse_event_bus
+            # Skill trigger → creates aggregated card
+            await bus.put({"type": "tool_call_start", "tool": "load_skill", "id": "sk1", "args": {"name": "researcher"}})
+            # Inner calls → absorbed
+            await bus.put({"type": "tool_call_start", "tool": "web_search", "id": "ws1", "args": {"query": "test"}})
+            await bus.put({"type": "tool_call_end", "tool": "web_search", "id": "ws1", "is_error": False})
+            await bus.put({"type": "tool_call_start", "tool": "read_file", "id": "rf1", "args": {"path": "x"}})
+            await bus.put({"type": "tool_call_end", "tool": "read_file", "id": "rf1", "is_error": False})
+            # Skill completes
+            await bus.put({"type": "tool_call_end", "tool": "load_skill", "id": "sk1", "is_error": False})
+            # text_delta triggers aggregation flush
+            await bus.put({"type": "text_delta", "content": "result"})
+            return '{"result": "ok"}'
+
+        mock_orch = AsyncMock()
+        mock_orch.delegate = AsyncMock(side_effect=fake_delegate)
+        engine.set_orchestrator(mock_orch)
+
+        session = MagicMock()
+        ctx = MagicMock()
+        ctx._sse_event_bus = None
+        ctx._bp_delegate_task = None
+        session.context = ctx
+
+        subtask = cfg.subtasks[0]
+        events = []
+        async for ev in engine._run_subtask_stream(
+            "bp-test", subtask, {"q": "hello"}, cfg, session
+        ):
+            events.append(ev)
+
+        step_cards = [e for e in events if e["type"] == "step_card"]
+        # Skill creates exactly 2 cards: running + completed
+        skill_cards = [c for c in step_cards if c.get("source_type") == "skill"]
+        assert len(skill_cards) == 2
+        running = [c for c in skill_cards if c["status"] == "running"]
+        completed = [c for c in skill_cards if c["status"] == "completed"]
+        assert len(running) == 1
+        assert len(completed) == 1
+        # Completed card should have absorbed_calls
+        assert len(completed[0].get("absorbed_calls", [])) >= 2
+        # No independent web_search or read_file cards
+        independent = [c for c in step_cards if c.get("source_type") == "tool"]
+        assert len(independent) == 0
 
     async def test_restores_old_event_bus(self):
         """After stream completes, the old event_bus is restored."""
