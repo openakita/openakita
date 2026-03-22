@@ -520,6 +520,38 @@ def _purge_old_commands() -> None:
         _command_store.pop(cid, None)
 
 
+def _bridge_command_to_session(
+    sm, org_id: str, target_node_id: str | None,
+    content: str, result: dict,
+) -> None:
+    """Write user command + result to SessionManager so OrgChatPanel can restore history."""
+    if not sm:
+        return
+    actual_node = result.get("node_id") or target_node_id
+    frontend_chat_id = (
+        f"org_{org_id}_node_{actual_node}" if actual_node
+        else f"org_{org_id}"
+    )
+    try:
+        session = sm.get_session(
+            channel="desktop", chat_id=frontend_chat_id,
+            user_id="desktop_user", create_if_missing=True,
+        )
+        if not session:
+            return
+        session.add_message("user", content)
+        if result.get("error"):
+            session.add_message("system", f"命令执行失败: {result['error']}")
+        elif result.get("result"):
+            text = result["result"]
+            if isinstance(text, dict):
+                text = text.get("result") or text.get("error") or str(text)
+            session.add_message("assistant", str(text))
+        sm.mark_dirty()
+    except Exception as exc:
+        logger.debug(f"[OrgCmd] session bridge failed: {exc}")
+
+
 @router.post("/{org_id}/command")
 async def send_command(request: Request, org_id: str):
     """Submit a command to the organization. Returns immediately with a
@@ -544,6 +576,8 @@ async def send_command(request: Request, org_id: str):
         "updated_at": time.time(),
     }
 
+    sm = getattr(request.app.state, "session_manager", None)
+
     async def _run() -> None:
         from openakita.api.routes.websocket import broadcast_event
         try:
@@ -551,6 +585,7 @@ async def send_command(request: Request, org_id: str):
             _command_store[command_id].update(
                 status="done", result=result, updated_at=time.time()
             )
+            _bridge_command_to_session(sm, org_id, target_node, content, result)
             await broadcast_event("org:command_done", {
                 "org_id": org_id,
                 "command_id": command_id,
@@ -559,6 +594,9 @@ async def send_command(request: Request, org_id: str):
         except Exception as exc:
             _command_store[command_id].update(
                 status="error", error=str(exc), updated_at=time.time()
+            )
+            _bridge_command_to_session(
+                sm, org_id, target_node, content, {"error": str(exc)},
             )
             await broadcast_event("org:command_done", {
                 "org_id": org_id,

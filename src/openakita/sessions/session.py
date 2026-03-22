@@ -111,8 +111,11 @@ class SessionContext:
 
     def get_messages(self, limit: int | None = None) -> list[dict]:
         """获取消息历史"""
-        if limit:
-            return self.messages[-limit:]
+        if limit is not None:
+            try:
+                return self.messages[-int(limit):]
+            except (ValueError, TypeError):
+                pass
         return self.messages
 
     def set_variable(self, key: str, value: Any) -> None:

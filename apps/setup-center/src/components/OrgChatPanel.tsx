@@ -244,13 +244,6 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       ));
     } finally {
       unsubProgress();
-      // Persist user + assistant messages to backend session BEFORE clearing sending state
-      if (finalContent) {
-        await persistMessages([
-          { role: "user", content: text },
-          { role: "assistant", content: finalContent },
-        ]);
-      }
       setSending(false);
     }
   }, [input, sending, orgId, nodeId, apiBaseUrl, persistMessages]);

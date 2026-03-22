@@ -166,7 +166,14 @@ class OrgToolHandler:
                 if p.status.value == "active" and p.org_id == org_id
             ]
             if not active_projects:
-                return
+                from openakita.orgs.models import OrgProject, ProjectStatus
+                default_proj = OrgProject(
+                    org_id=org_id,
+                    name="任务追踪",
+                    status=ProjectStatus.ACTIVE,
+                )
+                store.create_project(default_proj)
+                active_projects = [default_proj]
 
             # 2. assignee match: prefer project that has tasks for this assignee
             proj = None
