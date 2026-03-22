@@ -37,6 +37,14 @@
       @submit="handleBpAnswer"
     />
 
+    <BPOfferBlock
+      v-if="reply.bpOffer"
+      :offer="reply.bpOffer"
+      :disabled="!reply.isDone"
+      @accept="handleBpOfferAccept"
+      @decline="handleBpOfferDecline"
+    />
+
     <AskUserBlock v-if="reply.askUser" :ask="reply.askUser" />
   </div>
 </template>
@@ -53,6 +61,7 @@ import TaskProgressCard from './TaskProgressCard.vue'
 import SubtaskCompleteBlock from './SubtaskCompleteBlock.vue'
 import BPInstanceCreatedBlock from './BPInstanceCreatedBlock.vue'
 import BPAskUserBlock from './BPAskUserBlock.vue'
+import BPOfferBlock from './BPOfferBlock.vue'
 import { useBestPracticeStore } from '@/stores/bestpractice'
 import { useUIStore } from '@/stores/ui'
 import { useChatStore } from '@/stores/chat'
@@ -82,6 +91,9 @@ async function handleContinue() {
   const sessionStore = useSessionStore()
   const msg = '进入下一步'
   chatStore.addUserMessage(msg)
+  if (chatStore.currentReply && bpStore.activeInstance) {
+    chatStore.currentReply.bpProgress = bpStore.activeInstance
+  }
   const inst = bpStore.activeInstance
   if (!inst) {
     console.warn('[BP] handleContinue: no active BP instance')
@@ -104,6 +116,9 @@ async function handleBpStart() {
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
   chatStore.addUserMessage('开始执行')
+  if (chatStore.currentReply && bpStore.activeInstance) {
+    chatStore.currentReply.bpProgress = bpStore.activeInstance
+  }
   try {
     await sseClient.streamBP('/api/bp/next', {
       instance_id: props.reply.bpInstanceCreated.instanceId,
@@ -133,6 +148,33 @@ async function handleBpAnswer(data: Record<string, unknown>) {
 
 function handleEdit(subtaskId: string) {
   handleViewOutput(subtaskId)
+}
+
+async function handleBpOfferAccept(bpId: string) {
+  const chatStore = useChatStore()
+  const sessionStore = useSessionStore()
+  chatStore.addUserMessage('最佳实践模式')
+  try {
+    await sseClient.streamBP('/api/bp/start', {
+      bp_id: bpId,
+      session_id: sessionStore.activeSessionId,
+      input_data: {},
+      run_mode: 'manual',
+    })
+  } catch (err) {
+    console.error('[BP] offer accept error:', err)
+  }
+}
+
+async function handleBpOfferDecline() {
+  const chatStore = useChatStore()
+  const sessionStore = useSessionStore()
+  chatStore.addUserMessage('自由模式')
+  try {
+    await sseClient.sendMessage('自由模式', sessionStore.activeSessionId!)
+  } catch (err) {
+    console.error('[BP] offer decline error:', err)
+  }
 }
 </script>
 
