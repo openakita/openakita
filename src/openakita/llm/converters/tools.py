@@ -5,10 +5,14 @@
 支持文本格式工具调用解析（降级方案）。
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..types import Tool, ToolUseBlock
@@ -32,12 +36,10 @@ def _try_repair_json(s: str) -> dict | None:
     if not s:
         return None
 
-    # 确保以 { 开头
     if not s.startswith("{"):
         return None
 
-    # 尝试逐步补齐
-    for suffix in ['"}', '"}}', '"}}}}', '"}]}'  , '"]}'  , '"}'  , '}', '}}', '}}}']:
+    for suffix in ['"}', '"}}', '"}}}}', '"}]}', '"]}', '"}', '}', '}}', '}}}']:
         try:
             result = json.loads(s + suffix)
             if isinstance(result, dict):
@@ -70,27 +72,11 @@ def _dump_raw_arguments(tool_name: str, arguments: str) -> None:
         logger.warning(f"[TOOL_CALL] Failed to dump raw arguments: {exc}")
 
 
+# ── OpenAI Chat Completions 格式转换 ──────────────────────
+
+
 def convert_tools_to_openai(tools: list[Tool]) -> list[dict]:
-    """
-    将内部工具定义转换为 OpenAI 格式
-
-    内部格式:
-    {
-        "name": "get_weather",
-        "description": "获取天气",
-        "input_schema": {"type": "object", "properties": {...}}
-    }
-
-    OpenAI 格式:
-    {
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "获取天气",
-            "parameters": {"type": "object", "properties": {...}}
-        }
-    }
-    """
+    """将内部工具定义转换为 OpenAI 格式。"""
     return [
         {
             "type": "function",
@@ -105,9 +91,7 @@ def convert_tools_to_openai(tools: list[Tool]) -> list[dict]:
 
 
 def convert_tools_from_openai(tools: list[dict]) -> list[Tool]:
-    """
-    将 OpenAI 工具定义转换为内部格式
-    """
+    """将 OpenAI 工具定义转换为内部格式。"""
     result = []
     for tool in tools:
         if tool.get("type") == "function":
@@ -123,8 +107,7 @@ def convert_tools_from_openai(tools: list[dict]) -> list[Tool]:
 
 
 def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]:
-    """
-    将 OpenAI 工具调用转换为内部格式
+    """将 OpenAI 工具调用转换为内部格式。
 
     OpenAI 格式:
     {
@@ -151,7 +134,6 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
         tc_type = tc.get("type")
         if tc_type == "function" or (not tc_type and isinstance(func, dict) and func.get("name")):
 
-            # 解析 arguments（JSON 字符串 -> dict）
             arguments = func.get("arguments", "{}")
             if isinstance(arguments, str):
                 try:
@@ -164,10 +146,6 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                         f"[TOOL_CALL] JSON parse failed for tool '{tool_name}': "
                         f"{je} | arg_len={arg_len} | preview={arg_preview!r}"
                     )
-                    # 尝试修复截断的 JSON（补齐缺少的引号和括号）
-                    # ★ 修复成功 ≠ 参数完整：截断后补齐括号可能丢失尾部键值对。
-                    # 统一走 PARSE_ERROR_KEY 路径，避免以残缺参数执行工具
-                    # （尤其是 write_file 的巨大 content 会导致上下文膨胀）。
                     input_dict = _try_repair_json(arguments)
                     _dump_raw_arguments(tool_name, arguments)
                     if input_dict is not None:
@@ -231,9 +209,7 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
 
 
 def convert_tool_calls_to_openai(tool_uses: list[ToolUseBlock]) -> list[dict]:
-    """
-    将内部工具调用转换为 OpenAI 格式
-    """
+    """将内部工具调用转换为 OpenAI 格式。"""
     result = []
     for tu in tool_uses:
         tc: dict = {
@@ -251,11 +227,7 @@ def convert_tool_calls_to_openai(tool_uses: list[ToolUseBlock]) -> list[dict]:
 
 
 def convert_tool_result_to_openai(tool_use_id: str, content: str, is_error: bool = False) -> dict:
-    """
-    将工具结果转换为 OpenAI 格式消息
-
-    OpenAI 使用独立的 "tool" 角色消息来传递工具结果
-    """
+    """将工具结果转换为 OpenAI 格式消息。"""
     return {
         "role": "tool",
         "tool_call_id": tool_use_id,
@@ -264,9 +236,7 @@ def convert_tool_result_to_openai(tool_use_id: str, content: str, is_error: bool
 
 
 def convert_tool_result_from_openai(msg: dict) -> dict | None:
-    """
-    将 OpenAI 工具结果消息转换为内部格式
-    """
+    """将 OpenAI 工具结果消息转换为内部格式。"""
     if msg.get("role") != "tool":
         return None
 
@@ -277,208 +247,52 @@ def convert_tool_result_from_openai(msg: dict) -> dict | None:
     }
 
 
-def parse_text_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """
-    从文本中解析工具调用（降级方案）
-
-    当 LLM 不支持原生工具调用时，会以文本格式返回工具调用。
-    此函数解析这些文本格式的工具调用。
-
-    支持格式：
-    1. <function_calls>...</function_calls> 块
-    2. <minimax:tool_call>...</minimax:tool_call> 块（MiniMax 格式）
-
-    Args:
-        text: LLM 返回的文本内容
-
-    Returns:
-        (clean_text, tool_calls): 清理后的文本和解析出的工具调用列表
-    """
-    tool_calls = []
-    clean_text = text
-
-    # === 格式 1: <function_calls>...</function_calls> ===
-    function_calls_pattern = r"<function_calls>\s*(.*?)\s*</function_calls>"
-    matches = re.findall(function_calls_pattern, text, re.DOTALL | re.IGNORECASE)
-
-    if not matches:
-        # 尝试匹配不完整的格式（没有结束标签）
-        function_calls_pattern_incomplete = r"<function_calls>\s*(.*?)$"
-        matches = re.findall(function_calls_pattern_incomplete, text, re.DOTALL | re.IGNORECASE)
-
-    for match in matches:
-        tool_calls.extend(_parse_invoke_blocks(match))
-
-    # === 格式 2: <minimax:tool_call>...</minimax:tool_call> (MiniMax 格式) ===
-    minimax_pattern = r"<minimax:tool_call>\s*(.*?)\s*</minimax:tool_call>"
-    minimax_matches = re.findall(minimax_pattern, text, re.DOTALL | re.IGNORECASE)
-
-    if not minimax_matches:
-        # 尝试匹配不完整的格式
-        minimax_pattern_incomplete = r"<minimax:tool_call>\s*(.*?)$"
-        minimax_matches = re.findall(minimax_pattern_incomplete, text, re.DOTALL | re.IGNORECASE)
-
-    for match in minimax_matches:
-        tool_calls.extend(_parse_invoke_blocks(match))
-
-    # === 格式 3: <<|tool_calls_section_begin|>>...<<|tool_calls_section_end|>> (Kimi K2 格式) ===
-    kimi_tool_calls = _parse_kimi_tool_calls(text)
-    tool_calls.extend(kimi_tool_calls)
-
-    # === 格式 4: JSON 格式 {"name": "...", "arguments": {...}} ===
-    _json_parsed = False
-    if not tool_calls and _has_json_tool_calls(text):
-        json_clean, json_tool_calls = _parse_json_tool_calls(text)
-        if json_tool_calls:
-            tool_calls.extend(json_tool_calls)
-            clean_text = json_clean
-            _json_parsed = True
-
-    # 清理文本，移除已解析的工具调用（格式 1-3 的清理；格式 4 已在上面处理）
-    if tool_calls and not _json_parsed:
-        # 移除 function_calls 块
-        clean_text = re.sub(
-            r"<function_calls>.*?</function_calls>", "", text, flags=re.DOTALL | re.IGNORECASE
-        ).strip()
-
-        # 移除不完整的 function_calls 块
-        clean_text = re.sub(
-            r"<function_calls>.*$", "", clean_text, flags=re.DOTALL | re.IGNORECASE
-        ).strip()
-
-        # 移除 minimax:tool_call 块
-        clean_text = re.sub(
-            r"<minimax:tool_call>.*?</minimax:tool_call>",
-            "",
-            clean_text,
-            flags=re.DOTALL | re.IGNORECASE,
-        ).strip()
-
-        # 移除不完整的 minimax:tool_call 块
-        clean_text = re.sub(
-            r"<minimax:tool_call>.*$", "", clean_text, flags=re.DOTALL | re.IGNORECASE
-        ).strip()
-
-        # 移除 Kimi K2 格式的工具调用
-        clean_text = re.sub(
-            r"<<\|tool_calls_section_begin\|>>.*?<<\|tool_calls_section_end\|>>",
-            "",
-            clean_text,
-            flags=re.DOTALL,
-        ).strip()
-
-        # 移除不完整的 Kimi 格式
-        clean_text = re.sub(
-            r"<<\|tool_calls_section_begin\|>>.*$", "", clean_text, flags=re.DOTALL
-        ).strip()
-
-    return clean_text, tool_calls
+# ── 文本格式工具调用解析（降级方案）───────────────────────
+#
+# 注册表驱动：每种格式由 _TextToolFormat(name, detect_re, parse) 描述。
+# parse 函数接收完整文本，返回 (清理后文本, 工具调用列表)，
+# 解析与清理在同一函数内完成，消除不同步风险。
+# 新增格式只需添加一条注册 + 编写 parse 函数。
 
 
-def _parse_kimi_tool_calls(text: str) -> list[ToolUseBlock]:
-    """
-    解析 Kimi K2 格式的工具调用
+@dataclass(frozen=True)
+class _TextToolFormat:
+    """一种文本工具调用格式的描述。"""
 
-    格式：
-    <<|tool_calls_section_begin|>>
-    <<|tool_call_begin|>>functions.get_weather:0<<|tool_call_argument_begin|>>{"city": "Beijing"}<<|tool_call_end|>>
-    <<|tool_calls_section_end|>>
+    name: str
+    detect_re: re.Pattern
+    parse: Callable[[str], tuple[str, list[ToolUseBlock]]]
+    fallback: bool = False
 
-    Args:
-        text: 包含工具调用的文本
 
-    Returns:
-        工具调用列表
-    """
-    tool_calls = []
-
-    # 检查是否包含 Kimi 格式
-    if "<<|tool_calls_section_begin|>>" not in text:
-        return []
-
-    # 提取工具调用区块
-    section_pattern = r"<<\|tool_calls_section_begin\|>>(.*?)<<\|tool_calls_section_end\|>>"
-    section_matches = re.findall(section_pattern, text, re.DOTALL)
-
-    if not section_matches:
-        # 尝试不完整格式
-        section_pattern_incomplete = r"<<\|tool_calls_section_begin\|>>(.*?)$"
-        section_matches = re.findall(section_pattern_incomplete, text, re.DOTALL)
-
-    for section in section_matches:
-        # 提取每个工具调用
-        # 格式: <<|tool_call_begin|>>functions.func_name:idx<<|tool_call_argument_begin|>>{json}<<|tool_call_end|>>
-        call_pattern = r"<<\|tool_call_begin\|>>\s*(?P<tool_id>[\w\.]+:\d+)\s*<<\|tool_call_argument_begin\|>>\s*(?P<arguments>.*?)\s*<<\|tool_call_end\|>>"
-
-        for match in re.finditer(call_pattern, section, re.DOTALL):
-            tool_id = match.group("tool_id")
-            arguments_str = match.group("arguments").strip()
-
-            # 解析函数名: functions.get_weather:0 -> get_weather
-            try:
-                func_name = tool_id.split(".")[1].split(":")[0]
-            except IndexError:
-                func_name = tool_id
-
-            # 解析参数
-            try:
-                arguments = json.loads(arguments_str)
-            except json.JSONDecodeError:
-                arguments = {"raw": arguments_str}
-
-            tool_call = ToolUseBlock(
-                id=f"kimi_call_{tool_id.replace('.', '_').replace(':', '_')}",
-                name=func_name,
-                input=arguments,
-            )
-            tool_calls.append(tool_call)
-            logger.info(
-                f"[KIMI_TOOL_PARSE] Extracted tool call: {func_name} with args: {list(arguments.keys())}"
-            )
-
-    return tool_calls
+# ── 共享: <invoke> 块解析器 ────────────────────────────
 
 
 def _parse_invoke_blocks(content: str) -> list[ToolUseBlock]:
-    """
-    解析 <invoke> 块中的工具调用
-
-    Args:
-        content: 包含 <invoke> 块的内容
-
-    Returns:
-        工具调用列表
-    """
+    """解析 <invoke> 块中的工具调用（被多种 XML 包装格式共享）。"""
     tool_calls = []
 
-    # 查找 invoke 块
     invoke_pattern = r'<invoke\s+name=["\']?([^"\'>\s]+)["\']?\s*>(.*?)</invoke>'
     invokes = re.findall(invoke_pattern, content, re.DOTALL | re.IGNORECASE)
 
     if not invokes:
-        # 尝试不完整格式
         invoke_pattern_incomplete = (
             r'<invoke\s+name=["\']?([^"\'>\s]+)["\']?\s*>(.*?)(?:</invoke>|$)'
         )
         invokes = re.findall(invoke_pattern_incomplete, content, re.DOTALL | re.IGNORECASE)
 
     for tool_name, invoke_content in invokes:
-        # 解析参数
         params = {}
         param_pattern = r'<parameter\s+name=["\']?([^"\'>\s]+)["\']?\s*>(.*?)</parameter>'
         param_matches = re.findall(param_pattern, invoke_content, re.DOTALL | re.IGNORECASE)
 
         for param_name, param_value in param_matches:
-            # 清理参数值
             param_value = param_value.strip()
-
-            # 尝试解析为 JSON
             try:
                 params[param_name] = json.loads(param_value)
             except json.JSONDecodeError:
                 params[param_name] = param_value
 
-        # 创建工具调用
         tool_call = ToolUseBlock(
             id=f"text_call_{uuid.uuid4().hex[:8]}",
             name=tool_name.strip(),
@@ -486,10 +300,163 @@ def _parse_invoke_blocks(content: str) -> list[ToolUseBlock]:
         )
         tool_calls.append(tool_call)
         logger.info(
-            f"[TEXT_TOOL_PARSE] Extracted tool call: {tool_name} with params: {list(params.keys())}"
+            f"[TEXT_TOOL_PARSE] Extracted tool call: {tool_name} "
+            f"with params: {list(params.keys())}"
         )
 
     return tool_calls
+
+
+def _make_invoke_wrapper_parser(
+    open_tag: str, close_tag: str,
+) -> Callable[[str], tuple[str, list[ToolUseBlock]]]:
+    """为使用 <invoke> 内部结构的 XML 包装格式创建解析器。
+
+    function_calls 和 minimax:tool_call 结构相同（都包裹 <invoke> 块），
+    仅外层标签不同，通过此工厂函数统一生成。
+    """
+    _open_esc = re.escape(open_tag)
+    _close_esc = re.escape(close_tag)
+    _complete_re = re.compile(
+        f"{_open_esc}\\s*(.*?)\\s*{_close_esc}", re.DOTALL | re.IGNORECASE,
+    )
+    _incomplete_re = re.compile(
+        f"{_open_esc}\\s*(.*?)$", re.DOTALL | re.IGNORECASE,
+    )
+
+    def parser(text: str) -> tuple[str, list[ToolUseBlock]]:
+        matches = _complete_re.findall(text) or _incomplete_re.findall(text)
+        tool_calls: list[ToolUseBlock] = []
+        for m in matches:
+            tool_calls.extend(_parse_invoke_blocks(m))
+        if not tool_calls:
+            return text, []
+        clean = _complete_re.sub("", text).strip()
+        clean = _incomplete_re.sub("", clean).strip()
+        return clean, tool_calls
+
+    return parser
+
+
+# ── Kimi K2 格式 ──────────────────────────────────────
+
+
+def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """解析 Kimi K2 格式的工具调用。
+
+    格式：
+    <<|tool_calls_section_begin|>>
+    <<|tool_call_begin|>>functions.get_weather:0
+    <<|tool_call_argument_begin|>>{"city": "Beijing"}<<|tool_call_end|>>
+    <<|tool_calls_section_end|>>
+    """
+    if "<<|tool_calls_section_begin|>>" not in text:
+        return text, []
+
+    section_pattern = r"<<\|tool_calls_section_begin\|>>(.*?)<<\|tool_calls_section_end\|>>"
+    section_matches = re.findall(section_pattern, text, re.DOTALL)
+
+    if not section_matches:
+        section_pattern_incomplete = r"<<\|tool_calls_section_begin\|>>(.*?)$"
+        section_matches = re.findall(section_pattern_incomplete, text, re.DOTALL)
+
+    tool_calls: list[ToolUseBlock] = []
+    for section in section_matches:
+        call_pattern = (
+            r"<<\|tool_call_begin\|>>\s*(?P<tool_id>[\w\.]+:\d+)\s*"
+            r"<<\|tool_call_argument_begin\|>>\s*(?P<arguments>.*?)\s*<<\|tool_call_end\|>>"
+        )
+
+        for match in re.finditer(call_pattern, section, re.DOTALL):
+            tool_id = match.group("tool_id")
+            arguments_str = match.group("arguments").strip()
+
+            try:
+                func_name = tool_id.split(".")[1].split(":")[0]
+            except IndexError:
+                func_name = tool_id
+
+            try:
+                arguments = json.loads(arguments_str)
+            except json.JSONDecodeError:
+                arguments = {"raw": arguments_str}
+
+            tool_calls.append(ToolUseBlock(
+                id=f"kimi_call_{tool_id.replace('.', '_').replace(':', '_')}",
+                name=func_name,
+                input=arguments,
+            ))
+            logger.info(
+                f"[KIMI_TOOL_PARSE] Extracted tool call: {func_name} "
+                f"with args: {list(arguments.keys())}"
+            )
+
+    if not tool_calls:
+        return text, []
+
+    clean = re.sub(
+        r"<<\|tool_calls_section_begin\|>>.*?<<\|tool_calls_section_end\|>>",
+        "", text, flags=re.DOTALL,
+    ).strip()
+    clean = re.sub(
+        r"<<\|tool_calls_section_begin\|>>.*$", "", clean, flags=re.DOTALL,
+    ).strip()
+    return clean, tool_calls
+
+
+# ── GLM 格式 ──────────────────────────────────────────
+
+_GLM_COMPLETE_RE = re.compile(
+    r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE,
+)
+_GLM_INCOMPLETE_RE = re.compile(
+    r"<tool_call>\s*(.*?)$", re.DOTALL | re.IGNORECASE,
+)
+_GLM_KV_RE = re.compile(
+    r"<arg_key>\s*(.*?)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*</arg_value>",
+    re.DOTALL,
+)
+
+
+def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """解析 GLM 模型的 <tool_call> 格式。
+
+    格式:
+    <tool_call>run_shell<arg_key>command</arg_key><arg_value>...</arg_value></tool_call>
+    """
+    matches = _GLM_COMPLETE_RE.findall(text) or _GLM_INCOMPLETE_RE.findall(text)
+
+    tool_calls: list[ToolUseBlock] = []
+    for content in matches:
+        name_match = re.match(r"(\w[\w-]*)", content.strip())
+        if not name_match:
+            continue
+        tool_name = name_match.group(1)
+
+        params: dict = {}
+        for kv in _GLM_KV_RE.finditer(content):
+            key, val = kv.group(1).strip(), kv.group(2).strip()
+            try:
+                params[key] = json.loads(val)
+            except json.JSONDecodeError:
+                params[key] = val
+
+        tool_calls.append(ToolUseBlock(
+            id=f"glm_call_{uuid.uuid4().hex[:8]}",
+            name=tool_name,
+            input=params,
+        ))
+        logger.info(
+            f"[GLM_TOOL_PARSE] Extracted tool call: {tool_name} "
+            f"with params: {list(params.keys())}"
+        )
+
+    if not tool_calls:
+        return text, []
+
+    clean = _GLM_COMPLETE_RE.sub("", text).strip()
+    clean = _GLM_INCOMPLETE_RE.sub("", clean).strip()
+    return clean, tool_calls
 
 
 # ── JSON 格式工具调用检测与解析 ──────────────────────────
@@ -532,14 +499,8 @@ def _extract_balanced_braces(text: str, start: int) -> str | None:
     return None
 
 
-def _has_json_tool_calls(text: str) -> bool:
-    """检测文本中是否包含 JSON 格式的工具调用。"""
-    return bool(_JSON_TOOL_CALL_HEADER_RE.search(text))
-
-
 def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """
-    从文本中提取 JSON 格式工具调用。
+    """从文本中提取 JSON 格式工具调用。
 
     匹配 {"name": "xxx", "arguments": {...}} 或双花括号变体。
     使用括号计数法正确处理深度嵌套的参数 JSON。
@@ -556,12 +517,10 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         if args_str is None:
             continue
 
-        # 找到外层闭合花括号（跳过可能的多余 }）
         outer_end = args_start + len(args_str)
         while outer_end < len(text) and text[outer_end] in " \t\n\r}":
             outer_end += 1
 
-        # 向前找外层开头的多余 { 以便整块移除
         outer_start = m.start()
         while outer_start > 0 and text[outer_start - 1] == "{":
             outer_start -= 1
@@ -628,6 +587,73 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean_text, tool_calls
 
 
+# ── 格式注册表 + 公开 API ─────────────────────────────
+#
+# 顺序有意义：JSON 放最后，因为其检测 pattern 最宽泛。
+# 前面的格式使用精确的 XML 标签匹配，不会误报。
+
+_TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
+    _TextToolFormat(
+        "function_calls",
+        re.compile(r"<function_calls>", re.IGNORECASE),
+        _make_invoke_wrapper_parser("<function_calls>", "</function_calls>"),
+    ),
+    _TextToolFormat(
+        "minimax",
+        re.compile(r"<minimax:tool_call>", re.IGNORECASE),
+        _make_invoke_wrapper_parser("<minimax:tool_call>", "</minimax:tool_call>"),
+    ),
+    _TextToolFormat(
+        "kimi_k2",
+        re.compile(r"<<\|tool_calls_section_begin\|>>"),
+        _parse_kimi_k2,
+    ),
+    _TextToolFormat(
+        "glm",
+        re.compile(r"<tool_call>", re.IGNORECASE),
+        _parse_glm,
+    ),
+    _TextToolFormat(
+        "json",
+        _JSON_TOOL_CALL_HEADER_RE,
+        _parse_json_tool_calls,
+        fallback=True,
+    ),
+]
+
+
+def has_text_tool_calls(text: str) -> bool:
+    """检查文本中是否包含文本格式的工具调用。"""
+    return any(fmt.detect_re.search(text) for fmt in _TEXT_TOOL_FORMATS)
+
+
+def parse_text_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """从文本中解析工具调用（降级方案）。
+
+    当 LLM 不支持原生工具调用或偶尔退化为文本格式时，
+    遍历所有已注册的格式解析器，提取工具调用并清理残留标记。
+
+    Args:
+        text: LLM 返回的文本内容
+
+    Returns:
+        (clean_text, tool_calls): 清理后的文本和解析出的工具调用列表
+    """
+    all_tools: list[ToolUseBlock] = []
+    clean = text
+    for fmt in _TEXT_TOOL_FORMATS:
+        if fmt.fallback and all_tools:
+            continue
+        if fmt.detect_re.search(clean):
+            clean, tools = fmt.parse(clean)
+            if tools:
+                all_tools.extend(tools)
+                logger.info(
+                    f"[TEXT_TOOL_PARSE] {fmt.name}: extracted {len(tools)} tool calls"
+                )
+    return clean, all_tools
+
+
 # ── Responses API 格式转换 ──────────────────────────────────
 #
 # OpenAI Responses API 使用 internally-tagged 格式，与 Chat Completions
@@ -655,7 +681,8 @@ def convert_tools_to_responses(tools: list[Tool]) -> list[dict]:
 def convert_tool_calls_from_responses(items: list[dict]) -> list[ToolUseBlock]:
     """从 Responses API output items 中提取工具调用。
 
-    Responses 格式: {"type": "function_call", "id": ..., "call_id": ..., "name": ..., "arguments": "..."}
+    Responses 格式:
+    {"type": "function_call", "id": ..., "call_id": ..., "name": ..., "arguments": "..."}
     """
     result = []
     for item in items:
@@ -705,21 +732,3 @@ def convert_tool_result_to_responses(call_id: str, content: str) -> dict:
         "call_id": call_id,
         "output": content,
     }
-
-
-def has_text_tool_calls(text: str) -> bool:
-    """
-    检查文本中是否包含工具调用格式
-
-    支持检测：
-    - <function_calls> 格式（通用）
-    - <minimax:tool_call> 格式（MiniMax）
-    - <<|tool_calls_section_begin|>> 格式（Kimi K2）
-    - JSON 格式: {"name": "tool", "arguments": {...}} 或 {{"name": ...}}
-    """
-    return bool(
-        re.search(r"<function_calls>", text, re.IGNORECASE)
-        or re.search(r"<minimax:tool_call>", text, re.IGNORECASE)
-        or re.search(r"<<\|tool_calls_section_begin\|>>", text)
-        or _has_json_tool_calls(text)
-    )
