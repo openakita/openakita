@@ -921,25 +921,37 @@ class LLMClient:
         if override_provider and override_provider in eligible:
             eligible.remove(override_provider)
             eligible.insert(0, override_provider)
-        elif override_provider and override_provider not in eligible and require_thinking:
-            # 用户明确选择的端点仅因缺少 thinking 能力被排除时，
-            # 将其追加到末尾作为 non-thinking fallback。
-            # 这样当所有 thinking 端点都失败后，可以在同一轮 _try_endpoints 内
-            # 立即回落到用户选的端点，而不是走完整的降级重试周期。
+        elif override_provider and override_provider not in eligible:
+            # 用户显式选择的端点因能力推断被排除。
+            # 设计原则：能力推断可能不准确（静态表/关键词匹配固有局限），
+            # 而用户的显式选择是最高优先级的意图信号。
+            # 因此仍然将端点加入列表（优先尝试），让 API 错误自然暴露，
+            # 这比静默替换到另一个模型对用户更友好。
+            missing = []
             cfg = override_provider.config
-            passes_other = (
-                (not require_tools or cfg.has_capability("tools"))
-                and (not require_vision or cfg.has_capability("vision"))
-                and (not require_video or cfg.has_capability("video"))
-                and (not require_audio or cfg.has_capability("audio"))
-                and (not require_pdf or cfg.has_capability("pdf"))
-            )
-            if passes_other:
+            if require_tools and not cfg.has_capability("tools"):
+                missing.append("tools")
+            if require_thinking and not cfg.has_capability("thinking"):
+                missing.append("thinking")
+            if require_vision and not cfg.has_capability("vision"):
+                missing.append("vision")
+            if require_video and not cfg.has_capability("video"):
+                missing.append("video")
+            if require_audio and not cfg.has_capability("audio"):
+                missing.append("audio")
+            if require_pdf and not cfg.has_capability("pdf"):
+                missing.append("pdf")
+
+            if eligible:
+                eligible.insert(0, override_provider)
+            else:
                 eligible.append(override_provider)
-                logger.info(
-                    f"[LLM] User-selected endpoint {override_provider.name} "
-                    f"lacks thinking capability; appended as non-thinking fallback"
-                )
+
+            logger.warning(
+                f"[LLM] User-selected endpoint {override_provider.name} "
+                f"may lack capability: {', '.join(missing)}. "
+                f"Including it anyway (user intent > capability inference)."
+            )
 
         return eligible
 

@@ -695,6 +695,7 @@ MODEL_CAPABILITIES = {
     "volcengine": {
         # 火山引擎 (Volcengine / 火山方舟 Ark) - 字节跳动
         "doubao-seed-1-6": {"text": True, "vision": True, "video": False, "tools": True, "thinking": True},
+        "doubao-seed-code": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
         "doubao-1-5-pro-256k": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
         "doubao-1-5-pro-32k": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
         "doubao-1-5-lite-32k": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
@@ -786,10 +787,16 @@ def infer_capabilities(
                 return _normalize(caps)
 
     # 3. 跨服务商模糊匹配（用于中转服务商等场景）
-    for _provider, models in MODEL_CAPABILITIES.items():
-        for model_key, caps in models.items():
-            if model_lower.startswith(model_key.lower()):
-                return _normalize(caps)
+    # 本地推理服务（Ollama/LMStudio 等）的模型名常带 `:NB` 变体后缀
+    # （如 deepseek-r1:8b），这些蒸馏/量化版本的能力通常与同名官方大模型不同，
+    # 跨服务商前缀匹配会导致小模型错误继承大模型的能力标记。
+    _is_local = provider_slug in ("ollama", "local", "lmstudio")
+    _is_variant = ":" in model_name
+    if not (_is_local and _is_variant):
+        for _provider, models in MODEL_CAPABILITIES.items():
+            for model_key, caps in models.items():
+                if model_lower.startswith(model_key.lower()):
+                    return _normalize(caps)
 
     # 4. 基于模型名关键词智能推断
     caps = {"text": True, "vision": False, "video": False, "tools": False, "thinking": False, "audio": False, "pdf": False}
@@ -824,7 +831,10 @@ def infer_capabilities(
     # Tools 推断 (大部分主流模型都支持)
     if any(
         kw in model_lower
-        for kw in ["qwen", "gpt", "claude", "deepseek", "kimi", "glm", "gemini", "moonshot"]
+        for kw in [
+            "qwen", "gpt", "claude", "deepseek", "kimi", "glm",
+            "gemini", "moonshot", "doubao", "minimax",
+        ]
     ):
         caps["tools"] = True
 

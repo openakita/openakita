@@ -71,6 +71,7 @@ class VolcEngineRegistry(ProviderRegistry):
         preset = [
             # 豆包 (Doubao) 系列
             "doubao-seed-1-6",
+            "doubao-seed-code",
             "doubao-1-5-pro-256k",
             "doubao-1-5-pro-32k",
             "doubao-1-5-lite-32k",
