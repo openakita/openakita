@@ -182,16 +182,11 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                             session_manager.mark_dirty()
 
                     ask_event = json.dumps({
-                        "type": "ask_user",
-                        "ask_id": f"bp_trigger_{bp_id}",
-                        "question": question,
-                        "options": [
-                            {"label": "自由模式", "value": "free"},
-                            {
-                                "label": "最佳实践模式",
-                                "value": bp_id,
-                            },
-                        ],
+                        "type": "bp_offer",
+                        "bp_id": bp_id,
+                        "bp_name": bp_name,
+                        "subtasks": bp_match.get("subtasks", []),
+                        "default_run_mode": "manual",
                     }, ensure_ascii=False)
                     yield f"data: {ask_event}\n\n"
 
@@ -201,14 +196,13 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                     if bp_sm:
                         bp_sm.mark_bp_offered(bp_session_id, bp_id)
 
-                    # Save assistant message so LLM has context on next turn
                     if session:
                         session.add_message(
                             "assistant", question,
-                            reply_state={"ask_user": {
-                                "question": question,
+                            reply_state={"bp_offer": {
                                 "bp_id": bp_id,
                                 "bp_name": bp_name,
+                                "subtasks": bp_match.get("subtasks", []),
                             }},
                         )
                         if session_manager:
