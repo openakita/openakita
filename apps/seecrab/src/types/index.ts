@@ -8,6 +8,7 @@ export type SSEEventType =
   | 'bp_progress' | 'bp_subtask_output' | 'bp_stale'
   | 'bp_instance_created' | 'bp_subtask_start' | 'bp_subtask_complete'
   | 'bp_waiting_next' | 'bp_ask_user' | 'bp_complete' | 'bp_error'
+  | 'bp_offer'
 
 export interface SSEEvent {
   type: SSEEventType
@@ -51,6 +52,7 @@ export interface ReplyState {
     missingFields: string[]
     inputSchema?: Record<string, unknown>
   } | null
+  bpOffer: BPOfferInfo | null
   errorMessage?: string
 }
 
@@ -178,4 +180,11 @@ export interface BPAskUserEvent {
   subtask_name: string
   missing_fields: string[]
   input_schema?: Record<string, unknown>
+}
+
+export interface BPOfferInfo {
+  bpId: string
+  bpName: string
+  subtasks: { id: string; name: string }[]
+  defaultRunMode: string
 }
