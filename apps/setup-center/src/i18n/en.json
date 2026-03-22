@@ -431,7 +431,7 @@
     "installLocal": "Local Source",
     "installVersion": "Version",
     "imTitle": "IM Channels",
-    "imHint": "Enable channel toggles, then manage Bots in Channels → Bot Config",
+    "imHint": "Manage IM bots to connect with messaging platforms",
     "imPlatformOverview": "Supported IM Platforms",
     "imBotGuide": "Click \"Guided Setup\" for step-by-step bot creation and connection. You can also use \"Create Bot\" for quick setup.",
     "imTabChannels": "Channel Config",

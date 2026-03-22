@@ -5,7 +5,6 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { EnvMap } from "../types";
-import type { IMBot } from "./im-shared";
 import { envGet, envSet } from "../utils";
 import { copyToClipboard } from "../utils/clipboard";
 import { BotConfigTab } from "./IMView";
@@ -22,9 +21,6 @@ type IMConfigViewProps = {
   onRequestRestart?: () => void;
   wizardMode?: boolean;
   multiAgentEnabled?: boolean;
-  onNavigateToBotConfig?: (presetType: string) => void;
-  pendingBots?: IMBot[];
-  onPendingBotsChange?: React.Dispatch<React.SetStateAction<IMBot[]>>;
 };
 
 const DEFAULT_API = "http://127.0.0.1:18900";

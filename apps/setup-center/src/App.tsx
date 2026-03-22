@@ -18,8 +18,6 @@ import { AgentManagerView } from "./views/AgentManagerView";
 import { OrgEditorView } from "./views/OrgEditorView";
 import { FeedbackModal } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
-import type { IMBot } from "./views/im-shared";
-import { TYPE_TO_ENABLED_KEY } from "./views/im-shared";
 import { AgentSystemView } from "./views/AgentSystemView";
 import { AgentStoreView } from "./views/AgentStoreView";
 import { SkillStoreView } from "./views/SkillStoreView";
@@ -389,7 +387,6 @@ export function App() {
   const [obCliAddToPath, setObCliAddToPath] = useState(true);
   const [obAutostart, setObAutostart] = useState(true); // 开机自启，默认勾选
   const [obAgreementInput, setObAgreementInput] = useState("");
-  const [obPendingBots, setObPendingBots] = useState<IMBot[]>([]);
 
   // Custom root directory
   const [obShowCustomRoot, setObShowCustomRoot] = useState(false);
@@ -2733,20 +2730,15 @@ export function App() {
     disabledViews, toggleViewDisabled,
   };
 
-  function renderIM(opts?: { onboarding?: boolean }) {
-    const imDisabled = disabledViews.includes("im");
+  function renderIM(wizardMode?: boolean) {
     return (
       <IMConfigView
         {..._configViewProps}
         venvDir={venvDir}
-        imDisabled={imDisabled}
-        onToggleIM={opts?.onboarding ? undefined : () => toggleViewDisabled("im")}
-        multiAgentEnabled={multiAgentEnabled}
-        apiBaseUrl={httpApiBase()}
+        apiBaseUrl={apiBaseUrl}
         onRequestRestart={restartService}
-        wizardMode={opts?.onboarding}
-        onNavigateToBotConfig={opts?.onboarding ? undefined : (presetType) => { setView("im"); }}
-        {...(opts?.onboarding ? { pendingBots: obPendingBots, onPendingBotsChange: setObPendingBots } : {})}
+        wizardMode={wizardMode}
+        multiAgentEnabled={multiAgentEnabled}
       />
     );
   }
@@ -3686,9 +3678,6 @@ export function App() {
     if (obAutostart) {
       taskDefs.push({ id: "autostart", label: t("onboarding.autostart.taskLabel"), status: "pending" });
     }
-    if (obPendingBots.length > 0) {
-      taskDefs.push({ id: "register-bots", label: t("onboarding.registerBots", { count: obPendingBots.length }), status: "pending" });
-    }
     taskDefs.push({ id: "service-start", label: "启动后端服务", status: "pending" });
     taskDefs.push({ id: "http-wait", label: "等待 HTTP 服务就绪", status: "pending" });
     taskDefs.push({ id: "llm-config", label: "保存 LLM 配置", status: savedEndpoints.length > 0 ? "pending" : "skipped" });
@@ -3754,48 +3743,6 @@ export function App() {
         log(t("onboarding.progress.llmConfigSaved"));
         updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length} 个端点` });
         logTask("保存 LLM 配置", "done", `${savedEndpoints.length} 个端点`);
-      }
-
-      // Derive .env enabled flags from pending bots (ensures channel deps get installed)
-      if (obPendingBots.length > 0) {
-        const enabledTypes = new Set(obPendingBots.map((b) => b.type));
-        for (const bType of enabledTypes) {
-          const ek = TYPE_TO_ENABLED_KEY[bType];
-          if (ek) {
-            setEnvDraft((m: EnvMap) => ({ ...m, [ek]: "true" }));
-            envDraft[ek] = "true";
-          }
-        }
-      }
-
-      // ── STEP: env-save ──
-      updateTask("env-save", { status: "running" });
-      logTask("保存环境变量", "running");
-      try {
-        const imKeys = getAutoSaveKeysForStep("im");
-        const envEntries: { key: string; value: string }[] = [];
-        for (const k of imKeys) {
-          if (Object.prototype.hasOwnProperty.call(envDraft, k) && envDraft[k]) {
-            envEntries.push({ key: k, value: envDraft[k] });
-          }
-        }
-        for (const ep of savedEndpoints) {
-          const keyName = (ep as any).api_key_env;
-          if (keyName && Object.prototype.hasOwnProperty.call(envDraft, keyName) && envDraft[keyName]) {
-            envEntries.push({ key: keyName, value: envDraft[keyName] });
-          }
-        }
-        if (envEntries.length > 0) {
-          await invoke("workspace_update_env", { workspaceId: activeWsId, entries: envEntries });
-          log(t("onboarding.progress.envSaved") || "✓ 环境变量已保存");
-        }
-        updateTask("env-save", { status: "done", detail: `${envEntries.length} 项` });
-        logTask("保存环境变量", "done", `${envEntries.length} 项`);
-      } catch (e) {
-        log(`⚠ 保存环境变量失败: ${String(e)}`);
-        updateTask("env-save", { status: "error", detail: String(e) });
-        logTask("保存环境变量", "error", String(e));
-        hasErr = true;
       }
 
       // ── STEP: backend-check ──
@@ -3874,54 +3821,6 @@ export function App() {
           log(t("onboarding.autostart.fail") + ": " + String(e));
           updateTask("autostart", { status: "error", detail: String(e).slice(0, 120) });
           logTask(t("onboarding.autostart.taskLabel"), "error", String(e));
-        }
-      }
-
-      // ── STEP: register-bots (write to runtime_state.json via Tauri, before backend starts) ──
-      if (obPendingBots.length > 0) {
-        updateTask("register-bots", { status: "running" });
-        logTask("注册 IM Bot", "running");
-        try {
-          let runtimeState: Record<string, unknown> = {};
-          try {
-            const content = await invoke<string>("workspace_read_file", {
-              workspaceId: activeWsId,
-              relativePath: "data/runtime_state.json",
-            });
-            runtimeState = JSON.parse(content);
-          } catch { /* file doesn't exist yet, start fresh */ }
-
-          const existingBots: Record<string, unknown>[] = Array.isArray(runtimeState.im_bots)
-            ? (runtimeState.im_bots as Record<string, unknown>[])
-            : [];
-          const existingIds = new Set(existingBots.map((b) => b.id));
-
-          let added = 0;
-          for (const bot of obPendingBots) {
-            if (!existingIds.has(bot.id)) {
-              existingBots.push(bot);
-              existingIds.add(bot.id);
-              added++;
-              log(`✓ Bot ${bot.name || bot.id} 已写入配置`);
-            } else {
-              log(`⏭ Bot ${bot.id} 已存在，跳过`);
-            }
-          }
-          runtimeState.im_bots = existingBots;
-
-          await invoke("workspace_write_file", {
-            workspaceId: activeWsId,
-            relativePath: "data/runtime_state.json",
-            content: JSON.stringify(runtimeState, null, 2),
-          });
-
-          updateTask("register-bots", { status: "done", detail: `${added} Bot${added > 1 ? "s" : ""}` });
-          logTask("注册 IM Bot", "done", `${added} Bot(s) → runtime_state.json`);
-        } catch (e) {
-          log(`⚠ Bot 配置写入失败: ${String(e)}`);
-          updateTask("register-bots", { status: "error", detail: String(e).slice(0, 120) });
-          logTask("注册 IM Bot", "error", String(e));
-          hasErr = true;
         }
       }
 
@@ -4464,7 +4363,7 @@ export function App() {
             <div className="obContent">
               <h2 className="obStepTitle">{t("onboarding.im.title")}</h2>
               <p className="obStepDesc">{t("onboarding.im.desc")}</p>
-              <div className="obFormArea">{renderIM({ onboarding: true })}</div>
+              <div className="obFormArea">{renderIM(true)}</div>
               <p className="obSkipHint">{t("onboarding.skipHint")}</p>
             </div>
             <div className="obFooter">

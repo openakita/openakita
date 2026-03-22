@@ -431,7 +431,7 @@
     "installLocal": "本地源码",
     "installVersion": "指定版本",
     "imTitle": "IM 通道",
-    "imHint": "启用通道开关，然后在「消息通道 → Bot 配置」中添加和管理 Bot",
+    "imHint": "管理 IM 机器人，接入各平台实现智能通讯",
     "imPlatformOverview": "支持的 IM 平台",
     "imBotGuide": "推荐点击「引导创建」按钮，逐步引导你完成 IM 机器人的创建与接入。也可以点击「创建 Bot」快速创建。",
     "imTabChannels": "通道配置",
