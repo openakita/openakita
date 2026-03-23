@@ -19,6 +19,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bp")
 
 
+# ── BP state restoration (survives server restart) ────────────
+
+
+def _ensure_bp_restored(request: Request, session_id: str, sm) -> None:
+    """Restore BP instances from session metadata if missing in memory.
+
+    After server restart, BPStateManager._instances is empty.
+    This lazily restores them from session.metadata["bp_state"].
+    """
+    if not sm or not session_id:
+        return
+    # Already have instances for this session? Skip.
+    if sm.get_all_for_session(session_id):
+        return
+    session = _resolve_session(request, session_id)
+    if not session:
+        return
+    bp_state = session.metadata.get("bp_state")
+    if not bp_state:
+        return
+    loader = get_bp_config_loader()
+    config_map = {}
+    if loader and loader.configs:
+        config_map = dict(loader.configs)
+    restored = sm.restore_from_dict(session_id, bp_state, config_map=config_map)
+    if restored:
+        logger.info(f"[BP] Restored {restored} instance(s) for session {session_id} from metadata")
+
+
 # ── Existing endpoints (unchanged) ────────────────────────────
 
 
@@ -28,6 +57,8 @@ async def get_bp_status(session_id: str, request: Request):
     sm = get_bp_state_manager()
     if not sm:
         return JSONResponse({"instances": [], "active_id": None})
+
+    _ensure_bp_restored(request, session_id, sm)
 
     instances = sm.get_all_for_session(session_id)
     active = sm.get_active(session_id)
@@ -170,6 +201,7 @@ def _new_reply_state() -> dict:
         "timer": {"ttft": None, "total": None},
         "bp_progress": None,
         "bp_subtask_output": None,
+        "bp_subtask_outputs": [],  # ALL subtask outputs (auto mode produces multiple)
         "bp_subtask_complete": None,
         "bp_instance_created": None,
     }
@@ -212,10 +244,12 @@ def _collect_reply_state(event: dict, reply_state: dict, full_reply: list) -> No
         reply_state["bp_progress"] = event
     elif etype == "bp_subtask_output":
         reply_state["bp_subtask_output"] = event
+        reply_state["bp_subtask_outputs"].append(event)
     elif etype == "bp_subtask_complete":
         reply_state["bp_subtask_complete"] = event
         # Also store as bp_subtask_output for frontend restoration
         reply_state["bp_subtask_output"] = event
+        reply_state["bp_subtask_outputs"].append(event)
     elif etype == "bp_instance_created":
         reply_state["bp_instance_created"] = event
     elif etype == "plan_checklist":
@@ -227,6 +261,11 @@ def _collect_reply_state(event: dict, reply_state: dict, full_reply: list) -> No
 
 
 # ── Session resolution (R15) ──────────────────────────────────
+
+
+def _resolve_session_manager(request: Request):
+    """Get session_manager from app state."""
+    return getattr(request.app.state, "session_manager", None)
 
 
 def _resolve_session(request: Request, session_id: str, *, create_if_missing: bool = False):
@@ -245,11 +284,13 @@ def _resolve_session(request: Request, session_id: str, *, create_if_missing: bo
 # ── State persistence (R12, R18) ──────────────────────────────
 
 
-def _persist_user_message(session, message: str) -> None:
+def _persist_user_message(session, message: str, session_manager=None) -> None:
     """Persist user interaction message to session history."""
     if session and message:
         try:
             session.add_message("user", message)
+            if session_manager:
+                session_manager.mark_dirty()
         except Exception:
             pass
 
@@ -257,6 +298,7 @@ def _persist_user_message(session, message: str) -> None:
 def _persist_bp_to_session(
     session, instance_id: str, sm,
     *, reply_state: dict | None = None, full_reply: str = "",
+    session_manager=None,
 ) -> None:
     """Persist BP state to session (R12, R18).
     Two layers: metadata for recovery + add_message for history.
@@ -284,6 +326,11 @@ def _persist_bp_to_session(
         session.add_message("assistant", summary, reply_state=rs)
     except Exception:
         pass
+    if session_manager:
+        try:
+            session_manager.mark_dirty()
+        except Exception:
+            pass
 
 
 # ── New SSE endpoints (R4) ────────────────────────────────────
@@ -318,7 +365,8 @@ async def bp_start(request: Request):
         bp_config, session_id, initial_input=input_data, run_mode=run_mode,
     )
     session = _resolve_session(request, session_id, create_if_missing=True)
-    _persist_user_message(session, body.get("user_message", ""))
+    session_mgr = _resolve_session_manager(request)
+    _persist_user_message(session, body.get("user_message", ""), session_manager=session_mgr)
 
     async def generate():
         disconnect_event = asyncio.Event()
@@ -354,7 +402,8 @@ async def bp_start(request: Request):
 
             _persist_bp_to_session(session, instance_id, sm,
                                    reply_state=reply_state,
-                                   full_reply="".join(full_reply))
+                                   full_reply="".join(full_reply),
+                                   session_manager=session_mgr)
             yield _sse({"type": "done"})
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})
@@ -376,14 +425,18 @@ async def bp_next(request: Request):
     session_id = body.get("session_id", "")
 
     engine = get_bp_engine()
-    if not engine:
+    sm = get_bp_state_manager()
+    if not engine or not sm:
         return JSONResponse({"error": "BP system not initialized"}, status_code=500)
+
+    _ensure_bp_restored(request, session_id, sm)
 
     if not await _bp_mark_busy(session_id, "bp_next"):
         return JSONResponse({"error": "Session is busy"}, status_code=409)
 
     session = _resolve_session(request, session_id)
-    _persist_user_message(session, body.get("user_message", ""))
+    session_mgr = _resolve_session_manager(request)
+    _persist_user_message(session, body.get("user_message", ""), session_manager=session_mgr)
 
     async def generate():
         disconnect_event = asyncio.Event()
@@ -412,9 +465,10 @@ async def bp_next(request: Request):
                 if event.get("type") in ("bp_subtask_complete", "bp_progress"):
                     _bp_renew_busy(session_id)
 
-            _persist_bp_to_session(session, instance_id, get_bp_state_manager(),
+            _persist_bp_to_session(session, instance_id, sm,
                                    reply_state=reply_state,
-                                   full_reply="".join(full_reply))
+                                   full_reply="".join(full_reply),
+                                   session_manager=session_mgr)
             yield _sse({"type": "done"})
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})
@@ -438,14 +492,18 @@ async def bp_answer(request: Request):
     session_id = body.get("session_id", "")
 
     engine = get_bp_engine()
-    if not engine:
+    sm = get_bp_state_manager()
+    if not engine or not sm:
         return JSONResponse({"error": "BP system not initialized"}, status_code=500)
+
+    _ensure_bp_restored(request, session_id, sm)
 
     if not await _bp_mark_busy(session_id, "bp_answer"):
         return JSONResponse({"error": "Session is busy"}, status_code=409)
 
     session = _resolve_session(request, session_id)
-    _persist_user_message(session, body.get("user_message", ""))
+    session_mgr = _resolve_session_manager(request)
+    _persist_user_message(session, body.get("user_message", ""), session_manager=session_mgr)
 
     async def generate():
         disconnect_event = asyncio.Event()
@@ -472,9 +530,10 @@ async def bp_answer(request: Request):
                 yield _sse(event)
                 _collect_reply_state(event, reply_state, full_reply)
 
-            _persist_bp_to_session(session, instance_id, get_bp_state_manager(),
+            _persist_bp_to_session(session, instance_id, sm,
                                    reply_state=reply_state,
-                                   full_reply="".join(full_reply))
+                                   full_reply="".join(full_reply),
+                                   session_manager=session_mgr)
             yield _sse({"type": "done"})
         except Exception as e:
             yield _sse({"type": "error", "message": str(e)})

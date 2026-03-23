@@ -118,6 +118,7 @@ class BPEngine:
             for subtask in ready:
                 # Quick path: check input completeness
                 input_data = scheduler.resolve_input(subtask.id)
+                output_schema = scheduler.derive_output_schema(subtask.id)
                 missing = self._check_input_completeness(subtask, input_data)
                 if missing:
                     self.state_manager.update_subtask_status(
@@ -152,6 +153,7 @@ class BPEngine:
                 # thinking events so that thinking appears first in timeline.
                 output = None
                 raw_result_text = ""
+                tool_results_list: list[str] = []
                 try:
                     async for event in self._run_subtask_stream(
                         instance_id, subtask, input_data, bp_config, session,
@@ -160,6 +162,7 @@ class BPEngine:
                         if event.get("type") == "_internal_output":
                             output = event.get("data", {})
                             raw_result_text = event.get("raw_result", "")
+                            tool_results_list = event.get("tool_results", [])
                         elif event.get("type") == "bp_ask_user":
                             self.state_manager.update_subtask_status(
                                 instance_id, subtask.id, SubtaskStatus.WAITING_INPUT,
@@ -201,6 +204,12 @@ class BPEngine:
                 # Subtask completed successfully
                 if output is None:
                     output = {}
+
+                # Conform output to next subtask's input_schema via LLM
+                output = await self._conform_output(
+                    output, output_schema, raw_result_text, tool_results_list,
+                )
+
                 scheduler.complete_task(subtask.id, output)
                 self._persist_state(instance_id, session)
 
@@ -363,6 +372,9 @@ class BPEngine:
                 agent_id=sub_agent_id,
             )
 
+            # Accumulate tool call results for richer output extraction
+            tool_results: list[str] = []
+
             # Deferred delegate card: yield thinking first, then delegate card
             # before the first non-thinking event arrives.
             delegate_card_yielded = False
@@ -441,6 +453,9 @@ class BPEngine:
                     tool_id = event.get("id", "")
                     result = event.get("result", "")
                     is_error = event.get("is_error", False)
+                    # Capture non-error tool results for output extraction
+                    if not is_error and result:
+                        tool_results.append(str(result))
                     for ev in await aggregator.on_tool_call_end(
                         tool_name, tool_id, result, is_error
                     ):
@@ -474,7 +489,12 @@ class BPEngine:
             # Get final result
             raw_result = await delegate_task
             output = self._parse_output(raw_result)
-            yield {"type": "_internal_output", "data": output, "raw_result": raw_result}
+            yield {
+                "type": "_internal_output",
+                "data": output,
+                "raw_result": raw_result,
+                "tool_results": tool_results,
+            }
 
         finally:
             if hasattr(session, "context"):
@@ -524,10 +544,8 @@ class BPEngine:
         input_data: dict[str, Any],
         output_schema: dict[str, Any] | None,
     ) -> str:
-        schema_hint = (
-            json.dumps(output_schema, ensure_ascii=False, indent=2)
-            if output_schema
-            else "由你自行决定合适的输出格式"
+        schema_hint = self._schema_to_example(output_schema) if output_schema else (
+            "由你自行决定合适的输出格式"
         )
         return (
             f"## 最佳实践任务: {bp_config.name}\n"
@@ -541,9 +559,54 @@ class BPEngine:
             f"```json\n{schema_hint}\n```\n\n"
             f"## 限制\n"
             f"- 禁止使用 ask_user 工具，所有信息已在输入数据中提供\n"
-            f"- JSON 必须严格符合输出格式要求\n"
-            f"- **总结**行必须在 JSON 代码块之前"
+            f"- JSON 必须严格符合输出格式要求，包含上述所有字段\n"
+            f"- **总结**行必须在 JSON 代码块之前\n"
+            f"- 不要把结果写入文件，直接在回复中输出 JSON"
         )
+
+    @staticmethod
+    def _schema_to_example(schema: dict[str, Any]) -> str:
+        """Convert a JSON Schema to an example JSON template with placeholders.
+
+        Instead of showing the raw schema definition (which is confusing for
+        LLMs), this produces a human-readable template that shows the expected
+        keys and value type hints.  Example output::
+
+            {
+              "insights": [{"...": "object items"}],
+              "trends": ["string items"],
+              "recommendations": ["string items"]
+            }
+        """
+        props = schema.get("properties", {})
+        if not props:
+            return json.dumps(schema, ensure_ascii=False, indent=2)
+
+        example: dict[str, Any] = {}
+        for key, spec in props.items():
+            ptype = spec.get("type", "string") if isinstance(spec, dict) else "string"
+            desc = spec.get("description", "") if isinstance(spec, dict) else ""
+            if ptype == "array":
+                items = spec.get("items", {}) if isinstance(spec, dict) else {}
+                itype = items.get("type", "string") if isinstance(items, dict) else "string"
+                if itype == "object":
+                    example[key] = [{"...": desc or "object items"}]
+                else:
+                    example[key] = [desc or f"{itype} items"]
+            elif ptype == "object":
+                example[key] = {"...": desc or "object"}
+            elif ptype == "number" or ptype == "integer":
+                example[key] = 0
+            elif ptype == "boolean":
+                example[key] = True
+            else:
+                example[key] = desc or f"<{ptype}>"
+
+        required = schema.get("required", [])
+        lines = json.dumps(example, ensure_ascii=False, indent=2)
+        if required:
+            lines += f"\n// 必填字段: {', '.join(required)}"
+        return lines
 
     # ── Chat-to-Edit ───────────────────────────────────────────
 
@@ -611,7 +674,7 @@ class BPEngine:
             except json.JSONDecodeError:
                 pass
 
-        # Strategy 3: find last JSON object in text (agents often output JSON at the end)
+        # Strategy 3: find last JSON object in text
         last_brace = result.rfind("{")
         if last_brace >= 0:
             depth = 0
@@ -630,6 +693,95 @@ class BPEngine:
                         break
 
         return {"_raw_output": str(result)}
+
+    # ── Output conforming (LLM-based) ─────────────────────────
+
+    async def _conform_output(
+        self,
+        raw_output: dict[str, Any],
+        output_schema: dict[str, Any] | None,
+        raw_result_text: str,
+        tool_results: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """用轻量 LLM 把子任务输出映射到下一个子任务的 input_schema。
+
+        这是一个确定性的转换步骤——不依赖 sub-agent 自觉遵守格式，
+        而是在子任务完成后，显式地用 LLM 做结构化映射。
+        """
+        if not output_schema:
+            return raw_output
+
+        # 快速检查：如果 output 已经符合 schema，直接返回
+        required = set(output_schema.get("required", []))
+        if required and required.issubset(raw_output.keys()):
+            return raw_output
+
+        brain = self._get_brain()
+        if not brain:
+            logger.warning("[BP] No brain available for _conform_output, returning raw")
+            return raw_output
+
+        example = self._schema_to_example(output_schema)
+
+        # Build source text: combine text output + tool results for full context
+        source_parts: list[str] = []
+        if raw_result_text:
+            source_parts.append(raw_result_text)
+        if tool_results:
+            source_parts.append(
+                "\n\n--- 工具调用结果 ---\n" + "\n---\n".join(tool_results)
+            )
+        if not source_parts:
+            source_parts.append(json.dumps(raw_output, ensure_ascii=False))
+        source_text = "\n".join(source_parts)[:8000]
+
+        prompt = (
+            "请从以下子任务的执行结果中，提取并整理出符合目标格式的 JSON。\n\n"
+            "## 子任务执行结果\n"
+            f"```\n{source_text}\n```\n\n"
+            "## 目标 JSON 格式\n"
+            f"```json\n{example}\n```\n\n"
+            "## 要求\n"
+            "- 只输出一个 JSON 代码块，不要其他文字\n"
+            "- 从执行结果中提取相关数据填入目标格式的各字段\n"
+            "- 如果某个字段在执行结果中没有对应数据，用合理的空值（空数组[]或空字符串\"\"）\n"
+            "- 不要编造数据，只从执行结果中提取"
+        )
+
+        try:
+            resp = await brain.think_lightweight(prompt, max_tokens=4096)
+            text = resp.text if hasattr(resp, "text") else str(resp)
+            # 从 LLM 回复中提取 JSON
+            conformed = self._parse_output(text)
+            if "_raw_output" not in conformed:
+                logger.info(
+                    f"[BP] _conform_output: mapped {list(raw_output.keys())} "
+                    f"-> {list(conformed.keys())}"
+                )
+                return conformed
+        except Exception as e:
+            logger.warning(f"[BP] _conform_output LLM call failed: {e}")
+
+        return raw_output
+
+    def _get_brain(self):
+        """获取 Brain 实例用于轻量 LLM 调用。"""
+        try:
+            import seeagent.main
+            agent = getattr(seeagent.main, "_agent", None)
+            if agent and hasattr(agent, "brain"):
+                return agent.brain
+        except ImportError:
+            pass
+        orchestrator = self._get_orchestrator()
+        if orchestrator:
+            pool = getattr(orchestrator, "_pool", None)
+            if pool:
+                # Try to get brain from any cached agent
+                for agent in getattr(pool, "_agents", {}).values():
+                    if hasattr(agent, "brain"):
+                        return agent.brain
+        return None
 
     def _validate_output_soft(
         self, output: dict, subtask_id: str, bp_config: BestPracticeConfig,

@@ -39,6 +39,7 @@ export interface ReplyState {
   isDone: boolean
   bpProgress: BPInstanceState | null
   bpSubtaskOutput: { subtaskId: string; output: Record<string, unknown>; summary?: string; outputSchema?: Record<string, unknown> } | null
+  bpSubtaskOutputs?: { subtaskId: string; output: Record<string, unknown>; summary?: string; outputSchema?: Record<string, unknown> }[]
   bpInstanceCreated: {
     instanceId: string
     bpId: string

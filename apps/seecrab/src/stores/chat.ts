@@ -355,6 +355,12 @@ export const useChatStore = defineStore('chat', () => {
             summary: rs.bp_subtask_output.summary,
             outputSchema: rs.bp_subtask_output.output_schema,
           } : null,
+          bpSubtaskOutputs: (rs?.bp_subtask_outputs ?? []).map((o: any) => ({
+            subtaskId: o.subtask_id,
+            output: o.output,
+            summary: o.summary,
+            outputSchema: o.output_schema,
+          })),
           bpInstanceCreated: rs?.bp_instance_created ? {
             instanceId: rs.bp_instance_created.instance_id,
             bpId: rs.bp_instance_created.bp_id,
@@ -437,7 +443,18 @@ export const useChatStore = defineStore('chat', () => {
             status: bp.status,
           })
         }
-        if (msg.reply?.bpSubtaskOutput && msg.reply.bpProgress) {
+        if (msg.reply?.bpSubtaskOutputs?.length && msg.reply.bpProgress) {
+          // Restore ALL subtask outputs (auto mode produces multiple in one message)
+          for (const out of msg.reply.bpSubtaskOutputs) {
+            bpStore.updateSubtaskOutput(
+              msg.reply.bpProgress.instanceId,
+              out.subtaskId,
+              out.output,
+              { summary: out.summary, outputSchema: out.outputSchema },
+            )
+          }
+        } else if (msg.reply?.bpSubtaskOutput && msg.reply.bpProgress) {
+          // Backward compat: single output (manual mode or old data)
           bpStore.updateSubtaskOutput(
             msg.reply.bpProgress.instanceId,
             msg.reply.bpSubtaskOutput.subtaskId,
