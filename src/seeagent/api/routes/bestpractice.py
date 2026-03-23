@@ -245,6 +245,15 @@ def _resolve_session(request: Request, session_id: str, *, create_if_missing: bo
 # ── State persistence (R12, R18) ──────────────────────────────
 
 
+def _persist_user_message(session, message: str) -> None:
+    """Persist user interaction message to session history."""
+    if session and message:
+        try:
+            session.add_message("user", message)
+        except Exception:
+            pass
+
+
 def _persist_bp_to_session(
     session, instance_id: str, sm,
     *, reply_state: dict | None = None, full_reply: str = "",
@@ -309,6 +318,7 @@ async def bp_start(request: Request):
         bp_config, session_id, initial_input=input_data, run_mode=run_mode,
     )
     session = _resolve_session(request, session_id, create_if_missing=True)
+    _persist_user_message(session, body.get("user_message", ""))
 
     async def generate():
         disconnect_event = asyncio.Event()
@@ -373,6 +383,7 @@ async def bp_next(request: Request):
         return JSONResponse({"error": "Session is busy"}, status_code=409)
 
     session = _resolve_session(request, session_id)
+    _persist_user_message(session, body.get("user_message", ""))
 
     async def generate():
         disconnect_event = asyncio.Event()
@@ -434,6 +445,7 @@ async def bp_answer(request: Request):
         return JSONResponse({"error": "Session is busy"}, status_code=409)
 
     session = _resolve_session(request, session_id)
+    _persist_user_message(session, body.get("user_message", ""))
 
     async def generate():
         disconnect_event = asyncio.Event()

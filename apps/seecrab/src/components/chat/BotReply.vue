@@ -125,6 +125,7 @@ async function handleContinue() {
     await sseClient.streamBP('/api/bp/next', {
       instance_id: inst.instanceId,
       session_id: sessionStore.activeSessionId,
+      user_message: msg,
     })
   } catch (e) {
     console.error('[BP] handleContinue error:', e)
@@ -145,6 +146,7 @@ async function handleBpStart() {
     await sseClient.streamBP('/api/bp/next', {
       instance_id: props.reply.bpInstanceCreated.instanceId,
       session_id: sessionStore.activeSessionId,
+      user_message: '开始执行',
     })
   } catch (err) {
     console.error('[BP] start error:', err)
@@ -162,6 +164,7 @@ async function handleBpAnswer(data: Record<string, unknown>) {
       subtask_id: props.reply.bpAskUser.subtaskId,
       data,
       session_id: sessionStore.activeSessionId,
+      user_message: `补充数据: ${JSON.stringify(data).slice(0, 100)}`,
     })
   } catch (err) {
     console.error('[BP] answer error:', err)
@@ -182,6 +185,7 @@ async function handleBpOfferAccept(bpId: string) {
       session_id: sessionStore.activeSessionId,
       input_data: {},
       run_mode: 'manual',
+      user_message: '最佳实践模式',
     })
   } catch (err) {
     console.error('[BP] offer accept error:', err)
