@@ -248,10 +248,16 @@ class Settings(BaseSettings):
         description="适应期内记忆整理间隔（小时，默认 3 小时）",
     )
 
-    # === 多维关系型记忆 (Mode 2) ===
+    # === 记忆模式 ===
+    # mode1: 碎片化记忆 — 基于实体-属性的语义记忆片段，适合简单偏好/事实存储，
+    #         检索快但缺乏跨会话关联能力。
+    # mode2: 关系型图谱 — 多维度(时间/因果/实体/动作/上下文)交织的图结构记忆，
+    #         支持因果推理、时间线回溯、跨会话实体追踪，适合复杂长期交互。
+    # auto:  自动选择 — 根据查询特征(是否涉及因果、时间线、跨会话、实体追踪)
+    #         智能路由到 mode1 或 mode2，兼顾两者优势。
     memory_mode: str = Field(
-        default="mode1",
-        description="记忆模式: mode1(碎片化) / mode2(关系型图) / auto(自动选择)",
+        default="auto",
+        description="记忆模式: mode1(碎片化) / mode2(关系型图谱) / auto(自动选择，推荐)",
     )
     mdrm_max_hops: int = Field(
         default=3,

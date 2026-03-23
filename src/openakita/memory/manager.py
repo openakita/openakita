@@ -611,12 +611,12 @@ class MemoryManager:
             return False
 
     def _get_memory_mode(self) -> str:
-        """Read memory_mode from config. Defaults to 'mode1'."""
+        """Read memory_mode from config. Defaults to 'auto'."""
         try:
             from openakita.config import settings
-            return getattr(settings, "memory_mode", "mode1")
+            return getattr(settings, "memory_mode", "auto")
         except Exception:
-            return "mode1"
+            return "auto"
 
     def end_session(
         self, task_description: str = "", success: bool = True, errors: list | None = None

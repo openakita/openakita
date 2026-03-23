@@ -367,7 +367,7 @@ export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qual
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <div className="text-lg font-semibold mb-1">暂无记忆图谱数据</div>
         <div className="text-xs opacity-60">
-          启用 memory_mode = mode2 或 auto 后，对话将自动生成关系型记忆
+          对话后将自动生成关系型记忆（当前记忆模式需为 mode2 或 auto）
         </div>
       </div>
     );
