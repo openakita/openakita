@@ -14,10 +14,13 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+_KILL_WAIT_TIMEOUT = 5  # seconds to wait for process.wait() after kill
 
 
 @dataclass
@@ -88,6 +91,48 @@ class ShellTool:
         self.shell = shell
         self._is_windows = platform.system() == "Windows"
         self._oem_encoding: str | None = None
+
+    # ------------------------------------------------------------------
+    # 进程清理（Windows 安全杀死进程树）
+    # ------------------------------------------------------------------
+
+    async def _kill_process_tree(
+        self, process: asyncio.subprocess.Process
+    ) -> None:
+        """杀死进程及其所有子进程，然后带超时地等待退出。
+
+        Windows 上 process.kill() 仅杀死直接子进程，孙进程（如 node 启动的
+        服务）会继续运行并持有 stdout/stderr 管道，导致 process.wait() 永久
+        阻塞。改用 taskkill /T /F 杀死整个进程树。
+        """
+        pid = process.pid
+        if pid is None:
+            return
+
+        if self._is_windows:
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    timeout=_KILL_WAIT_TIMEOUT,
+                )
+            except Exception as e:
+                logger.debug(f"taskkill failed for PID {pid}: {e}")
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+        else:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+        # 带超时等待，防止无限阻塞
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_KILL_WAIT_TIMEOUT)
+        except (TimeoutError, Exception):
+            logger.warning(f"Process {pid} did not exit within {_KILL_WAIT_TIMEOUT}s after kill")
 
     # ------------------------------------------------------------------
     # Windows 编码处理
@@ -302,21 +347,13 @@ class ShellTool:
             # 三路竞速 cancel/skip：立即杀掉子进程，实时中断
             logger.warning(f"Command cancelled, killing subprocess: {original_command[:200]}")
             if process and process.returncode is None:
-                try:
-                    process.kill()
-                    await process.wait()
-                except Exception:
-                    pass
+                await self._kill_process_tree(process)
             raise  # 重新抛出，让上层三路竞速逻辑处理
 
         except TimeoutError:
             logger.error(f"Command timed out after {cmd_timeout}s")
             if process and process.returncode is None:
-                try:
-                    process.kill()
-                    await process.wait()
-                except Exception:
-                    pass
+                await self._kill_process_tree(process)
             return CommandResult(
                 returncode=-1,
                 stdout="",

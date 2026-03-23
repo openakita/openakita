@@ -727,6 +727,21 @@ class MCPClient:
                 pass
 
     @staticmethod
+    def _extract_content(items: list) -> list:
+        """从 MCP 响应中提取所有 content 块的文本/数据表示。"""
+        content = []
+        for item in items:
+            if hasattr(item, "text"):
+                content.append(item.text)
+            elif hasattr(item, "data"):
+                content.append(item.data)
+            elif hasattr(item, "resource"):
+                content.append(f"[resource: {getattr(item.resource, 'uri', item.resource)}]")
+            else:
+                content.append(str(item))
+        return content
+
+    @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
         """判断异常是否表示底层连接已断开（服务端关闭 / 管道断裂等）"""
         if isinstance(exc, _CONNECTION_ERRORS):
@@ -831,12 +846,19 @@ class MCPClient:
                     timeout=self._CALL_TIMEOUT,
                 )
 
-                content = []
-                for item in result.content:
-                    if hasattr(item, "text"):
-                        content.append(item.text)
-                    elif hasattr(item, "data"):
-                        content.append(item.data)
+                content = self._extract_content(result.content)
+
+                if getattr(result, "isError", False):
+                    error_text = "\n".join(str(c) for c in content) if content else "Unknown error"
+                    logger.warning(
+                        "MCP tool %s:%s returned isError=true: %s",
+                        server_name, tool_name, error_text[:500],
+                    )
+                    return MCPCallResult(
+                        success=False,
+                        error=error_text,
+                        reconnected=did_reconnect,
+                    )
 
                 return MCPCallResult(
                     success=True,

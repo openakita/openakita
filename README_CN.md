@@ -438,6 +438,10 @@ OpenAkita 对国内用户做了全面优化：
 - [browser-use](https://github.com/browser-use/browser-use) — AI 浏览器自动化
 - [AGENTS.md](https://agentsmd.io/) / [Agent Skills](https://agentskills.io/) — 开放标准
 
+### 社区贡献者
+
+- [@948324394](https://github.com/948324394) — Docker 部署方案
+
 ## 许可证
 
 Apache License 2.0 — 详见 [LICENSE](LICENSE)

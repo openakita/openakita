@@ -92,14 +92,19 @@ async def list_channels(request: Request):
             or bot_name_map.get(name)
             or name
         )
-        channels.append({
+        entry: dict[str, Any] = {
             "channel": name,
             "channel_type": getattr(adapter, "channel_type", name.split(":")[0]),
             "name": display_name,
             "status": status,
             "sessionCount": session_count,
             "lastActive": last_active,
-        })
+        }
+        if status == "offline":
+            reasons = getattr(gateway, "_failed_adapter_reasons", {})
+            if name in reasons:
+                entry["error"] = reasons[name]
+        channels.append(entry)
 
     return JSONResponse(content={"channels": channels})
 

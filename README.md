@@ -427,6 +427,10 @@ Tracing  ─── AgentTracer(12 SpanTypes) · DecisionTrace · TokenStats
 - [browser-use](https://github.com/browser-use/browser-use) — AI browser automation
 - [AGENTS.md](https://agentsmd.io/) / [Agent Skills](https://agentskills.io/) — Open standards
 
+### Community Contributors
+
+- [@948324394](https://github.com/948324394) — Docker deployment support
+
 ## License
 
 Apache License 2.0 — See [LICENSE](LICENSE)

@@ -76,7 +76,7 @@ class QQBotAdapter(ChannelAdapter):
     capabilities = {
         "streaming": False,
         "send_image": True,
-        "send_file": False,
+        "send_file": True,
         "send_voice": False,
         "delete_message": False,
         "edit_message": False,
@@ -244,9 +244,19 @@ class QQBotAdapter(ChannelAdapter):
 
     async def start(self) -> None:
         """启动 QQ 官方机器人"""
+        if not self.app_id or not self.app_secret:
+            raise ValueError(
+                "QQ 机器人 AppID 或 AppSecret 未配置，请在 q.qq.com 开发设置中获取。"
+            )
+
         self._running = True
 
         if self.mode == "webhook":
+            try:
+                from aiohttp import web  # noqa: F401
+            except ImportError:
+                raise ImportError("aiohttp not installed. Run: pip install aiohttp")
+
             self._task = asyncio.create_task(self._run_webhook_server())
             logger.info(
                 f"QQ Official Bot adapter starting in WEBHOOK mode "
@@ -907,7 +917,7 @@ class QQBotAdapter(ChannelAdapter):
             api: botpy API client
             chat_type: "group" 或 "c2c"
             target_id: group_openid 或 user openid
-            file_type: 1=图片, 2=视频, 3=语音, 4=文件(暂未开放)
+            file_type: 1=图片, 2=视频, 3=语音, 4=文件
             url: 媒体资源 URL (必须为公网可访问的 http/https URL)
             srv_send_msg: True 则服务端直接发送（占主动消息频次）
 
@@ -1011,6 +1021,39 @@ class QQBotAdapter(ChannelAdapter):
             data = resp.json()
             return str(data.get("id", ""))
 
+    async def _send_text_via_http(
+        self,
+        chat_type: str,
+        target_id: str,
+        text: str,
+        msg_id: str | None = None,
+    ) -> str:
+        """Webhook 模式下通过 HTTP 发送纯文本消息。"""
+        import httpx as hx
+
+        headers = await self._build_api_headers()
+        base_url = self._api_base_url()
+
+        if chat_type == "group":
+            url = f"{base_url}/v2/groups/{target_id}/messages"
+        else:
+            url = f"{base_url}/v2/users/{target_id}/messages"
+
+        seq_key = msg_id or target_id
+        payload: dict[str, Any] = {
+            "msg_type": 0,
+            "content": text,
+            "msg_seq": self._next_msg_seq(seq_key),
+        }
+        if msg_id:
+            payload["msg_id"] = msg_id
+
+        async with hx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            return str(data.get("id", ""))
+
     async def _send_rich_media(
         self,
         api: Any,
@@ -1032,7 +1075,7 @@ class QQBotAdapter(ChannelAdapter):
             api: botpy API client
             chat_type: "group" 或 "c2c"
             target_id: 目标 openid
-            file_type: 1=图片, 2=视频, 3=语音
+            file_type: 1=图片, 2=视频, 3=语音, 4=文件
             url: 公网可访问的媒体 URL
             msg_id: 被动回复的消息 ID（可选）
             local_path: 本地文件路径（可选，与 url 二选一）
@@ -1122,6 +1165,7 @@ class QQBotAdapter(ChannelAdapter):
         - 文本消息 (msg_type=0)
         - Markdown 消息 (msg_type=2, 需内邀开通，失败自动降级)
         - 图片消息 (频道: content+image/file_image; 群/C2C: 两步富媒体上传)
+        - 文件消息 (群/C2C: file_type=4 两步富媒体上传)
         """
         chat_type = self._resolve_chat_type(message.chat_id, message.metadata)
         msg_id = self._resolve_msg_id(message.chat_id, message.metadata)
@@ -1191,6 +1235,26 @@ class QQBotAdapter(ChannelAdapter):
             except Exception as e:
                 logger.warning(f"QQ: send extra image failed: {e}")
 
+        # 发送文件附件 (file_type=4, 频道不支持)
+        if chat_type != "channel":
+            for file_media in message.content.files:
+                file_url = file_media.url if file_media.url else None
+                file_path = (
+                    file_media.local_path if not file_url and file_media.local_path else None
+                )
+                if not file_url and not file_path:
+                    continue
+                try:
+                    await self._send_rich_media(
+                        api, chat_type, message.chat_id,
+                        file_type=4,
+                        url=file_url,
+                        msg_id=msg_id,
+                        local_path=file_path if not file_url else None,
+                    )
+                except Exception as e:
+                    logger.warning(f"QQ: send file failed: {e}")
+
         return result_id
 
     async def _send_message_via_http(
@@ -1200,7 +1264,7 @@ class QQBotAdapter(ChannelAdapter):
         msg_id: str | None,
         parse_mode: str | None = None,
     ) -> str:
-        """Webhook 模式：通过 HTTP API 发送消息（文本/Markdown/图片）"""
+        """Webhook 模式：通过 HTTP API 发送消息（文本/Markdown/图片/文件）"""
         try:
             import httpx as hx
         except ImportError:
@@ -1293,6 +1357,26 @@ class QQBotAdapter(ChannelAdapter):
                 local_path=first_image_path if not first_image_url else None,
             )
             result_id = result_id or media_id
+
+        # 发送文件附件 (file_type=4, 频道不支持)
+        if chat_type != "channel":
+            for file_media in message.content.files:
+                file_url = file_media.url if file_media.url else None
+                file_path = (
+                    file_media.local_path if not file_url and file_media.local_path else None
+                )
+                if not file_url and not file_path:
+                    continue
+                try:
+                    await self._send_rich_media(
+                        None, chat_type, target_id,
+                        file_type=4,
+                        url=file_url,
+                        msg_id=msg_id,
+                        local_path=file_path if not file_url else None,
+                    )
+                except Exception as e:
+                    logger.warning(f"QQ HTTP: send file failed: {e}")
 
         return result_id
 
@@ -1482,14 +1566,32 @@ class QQBotAdapter(ChannelAdapter):
         chat_id: str,
         file_path: str,
         caption: str | None = None,
+        **kwargs,
     ) -> str:
-        """
-        发送文件
+        """发送文件（file_type=4），支持群聊和 C2C。"""
+        chat_type = self._resolve_chat_type(chat_id)
+        if chat_type == "channel":
+            raise NotImplementedError("QQ 频道暂不支持通过富媒体 API 发送文件")
+        msg_id = self._resolve_msg_id(chat_id)
 
-        注意: QQ 官方 API 的 file_type=4 (文件) 暂未开放。
-        """
-        raise NotImplementedError(
-            "QQ 官方机器人暂不支持发送文件（file_type=4 API 未开放）"
+        if caption:
+            try:
+                if self._client and self._client.api:
+                    await self._send_to_target(
+                        self._client.api, chat_type, chat_id,
+                        msg_type=0, content=caption, msg_id=msg_id,
+                    )
+                else:
+                    await self._send_text_via_http(chat_type, chat_id, caption, msg_id)
+            except Exception as e:
+                logger.warning(f"QQ: send file caption failed: {e}")
+
+        api = self._client.api if self._client and self._client.api else None
+        return await self._send_rich_media(
+            api, chat_type, chat_id,
+            file_type=4,
+            msg_id=msg_id,
+            local_path=file_path,
         )
 
     async def send_voice(
@@ -1679,7 +1781,8 @@ class QQBotAdapter(ChannelAdapter):
                 response = await client.get(media.url)
                 response.raise_for_status()
 
-                safe_name = Path(media.filename).name or "download"
+                from openakita.channels.base import sanitize_filename
+                safe_name = sanitize_filename(Path(media.filename).name or "download")
                 local_path = self.media_dir / safe_name
                 with open(local_path, "wb") as f:
                     f.write(response.content)

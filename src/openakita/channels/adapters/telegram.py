@@ -424,8 +424,28 @@ class TelegramAdapter(ChannelAdapter):
             )
         )
 
-        # 初始化
-        await self._app.initialize()
+        # 初始化（连接 Telegram API）
+        try:
+            await self._app.initialize()
+        except Exception as e:
+            err_str = str(e)
+            err_type = type(e).__name__
+            if "ConnectError" in err_type or "ConnectError" in err_str:
+                proxy_hint = (
+                    "Telegram API (api.telegram.org) 无法连接。"
+                    "如果你在中国大陆，需要配置代理才能使用 Telegram Bot。\n"
+                    "配置方式（任选其一）：\n"
+                    "  1. 在 IM 通道配置中添加 proxy 字段，如 socks5://127.0.0.1:7890\n"
+                    "  2. 设置环境变量 TELEGRAM_PROXY=socks5://127.0.0.1:7890\n"
+                    "  3. 使用支持 TUN 模式的代理工具（如 Clash TUN）"
+                )
+                logger.error(f"[Telegram] {proxy_hint}")
+                raise ConnectionError(proxy_hint) from e
+            if "InvalidToken" in err_type or "Not Found" in err_str or "Unauthorized" in err_str:
+                raise ConnectionError(
+                    "Telegram Bot Token 无效或已过期，请在 @BotFather 检查 Token 是否正确。"
+                ) from e
+            raise
 
         # 自动注册机器人命令菜单（Telegram 的 / 命令提示）
         try:
@@ -839,6 +859,17 @@ class TelegramAdapter(ChannelAdapter):
                             break
                 if is_mentioned:
                     break
+
+        # 隐式 mention：回复机器人消息视为提及
+        if not is_mentioned and chat_type == "group" and message.reply_to_message:
+            reply_from = message.reply_to_message.from_user
+            bot_id = getattr(self._bot, "id", None) if self._bot else None
+            if reply_from and bot_id and reply_from.id == bot_id:
+                is_mentioned = True
+                logger.info(
+                    f"Telegram: implicit mention detected "
+                    f"(reply to bot message {message.reply_to_message.message_id})"
+                )
 
         from_user = message.from_user
         user_id_val = from_user.id if from_user else 0

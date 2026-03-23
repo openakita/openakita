@@ -1188,7 +1188,7 @@ class LLMClient:
                             "payload too large",
                             "request entity too large",
                             "content too large",
-                            "maximum context length",
+                            "context length",
                             "too many tokens",
                             "string too long",
                             "data_inspection",       # DashScope 内容安全审查（内容问题，非端点问题）

@@ -242,6 +242,10 @@ class FeishuAdapter(ChannelAdapter):
         # session_key → 工具调用/结果等 chain 文本行（流式期间追加，finalize 后清理）
         self._streaming_chain: dict[str, list[str]] = {}
 
+        # Bot 已发送消息 ID 追踪：用于识别"回复机器人消息"作为隐式 mention
+        self._bot_sent_msg_ids: collections.OrderedDict[str, None] = collections.OrderedDict()
+        self._bot_sent_msg_ids_max = 500
+
         # Per-bot 群聊响应模式（构造参数 > 环境变量 > 全局配置）
         self._group_response_mode: str | None = group_response_mode or (
             os.environ.get("FEISHU_GROUP_RESPONSE_MODE") or None
@@ -292,6 +296,7 @@ class FeishuAdapter(ChannelAdapter):
         # 尝试获取机器人 open_id（用于精确匹配 @提及）。
         # lark_oapi.api.bot 子模块在部分打包版本中可能缺失，
         # 导入失败不应阻断适配器启动——仅影响群聊 @提及检测。
+        _bot_info_error: str | None = None
         try:
             import lark_oapi.api.bot.v3 as bot_v3
 
@@ -304,12 +309,15 @@ class FeishuAdapter(ChannelAdapter):
                     if resp.success() and resp.data and resp.data.bot:
                         self._bot_open_id = getattr(resp.data.bot, "open_id", None)
                         logger.info(f"Feishu bot open_id: {self._bot_open_id}")
+                        _bot_info_error = None
                         break
                     else:
+                        _bot_info_error = getattr(resp, "msg", "unknown")
                         logger.warning(
-                            f"Feishu: GetBotInfo attempt {attempt + 1}/3 failed: {getattr(resp, 'msg', 'unknown')}"
+                            f"Feishu: GetBotInfo attempt {attempt + 1}/3 failed: {_bot_info_error}"
                         )
                 except Exception as e:
+                    _bot_info_error = str(e)
                     logger.warning(f"Feishu: GetBotInfo attempt {attempt + 1}/3 error: {e}")
                 if attempt < 2:
                     await asyncio.sleep(2)
@@ -336,10 +344,27 @@ class FeishuAdapter(ChannelAdapter):
                         logger.info(
                             f"Feishu bot open_id (raw HTTP): {self._bot_open_id}"
                         )
+                        _bot_info_error = None
+                    else:
+                        _bot_info_error = "raw HTTP 返回中未包含 bot open_id"
+                else:
+                    _bot_info_error = getattr(raw_resp, "msg", "raw HTTP fallback failed")
             except Exception as e:
+                _bot_info_error = str(e)
                 logger.warning(f"Feishu: raw HTTP bot info fallback failed: {e}")
 
-        if not self._bot_open_id:
+        if not self._bot_open_id and _bot_info_error:
+            _err_lower = (_bot_info_error or "").lower()
+            if any(kw in _err_lower for kw in ("invalid", "app_id", "secret", "token", "auth", "10003")):
+                raise ConnectionError(
+                    f"飞书 App ID 或 App Secret 无效，请在飞书开放平台检查应用凭据。"
+                    f"（错误详情: {_bot_info_error}）"
+                )
+            if "connect" in _err_lower or "timeout" in _err_lower or "resolve" in _err_lower:
+                raise ConnectionError(
+                    f"无法连接飞书 API (open.feishu.cn)，请检查网络连接。"
+                    f"（错误详情: {_bot_info_error}）"
+                )
             logger.warning(
                 "Feishu: bot open_id not available. "
                 "@mention detection will be disabled (bot will NOT respond to any @mention in groups)."
@@ -616,6 +641,15 @@ class FeishuAdapter(ChannelAdapter):
             builder = builder.register_p2_im_chat_member_bot_deleted_v1(self._on_bot_chat_deleted)
         except AttributeError:
             pass
+        # 注册表情回复事件，避免 SDK 报 "processor not found" ERROR 日志
+        try:
+            builder = builder.register_p2_im_message_reaction_created_v1(self._on_reaction_created)
+        except AttributeError:
+            pass
+        try:
+            builder = builder.register_p2_im_message_reaction_deleted_v1(self._on_reaction_deleted)
+        except AttributeError:
+            pass
         # 注册卡片交互回调（card.action.trigger），需要 lark-oapi >= 1.3.0
         try:
             builder = builder.register_p2_card_action_trigger(self._on_card_action)
@@ -665,6 +699,7 @@ class FeishuAdapter(ChannelAdapter):
                 "message_type": message.message_type,
                 "content": message.content,
                 "root_id": getattr(message, "root_id", None),
+                "parent_id": getattr(message, "parent_id", None),
                 "mentions": mentions_raw,
                 "create_time": getattr(message, "create_time", None),
             }
@@ -705,6 +740,14 @@ class FeishuAdapter(ChannelAdapter):
 
     def _on_message_read(self, data: Any) -> None:
         """消息已读事件 (im.message.message_read_v1)，仅需静默消费以避免 SDK 报错"""
+        pass
+
+    def _on_reaction_created(self, data: Any) -> None:
+        """消息表情回复事件 (im.message.reaction.created_v1)，静默消费以避免 SDK 报错"""
+        pass
+
+    def _on_reaction_deleted(self, data: Any) -> None:
+        """消息表情回复移除事件 (im.message.reaction.deleted_v1)，静默消费以避免 SDK 报错"""
         pass
 
     def _on_bot_chat_entered(self, data: Any) -> None:
@@ -1178,7 +1221,9 @@ class FeishuAdapter(ChannelAdapter):
                 )
             if response.success():
                 logger.debug(f"Feishu: thinking card sent to {chat_id}")
-                return response.data.message_id if response.data else ""
+                mid = response.data.message_id if response.data else ""
+                self._record_bot_msg_id(mid)
+                return mid
             logger.debug(f"Feishu: thinking card failed: {response.msg}")
         except Exception as e:
             logger.debug(f"Feishu: _send_thinking_card error: {e}")
@@ -1746,6 +1791,18 @@ class FeishuAdapter(ChannelAdapter):
                         "Feishu: _bot_open_id is None, mention detection fallback inconclusive"
                     )
 
+        # 隐式 mention：回复机器人消息视为提及（群聊中用户回复 bot 消息时无显式 @）
+        # 仅检查 parent_id（直接回复目标），不检查 root_id（话题根消息），
+        # 避免在话题内回复其他用户消息时因 root_id 指向 bot 根消息而误判。
+        if not is_mentioned and chat_type == "group":
+            parent_id = message.get("parent_id")
+            if parent_id and parent_id in self._bot_sent_msg_ids:
+                is_mentioned = True
+                logger.info(
+                    f"Feishu: implicit mention detected (reply to bot message "
+                    f"{parent_id[:20]})"
+                )
+
         # 清理 @_user_N 占位符：替换为实际名称或移除
         if content.text and mentions:
             for m in mentions:
@@ -1942,6 +1999,14 @@ class FeishuAdapter(ChannelAdapter):
 
         return "\n".join(result)
 
+    def _record_bot_msg_id(self, msg_id: str) -> None:
+        """Record a bot-sent message_id for implicit mention detection in group replies."""
+        if not msg_id:
+            return
+        self._bot_sent_msg_ids[msg_id] = None
+        while len(self._bot_sent_msg_ids) > self._bot_sent_msg_ids_max:
+            self._bot_sent_msg_ids.popitem(last=False)
+
     async def send_message(self, message: OutgoingMessage) -> str:
         """发送消息"""
         if not self._client:
@@ -1949,34 +2014,40 @@ class FeishuAdapter(ChannelAdapter):
 
         # ---- 思考卡片处理：尝试 PATCH 占位卡片为最终回复 ----
         sk = self._make_session_key(message.chat_id, message.thread_id)
-        # 如果流式已经完成了 finalize，不再重复 PATCH
-        if sk in self._streaming_finalized:
-            card_id = self._thinking_cards.get(sk)
-            self._streaming_finalized.discard(sk)
-            self._thinking_cards.pop(sk, None)
-            self._typing_suppressed.add(sk)
-            self._streaming_buffers.pop(sk, None)
-            self._streaming_last_patch.pop(sk, None)
-            self._typing_start_time.pop(sk, None)
-            self._typing_status.pop(sk, None)
-            return card_id or sk
-        if sk not in self._streaming_buffers:
-            text = message.content.text or ""
-            if text and not message.content.has_media:
-                thinking_card_id = self._thinking_cards.pop(sk, None)
-                if thinking_card_id:
-                    self._typing_suppressed.add(sk)
-                    try:
-                        if await self._patch_card_content(thinking_card_id, text, sk, final=True):
-                            self._typing_start_time.pop(sk, None)
-                            self._typing_status.pop(sk, None)
-                            return thinking_card_id
-                    except Exception as e:
-                        logger.warning(f"Feishu: patch thinking card failed: {e}")
-                    with contextlib.suppress(Exception):
-                        await self._delete_feishu_message(thinking_card_id)
-                    self._typing_start_time.pop(sk, None)
-                    self._typing_status.pop(sk, None)
+
+        # 中间消息（ask_user 问题、提醒、反馈等）不参与卡片状态管理，
+        # 保留思考卡片给最终回复使用
+        _is_interim = message.metadata.get("_interim", False)
+
+        if not _is_interim:
+            # 如果流式已经完成了 finalize，不再重复 PATCH
+            if sk in self._streaming_finalized:
+                card_id = self._thinking_cards.get(sk)
+                self._streaming_finalized.discard(sk)
+                self._thinking_cards.pop(sk, None)
+                self._typing_suppressed.add(sk)
+                self._streaming_buffers.pop(sk, None)
+                self._streaming_last_patch.pop(sk, None)
+                self._typing_start_time.pop(sk, None)
+                self._typing_status.pop(sk, None)
+                return card_id or sk
+            if sk not in self._streaming_buffers:
+                text = message.content.text or ""
+                if text and not message.content.has_media:
+                    thinking_card_id = self._thinking_cards.pop(sk, None)
+                    if thinking_card_id:
+                        self._typing_suppressed.add(sk)
+                        try:
+                            if await self._patch_card_content(thinking_card_id, text, sk, final=True):
+                                self._typing_start_time.pop(sk, None)
+                                self._typing_status.pop(sk, None)
+                                return thinking_card_id
+                        except Exception as e:
+                            logger.warning(f"Feishu: patch thinking card failed: {e}")
+                        with contextlib.suppress(Exception):
+                            await self._delete_feishu_message(thinking_card_id)
+                        self._typing_start_time.pop(sk, None)
+                        self._typing_status.pop(sk, None)
 
         reply_target = message.reply_to or message.thread_id
 
@@ -2090,7 +2161,9 @@ class FeishuAdapter(ChannelAdapter):
                         await self.send_image(message.chat_id, extra_img.local_path, reply_to=reply_target)
                     except Exception as e:
                         logger.warning(f"Feishu: send extra image failed: {e}")
-            return response.data.message_id if response.data else ""
+            mid = response.data.message_id if response.data else ""
+            self._record_bot_msg_id(mid)
+            return mid
 
         # 普通发送（在线程池中执行同步调用）
         request = (
@@ -2123,7 +2196,9 @@ class FeishuAdapter(ChannelAdapter):
                 except Exception as e:
                     logger.warning(f"Feishu: send extra image failed: {e}")
 
-        return response.data.message_id if response.data else ""
+        mid = response.data.message_id if response.data else ""
+        self._record_bot_msg_id(mid)
+        return mid
 
     # ==================== IM 查询工具方法 ====================
 
@@ -2344,8 +2419,9 @@ class FeishuAdapter(ChannelAdapter):
         if not getattr(response, "file", None):
             raise RuntimeError(f"Download succeeded but response.file is empty for {media.file_id}")
 
-        # 保存文件
-        safe_name = Path(media.filename).name or "download"
+        # 保存文件（过滤 Windows 非法字符如 : * ? 等）
+        from openakita.channels.base import sanitize_filename
+        safe_name = sanitize_filename(Path(media.filename).name or "download")
         local_path = self.media_dir / safe_name
         with open(local_path, "wb") as f:
             f.write(response.file.read())
@@ -2427,7 +2503,9 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send card: {response.msg}")
 
-        return response.data.message_id if response.data else ""
+        mid = response.data.message_id if response.data else ""
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def reply_message(self, message_id: str, text: str, msg_type: str = "text") -> str:
         """
@@ -2465,7 +2543,9 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to reply message: {response.msg}")
 
-        return response.data.message_id if response.data else ""
+        mid = response.data.message_id if response.data else ""
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def send_photo(
         self, chat_id: str, photo_path: str, caption: str | None = None,
@@ -2530,6 +2610,7 @@ class FeishuAdapter(ChannelAdapter):
             await self._send_text(chat_id, caption, reply_to=reply_to)
 
         logger.info(f"Sent photo to {chat_id}: {photo_path}")
+        self._record_bot_msg_id(message_id)
         return message_id
 
     async def send_file(
@@ -2595,6 +2676,7 @@ class FeishuAdapter(ChannelAdapter):
             await self._send_text(chat_id, caption, reply_to=reply_to)
 
         logger.info(f"Sent file to {chat_id}: {file_path}")
+        self._record_bot_msg_id(message_id)
         return message_id
 
     async def send_voice(
@@ -2660,6 +2742,7 @@ class FeishuAdapter(ChannelAdapter):
             await self._send_text(chat_id, caption, reply_to=reply_to)
 
         logger.info(f"Sent voice to {chat_id}: {voice_path}")
+        self._record_bot_msg_id(message_id)
         return message_id
 
     async def _send_text(
@@ -2703,7 +2786,9 @@ class FeishuAdapter(ChannelAdapter):
         if not response.success():
             raise RuntimeError(f"Failed to send text: {response.msg}")
 
-        return response.data.message_id if response.data else ""
+        mid = response.data.message_id if response.data else ""
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def _upload_file(self, path: str) -> str:
         """上传文件到飞书（含 token 过期自动重试）"""

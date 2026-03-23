@@ -594,6 +594,10 @@ class WeWorkWsAdapter(ChannelAdapter):
         # background tasks ref holder
         self._bg_tasks: set[asyncio.Task] = set()
 
+        # Auth failure tracking (instance-level to survive adapter restarts)
+        self._consecutive_auth_failures: int = 0
+        self._auth_disabled: bool = False
+
         # Streaming state (for gateway streaming path)
         self._chat_to_req: dict[str, str] = {}
         self._typing_start_time: dict[str, float] = {}
@@ -619,6 +623,11 @@ class WeWorkWsAdapter(ChannelAdapter):
 
     async def start(self) -> None:
         _import_websockets()
+        if self._auth_disabled:
+            raise ConnectionError(
+                "企业微信 WebSocket 适配器因连续鉴权失败已被禁用。"
+                "请检查 Bot ID 和 Secret 是否正确，修正后重启服务。"
+            )
         self._running = True
         self._connection_task = asyncio.create_task(self._connection_loop())
         logger.info(
@@ -652,14 +661,20 @@ class WeWorkWsAdapter(ChannelAdapter):
 
     async def _connection_loop(self) -> None:
         """Main connection loop with exponential back-off reconnect."""
-        attempt = 0
-        _consecutive_auth_failures = 0
         _MAX_AUTH_FAILURES = 3
+        attempt = 0
         while self._running:
+            if self._auth_disabled:
+                logger.warning(
+                    "[WeWork WS] Auth permanently failed, not reconnecting. "
+                    "Fix bot_id/secret and restart."
+                )
+                return
+
             try:
                 await self._connect_and_run()
                 attempt = 0
-                _consecutive_auth_failures = 0
+                self._consecutive_auth_failures = 0
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -676,11 +691,13 @@ class WeWorkWsAdapter(ChannelAdapter):
                 return
 
             if getattr(self, "_auth_fatal", False):
-                _consecutive_auth_failures += 1
-                if _consecutive_auth_failures >= _MAX_AUTH_FAILURES:
+                self._consecutive_auth_failures += 1
+                if self._consecutive_auth_failures >= _MAX_AUTH_FAILURES:
+                    self._auth_disabled = True
                     logger.error(
-                        f"Fatal auth error persisted after {_consecutive_auth_failures} "
-                        f"attempts (last: {getattr(self, '_auth_error', '?')}). "
+                        f"[WeWork WS] Fatal auth error persisted after "
+                        f"{self._consecutive_auth_failures} attempts "
+                        f"(last: {getattr(self, '_auth_error', '?')}). "
                         "Stopping reconnect — check bot_id/secret configuration."
                     )
                     return
@@ -2043,7 +2060,8 @@ class WeWorkWsAdapter(ChannelAdapter):
                     media.status = MediaStatus.FAILED
                     raise
 
-            safe_filename = Path(filename).name or "download"
+            from openakita.channels.base import sanitize_filename
+            safe_filename = sanitize_filename(Path(filename).name or "download")
             local_path = self.media_dir / f"{media.id}_{safe_filename}"
             await asyncio.get_running_loop().run_in_executor(
                 None, local_path.write_bytes, data

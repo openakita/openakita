@@ -12,11 +12,13 @@
 
 import asyncio
 import base64
+import collections
 import contextlib
 import logging
 import os
 import random
 import sys
+import time as _time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -874,6 +876,7 @@ class MessageGateway:
         self._accepting = True  # False = drain 模式，拒绝新消息
         self._started_adapters: list[str] = []
         self._failed_adapters: list[str] = []
+        self._failed_adapter_reasons: dict[str, str] = {}
 
         # 中间件
         self._pre_process_hooks: list[Callable[[UnifiedMessage], Awaitable[UnifiedMessage]]] = []
@@ -934,6 +937,13 @@ class MessageGateway:
 
         # ==================== 群聊响应策略 ====================
         self._smart_throttle = SmartModeThrottle()
+
+        # ==================== 群聊上下文缓冲区 ====================
+        # 缓存被过滤的群聊消息（未 @ 时），供后续 @ 消息注入上下文
+        # key: "channel:chat_id", value: deque of context entries
+        self._group_context_buffer: dict[str, collections.deque] = {}
+        self._GROUP_CONTEXT_MAX_ITEMS = 20
+        self._GROUP_CONTEXT_TTL = 600  # 10 分钟
 
     async def _handle_feishu_command(self, cmd: str, message: "UnifiedMessage") -> str | None:
         """Handle ``/feishu start|auth|help``."""
@@ -1315,6 +1325,65 @@ class MessageGateway:
             return set(raw) if not isinstance(raw, set) else raw
         return set()
 
+    # ==================== 群聊上下文缓冲区方法 ====================
+
+    def _buffer_group_context(
+        self, message: "UnifiedMessage", *, text: str | None = None,
+    ) -> None:
+        """将被过滤的群聊消息缓存到上下文缓冲区。
+
+        key 为 ``channel:chat_id``（群聊级），每条记录包含时间戳、用户、文本。
+        超出 TTL 或最大条数的旧条目自动淘汰。
+        """
+        buf_key = f"{message.channel}:{message.chat_id}"
+        buf = self._group_context_buffer.get(buf_key)
+        if buf is None:
+            buf = collections.deque(maxlen=self._GROUP_CONTEXT_MAX_ITEMS)
+            self._group_context_buffer[buf_key] = buf
+
+        now = _time.time()
+        # 淘汰过期条目
+        while buf and (now - buf[0]["ts"]) > self._GROUP_CONTEXT_TTL:
+            buf.popleft()
+
+        display = text or message.plain_text or ""
+        if not display.strip():
+            return
+
+        sender = (message.metadata or {}).get("sender_name", message.user_id or "")
+        buf.append({
+            "ts": now,
+            "user": sender,
+            "user_id": message.user_id,
+            "text": display[:500],
+        })
+
+    def _get_group_context(
+        self, channel: str, chat_id: str, *, max_items: int = 10,
+    ) -> list[dict]:
+        """获取群聊上下文缓冲区中的近期消息（已过期的自动淘汰）。"""
+        buf_key = f"{channel}:{chat_id}"
+        buf = self._group_context_buffer.get(buf_key)
+        if not buf:
+            return []
+        now = _time.time()
+        while buf and (now - buf[0]["ts"]) > self._GROUP_CONTEXT_TTL:
+            buf.popleft()
+        items = list(buf)[-max_items:]
+        return items
+
+    @staticmethod
+    def _format_group_context(items: list[dict]) -> str:
+        """将缓冲区条目格式化为可注入 prompt 的文本。"""
+        if not items:
+            return ""
+        lines = ["[群聊近期上下文] 以下是本群中最近的未处理消息，供你理解上下文："]
+        for entry in items:
+            user = entry.get("user") or entry.get("user_id", "?")
+            text = entry.get("text", "")
+            lines.append(f"  - {user}: {text}")
+        return "\n".join(lines)
+
     def _apply_persisted_group_policy(self) -> None:
         """Load persisted group policy from JSON and apply to adapters."""
         from pathlib import Path
@@ -1349,6 +1418,7 @@ class MessageGateway:
         # 启动所有适配器
         started = []
         failed = []
+        failed_reasons: dict[str, str] = {}
         for name, adapter in self._adapters.items():
             try:
                 await adapter.start()
@@ -1356,15 +1426,21 @@ class MessageGateway:
                 logger.info(f"Started adapter: {name}")
             except Exception as e:
                 failed.append(name)
+                failed_reasons[name] = str(e)
                 adapter._running = False
                 logger.error(f"Failed to start adapter {name}: {e}")
 
         self._started_adapters = started
         self._failed_adapters = failed
+        self._failed_adapter_reasons = failed_reasons
 
         self._apply_persisted_group_policy()
 
-        _notify_im_event("im:channel_status", {"started": started, "failed": failed})
+        _notify_im_event("im:channel_status", {
+            "started": started,
+            "failed": failed,
+            "failed_reasons": failed_reasons,
+        })
 
         # 启动消息处理循环
         self._processing_task = asyncio.create_task(self._process_loop())
@@ -1387,6 +1463,29 @@ class MessageGateway:
     def get_failed_adapters(self) -> list[str]:
         """获取启动失败的适配器列表。"""
         return list(self._failed_adapters)
+
+    def get_failed_adapter_reasons(self) -> dict[str, str]:
+        """获取启动失败的适配器及其错误原因。"""
+        return dict(getattr(self, "_failed_adapter_reasons", {}))
+
+    def report_adapter_failure(self, name: str, reason: str) -> None:
+        """后台任务中适配器发生致命失败时调用，更新状态并通知前端。"""
+        if name not in self._failed_adapters:
+            self._failed_adapters.append(name)
+        if name in self._started_adapters:
+            self._started_adapters.remove(name)
+        self._failed_adapter_reasons[name] = reason
+
+        adapter = self._adapters.get(name)
+        if adapter:
+            adapter._running = False
+
+        _notify_im_event("im:channel_status", {
+            "started": list(self._started_adapters),
+            "failed": list(self._failed_adapters),
+            "failed_reasons": dict(self._failed_adapter_reasons),
+        })
+        logger.warning(f"Adapter {name} reported fatal failure: {reason}")
 
     async def _preload_whisper_async(self) -> None:
         """异步预加载 Whisper 模型"""
@@ -1808,9 +1907,11 @@ class MessageGateway:
                     if _irq_mode == GroupResponseMode.MENTION_ONLY and not message.is_mentioned:
                         _is_stop_or_skip = self.agent_handler and self.agent_handler.classify_interrupt(user_text) in ("stop", "skip")
                         if not _is_stop_or_skip:
+                            with contextlib.suppress(Exception):
+                                self._buffer_group_context(message, text=user_text)
                             logger.debug(
                                 f"[Interrupt] Group message ignored in interrupt path "
-                                f"(mention_only, not mentioned): {user_text[:50]}"
+                                f"(mention_only, not mentioned), buffered: {user_text[:50]}"
                             )
                             return
 
@@ -2201,12 +2302,16 @@ class MessageGateway:
                         return
 
                 if mode == GroupResponseMode.MENTION_ONLY and not message.is_mentioned:
-                    logger.debug(f"[IM] Group message ignored (mention_only): {user_text[:50]}")
+                    with contextlib.suppress(Exception):
+                        self._buffer_group_context(message, text=user_text)
+                    logger.debug(f"[IM] Group message ignored (mention_only), buffered: {user_text[:50]}")
                     return
 
                 if mode == GroupResponseMode.SMART and not message.is_mentioned:
                     if not self._smart_throttle.should_process(message.chat_id):
-                        logger.debug(f"[IM] Group message throttled (smart): {user_text[:50]}")
+                        with contextlib.suppress(Exception):
+                            self._buffer_group_context(message, text=user_text)
+                        logger.debug(f"[IM] Group message throttled (smart), buffered: {user_text[:50]}")
                         return
                     self._smart_throttle.record_process(message.chat_id)
                     message.metadata["group_smart_mode"] = True
@@ -2444,6 +2549,26 @@ class MessageGateway:
                             + "\n".join(event_lines)
                         )
                         session.context.add_message("system", event_text)
+
+            # 4.9 群聊上下文注入：将近期被过滤的群消息作为上下文注入
+            # 使用 "user" 角色确保 history build 不会过滤掉（system 会被跳过）
+            if message.chat_type == "group" and not message.is_direct_message:
+                try:
+                    _ctx_items = self._get_group_context(
+                        message.channel, message.chat_id, max_items=10,
+                    )
+                    if _ctx_items:
+                        _ctx_text = self._format_group_context(_ctx_items)
+                        session.context.add_message("user", _ctx_text, passive=True)
+                        logger.debug(
+                            f"[IM] Injected {len(_ctx_items)} buffered group context items "
+                            f"for {session_key}"
+                        )
+                        # 注入后清空缓冲区，避免重复注入
+                        _buf_key = f"{message.channel}:{message.chat_id}"
+                        self._group_context_buffer.pop(_buf_key, None)
+                except Exception as _ctx_err:
+                    logger.debug(f"[IM] Group context injection failed (non-critical): {_ctx_err}")
 
             # 5. 记录消息到会话
             session.add_message(
@@ -2841,7 +2966,10 @@ class MessageGateway:
         adapter = self._adapters.get(message.channel)
         if adapter and hasattr(adapter, "send_text"):
             try:
-                _meta = {"is_group": (message.metadata or {}).get("is_group", message.chat_type == "group")}
+                _meta = {
+                    "is_group": (message.metadata or {}).get("is_group", message.chat_type == "group"),
+                    "_interim": True,
+                }
                 await adapter.send_text(
                     chat_id=message.chat_id,
                     text=text,
@@ -3048,6 +3176,7 @@ class MessageGateway:
                     try:
                         mime = fil.mime_type or ""
                         suffix = Path(fil.local_path).suffix.lower()
+                        _fname = fil.filename or Path(fil.local_path).name
                         if suffix == ".pdf" or "pdf" in mime:
                             file_data = base64.b64encode(
                                 Path(fil.local_path).read_bytes()
@@ -3059,13 +3188,49 @@ class MessageGateway:
                                     "media_type": "application/pdf",
                                     "data": file_data,
                                 },
-                                "filename": fil.filename or Path(fil.local_path).name,
+                                "filename": _fname,
                                 "local_path": fil.local_path,
                             })
                             logger.info(f"PDF file encoded: {fil.local_path}")
+                        elif suffix in (
+                            ".md", ".txt", ".csv", ".json", ".jsonl",
+                            ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+                            ".log", ".py", ".js", ".ts", ".jsx", ".tsx",
+                            ".html", ".htm", ".css", ".sql", ".sh", ".bat",
+                            ".ps1", ".java", ".c", ".cpp", ".h", ".hpp",
+                            ".go", ".rs", ".rb", ".php", ".lua", ".r",
+                            ".swift", ".kt", ".scala", ".conf", ".env",
+                            ".gitignore", ".dockerfile", ".makefile",
+                        ) or mime.startswith("text/"):
+                            _TEXT_FILE_SIZE_LIMIT = 512 * 1024  # 512KB
+                            _fpath = Path(fil.local_path)
+                            if _fpath.stat().st_size <= _TEXT_FILE_SIZE_LIMIT:
+                                _content = _fpath.read_text(
+                                    encoding="utf-8", errors="replace",
+                                )
+                                input_text += (
+                                    f"\n\n--- 文件: {_fname} ---\n"
+                                    f"{_content}\n"
+                                    f"--- 文件结束 ---"
+                                )
+                                logger.info(
+                                    f"Text file injected: {fil.local_path} "
+                                    f"({len(_content)} chars)"
+                                )
+                            else:
+                                input_text += (
+                                    f"\n[附件: {_fname} ({mime or suffix}), "
+                                    f"文件过大无法内联，本地路径: {fil.local_path}]"
+                                )
+                                logger.info(
+                                    f"Text file too large for inline, "
+                                    f"path provided: {fil.local_path}"
+                                )
                         else:
-                            # 非 PDF 文件，作为文本描述
-                            input_text += f"\n[附件: {fil.filename or Path(fil.local_path).name} ({mime or suffix})]"
+                            input_text += (
+                                f"\n[附件: {_fname} ({mime or suffix}), "
+                                f"本地路径: {fil.local_path}]"
+                            )
                     except Exception as e:
                         logger.error(f"Failed to process file: {e}")
 
@@ -3657,6 +3822,15 @@ class MessageGateway:
             return None
 
         try:
+            # 标记为中间消息，防止飞书思考卡片被提前消费
+            _meta = kwargs.pop("metadata", None) or {}
+            if isinstance(_meta, dict):
+                _meta = dict(_meta)
+            else:
+                _meta = {}
+            _meta.setdefault("_interim", True)
+            kwargs["metadata"] = _meta
+
             result = await adapter.send_text(chat_id, text, **kwargs)
 
             # 记录到 session 历史

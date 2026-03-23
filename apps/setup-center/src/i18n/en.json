@@ -944,7 +944,8 @@
     "botTypeOnebotReverse": "OneBot (Reverse WS)",
     "botTypeOnebot": "OneBot",
     "botTypeQQBot": "QQ",
-    "botTypeWechat": "WeChat"
+    "botTypeWechat": "WeChat",
+    "adapterStartFailed": "Channel {{name}} failed to start"
   },
   "llm": {
     "title": "LLM Endpoints",

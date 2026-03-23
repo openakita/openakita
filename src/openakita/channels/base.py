@@ -9,6 +9,7 @@
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -17,6 +18,16 @@ from typing import ClassVar
 from .types import MediaFile, OutgoingMessage, UnifiedMessage
 
 logger = logging.getLogger(__name__)
+
+# Windows 文件名非法字符 (: * ? " < > |)
+_UNSAFE_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def sanitize_filename(name: str) -> str:
+    """将文件名中的非法字符替换为下划线，确保跨平台兼容。"""
+    safe = _UNSAFE_FILENAME_RE.sub("_", name)
+    return safe.strip(". ") or "download"
+
 
 # 回调类型定义
 MessageCallback = Callable[[UnifiedMessage], Awaitable[None]]

@@ -3591,6 +3591,75 @@ class ReasoningEngine:
 
         return result, stripped
 
+    @staticmethod
+    def _truncate_oversized_messages(
+        messages: list[dict],
+        max_single_tokens: int = 30000,
+    ) -> tuple[list[dict], bool]:
+        """截断超大文本消息，防止上下文溢出。
+
+        当单条消息的文本内容超过 max_single_tokens 估算值时，
+        保留开头和结尾各一半，中间截断并插入提示。
+        """
+        from .context_manager import ContextManager
+
+        truncated = False
+        result = []
+        target_chars = max_single_tokens * 3
+
+        for msg in messages:
+            content = msg.get("content")
+
+            if isinstance(content, str):
+                est = ContextManager.static_estimate_tokens(content)
+                if est > max_single_tokens:
+                    half = target_chars // 2
+                    content = (
+                        content[:half]
+                        + "\n\n[... 内容过长已截断，以适应模型上下文窗口 ...]\n\n"
+                        + content[-half:]
+                    )
+                    truncated = True
+                    result.append({**msg, "content": content})
+                    continue
+
+            elif isinstance(content, list):
+                new_parts = []
+                for part in content:
+                    text = ""
+                    if isinstance(part, dict):
+                        text = str(
+                            part.get("text", part.get("content", ""))
+                        )
+                    elif isinstance(part, str):
+                        text = part
+
+                    if text:
+                        est = ContextManager.static_estimate_tokens(text)
+                        if est > max_single_tokens:
+                            half = target_chars // 2
+                            text = (
+                                text[:half]
+                                + "\n\n[... 内容过长已截断 ...]\n\n"
+                                + text[-half:]
+                            )
+                            truncated = True
+                            if isinstance(part, dict):
+                                key = "text" if "text" in part else "content"
+                                part = {**part, key: text}
+                            else:
+                                part = text
+
+                    new_parts.append(part)
+
+                if truncated:
+                    result.append({**msg, "content": new_parts})
+                    continue
+
+            result.append(msg)
+
+        return result, truncated
+
     def _handle_llm_error(
         self,
         error: Exception,
@@ -3643,6 +3712,34 @@ class ReasoningEngine:
                     if llm_client:
                         llm_client.reset_all_cooldowns(include_structural=True)
                     return "retry"
+
+                # 方案 C: 上下文溢出 — 媒体剥离无效时尝试截断超大文本
+                error_lower = str(error).lower()
+                _ctx_overflow_patterns = [
+                    "context length", "too many tokens",
+                    "token limit",
+                ]
+                is_ctx_overflow = any(
+                    p in error_lower for p in _ctx_overflow_patterns
+                ) or ("maximum" in error_lower and "length" in error_lower)
+                if is_ctx_overflow:
+                    trunc_msgs, did_trunc = self._truncate_oversized_messages(
+                        working_messages
+                    )
+                    if did_trunc:
+                        logger.warning(
+                            "[ReAct] Context length overflow detected. "
+                            "Truncating oversized text content and retrying."
+                        )
+                        state._structural_content_stripped = True
+                        working_messages.clear()
+                        working_messages.extend(trunc_msgs)
+                        llm_client = getattr(self._brain, "_llm_client", None)
+                        if llm_client:
+                            llm_client.reset_all_cooldowns(
+                                include_structural=True
+                            )
+                        return "retry"
 
             logger.error(
                 f"[ReAct] Structural API error, cannot recover "

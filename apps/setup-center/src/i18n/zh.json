@@ -944,7 +944,8 @@
     "botTypeOnebotReverse": "OneBot (反向WS)",
     "botTypeOnebot": "OneBot",
     "botTypeQQBot": "QQ",
-    "botTypeWechat": "微信"
+    "botTypeWechat": "微信",
+    "adapterStartFailed": "通道 {{name}} 启动失败"
   },
   "llm": {
     "title": "LLM 端点",

@@ -332,6 +332,11 @@ class WeChatAdapter(ChannelAdapter):
     # ==================== 生命周期 ====================
 
     async def start(self) -> None:
+        if not self.config.token:
+            raise ValueError(
+                "微信 Token 未配置，请先在 Bot 配置中扫码登录获取 Token。"
+            )
+
         _import_httpx()
         self._http = httpx.AsyncClient(timeout=httpx.Timeout(
             connect=10.0,
@@ -347,8 +352,7 @@ class WeChatAdapter(ChannelAdapter):
         self._poll_task = asyncio.create_task(self._poll_loop())
         logger.info(
             f"{self.channel_name}: WeChat adapter started "
-            f"(base_url={self.config.base_url}, "
-            f"token={'present' if self.config.token else 'MISSING'})"
+            f"(base_url={self.config.base_url})"
         )
 
     async def stop(self) -> None:

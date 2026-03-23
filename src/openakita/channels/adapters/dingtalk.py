@@ -388,7 +388,25 @@ class DingTalkAdapter(ChannelAdapter):
         _import_dingtalk_stream()
 
         self._http_client = httpx.AsyncClient()
-        await self._refresh_token()
+        try:
+            await self._refresh_token()
+        except Exception as e:
+            err_str = str(e)
+            err_type = type(e).__name__
+            if "ConnectError" in err_type or "ConnectError" in err_str:
+                raise ConnectionError(
+                    "无法连接钉钉 API (oapi.dingtalk.com / api.dingtalk.com)，请检查网络连接。"
+                ) from e
+            if "ConnectTimeout" in err_type or "TimeoutException" in err_type:
+                raise ConnectionError(
+                    "连接钉钉 API 超时，请检查网络连接。"
+                ) from e
+            if "Failed to get" in err_str or "accessToken" in err_str:
+                raise ConnectionError(
+                    f"钉钉 AppKey 或 AppSecret 无效，请在钉钉开放平台检查应用凭据。"
+                    f"（错误详情: {err_str}）"
+                ) from e
+            raise
 
         self._running = True
 
@@ -699,6 +717,11 @@ class DingTalkAdapter(ChannelAdapter):
                 if at_user.get("dingtalkId") == robot_code:
                     is_mentioned = True
                     break
+
+        # NOTE: 钉钉 Stream 回调不提供引用/回复目标信息（无 parentMsgId 等字段），
+        # 因此无法像飞书/Telegram/OneBot 那样检测"回复机器人消息"作为隐式 mention。
+        # 如果需要在群聊中响应非 @ 消息，请在开发者后台开启"接收群聊中所有消息"，
+        # 并将 group_response_mode 设置为 smart 或 always。
 
         unified = UnifiedMessage.create(
             channel=self.channel_name,
@@ -1920,7 +1943,8 @@ class DingTalkAdapter(ChannelAdapter):
         response = await self._http_client.get(download_url, timeout=60.0)
         response.raise_for_status()
 
-        safe_name = Path(media.filename).name or "download"
+        from openakita.channels.base import sanitize_filename
+        safe_name = sanitize_filename(Path(media.filename).name or "download")
         local_path = self.media_dir / safe_name
         with open(local_path, "wb") as f:
             f.write(response.content)

@@ -2901,7 +2901,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         pending_audio = session.get_metadata("pending_audio") if session else None
         pending_files = session.get_metadata("pending_files") if session else None
 
-        # 处理 PDF/文档文件 — 如果 LLM 支持 PDF 则构建 DocumentBlock，否则降级为文本
+        # 处理 PDF/文档文件 — 如果 LLM 支持 PDF 则构建 DocumentBlock，否则降级提取文本
         document_blocks = []
         if pending_files:
             llm_client_for_pdf = getattr(self.brain, "_llm_client", None)
@@ -2911,9 +2911,30 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     document_blocks.append(fdata)
                     logger.info(f"[Session:{session_id}] PDF → native DocumentBlock")
                 else:
-                    # 降级: 提取文本描述
+                    # 降级: 从 PDF 中提取文本内容
                     fname = fdata.get("filename", "unknown")
-                    compiled_message += f"\n[文档附件: {fname}，该端点不支持 PDF 原生输入]"
+                    local_path = fdata.get("local_path", "")
+                    extracted = ""
+                    if local_path and Path(local_path).exists():
+                        try:
+                            from openakita.channels.media.handler import MediaHandler
+                            _handler = MediaHandler()
+                            extracted = await _handler._extract_pdf(Path(local_path))
+                        except Exception as _ext_err:
+                            logger.warning(f"[Session:{session_id}] PDF text extraction failed: {_ext_err}")
+                    if extracted and extracted.strip():
+                        _PDF_TEXT_LIMIT = 80_000
+                        if len(extracted) > _PDF_TEXT_LIMIT:
+                            extracted = extracted[:_PDF_TEXT_LIMIT] + "\n...(文档过长，已截断)"
+                        compiled_message += (
+                            f"\n\n--- PDF文件: {fname} ---\n"
+                            f"{extracted}\n"
+                            f"--- 文件结束 ---"
+                        )
+                        logger.info(f"[Session:{session_id}] PDF → text fallback ({len(extracted)} chars)")
+                    else:
+                        compiled_message += f"\n[文档附件: {fname}，本地路径: {local_path}]"
+                        logger.warning(f"[Session:{session_id}] PDF text extraction empty, path provided")
 
         # 三级音频决策：LLM原生audio > 在线STT > 本地Whisper
         audio_blocks = []

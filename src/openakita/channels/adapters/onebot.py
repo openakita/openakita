@@ -126,6 +126,10 @@ class OneBotAdapter(ChannelAdapter):
         # group_id → group_name 缓存
         self._group_name_cache: dict[str, str] = {}
 
+        # Bot 已发送消息 ID 追踪：用于识别"回复机器人消息"作为隐式 mention
+        self._bot_sent_msg_ids: OrderedDict[str, None] = OrderedDict()
+        self._BOT_SENT_MSG_IDS_MAX = 500
+
     # ==================== 生命周期 ====================
 
     async def start(self) -> None:
@@ -133,11 +137,27 @@ class OneBotAdapter(ChannelAdapter):
         self._running = True
 
         if self.config.mode == "reverse":
-            self._receive_task = asyncio.create_task(self._run_reverse_server())
-            logger.info(
-                f"OneBot adapter starting in reverse mode, "
-                f"listening on {self.config.reverse_host}:{self.config.reverse_port}"
-            )
+            try:
+                self._server = await websockets.serve(
+                    self._reverse_ws_handler,
+                    self.config.reverse_host,
+                    self.config.reverse_port,
+                )
+                logger.info(
+                    f"OneBot reverse WS server listening on "
+                    f"ws://{self.config.reverse_host}:{self.config.reverse_port}"
+                )
+            except OSError as e:
+                self._running = False
+                if e.errno in (10048, 98) or "Address already in use" in str(e):
+                    raise ConnectionError(
+                        f"OneBot 反向 WS 端口 {self.config.reverse_port} 已被占用，"
+                        f"请修改配置或释放端口。"
+                    ) from e
+                raise ConnectionError(
+                    f"OneBot 反向 WS 服务器启动失败: {e}"
+                ) from e
+            self._receive_task = asyncio.create_task(self._server.wait_closed())
         else:
             self._receive_task = asyncio.create_task(self._receive_loop_with_reconnect())
             logger.info(f"OneBot adapter starting in forward mode, will connect to {self.config.ws_url}")
@@ -167,15 +187,16 @@ class OneBotAdapter(ChannelAdapter):
 
     async def _run_reverse_server(self) -> None:
         try:
-            self._server = await websockets.serve(
-                self._reverse_ws_handler,
-                self.config.reverse_host,
-                self.config.reverse_port,
-            )
-            logger.info(
-                f"OneBot reverse WS server listening on "
-                f"ws://{self.config.reverse_host}:{self.config.reverse_port}"
-            )
+            if not self._server:
+                self._server = await websockets.serve(
+                    self._reverse_ws_handler,
+                    self.config.reverse_host,
+                    self.config.reverse_port,
+                )
+                logger.info(
+                    f"OneBot reverse WS server listening on "
+                    f"ws://{self.config.reverse_host}:{self.config.reverse_port}"
+                )
             await self._server.wait_closed()
         except asyncio.CancelledError:
             return
@@ -384,6 +405,15 @@ class OneBotAdapter(ChannelAdapter):
                         is_mentioned = True
                         break
 
+        # 隐式 mention：回复机器人消息视为提及
+        if not is_mentioned and chat_type == "group" and _reply_to_id:
+            if _reply_to_id in self._bot_sent_msg_ids:
+                is_mentioned = True
+                logger.info(
+                    f"OneBot: implicit mention detected "
+                    f"(reply to bot message {_reply_to_id})"
+                )
+
         sender = data.get("sender") or {}
         user_id = str(data.get("user_id"))
 
@@ -578,6 +608,14 @@ class OneBotAdapter(ChannelAdapter):
             return bool(message.metadata["is_group"])
         return self._chat_type_map.get(message.chat_id, "group") == "group"
 
+    def _record_bot_msg_id(self, msg_id: str) -> None:
+        """Record a bot-sent message_id for implicit mention detection in group replies."""
+        if not msg_id:
+            return
+        self._bot_sent_msg_ids[msg_id] = None
+        while len(self._bot_sent_msg_ids) > self._BOT_SENT_MSG_IDS_MAX:
+            self._bot_sent_msg_ids.popitem(last=False)
+
     async def send_message(self, message: OutgoingMessage) -> str:
         msg_array = []
 
@@ -611,15 +649,21 @@ class OneBotAdapter(ChannelAdapter):
         else:
             result = await self._call_api("send_private_msg", {"user_id": chat_id, "message": msg_array})
 
-        return str((result or {}).get("message_id", ""))
+        mid = str((result or {}).get("message_id", ""))
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def send_group_message(self, group_id: int, message: str) -> str:
         result = await self._call_api("send_group_msg", {"group_id": group_id, "message": message})
-        return str((result or {}).get("message_id", ""))
+        mid = str((result or {}).get("message_id", ""))
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def send_private_message(self, user_id: int, message: str) -> str:
         result = await self._call_api("send_private_msg", {"user_id": user_id, "message": message})
-        return str((result or {}).get("message_id", ""))
+        mid = str((result or {}).get("message_id", ""))
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
         """发送"正在输入"状态（NapCat 扩展 API: set_input_status）。
@@ -728,7 +772,11 @@ class OneBotAdapter(ChannelAdapter):
         key = "group_id" if _is_grp else "user_id"
         try:
             result = await self._call_api(api, {key: chat_id_int, "file": file_str, "name": path.name})
-            return str((result or {}).get("message_id", f"file_{chat_id}"))
+            real_mid = (result or {}).get("message_id")
+            mid = str(real_mid) if real_mid else f"file_{chat_id}"
+            if real_mid:
+                self._record_bot_msg_id(mid)
+            return mid
         except Exception as e:
             raise RuntimeError(f"Failed to send file via OneBot: {e}") from e
 
@@ -760,7 +808,9 @@ class OneBotAdapter(ChannelAdapter):
             with contextlib.suppress(Exception):
                 await self._call_api(api, {key: chat_id_int, "message": caption_msg})
 
-        return str((result or {}).get("message_id", ""))
+        mid = str((result or {}).get("message_id", ""))
+        self._record_bot_msg_id(mid)
+        return mid
 
     async def delete_message(self, chat_id: str, message_id: str) -> bool:
         try:

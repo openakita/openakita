@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# Python
+.venv
+.venv-ci
+__pycache__
+*.pyc
+*.egg-info
+dist
+build
+
+# Node / Frontend build artifacts
+apps/setup-center/node_modules
+apps/setup-center/dist
+
+# IDE & tooling
+.cursor
+.ruff_cache
+.pytest_cache
+.mypy_cache
+
+# Docker
+docker
+
+# Temporary & runtime files
+feedback-downloads
+temp-feedback
+logs
+data
+*.log

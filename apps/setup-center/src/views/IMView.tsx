@@ -43,6 +43,7 @@ type IMChannel = {
   status: "online" | "offline";
   sessionCount: number;
   lastActive: string | null;
+  error?: string;
 };
 
 type IMSession = {
@@ -403,7 +404,17 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
   useEffect(() => {
     if (!IS_WEB) return;
     return onWsEvent((event, data) => {
-      if (event === "im:channel_status") fetchChannels();
+      if (event === "im:channel_status") {
+        fetchChannels();
+        const d = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+        const failedReasons = d.failed_reasons as Record<string, string> | undefined;
+        if (failedReasons && Object.keys(failedReasons).length > 0) {
+          for (const [name, reason] of Object.entries(failedReasons)) {
+            const short = reason.length > 120 ? reason.slice(0, 120) + "…" : reason;
+            toast.error(`${t("im.adapterStartFailed", { name })}`, { description: short, duration: 8000 });
+          }
+        }
+      }
       if (event === "im:new_message") {
         const d = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
         const evtChannel = d.channel as string | undefined;
@@ -416,7 +427,7 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
         if (selectedChannel) fetchSessions(selectedChannel);
       }
     });
-  }, [fetchChannels, fetchSessions, fetchMessages, selectedChannel, selectedSessionId]);
+  }, [fetchChannels, fetchSessions, fetchMessages, selectedChannel, selectedSessionId, t]);
 
   const handleSelectChannel = useCallback(async (ch: string) => {
     setSelectedChannel(ch);
@@ -654,7 +665,18 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                 onClick={() => handleSelectChannel(ch.channel)}
               >
                 <span className="flex items-center gap-1.5 min-w-0">
-                  {ch.status === "online" ? <DotGreen /> : <DotGray />}
+                  {ch.status === "online" ? <DotGreen /> : ch.error ? (
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span><AlertCircle size={12} className="text-destructive shrink-0" /></span>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="max-w-[320px] text-xs whitespace-pre-wrap">
+                          {ch.error}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : <DotGray />}
                   {(IM_LOGO_MAP[(ch.channel_type || "").toLowerCase()] || IM_LOGO_MAP[(ch.channel || "").toLowerCase()])?.({ size: 14 })}
                   <span className="truncate">{getChannelDisplayName(ch)}</span>
                 </span>
@@ -1119,7 +1141,18 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
               )}
               onClick={() => handleSelectChannel(ch.channel)}
             >
-              {ch.status === "online" ? <DotGreen /> : <DotGray />}
+              {ch.status === "online" ? <DotGreen /> : ch.error ? (
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span><AlertCircle size={12} className="text-destructive shrink-0" /></span>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-[320px] text-xs whitespace-pre-wrap">
+                      {ch.error}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : <DotGray />}
               {(IM_LOGO_MAP[(ch.channel_type || "").toLowerCase()] || IM_LOGO_MAP[(ch.channel || "").toLowerCase()])?.({ size: 14 })}
               <span className="font-semibold truncate">{getChannelDisplayName(ch)}</span>
             </button>
