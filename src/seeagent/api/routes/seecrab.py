@@ -2,6 +2,8 @@
 """SeeCrab API routes: SSE streaming chat + session management."""
 from __future__ import annotations
 
+from typing import Any
+
 import asyncio
 import json
 import logging
@@ -110,6 +112,41 @@ def _has_bp_next_step(snap) -> bool:
     if total <= 0:
         return False
     return int(getattr(snap, "current_subtask_index", 0) or 0) < total
+
+
+async def _extract_input_from_query(
+    brain: Any, user_query: str, input_schema: dict,
+) -> dict:
+    """用 LLM 从用户原始 query 中提取符合 input_schema 的结构化参数。"""
+    if not brain or not user_query or not input_schema:
+        return {}
+
+    props = input_schema.get("properties", {})
+    if not props:
+        return {}
+
+    fields_desc = "\n".join(
+        f"- {name}: {info.get('description', '无描述')} (type: {info.get('type', 'string')})"
+        for name, info in props.items()
+    )
+    prompt = (
+        "从用户消息中提取以下字段，输出一个 JSON 对象。\n"
+        "只提取消息中明确提到或可推断的字段，没有提到的字段不要包含。\n"
+        "只输出 JSON，不要其他文字。\n\n"
+        f"## 字段定义\n{fields_desc}\n\n"
+        f"## 用户消息\n{user_query}"
+    )
+    try:
+        from seeagent.bestpractice.engine import BPEngine
+
+        resp = await brain.think_lightweight(prompt, max_tokens=512)
+        text = resp.content if hasattr(resp, "content") else str(resp)
+        parsed = BPEngine._parse_output(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception as e:
+        logger.warning(f"[BP] Failed to extract input from query: {e}")
+    return {}
 
 
 async def _stream_bp_start_from_chat(
@@ -344,7 +381,9 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
             if not user_messages and body.message:
                 user_messages = [body.message]
 
-            bp_session_id = session.id if session else conversation_id
+            # 使用 conversation_id(=chat_id)，与前端 activeSessionId 一致，
+            # 确保 /api/bp/start 能通过 get_pending_offer(session_id) 找到 pending_offer
+            bp_session_id = conversation_id
             bp_cmd = _match_bp_command(body.message or "")
             if bp_cmd:
                 from seeagent.bestpractice.facade import get_bp_state_manager
@@ -362,12 +401,24 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                         return
                     pending_offer = bp_sm.get_pending_offer(bp_session_id) if bp_sm else None
                     if pending_offer and pending_offer.get("bp_id"):
+                        # 用 LLM 从用户原始 query 中提取 input_data
+                        extracted_input = {}
+                        user_query = pending_offer.get("user_query", "")
+                        first_schema = pending_offer.get("first_input_schema")
+                        if user_query and first_schema:
+                            brain = getattr(agent, "brain", None)
+                            extracted_input = await _extract_input_from_query(
+                                brain, user_query, first_schema,
+                            )
+                            logger.info(
+                                f"[BP] Extracted input from query: {extracted_input}"
+                            )
                         async for event in _stream_bp_start_from_chat(
                             request,
                             session_id=bp_session_id,
                             bp_id=pending_offer.get("bp_id", ""),
                             run_mode_str=pending_offer.get("default_run_mode", "manual"),
-                            input_data={},
+                            input_data=extracted_input,
                             session=session,
                             session_manager=session_manager,
                             disconnect_event=disconnect_event,
@@ -449,6 +500,8 @@ async def seecrab_chat(body: SeeCrabChatRequest, request: Request):
                                 "bp_name": bp_name,
                                 "subtasks": bp_match.get("subtasks", []),
                                 "default_run_mode": "manual",
+                                "user_query": bp_match.get("user_query", ""),
+                                "first_input_schema": bp_match.get("first_input_schema"),
                             },
                         )
 

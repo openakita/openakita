@@ -360,6 +360,19 @@ async def bp_start(request: Request):
     if not bp_config:
         return JSONResponse({"error": f"BP '{bp_id}' not found"}, status_code=404)
 
+    # 当前端未传 input_data 时，从 pending_offer 中提取用户原始 query 并用 LLM 解析
+    if not input_data and bp_config.subtasks:
+        pending_offer = sm.get_pending_offer(session_id)
+        if pending_offer:
+            user_query = pending_offer.get("user_query", "")
+            first_schema = pending_offer.get("first_input_schema") or bp_config.subtasks[0].input_schema
+            if user_query and first_schema:
+                from seeagent.api.routes.seecrab import _extract_input_from_query
+                agent = getattr(request.app.state, "agent", None)
+                brain = getattr(agent, "brain", None) if agent else None
+                input_data = await _extract_input_from_query(brain, user_query, first_schema)
+                logger.info(f"[BP] Extracted input from pending offer query: {input_data}")
+
     if not await _bp_mark_busy(session_id, "bp_start"):
         return JSONResponse({"error": "Session is busy"}, status_code=409)
 

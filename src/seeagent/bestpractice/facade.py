@@ -184,6 +184,9 @@ def match_bp_from_message(user_message: str, session_id: str) -> dict | None:
         for trigger in config.triggers:
             if trigger.type == TriggerType.CONTEXT:
                 if any(kw in user_message for kw in trigger.conditions):
+                    first_input_schema = (
+                        config.subtasks[0].input_schema if config.subtasks else None
+                    )
                     return {
                         "bp_id": bp_id,
                         "bp_name": config.name,
@@ -193,6 +196,8 @@ def match_bp_from_message(user_message: str, session_id: str) -> dict | None:
                             {"id": s.id, "name": s.name}
                             for s in config.subtasks
                         ],
+                        "user_query": user_message,
+                        "first_input_schema": first_input_schema,
                     }
     return None
 
