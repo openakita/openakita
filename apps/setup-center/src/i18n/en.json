@@ -27,7 +27,8 @@
     "groupCapabilities": "Capabilities",
     "groupMonitor": "Monitor",
     "groupMultiAgent": "Agents",
-    "groupStore": "Store"
+    "groupStore": "Store",
+    "plugins": "Plugins"
   },
   "topbar": {
     "workspace": "Workspace",
@@ -1591,6 +1592,23 @@
     "extCreditsTitle": "Credits",
     "extCreditsHint": "OpenAkita's tool calling and browser capabilities are enhanced by these open-source projects",
     "extCopied": "Copied"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "installed": "{{count}} installed",
+    "desc": "Manage installed plugins, install from URL, or enable/disable modules.",
+    "installPlaceholder": "URL or path to install plugin...",
+    "install": "Install",
+    "installing": "Installing...",
+    "refresh": "Refresh",
+    "loading": "Loading plugins...",
+    "noPlugins": "No plugins installed. Install from URL or place them in data/plugins/.",
+    "enable": "Enable",
+    "disable": "Disable",
+    "remove": "Remove",
+    "failed": "Failed",
+    "failedToLoad": "Failed to Load",
+    "notAvailable": "Plugin system requires backend v1.28+. Please upgrade and retry."
   },
   "poster": {
     "title": "Poster Generator",

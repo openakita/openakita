@@ -107,7 +107,7 @@ export function Sidebar({
     setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const capViews: ViewId[] = ["skills", "mcp", "memory", "scheduler"];
+  const capViews: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
   const monViews: ViewId[] = ["token_stats", "security"];
   const maViews: ViewId[] = ["dashboard", "org_editor", "agent_manager"];
   const stViews: ViewId[] = ["agent_store", "skill_store"];
@@ -180,8 +180,8 @@ export function Sidebar({
                 <IconPlug size={16} /> {!collapsed && <span>MCP {BETA_SUP}</span>}
               </div>
             )}
-            <div className={`navItem ${view === "plugins" ? "navItemActive" : ""}`} onClick={() => onViewChange("plugins")} role="button" tabIndex={0} title="Plugins">
-              <IconPuzzle size={16} /> {!collapsed && <span>Plugins {BETA_SUP}</span>}
+            <div className={`navItem ${view === "plugins" ? "navItemActive" : ""}`} onClick={() => onViewChange("plugins")} role="button" tabIndex={0} title={t("sidebar.plugins")}>
+              <IconPuzzle size={16} /> {!collapsed && <span>{t("sidebar.plugins")} {BETA_SUP}</span>}
             </div>
             <div className={`navItem ${view === "memory" ? "navItemActive" : ""}`} onClick={() => onViewChange("memory")} role="button" tabIndex={0} title={t("sidebar.memory")} style={disabledViews.includes("memory") ? { opacity: 0.4 } : undefined}>
               <IconBrain size={16} /> {!collapsed && <span>{t("sidebar.memory")} {BETA_SUP}</span>}

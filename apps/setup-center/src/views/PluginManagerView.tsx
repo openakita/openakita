@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 interface PluginInfo {
   id: string;
@@ -65,9 +66,9 @@ async function installPlugin(source: string): Promise<any> {
 }
 
 const LEVEL_COLORS: Record<string, string> = {
-  basic: "#22c55e",
-  advanced: "#f59e0b",
-  system: "#ef4444",
+  basic: "var(--ok, #22c55e)",
+  advanced: "var(--warning, #f59e0b)",
+  system: "var(--danger, #ef4444)",
 };
 
 const TYPE_ICONS: Record<string, string> = {
@@ -77,26 +78,34 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 export default function PluginManagerView({ visible }: { visible: boolean }) {
+  const { t } = useTranslation();
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [failed, setFailed] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notAvailable, setNotAvailable] = useState(false);
   const [installUrl, setInstallUrl] = useState("");
   const [installing, setInstalling] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
+    setNotAvailable(false);
     try {
       const data = await fetchPlugins();
       setPlugins(data.plugins || []);
       setFailed(data.failed || {});
     } catch (e: any) {
-      setError(e.message || "Failed to load plugins");
+      const msg = e.message || "";
+      if (msg.includes("404") || msg.includes("Not Found")) {
+        setNotAvailable(true);
+      } else {
+        setError(msg || t("plugins.failedToLoad"));
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (visible) refresh();
@@ -130,103 +139,130 @@ export default function PluginManagerView({ visible }: { visible: boolean }) {
 
   return (
     <div style={{ padding: "24px", maxWidth: 900 }}>
-      <h2 style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-        Plugins
-        <span style={{ fontSize: 12, color: "#888", fontWeight: 400 }}>
-          {plugins.length} installed
+      <h2 style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8, color: "var(--fg)" }}>
+        {t("plugins.title")}
+        <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 400 }}>
+          {t("plugins.installed", { count: plugins.length })}
         </span>
       </h2>
-      <p style={{ color: "#888", fontSize: 13, marginBottom: 20 }}>
-        Manage installed plugins, install from URL, or enable/disable modules.
+      <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 20 }}>
+        {t("plugins.desc")}
       </p>
 
       {/* Install bar */}
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         <input
           type="text"
-          placeholder="URL or path to install plugin..."
+          placeholder={t("plugins.installPlaceholder")}
           value={installUrl}
           onChange={(e) => setInstallUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleInstall()}
+          disabled={notAvailable}
           style={{
             flex: 1,
             padding: "8px 12px",
-            border: "1px solid #333",
+            border: "1px solid var(--line)",
             borderRadius: 6,
-            background: "#1a1a1a",
-            color: "#eee",
+            background: "var(--bg-subtle, var(--panel))",
+            color: "var(--fg)",
             fontSize: 13,
+            outline: "none",
           }}
         />
         <button
           onClick={handleInstall}
-          disabled={installing || !installUrl.trim()}
+          disabled={installing || !installUrl.trim() || notAvailable}
           style={{
             padding: "8px 16px",
             borderRadius: 6,
             border: "none",
-            background: "#2563eb",
+            background: "var(--primary, #2563eb)",
             color: "#fff",
-            cursor: "pointer",
+            cursor: notAvailable ? "not-allowed" : "pointer",
             fontSize: 13,
-            opacity: installing ? 0.6 : 1,
+            opacity: installing || notAvailable ? 0.6 : 1,
           }}
         >
-          {installing ? "Installing..." : "Install"}
+          {installing ? t("plugins.installing") : t("plugins.install")}
         </button>
         <button
           onClick={refresh}
           style={{
             padding: "8px 12px",
             borderRadius: 6,
-            border: "1px solid #333",
+            border: "1px solid var(--line)",
             background: "transparent",
-            color: "#aaa",
+            color: "var(--muted)",
             cursor: "pointer",
             fontSize: 13,
           }}
         >
-          Refresh
+          {t("plugins.refresh")}
         </button>
       </div>
 
+      {notAvailable && (
+        <div style={{
+          padding: "14px 18px",
+          background: "var(--warn-bg, rgba(245, 158, 11, 0.15))",
+          border: "1px solid var(--warning, #f59e0b)",
+          borderRadius: 6,
+          color: "var(--fg)",
+          marginBottom: 16,
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}>
+          {t("plugins.notAvailable")}
+        </div>
+      )}
+
       {error && (
-        <div style={{ padding: "10px 14px", background: "#2d1515", border: "1px solid #5a2020", borderRadius: 6, color: "#f87171", marginBottom: 16, fontSize: 13 }}>
+        <div style={{
+          padding: "10px 14px",
+          background: "var(--err-bg, rgba(239, 68, 68, 0.15))",
+          border: "1px solid var(--danger, #ef4444)",
+          borderRadius: 6,
+          color: "var(--error, #f87171)",
+          marginBottom: 16,
+          fontSize: 13,
+        }}>
           {error}
         </div>
       )}
 
-      {loading ? (
-        <div style={{ color: "#888", padding: 40, textAlign: "center" }}>Loading plugins...</div>
-      ) : plugins.length === 0 && Object.keys(failed).length === 0 ? (
-        <div style={{ color: "#888", padding: 40, textAlign: "center" }}>
-          No plugins installed. Install plugins from URL or place them in <code>data/plugins/</code>.
+      {loading && !notAvailable ? (
+        <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>
+          {t("plugins.loading")}
         </div>
-      ) : (
+      ) : !notAvailable && plugins.length === 0 && Object.keys(failed).length === 0 ? (
+        <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>
+          {t("plugins.noPlugins")}
+        </div>
+      ) : !notAvailable ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {plugins.map((p) => (
             <div
               key={p.id}
               style={{
-                border: "1px solid #2a2a2a",
+                border: "1px solid var(--line)",
                 borderRadius: 8,
                 padding: "14px 18px",
-                background: "#111",
+                background: "var(--card-bg, var(--panel))",
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 18 }}>{TYPE_ICONS[p.type] || "📦"}</span>
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
-                    <div style={{ color: "#888", fontSize: 12 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--fg)" }}>{p.name}</div>
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
                       v{p.version} · {p.category || p.type}
                     </div>
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   {p.status === "failed" && (
-                    <span style={{ color: "#f87171", fontSize: 11 }}>failed</span>
+                    <span style={{ color: "var(--error, #f87171)", fontSize: 11 }}>{t("plugins.failed")}</span>
                   )}
                   {p.permission_level && (
                     <span
@@ -237,7 +273,7 @@ export default function PluginManagerView({ visible }: { visible: boolean }) {
                         fontSize: 11,
                         fontWeight: 600,
                         color: "#fff",
-                        background: LEVEL_COLORS[p.permission_level] || "#666",
+                        background: LEVEL_COLORS[p.permission_level] || "var(--muted)",
                       }}
                     >
                       {p.permission_level}
@@ -248,33 +284,33 @@ export default function PluginManagerView({ visible }: { visible: boolean }) {
                     style={{
                       padding: "4px 10px",
                       borderRadius: 4,
-                      border: "1px solid #333",
+                      border: "1px solid var(--line)",
                       background: "transparent",
-                      color: p.enabled === false ? "#22c55e" : "#aaa",
+                      color: p.enabled === false ? "var(--ok, #22c55e)" : "var(--muted)",
                       cursor: "pointer",
                       fontSize: 12,
                     }}
                   >
-                    {p.enabled === false ? "Enable" : "Disable"}
+                    {p.enabled === false ? t("plugins.enable") : t("plugins.disable")}
                   </button>
                   <button
                     onClick={() => handleAction(p.id, "delete")}
                     style={{
                       padding: "4px 10px",
                       borderRadius: 4,
-                      border: "1px solid #5a2020",
+                      border: "1px solid var(--danger, #ef4444)",
                       background: "transparent",
-                      color: "#f87171",
+                      color: "var(--error, #f87171)",
                       cursor: "pointer",
                       fontSize: 12,
                     }}
                   >
-                    Remove
+                    {t("plugins.remove")}
                   </button>
                 </div>
               </div>
               {p.error && (
-                <div style={{ marginTop: 6, color: "#f87171", fontSize: 12 }}>{p.error}</div>
+                <div style={{ marginTop: 6, color: "var(--error, #f87171)", fontSize: 12 }}>{p.error}</div>
               )}
               {(p.permissions?.length ?? 0) > 0 && (
                 <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -285,9 +321,9 @@ export default function PluginManagerView({ visible }: { visible: boolean }) {
                         padding: "1px 6px",
                         borderRadius: 4,
                         fontSize: 10,
-                        background: "#222",
-                        color: "#999",
-                        border: "1px solid #333",
+                        background: "var(--bg-subtle, var(--panel2))",
+                        color: "var(--muted)",
+                        border: "1px solid var(--line)",
                       }}
                     >
                       {perm}
@@ -300,25 +336,27 @@ export default function PluginManagerView({ visible }: { visible: boolean }) {
 
           {Object.keys(failed).length > 0 && (
             <>
-              <h3 style={{ marginTop: 16, color: "#f87171", fontSize: 14 }}>Failed to Load</h3>
+              <h3 style={{ marginTop: 16, color: "var(--error, #f87171)", fontSize: 14 }}>
+                {t("plugins.failedToLoad")}
+              </h3>
               {Object.entries(failed).map(([id, reason]) => (
                 <div
                   key={id}
                   style={{
-                    border: "1px solid #5a2020",
+                    border: "1px solid var(--danger, #ef4444)",
                     borderRadius: 8,
                     padding: "10px 14px",
-                    background: "#1a0f0f",
+                    background: "var(--err-bg, rgba(239, 68, 68, 0.15))",
                   }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{id}</div>
-                  <div style={{ color: "#f87171", fontSize: 12, marginTop: 4 }}>{reason}</div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "var(--fg)" }}>{id}</div>
+                  <div style={{ color: "var(--error, #f87171)", fontSize: 12, marginTop: 4 }}>{reason}</div>
                 </div>
               ))}
             </>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
