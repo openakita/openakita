@@ -1629,6 +1629,7 @@
     "permDesc": "该插件请求以下权限。基础权限已自动授予，高级和系统权限需手动授权。未授权的权限不会阻止插件加载，但相关功能将被限制。",
     "grantAll": "全部授权",
     "grantAllAndReload": "授权并重新加载",
+    "permAllGranted": "— 已全部授权",
     "openFolder": "打开插件文件夹",
     "export": "导出插件",
     "viewLogs": "查看运行日志",

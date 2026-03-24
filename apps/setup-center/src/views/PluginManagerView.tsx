@@ -591,15 +591,16 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                     {p.status === "failed" && (
                       <span style={{ color: "var(--error, #f87171)", fontSize: 11 }}>{t("plugins.failed")}</span>
                     )}
-                    {hasPending && (
+                    {(p.permissions?.length ?? 0) > 0 && (
                       <button
                         onClick={() => setPermDialog(permDialog === p.id ? null : p.id)}
                         title={t("plugins.permManage")}
                         style={{
                           padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                          border: "1px solid var(--warning, #f59e0b)",
-                          background: permDialog === p.id ? "var(--warn-bg, rgba(245,158,11,0.1))" : "transparent",
-                          color: "var(--warning, #f59e0b)", cursor: "pointer",
+                          border: `1px solid ${hasPending ? "var(--warning, #f59e0b)" : "var(--line)"}`,
+                          background: permDialog === p.id ? "var(--bg-subtle, var(--panel2))" : "transparent",
+                          color: hasPending ? "var(--warning, #f59e0b)" : "var(--muted)",
+                          cursor: "pointer",
                         }}
                       >
                         <IconShield size={14} />
@@ -722,12 +723,19 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                 {permDialog === p.id && (
                   <div style={{
                     marginTop: 10, padding: "14px 16px", borderRadius: 6,
-                    background: "var(--warn-bg, rgba(245,158,11,0.08))",
-                    border: "1px solid var(--warning, #f59e0b)",
+                    background: hasPending
+                      ? "var(--warn-bg, rgba(245,158,11,0.08))"
+                      : "var(--bg-subtle, var(--panel2))",
+                    border: `1px solid ${hasPending ? "var(--warning, #f59e0b)" : "var(--line)"}`,
                   }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: "var(--fg)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                      <IconShield size={14} style={{ color: "var(--warning, #f59e0b)" }} />
+                      <IconShield size={14} style={{ color: hasPending ? "var(--warning, #f59e0b)" : "var(--ok, #22c55e)" }} />
                       {t("plugins.permTitle")}
+                      {!hasPending && (
+                        <span style={{ fontSize: 11, fontWeight: 400, color: "var(--ok, #22c55e)" }}>
+                          {t("plugins.permAllGranted")}
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
                       {t("plugins.permDesc")}
@@ -756,18 +764,20 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                       </tbody>
                     </table>
                     <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
-                        disabled={granting}
-                        style={{
-                          padding: "6px 16px", borderRadius: 4, border: "none",
-                          background: "var(--warning, #f59e0b)", color: "#fff",
-                          cursor: granting ? "not-allowed" : "pointer", fontSize: 12,
-                          opacity: granting ? 0.6 : 1,
-                        }}
-                      >
-                        {granting ? "..." : t("plugins.grantAllAndReload")}
-                      </button>
+                      {hasPending && (
+                        <button
+                          onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
+                          disabled={granting}
+                          style={{
+                            padding: "6px 16px", borderRadius: 4, border: "none",
+                            background: "var(--warning, #f59e0b)", color: "#fff",
+                            cursor: granting ? "not-allowed" : "pointer", fontSize: 12,
+                            opacity: granting ? 0.6 : 1,
+                          }}
+                        >
+                          {granting ? "..." : t("plugins.grantAllAndReload")}
+                        </button>
+                      )}
                       <button
                         onClick={() => setPermDialog(null)}
                         style={{

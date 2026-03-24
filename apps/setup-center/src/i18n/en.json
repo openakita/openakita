@@ -1629,6 +1629,7 @@
     "permDesc": "This plugin requests the following permissions. Basic permissions are auto-granted. Advanced and system permissions require manual authorization. Ungranted permissions won't block the plugin but will limit certain features.",
     "grantAll": "Grant All",
     "grantAllAndReload": "Grant & Reload",
+    "permAllGranted": "— All Granted",
     "openFolder": "Open Plugin Folder",
     "export": "Export Plugin",
     "viewLogs": "View Runtime Logs",
