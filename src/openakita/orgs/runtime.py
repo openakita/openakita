@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 AGENT_CACHE_MAX = 10
 AGENT_CACHE_TTL = 600
+_CIRCUIT_BREAKER_THRESHOLD = 3
 
 _runtime_instance: OrgRuntime | None = None
 
@@ -117,6 +118,8 @@ class OrgRuntime:
         self._org_semaphores: dict[str, asyncio.Semaphore] = {}
 
         self._save_locks: dict[str, asyncio.Lock] = {}
+
+        self._node_consecutive_failures: dict[str, int] = {}
 
         self._started = False
 
@@ -634,6 +637,7 @@ class OrgRuntime:
 
             self._set_node_status(org, node, NodeStatus.IDLE, "task_completed")
             org.total_tasks_completed += 1
+            self._node_consecutive_failures.pop(f"{org.id}:{node.id}", None)
             await self._save_org(org)
             self._heartbeat.record_activity(org.id)
 
@@ -659,10 +663,29 @@ class OrgRuntime:
 
         except Exception as e:
             logger.error(f"[OrgRuntime] Task error on {node.id}: {e}")
-            try:
-                self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
-            except Exception:
-                node.status = NodeStatus.ERROR
+            fail_key = f"{org.id}:{node.id}"
+            self._node_consecutive_failures[fail_key] = (
+                self._node_consecutive_failures.get(fail_key, 0) + 1
+            )
+            if self._node_consecutive_failures[fail_key] >= _CIRCUIT_BREAKER_THRESHOLD:
+                logger.warning(
+                    f"[OrgRuntime] Circuit breaker: {node.role_title} ({node.id}) "
+                    f"failed {self._node_consecutive_failures[fail_key]} times, auto-freezing"
+                )
+                try:
+                    node.status = NodeStatus.FROZEN
+                    node.frozen_by = "circuit_breaker"
+                    node.frozen_reason = (
+                        f"连续失败 {self._node_consecutive_failures[fail_key]} 次，自动冻结"
+                    )
+                    self._set_node_status(org, node, NodeStatus.FROZEN, node.frozen_reason)
+                except Exception:
+                    node.status = NodeStatus.FROZEN
+            else:
+                try:
+                    self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
+                except Exception:
+                    node.status = NodeStatus.ERROR
             try:
                 await self._save_org(org)
             except Exception as save_err:
@@ -675,7 +698,8 @@ class OrgRuntime:
                 pass
             try:
                 await self._broadcast_ws("org:node_status", {
-                    "org_id": org.id, "node_id": node.id, "status": "error",
+                    "org_id": org.id, "node_id": node.id,
+                    "status": "frozen" if node.status == NodeStatus.FROZEN else "error",
                     "current_task": "",
                 })
             except Exception:
@@ -841,6 +865,12 @@ class OrgRuntime:
                 "node_title": node.role_title,
                 "session_id": f"org:{org.id}:node:{node.id}",
             })
+
+        if hasattr(agent, "reasoning_engine"):
+            from ..config import settings as _settings
+            agent.reasoning_engine._force_tool_override = max(
+                1, int(getattr(_settings, "force_tool_call_max_retries", 1))
+            )
 
         self._register_org_tool_handler(agent, org.id, node.id)
 

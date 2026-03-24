@@ -51,6 +51,7 @@ class PatternType(str, Enum):
     PLAN_DRIFT = "plan_drift"
     SIGNATURE_REPEAT = "signature_repeat"
     EXTREME_ITERATIONS = "extreme_iterations"
+    UNPRODUCTIVE_LOOP = "unproductive_loop"
 
 
 @dataclass
@@ -91,6 +92,12 @@ SIGNATURE_REPEAT_TERMINATE = 5
 PLAN_DRIFT_WINDOW = 5
 EXTREME_ITERATION_THRESHOLD = 50
 SELF_CHECK_INTERVAL = 10
+UNPRODUCTIVE_WINDOW = 5
+UNPRODUCTIVE_ADMIN_TOOLS = frozenset({
+    "create_todo", "update_todo_step", "search_memory", "add_memory",
+    "list_directory", "get_plan_status", "create_plan", "update_plan_step",
+    "complete_plan",
+})
 
 
 class RuntimeSupervisor:
@@ -248,6 +255,10 @@ class RuntimeSupervisor:
         extreme_intervention = self._check_extreme_iterations(iteration)
         if extreme_intervention:
             interventions.append(extreme_intervention)
+
+        unproductive_intervention = self._check_unproductive_loop(iteration)
+        if unproductive_intervention:
+            interventions.append(unproductive_intervention)
 
         selfcheck_intervention = self._check_self_check_interval(
             iteration, has_active_plan, plan_current_step,
@@ -486,6 +497,28 @@ class RuntimeSupervisor:
             should_inject_prompt=True,
             prompt_injection=msg,
         )
+
+    def _check_unproductive_loop(self, iteration: int) -> Intervention | None:
+        """检测连续多轮只调用行政/元工具、无实际产出的空转"""
+        if iteration < UNPRODUCTIVE_WINDOW:
+            return None
+        recent = self._tool_call_history[-UNPRODUCTIVE_WINDOW:]
+        if len(recent) < UNPRODUCTIVE_WINDOW:
+            return None
+        if all(entry["tool_name"] in UNPRODUCTIVE_ADMIN_TOOLS for entry in recent):
+            return Intervention(
+                level=InterventionLevel.NUDGE,
+                pattern=PatternType.UNPRODUCTIVE_LOOP,
+                message=f"Last {UNPRODUCTIVE_WINDOW} tool calls are all administrative",
+                should_inject_prompt=True,
+                prompt_injection=(
+                    "[系统提示] 你最近连续多轮都只在调用管理/计划类工具"
+                    "（如 create_todo、search_memory），没有执行任何实质性操作。"
+                    "请立即开始执行具体工作：读取文件、编写代码、调用 API 等。"
+                    "如果任务本身已完成，请直接回复结果。"
+                ),
+            )
+        return None
 
     # ==================== 辅助方法 ====================
 

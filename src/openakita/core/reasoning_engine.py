@@ -48,6 +48,7 @@ from ..llm.converters.tools import PARSE_ERROR_KEY
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
+_MIN_ITERATIONS = 15
 
 
 class DecisionType(Enum):
@@ -532,7 +533,7 @@ class ReasoningEngine:
             "model": self._brain.model,
         })
 
-        max_iterations = settings.max_iterations
+        max_iterations = max(_MIN_ITERATIONS, settings.max_iterations)
 
         # 进度回调辅助（安全调用，忽略异常）
         async def _emit_progress(text: str) -> None:
@@ -572,7 +573,10 @@ class ReasoningEngine:
 
         # ForceToolCall 配置
         im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
-        configured = int(getattr(settings, "force_tool_call_max_retries", 1))
+        configured = int(
+            getattr(self, "_force_tool_override", None)
+            or getattr(settings, "force_tool_call_max_retries", 1)
+        )
         if session_type == "im":
             base_force_retries = max(im_floor, configured)
         else:
@@ -1589,12 +1593,15 @@ class ReasoningEngine:
             state.original_user_messages = [
                 msg for msg in messages if self._is_human_user_message(msg)
             ]
-            max_iterations = settings.max_iterations
+            max_iterations = max(_MIN_ITERATIONS, settings.max_iterations)
             working_messages = list(messages)
 
             # ForceToolCall 配置
             im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
-            configured = int(getattr(settings, "force_tool_call_max_retries", 1))
+            configured = int(
+                getattr(self, "_force_tool_override", None)
+                or getattr(settings, "force_tool_call_max_retries", 1)
+            )
             if session_type == "im":
                 base_force_retries = max(im_floor, configured)
             else:
