@@ -1974,7 +1974,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
       {showPluginOnboard && editingBot?.type === "whatsapp" && (
         <PluginOnboardModal
           pluginId="whatsapp-channel"
-          apiBaseUrl={apiBaseUrl}
+          apiBaseUrl={apiBaseUrl ?? api}
           onboard={{
             type: "qr",
             start_endpoint: "/onboard/start",
