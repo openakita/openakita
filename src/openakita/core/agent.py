@@ -4640,7 +4640,7 @@ NEXT: 建议的下一步（如有）"""
             elif intent_result.force_tool:
                 pass  # None = use default from settings
             else:
-                force_tool_retries = max(0, settings.max_no_tool_retries - 1)
+                force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 1) - 1)
 
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
