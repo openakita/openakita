@@ -33,16 +33,19 @@ interface PluginListResponse {
   failed: Record<string, string>;
 }
 
+interface ConfigProp {
+  type?: string;
+  title?: string;
+  description?: string;
+  default?: any;
+  enum?: string[];
+  items?: { type?: string };
+  "x-visible-when"?: Record<string, string | string[]>;
+}
+
 interface ConfigSchema {
   type?: string;
-  properties?: Record<string, {
-    type?: string;
-    title?: string;
-    description?: string;
-    default?: any;
-    enum?: string[];
-    items?: { type?: string };
-  }>;
+  properties?: Record<string, ConfigProp>;
   required?: string[];
 }
 
@@ -170,13 +173,28 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const [logsContent, setLogsContent] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
 
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
   const apiBaseRef = useRef(httpApiBase);
   apiBaseRef.current = httpApiBase;
 
+  const closeAllPanels = () => {
+    setExpandedId(null);
+    setConfigPanel(null);
+    setPermDialog(null);
+    setLogsPanel(null);
+  };
+
+  const scrollToCard = (pluginId: string) => {
+    requestAnimationFrame(() => {
+      cardRefs.current[pluginId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   const refreshRef = useRef<() => Promise<void>>();
 
-  const doRefresh = useCallback(async () => {
-    setLoading(true);
+  const fetchPlugins = useCallback(async (showSpinner: boolean) => {
+    if (showSpinner) setLoading(true);
     setError("");
     setNotAvailable(false);
     try {
@@ -196,23 +214,27 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     }
   }, [t]);
 
-  refreshRef.current = doRefresh;
+  refreshRef.current = () => fetchPlugins(false);
 
   const mountedRef = useRef(false);
   useEffect(() => {
     if (visible && !mountedRef.current) {
       mountedRef.current = true;
-      doRefresh();
+      fetchPlugins(true);
     }
-  }, [visible, doRefresh]);
+  }, [visible, fetchPlugins]);
 
-  useEffect(() => {
-    if (visible && mountedRef.current) {
-      /* skip: already loaded on mount */
-    }
-  }, [visible]);
+  const updatePluginLocal = (id: string, patch: Partial<PluginInfo>) => {
+    setPlugins((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  };
 
-  const manualRefresh = useCallback(() => doRefresh(), [doRefresh]);
+  const removePluginLocal = (id: string) => {
+    setPlugins((prev) => prev.filter((p) => p.id !== id));
+    setExpandedId((prev) => (prev === id ? null : prev));
+    setConfigPanel((prev) => (prev === id ? null : prev));
+    setPermDialog((prev) => (prev === id ? null : prev));
+    setLogsPanel((prev) => (prev === id ? null : prev));
+  };
 
   const handleAction = async (id: string, action: "enable" | "disable" | "delete") => {
     try {
@@ -222,7 +244,11 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
           ? `${apiBaseRef.current()}/api/plugins/${id}`
           : `${apiBaseRef.current()}/api/plugins/${id}/${action}`;
       await safeFetch(url, { method });
-      await doRefresh();
+      if (action === "delete") {
+        removePluginLocal(id);
+      } else {
+        updatePluginLocal(id, { enabled: action === "enable" });
+      }
     } catch (e: any) {
       setError(e.message);
     }
@@ -239,7 +265,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         body: JSON.stringify({ source: installUrl.trim() }),
       });
       setInstallUrl("");
-      await doRefresh();
+      await fetchPlugins(false);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -252,7 +278,9 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       setExpandedId(null);
       return;
     }
+    closeAllPanels();
     setExpandedId(pluginId);
+    scrollToCard(pluginId);
     if (!readmeCache[pluginId]) {
       try {
         const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/readme`);
@@ -269,8 +297,12 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       setConfigPanel(null);
       return;
     }
+    closeAllPanels();
     setConfigPanel(pluginId);
+    setConfigSchema(null);
+    setConfigValues({});
     setConfigMsg("");
+    scrollToCard(pluginId);
     try {
       const [schemaResp, configResp] = await Promise.all([
         safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/schema`),
@@ -312,8 +344,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ permissions: perms, reload: true }),
       });
-      setPermDialog(null);
-      await doRefresh();
+      await fetchPlugins(false);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -329,7 +360,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ permissions: [perm], reload: true }),
       });
-      await doRefresh();
+      await fetchPlugins(false);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -365,7 +396,9 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       setLogsPanel(null);
       return;
     }
+    closeAllPanels();
     setLogsPanel(pluginId);
+    scrollToCard(pluginId);
     setLogsContent("");
     try {
       const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
@@ -437,7 +470,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
           {installing ? t("plugins.installing") : t("plugins.install")}
         </button>
         <button
-          onClick={manualRefresh}
+          onClick={() => fetchPlugins(false)}
           style={{
             padding: "8px 12px", borderRadius: 6,
             border: "1px solid var(--line)", background: "transparent",
@@ -563,6 +596,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
             return (
               <div
                 key={p.id}
+                ref={(el) => { cardRefs.current[p.id] = el; }}
                 style={{
                   border: `1px solid ${hasPending ? "var(--warning, #f59e0b)" : "var(--line)"}`,
                   borderRadius: 8, padding: "14px 18px",
@@ -609,7 +643,12 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                     )}
                     {(p.permissions?.length ?? 0) > 0 && (
                       <button
-                        onClick={() => setPermDialog(permDialog === p.id ? null : p.id)}
+                        onClick={() => {
+                          if (permDialog === p.id) { setPermDialog(null); return; }
+                          closeAllPanels();
+                          setPermDialog(p.id);
+                          scrollToCard(p.id);
+                        }}
                         title={t("plugins.permManage")}
                         style={{
                           padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
@@ -871,6 +910,15 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                       <>
                         {Object.entries(configSchema.properties).map(([key, prop]) => {
                           const isRequired = configSchema.required?.includes(key);
+                          const visibleWhen = prop["x-visible-when"];
+                          if (visibleWhen) {
+                            const hidden = Object.entries(visibleWhen).some(([depKey, expected]) => {
+                              const cur = configValues[depKey] ?? configSchema.properties?.[depKey]?.default;
+                              if (Array.isArray(expected)) return !expected.includes(cur);
+                              return cur !== expected;
+                            });
+                            if (hidden) return null;
+                          }
                           return (
                             <div key={key} style={{ marginBottom: 12 }}>
                               <label style={{ display: "block", fontSize: 12, color: "var(--fg)", marginBottom: 4, fontWeight: 500 }}>
@@ -933,7 +981,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                                 />
                               ) : (
                                 <input
-                                  type={key.toLowerCase().includes("password") || key.toLowerCase().includes("secret") || key.toLowerCase().includes("key") ? "password" : "text"}
+                                  type={/password|secret|_token$|_key$|^api_key$|^access_token$/i.test(key) ? "password" : "text"}
                                   value={configValues[key] ?? prop.default ?? ""}
                                   placeholder={prop.default != null ? String(prop.default) : ""}
                                   onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.value }))}

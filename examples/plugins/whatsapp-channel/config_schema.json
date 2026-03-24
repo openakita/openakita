@@ -11,24 +11,27 @@
     "phone_number_id": {
       "type": "string",
       "title": "手机号 ID / Phone Number ID",
-      "description": "WhatsApp Business phone number ID from Meta developer portal (Cloud API mode)"
+      "description": "WhatsApp Business phone number ID from Meta developer portal",
+      "x-visible-when": { "mode": "cloud_api" }
     },
     "access_token": {
       "type": "string",
       "title": "访问令牌 / Access Token",
-      "description": "Graph API permanent access token (Cloud API mode)"
+      "description": "Graph API permanent access token",
+      "x-visible-when": { "mode": "cloud_api" }
+    },
+    "api_version": {
+      "type": "string",
+      "title": "API 版本 / API Version",
+      "description": "Meta Graph API version",
+      "default": "v21.0",
+      "x-visible-when": { "mode": "cloud_api" }
     },
     "verify_token": {
       "type": "string",
       "title": "Webhook 验证令牌 / Verify Token",
       "description": "Custom string for webhook verification",
       "default": "openakita-verify"
-    },
-    "api_version": {
-      "type": "string",
-      "title": "API 版本 / API Version",
-      "description": "Meta Graph API version",
-      "default": "v21.0"
     },
     "webhook_port": {
       "type": "integer",
@@ -44,19 +47,22 @@
     "node_path": {
       "type": "string",
       "title": "Node.js 路径 / Node Path",
-      "description": "Path to node executable (Web mode only)",
-      "default": "node"
+      "description": "Path to node executable",
+      "default": "node",
+      "x-visible-when": { "mode": "web" }
     },
     "bridge_port": {
       "type": "integer",
       "title": "Bridge 端口 / Bridge Port",
-      "description": "Baileys bridge HTTP API port (Web mode only)",
-      "default": 9882
+      "description": "Baileys bridge HTTP API port",
+      "default": 9882,
+      "x-visible-when": { "mode": "web" }
     },
     "bridge_data_dir": {
       "type": "string",
       "title": "Bridge 数据目录 / Bridge Data Dir",
-      "description": "Directory for Baileys auth/session data (Web mode only)"
+      "description": "Directory for Baileys auth/session data",
+      "x-visible-when": { "mode": "web" }
     }
   },
   "required": ["mode"]
