@@ -80,6 +80,14 @@ class MCPHandler:
         server = params["server"]
         mcp_tool_name = params["tool_name"]
         arguments = params.get("arguments", {})
+
+        catalog = self.agent.mcp_catalog
+        server_info = catalog.get_server(server) if catalog else None
+        if server_info and not server_info.enabled:
+            return f"❌ MCP 服务器 {server} 已禁用，无法调用"
+        if catalog and hasattr(catalog, "has_server") and not catalog.has_server(server):
+            return f"❌ MCP 服务器 '{server}' 不在此 Agent 的可用范围内"
+
         client = self.agent.mcp_client
 
         auto_connected = False
@@ -102,10 +110,9 @@ class MCPHandler:
     async def _list_servers(self, params: dict) -> str:
         """列出 MCP 服务器及其工具"""
         catalog_servers = self.agent.mcp_catalog.list_servers()
-        client_servers = self.agent.mcp_client.list_servers()
         connected = self.agent.mcp_client.list_connected()
 
-        all_ids = sorted(set(catalog_servers) | set(client_servers))
+        all_ids = sorted(catalog_servers)
 
         if not all_ids:
             return (
@@ -169,7 +176,11 @@ class MCPHandler:
     async def _connect_server(self, params: dict) -> str:
         """连接到 MCP 服务器"""
         server = params["server"]
+        catalog = self.agent.mcp_catalog
         client = self.agent.mcp_client
+
+        if catalog and hasattr(catalog, "has_server") and not catalog.has_server(server):
+            return f"❌ MCP 服务器 '{server}' 不在此 Agent 的可用范围内"
 
         if client.is_connected(server):
             tools = client.list_tools(server)

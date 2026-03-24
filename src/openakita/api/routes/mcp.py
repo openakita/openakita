@@ -67,6 +67,10 @@ class MCPServerAddRequest(BaseModel):
     auto_connect: bool = False
 
 
+class MCPToggleRequest(BaseModel):
+    enabled: bool
+
+
 class MCPConnectRequest(BaseModel):
     server_name: str
 
@@ -109,6 +113,8 @@ async def list_mcp_servers(request: Request):
             "url": server_config.url if server_config else "",
             "command": server_config.command if server_config else "",
             "connected": name in connected,
+            "enabled": catalog_info.enabled if catalog_info else True,
+            "auto_connect": catalog_info.auto_connect if catalog_info else False,
             "tools": [
                 {"name": t.name, "description": t.description}
                 for t in tools
@@ -256,6 +262,46 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     )
 
     return result
+
+
+@router.post("/api/mcp/servers/{server_name}/toggle")
+async def toggle_mcp_server(request: Request, server_name: str, body: MCPToggleRequest):
+    """Toggle a MCP server's enabled state (persisted to SERVER_METADATA.json)."""
+    import json
+    from pathlib import Path
+
+    catalog = _get_mcp_catalog(request)
+    client = _get_mcp_client(request)
+    if not catalog or not client:
+        return {"status": "error", "message": "Agent not initialized"}
+
+    server_info = catalog.get_server(server_name)
+    if not server_info:
+        return {"status": "error", "message": f"MCP server '{server_name}' not found"}
+
+    server_info.enabled = body.enabled
+    catalog.invalidate_cache()
+
+    if server_info.config_dir:
+        metadata_path = Path(server_info.config_dir) / "SERVER_METADATA.json"
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                metadata["enabled"] = body.enabled
+                metadata_path.write_text(
+                    json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception as e:
+                logger.warning("Failed to persist enabled state for %s: %s", server_name, e)
+
+    if not body.enabled and client.is_connected(server_name):
+        await client.disconnect(server_name)
+
+    return {
+        "status": "ok",
+        "server": server_name,
+        "enabled": body.enabled,
+    }
 
 
 @router.delete("/api/mcp/servers/{server_name}")

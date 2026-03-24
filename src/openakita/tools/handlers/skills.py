@@ -199,7 +199,7 @@ class SkillsHandler:
         skill_name = params["skill_name"]
         skill = self.agent.skill_registry.get(skill_name)
 
-        if not skill:
+        if not skill or skill.disabled:
             available = [s.name for s in self.agent.skill_registry.list_all()[:10]]
             hint = f"，当前可用技能: {', '.join(available)}" if available else ""
             return (

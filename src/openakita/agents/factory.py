@@ -26,6 +26,16 @@ _REAP_INTERVAL_SECONDS = 60  # 每分钟检查一次
 # INCLUSIVE 模式下始终保留的基础系统工具。
 # 所有子 Agent（含用户手动创建的）都需要这些工具才能正常工作。
 # 只有浏览器、桌面控制、MCP、定时任务等专用工具需在 profile.skills 显式列出。
+ESSENTIAL_TOOL_NAMES: frozenset[str] = frozenset({
+    "run_shell", "read_file", "write_file", "list_directory",
+    "web_search", "deliver_artifacts", "get_chat_history",
+    "search_memory", "add_memory",
+    "create_todo", "update_todo_step", "get_todo_status", "complete_todo",
+    "list_skills", "get_skill_info",
+    "get_tool_info", "set_task_timeout",
+    "get_image_file", "get_voice_file",
+})
+
 ESSENTIAL_SYSTEM_SKILLS: frozenset[str] = frozenset({
     # 规划（多步任务的核心）
     "create-todo", "update-todo-step", "get-todo-status", "complete-todo",
@@ -62,6 +72,29 @@ class AgentFactory:
         await agent.initialize(start_scheduler=False, lightweight=True)
 
         self._apply_skill_filter(agent, profile)
+        self._apply_tool_filter(agent, profile)
+        self._apply_mcp_filter(agent, profile)
+        await self._apply_plugin_filter(agent, profile)
+
+        # Sync PromptAssembler catalog references after filtering.
+        # _apply_tool_filter / _apply_mcp_filter may replace agent.tool_catalog /
+        # mcp_catalog with new objects; the PromptAssembler still holds the old refs.
+        pa = getattr(agent, "prompt_assembler", None)
+        if pa is not None:
+            pa._tool_catalog = agent.tool_catalog
+            pa._mcp_catalog = agent.mcp_catalog
+
+        # Rebuild the initial system prompt so it reflects the filtered catalogs.
+        needs_rebuild = (
+            (profile.tools_mode != "all" and profile.tools)
+            or (profile.mcp_mode != "all" and profile.mcp_servers)
+            or (profile.skills_mode != SkillsMode.ALL and profile.skills)
+        )
+        if needs_rebuild and hasattr(agent, "_context"):
+            base_prompt = agent.identity.get_system_prompt()
+            agent._context.system = agent._build_system_prompt(
+                base_prompt, use_compiled=True,
+            )
 
         if profile.custom_prompt:
             agent._custom_prompt_suffix = profile.custom_prompt
@@ -73,6 +106,9 @@ class AgentFactory:
             f"AgentFactory created: {profile.id} "
             f"(skills_mode={profile.skills_mode.value}, "
             f"skills={profile.skills}, "
+            f"tools_mode={profile.tools_mode}, "
+            f"mcp_mode={profile.mcp_mode}, "
+            f"plugins_mode={profile.plugins_mode}, "
             f"preferred_endpoint={profile.preferred_endpoint or 'auto'})"
         )
         return agent
@@ -148,6 +184,88 @@ class AgentFactory:
             agent.skill_catalog.invalidate_cache()
             agent.skill_catalog.generate_catalog()
             agent._update_skill_tools()
+
+    @staticmethod
+    def _apply_tool_filter(agent: Agent, profile: AgentProfile) -> None:
+        """按 profile.tools + tools_mode 过滤 Agent 的工具列表。
+
+        tools 字段支持类目名（如 "research"）和具体工具名的混合。
+        INCLUSIVE 模式下 ESSENTIAL_TOOL_NAMES 始终保留。
+        """
+        if profile.tools_mode == "all" or not profile.tools:
+            return
+
+        from ..orgs.tool_categories import expand_tool_categories
+
+        specified = expand_tool_categories(profile.tools)
+
+        if profile.tools_mode == "inclusive":
+            agent._tools = [
+                t for t in agent._tools
+                if t["name"] in specified or t["name"] in ESSENTIAL_TOOL_NAMES
+            ]
+        elif profile.tools_mode == "exclusive":
+            agent._tools = [
+                t for t in agent._tools
+                if t["name"] not in specified or t["name"] in ESSENTIAL_TOOL_NAMES
+            ]
+
+        from ..tools.catalog import ToolCatalog
+        agent.tool_catalog = ToolCatalog(agent._tools)
+        logger.info(
+            f"Tool filter applied: mode={profile.tools_mode}, "
+            f"remaining={len(agent._tools)} tools"
+        )
+
+    @staticmethod
+    def _apply_mcp_filter(agent: Agent, profile: AgentProfile) -> None:
+        """按 profile.mcp_servers + mcp_mode 过滤 Agent 的 MCP catalog。
+
+        创建一个 filtered clone 替换 agent.mcp_catalog，
+        使 call_mcp_tool handler 只能访问 clone 中的 server。
+        """
+        if profile.mcp_mode == "all" or not profile.mcp_servers:
+            return
+
+        catalog = getattr(agent, "mcp_catalog", None)
+        if catalog is None or not hasattr(catalog, "clone_filtered"):
+            return
+
+        filtered = catalog.clone_filtered(profile.mcp_servers, mode=profile.mcp_mode)
+        agent.mcp_catalog = filtered
+        logger.info(
+            f"MCP filter applied: mode={profile.mcp_mode}, "
+            f"servers={profile.mcp_servers}, "
+            f"remaining={filtered.server_count} servers"
+        )
+
+    @staticmethod
+    async def _apply_plugin_filter(agent: Agent, profile: AgentProfile) -> None:
+        """按 profile.plugins + plugins_mode 过滤 Agent 的插件。
+
+        对不应保留的插件执行 unload，清理其 hooks、tools、channels。
+        """
+        if profile.plugins_mode == "all" or not profile.plugins:
+            return
+
+        pm = getattr(agent, "_plugin_manager", None)
+        if pm is None:
+            return
+
+        specified = set(profile.plugins)
+        loaded_ids = list(pm.loaded_plugins.keys())
+
+        for plugin_id in loaded_ids:
+            should_keep = (
+                (profile.plugins_mode == "inclusive" and plugin_id in specified)
+                or (profile.plugins_mode == "exclusive" and plugin_id not in specified)
+            )
+            if not should_keep:
+                try:
+                    await pm.unload_plugin(plugin_id)
+                    logger.info(f"Plugin filter: unloaded {plugin_id}")
+                except Exception as e:
+                    logger.warning(f"Plugin filter: failed to unload {plugin_id}: {e}")
 
 
 class _PoolEntry:

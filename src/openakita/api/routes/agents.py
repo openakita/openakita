@@ -74,6 +74,12 @@ class ProfileCreateRequest(BaseModel):
     color: str = Field("#6b7280", max_length=20)
     skills: list[str] = Field(default_factory=list)
     skills_mode: str = Field("all")
+    tools: list[str] = Field(default_factory=list)
+    tools_mode: str = Field("all")
+    mcp_servers: list[str] = Field(default_factory=list)
+    mcp_mode: str = Field("all")
+    plugins: list[str] = Field(default_factory=list)
+    plugins_mode: str = Field("all")
     custom_prompt: str = Field("", max_length=5000)
     category: str = Field("", max_length=30)
     preferred_endpoint: str | None = Field(None, max_length=200)
@@ -86,6 +92,12 @@ class ProfileUpdateRequest(BaseModel):
     color: str | None = Field(None, max_length=20)
     skills: list[str] | None = None
     skills_mode: str | None = None
+    tools: list[str] | None = None
+    tools_mode: str | None = None
+    mcp_servers: list[str] | None = None
+    mcp_mode: str | None = None
+    plugins: list[str] | None = None
+    plugins_mode: str | None = None
     custom_prompt: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=30)
     preferred_endpoint: str | None = Field(None, max_length=200)
@@ -374,6 +386,15 @@ async def create_agent_profile(body: ProfileCreateRequest):
     if store.exists(body.id):
         raise HTTPException(status_code=400, detail=f"Profile '{body.id}' already exists")
 
+    valid_mode_values = {"all", "inclusive", "exclusive"}
+    for field_name in ("tools_mode", "mcp_mode", "plugins_mode"):
+        val = getattr(body, field_name)
+        if val not in valid_mode_values:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name} must be one of: {', '.join(valid_mode_values)}",
+            )
+
     profile = AgentProfile(
         id=body.id,
         name=body.name,
@@ -381,6 +402,12 @@ async def create_agent_profile(body: ProfileCreateRequest):
         type=AgentType.CUSTOM,
         skills=body.skills,
         skills_mode=SkillsMode(body.skills_mode),
+        tools=body.tools,
+        tools_mode=body.tools_mode,
+        mcp_servers=body.mcp_servers,
+        mcp_mode=body.mcp_mode,
+        plugins=body.plugins,
+        plugins_mode=body.plugins_mode,
         custom_prompt=body.custom_prompt,
         icon=body.icon,
         color=body.color,

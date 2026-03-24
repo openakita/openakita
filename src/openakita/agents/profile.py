@@ -62,6 +62,18 @@ class AgentProfile:
     skills: list[str] = field(default_factory=list)
     skills_mode: SkillsMode = SkillsMode.ALL
 
+    # 工具控制（类目名或具体工具名，复用 orgs/tool_categories.py 的 TOOL_CATEGORIES）
+    tools: list[str] = field(default_factory=list)
+    tools_mode: str = "all"  # "all" | "inclusive" | "exclusive"
+
+    # MCP 服务器控制
+    mcp_servers: list[str] = field(default_factory=list)
+    mcp_mode: str = "all"  # "all" | "inclusive" | "exclusive"
+
+    # 插件控制
+    plugins: list[str] = field(default_factory=list)
+    plugins_mode: str = "all"  # "all" | "inclusive" | "exclusive"
+
     # 自定义提示词（追加到系统提示词中）
     custom_prompt: str = ""
 
@@ -234,6 +246,7 @@ class ProfileStore:
     # 仅用于判断"用户是否实质修改了系统 Agent"的字段集（hidden/visibility 不算）
     _CUSTOMIZATION_FIELDS = frozenset({
         "name", "description", "icon", "color", "skills", "skills_mode",
+        "tools", "tools_mode", "mcp_servers", "mcp_mode", "plugins", "plugins_mode",
         "custom_prompt", "category", "fallback_profile_id", "preferred_endpoint",
     })
 

@@ -774,56 +774,35 @@ class OrgRuntime:
 
         agent = await factory.create(profile)
 
-        from .tool_categories import expand_tool_categories
-
-        _KEEP = frozenset({
-            "get_tool_info",
-            "create_todo",
-            "update_todo_step",
-            "get_todo_status",
-            "complete_todo",
-        })
-
         # Free-form delegation tools conflict with org_delegate_task
         _ORG_CONFLICT_TOOLS = frozenset({
             "delegate_to_agent", "spawn_agent",
             "delegate_parallel", "create_agent",
         })
 
-        allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
+        # Add org-specific collaboration tools and remove conflicting delegation tools
+        if hasattr(agent, "_tools"):
+            agent._tools = [
+                t for t in agent._tools if t.get("name", "") not in _ORG_CONFLICT_TOOLS
+            ]
+            existing_names = {t["name"] for t in agent._tools}
+            for t in ORG_NODE_TOOLS:
+                if t["name"] not in existing_names:
+                    agent._tools.append(t)
 
         if hasattr(agent, "tool_catalog"):
+            for name in _ORG_CONFLICT_TOOLS:
+                agent.tool_catalog.remove_tool(name)
             for tool_def in ORG_NODE_TOOLS:
                 agent.tool_catalog.add_tool(tool_def)
-            non_org = [
-                n for n in agent.tool_catalog.list_tools()
-                if not n.startswith("org_") and n not in _KEEP
-                and n not in allowed_external
-            ]
-            for n in non_org:
-                agent.tool_catalog.remove_tool(n)
 
-        if hasattr(agent, "_tools"):
-            seen: set[str] = set()
-            filtered: list[dict] = []
-            for t in agent._tools:
-                name = t.get("name", "")
-                if (name.startswith("org_") or name in _KEEP
-                        or name in allowed_external) and name not in seen:
-                    seen.add(name)
-                    filtered.append(t)
-            for t in ORG_NODE_TOOLS:
-                name = t["name"]
-                if name not in seen:
-                    seen.add(name)
-                    filtered.append(t)
-            agent._tools = filtered
-
-        _MCP_TOOL_NAMES = {"call_mcp_tool", "list_mcp_servers", "get_mcp_instructions"}
-        if node.mcp_servers and (
-            "mcp" in (node.external_tools or []) or _MCP_TOOL_NAMES & allowed_external
-        ):
-            self._connect_node_mcp_servers(agent, node.mcp_servers)
+        # Connect node-specific MCP servers if configured
+        if node.mcp_servers:
+            from .tool_categories import expand_tool_categories
+            _MCP_TOOL_NAMES = {"call_mcp_tool", "list_mcp_servers", "get_mcp_instructions"}
+            allowed_external = expand_tool_categories(node.external_tools)
+            if "mcp" in (node.external_tools or []) or _MCP_TOOL_NAMES & allowed_external:
+                self._connect_node_mcp_servers(agent, node.mcp_servers)
 
         self._override_system_prompt_for_org(agent, org_context_prompt)
 
@@ -919,6 +898,13 @@ class OrgRuntime:
             ext_section = "\n".join(ext_tool_lines)
             parts.append(f"## 外部执行工具\n\n{ext_section}")
 
+        # MCP server catalog for org nodes with MCP access
+        mcp_catalog = getattr(agent, "mcp_catalog", None)
+        if mcp_catalog and mcp_catalog.server_count > 0:
+            mcp_text = mcp_catalog.get_catalog(refresh=True)
+            if mcp_text and "No MCP servers" not in mcp_text and "disabled" not in mcp_text:
+                parts.append(mcp_text.strip())
+
         parts.append(
             "参数带 * 为必填。用 get_tool_info(tool_name) 可查看工具完整参数。"
         )
@@ -965,6 +951,9 @@ class OrgRuntime:
         """Build an AgentProfile-like object for factory.create()."""
         from openakita.agents.profile import AgentProfile, SkillsMode
 
+        node_tools = node.external_tools or []
+        node_mcp = node.mcp_servers or []
+
         if node.agent_profile_id:
             try:
                 base = self._get_shared_profile(node.agent_profile_id)
@@ -976,6 +965,10 @@ class OrgRuntime:
                         custom_prompt=org_prompt,
                         skills=node.skills if node.skills else base.skills,
                         skills_mode=SkillsMode(node.skills_mode) if node.skills_mode != "all" else base.skills_mode,
+                        tools=node_tools if node_tools else base.tools,
+                        tools_mode="inclusive" if node_tools else base.tools_mode,
+                        mcp_servers=node_mcp if node_mcp else base.mcp_servers,
+                        mcp_mode="inclusive" if node_mcp else base.mcp_mode,
                         preferred_endpoint=node.preferred_endpoint or base.preferred_endpoint,
                     )
                     return profile
@@ -988,6 +981,10 @@ class OrgRuntime:
             custom_prompt=org_prompt,
             skills=node.skills,
             skills_mode=SkillsMode(node.skills_mode) if node.skills_mode != "all" else SkillsMode.ALL,
+            tools=node_tools,
+            tools_mode="inclusive" if node_tools else "all",
+            mcp_servers=node_mcp,
+            mcp_mode="inclusive" if node_mcp else "all",
             preferred_endpoint=node.preferred_endpoint,
         )
 

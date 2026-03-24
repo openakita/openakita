@@ -354,7 +354,8 @@ class SkillRegistry:
         context_lower = context.lower()
 
         for skill in self._skills.values():
-            # 跳过禁用自动调用的技能
+            if skill.disabled:
+                continue
             if skill.disable_model_invocation:
                 continue
 

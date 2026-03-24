@@ -145,7 +145,7 @@ MEDIUM_CTX_EXTRA_TOOLS = {
     "add_memory", "search_memory", "get_memory_stats",
     "list_skills", "get_skill_info", "run_skill_script",
     "web_search", "browser_navigate",
-    "call_mcp_tool", "list_mcp_tools",
+    "call_mcp_tool", "list_mcp_servers",
     "enable_thinking",
     "glob", "delete_file",
 }
@@ -1511,6 +1511,9 @@ class Agent:
 
             for server in self.mcp_catalog.servers:
                 if not server.identifier:
+                    continue
+                if not server.enabled:
+                    logger.debug("Skipping disabled MCP server: %s", server.identifier)
                     continue
                 transport = server.transport or "stdio"
                 if transport == "stdio" and not server.command:

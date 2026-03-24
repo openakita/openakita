@@ -24,6 +24,13 @@ class PluginErrorTracker:
     def __init__(self) -> None:
         self._errors: dict[str, list[dict]] = defaultdict(list)
         self._disabled: set[str] = set()
+        self._on_auto_disable: Callable[[str], None] | None = None
+
+    def set_auto_disable_callback(
+        self, callback: Callable[[str], None]
+    ) -> None:
+        """Set a callback invoked when a plugin is auto-disabled (for tool cleanup)."""
+        self._on_auto_disable = callback
 
     def record_error(
         self, plugin_id: str, context: str, error: str
@@ -38,6 +45,14 @@ class PluginErrorTracker:
 
         if len(recent) >= MAX_CONSECUTIVE_ERRORS:
             self._disabled.add(plugin_id)
+            if self._on_auto_disable:
+                try:
+                    self._on_auto_disable(plugin_id)
+                except Exception as e:
+                    logger.warning(
+                        "Auto-disable callback failed for plugin '%s': %s",
+                        plugin_id, e,
+                    )
             return True
         return False
 

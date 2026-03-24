@@ -44,6 +44,7 @@ class MCPServerInfo:
     url: str = ""  # streamable_http / sse 模式使用
     headers: dict[str, str] = field(default_factory=dict)
     auto_connect: bool = False
+    enabled: bool = True  # per-server 启用/禁用，默认启用（向后兼容）
     config_dir: str = ""  # 配置文件所在目录（用作 stdio 的 cwd 回退）
 
 
@@ -213,6 +214,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
             url = metadata.get("url", "")
             headers = _resolve_headers(metadata.get("headers") or {})
             auto_connect = metadata.get("autoConnect", False)
+            enabled = metadata.get("enabled", True)
 
             # 加载工具
             tools = []
@@ -241,6 +243,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
                 url=url,
                 headers=headers,
                 auto_connect=auto_connect,
+                enabled=enabled,
                 config_dir=str(server_dir),
             )
 
@@ -268,17 +271,20 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         """
         生成 MCP 工具清单
 
-        包含所有服务器——有工具的展示工具列表，无工具的提示用户连接以发现。
+        只包含 enabled=True 的服务器。有工具的展示工具列表，无工具的提示用户连接以发现。
 
         Returns:
             格式化的 MCP 清单字符串
         """
-        if not self._servers:
+        enabled_servers = [s for s in self._servers if s.enabled]
+        if not enabled_servers:
+            if self._servers:
+                return "\n## MCP Servers\n\nAll MCP servers are disabled.\n"
             return "\n## MCP Servers\n\nNo MCP servers configured.\n"
 
         server_sections = []
 
-        for server in self._servers:
+        for server in enabled_servers:
             if server.tools:
                 tool_entries = []
                 for tool in server.tools:
@@ -307,7 +313,10 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         catalog = self.CATALOG_TEMPLATE.format(server_list=server_list)
         self._cached_catalog = catalog
 
-        logger.info(f"Generated MCP catalog with {len(self._servers)} servers")
+        logger.info(
+            f"Generated MCP catalog with {len(enabled_servers)} enabled servers "
+            f"(total: {len(self._servers)})"
+        )
         return catalog
 
     def get_catalog(self, refresh: bool = False) -> str:
@@ -352,6 +361,51 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
     def list_servers(self) -> list[str]:
         """列出所有服务器标识符"""
         return [s.identifier for s in self._servers]
+
+    def list_enabled_servers(self) -> list[str]:
+        """列出所有已启用的服务器标识符"""
+        return [s.identifier for s in self._servers if s.enabled]
+
+    def get_server(self, identifier: str) -> MCPServerInfo | None:
+        """按 identifier 获取服务器信息"""
+        for s in self._servers:
+            if s.identifier == identifier:
+                return s
+        return None
+
+    def has_server(self, identifier: str) -> bool:
+        """检查指定 server 是否在 catalog 中（用于调用隔离校验）"""
+        return any(s.identifier == identifier for s in self._servers)
+
+    def set_server_enabled(self, identifier: str, enabled: bool) -> bool:
+        """设置服务器启用/禁用状态并使缓存失效。返回是否找到。"""
+        for s in self._servers:
+            if s.identifier == identifier:
+                s.enabled = enabled
+                self._cached_catalog = None
+                return True
+        return False
+
+    def clone_filtered(
+        self, server_ids: list[str], *, mode: str = "inclusive"
+    ) -> "MCPCatalog":
+        """创建一个过滤后的 catalog 副本（用于子 Agent per-profile MCP 隔离）。
+
+        Args:
+            server_ids: 要包含或排除的服务器 ID 列表
+            mode: "inclusive" 只保留列表中的; "exclusive" 排除列表中的
+        """
+        clone = MCPCatalog(self.mcp_config_dir)
+        id_set = set(server_ids)
+        for s in self._servers:
+            if not s.enabled:
+                continue
+            if (
+                (mode == "inclusive" and s.identifier in id_set)
+                or (mode == "exclusive" and s.identifier not in id_set)
+            ):
+                clone._servers.append(s)
+        return clone
 
     def list_tools(self, server_id: str | None = None) -> list[MCPToolInfo]:
         """列出工具"""

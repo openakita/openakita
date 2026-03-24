@@ -45,6 +45,7 @@ class PluginManager:
 
         self._state = PluginState.load(self._state_path)
         self._error_tracker = PluginErrorTracker()
+        self._error_tracker.set_auto_disable_callback(self._on_plugin_auto_disabled)
         self._hook_registry = HookRegistry(error_tracker=self._error_tracker)
 
         self._loaded: dict[str, _LoadedPlugin] = {}
@@ -453,6 +454,29 @@ class PluginManager:
         self._state.enable(plugin_id)
         self._error_tracker.reset(plugin_id)
         self._save_state()
+        if plugin_id not in self._loaded:
+            try:
+                await self.reload_plugin(plugin_id)
+            except Exception as e:
+                logger.warning("Failed to auto-reload plugin '%s' on enable: %s", plugin_id, e)
+
+    def _on_plugin_auto_disabled(self, plugin_id: str) -> None:
+        """Callback when PluginErrorTracker auto-disables a plugin.
+
+        Cleans up registered tools from the agent's tool list/catalog.
+        """
+        loaded = self._loaded.get(plugin_id)
+        if loaded and hasattr(loaded.api, "_cleanup_tools"):
+            try:
+                loaded.api._cleanup_tools()
+                logger.info(
+                    "Auto-disable: cleaned up tools for plugin '%s'", plugin_id
+                )
+            except Exception as e:
+                logger.warning(
+                    "Auto-disable: tool cleanup failed for plugin '%s': %s",
+                    plugin_id, e,
+                )
 
     # --- State ---
 

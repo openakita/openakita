@@ -510,6 +510,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
             "jimliu/baoyu-skills@baoyu-url-to-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
+        tools=["browser", "research"],
+        tools_mode="inclusive",
         custom_prompt=(
             "你是网络浏览与信息采集专家。擅长搜索信息、浏览网页、截图取证。"
             "对于不需要网络操作的任务，建议切换到通用助手。"
@@ -639,12 +641,20 @@ def deploy_system_presets(store: ProfileStore) -> int:
                 needs_upgrade = (
                     sorted(existing.skills) != sorted(preset.skills)
                     or existing.category != preset.category
+                    or sorted(existing.tools) != sorted(preset.tools)
+                    or existing.tools_mode != preset.tools_mode
                 )
                 if needs_upgrade:
                     data = existing.to_dict()
                     data["skills"] = preset.skills
                     data["skills_mode"] = preset.skills_mode.value
                     data["category"] = preset.category
+                    data["tools"] = preset.tools
+                    data["tools_mode"] = preset.tools_mode
+                    data["mcp_servers"] = preset.mcp_servers
+                    data["mcp_mode"] = preset.mcp_mode
+                    data["plugins"] = preset.plugins
+                    data["plugins_mode"] = preset.plugins_mode
                     updated = AgentProfile.from_dict(data)
                     store._cache[preset.id] = updated
                     store._persist(updated)
