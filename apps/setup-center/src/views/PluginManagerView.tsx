@@ -37,6 +37,7 @@ interface ConfigSchema {
   type?: string;
   properties?: Record<string, {
     type?: string;
+    title?: string;
     description?: string;
     default?: any;
     enum?: string[];
@@ -764,8 +765,9 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                           return (
                             <div key={key} style={{ marginBottom: 12 }}>
                               <label style={{ display: "block", fontSize: 12, color: "var(--fg)", marginBottom: 4, fontWeight: 500 }}>
-                                {key}
+                                {prop.title || key}
                                 {isRequired && <span style={{ color: "var(--danger, #ef4444)", marginLeft: 2 }}>*</span>}
+                                {prop.title && <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 4, fontWeight: 400 }}>({key})</span>}
                               </label>
                               {prop.description && (
                                 <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
@@ -792,7 +794,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                                     checked={!!configValues[key]}
                                     onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.checked }))}
                                   />
-                                  {key}
+                                  {prop.title || key}
                                 </label>
                               ) : prop.type === "integer" || prop.type === "number" ? (
                                 <input

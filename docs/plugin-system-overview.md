@@ -237,30 +237,36 @@ my-plugin/
   "properties": {
     "vault_path": {
       "type": "string",
+      "title": "Vault 路径",
       "description": "Obsidian Vault 目录路径"
     },
     "api_key": {
       "type": "string",
-      "description": "API 密钥（前端自动隐藏输入）"
+      "title": "API 密钥",
+      "description": "前端自动隐藏输入"
     },
     "max_results": {
       "type": "integer",
+      "title": "最大结果数",
       "description": "最大返回结果数",
       "default": 10
     },
     "enabled_features": {
       "type": "array",
       "items": { "type": "string" },
+      "title": "启用功能",
       "description": "启用的功能列表",
       "default": ["search", "index"]
     },
     "mode": {
       "type": "string",
       "enum": ["fast", "balanced", "thorough"],
-      "description": "搜索模式"
+      "title": "搜索模式",
+      "description": "选择搜索策略"
     },
     "debug": {
       "type": "boolean",
+      "title": "调试模式",
       "description": "是否启用调试日志",
       "default": false
     }
@@ -268,6 +274,16 @@ my-plugin/
   "required": ["vault_path"]
 }
 ```
+
+### 支持的字段属性
+
+| 属性 | 说明 | 示例 |
+|------|------|------|
+| `title` | 字段显示名（支持中文），优先于 key 作为标签显示 | `"title": "Vault 路径"` |
+| `description` | 字段说明提示文字 | `"description": "Obsidian Vault 目录路径"` |
+| `default` | 默认值 | `"default": 500` |
+| `enum` | 枚举选项，渲染为下拉选择 | `"enum": ["fast", "balanced"]` |
+| `type` | 字段类型（见下表） | `"type": "string"` |
 
 ### 支持的字段类型
 
@@ -281,8 +297,9 @@ my-plugin/
 
 ### 前端行为
 
-- **📖 文档按钮**：有 `README.md` 的插件在列表中显示文档按钮，点击展开查看
-- **⚙️ 配置按钮**：有 `config_schema.json` 的插件显示配置按钮，点击展开配置表单
+- 有 `README.md` 的插件在列表中显示文档按钮，点击展开查看
+- 有 `config_schema.json` 的插件显示配置按钮，点击展开配置表单
+- 有 `title` 时优先显示 `title` 作为标签，key 名以灰色小字显示在旁边
 - `required` 字段在标签后显示红色 `*` 标记
 - 配置修改后点"保存"写入 `config.json`，插件通过 `api.get_config()` 读取
 

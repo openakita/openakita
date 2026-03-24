@@ -3,22 +3,26 @@
   "properties": {
     "vault_path": {
       "type": "string",
+      "title": "Vault 路径",
       "description": "Obsidian Vault 目录路径 (Path to Obsidian vault directory)"
     },
     "exclude_patterns": {
       "type": "array",
       "items": {"type": "string"},
+      "title": "排除规则",
       "description": "排除的目录/文件 glob 模式，如 ['.trash', '.obsidian', 'templates']",
       "default": [".trash", ".obsidian", "templates"]
     },
     "max_file_size_kb": {
       "type": "integer",
-      "description": "最大文件大小 (KB)，超过跳过",
+      "title": "最大文件大小 (KB)",
+      "description": "超过此大小的文件将被跳过",
       "default": 500
     },
     "excerpt_length": {
       "type": "integer",
-      "description": "搜索结果摘要长度（字符数）",
+      "title": "摘要长度",
+      "description": "搜索结果摘要的字符数",
       "default": 600
     }
   },
