@@ -1,7 +1,7 @@
 {
   "name": "openakita-setup-center",
   "private": true,
-  "version": "1.27.3",
+  "version": "1.27.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
