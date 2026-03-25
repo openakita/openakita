@@ -720,35 +720,29 @@ journalctl -u openakita -f
 
 ### 使用 Docker
 
-```dockerfile
-FROM python:3.11-slim
+仓库自带 `docker/Dockerfile`，会在构建阶段自动完成以下工作：
 
-WORKDIR /app
+- 编译 `apps/setup-center` 的 Web 前端并打进 Python wheel
+- 编译 `docs-site` 用户文档，避免 `pyproject.toml` 的 `force-include` 在干净环境下失败
+- 用最终 wheel 安装运行时镜像，不依赖宿主机预先生成 `dist-web`
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-
-# 安装 Python 依赖
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[feishu]"
-
-# 复制项目文件
-COPY . .
-
-# 安装 Playwright
-RUN playwright install chromium && playwright install-deps chromium
-
-CMD ["openakita", "serve"]
-```
+构建镜像时直接使用仓库根目录作为 context：
 
 ```bash
-docker build -t openakita .
+docker build -f docker/Dockerfile -t openakita .
 docker run -d \
   --name openakita \
+  -p 18900:18900 \
   -v $(pwd)/.env:/app/.env \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/identity:/app/identity \
   openakita
+```
+
+如果使用 Compose，可直接运行：
+
+```bash
+docker compose -f docker/docker-compose.yml up --build -d
 ```
 
 ### 使用 nohup（简单后台运行）

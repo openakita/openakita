@@ -235,3 +235,7 @@ ppt_build/
 # Cursor commit message drafts
 .commitmsg
 .commitmsg_responses
+
+# docker compose
+docker/data
+docker/identity
