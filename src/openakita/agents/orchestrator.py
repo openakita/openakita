@@ -492,13 +492,13 @@ class AgentOrchestrator:
         last_fingerprint: tuple[int, str, int] = (-1, "", 0)
         last_progress_time = start
 
-        state_key = f"{session.id}:{agent_profile_id}"
+        state_key = f"{session.chat_id}:{agent_profile_id}"
         existing_state = self._sub_agent_states.get(state_key, {})
         self._sub_agent_states[state_key] = {
             **existing_state,
             "agent_id": agent_profile_id,
             "profile_id": profile.id,
-            "session_id": str(session.id),
+            "session_id": session.chat_id,
             "status": "starting",
             "iteration": 0,
             "tools_executed": [],
@@ -672,10 +672,6 @@ class AgentOrchestrator:
         if state is None:
             return []
         task = state.get_task_for_session(session_id)
-        if task is None and session is not None:
-            sk = getattr(session, "session_key", None)
-            if sk and sk != session_id:
-                task = state.get_task_for_session(sk)
         if task is None:
             task = state.current_task
         if task is None:
@@ -685,16 +681,15 @@ class AgentOrchestrator:
     def get_sub_agent_states(self, session_id: str) -> list[dict]:
         """Return live sub-agent states for the given conversation.
 
-        Accepts either a full session.id or a chat_id (conversation_id).
-        The state keys are stored as '{session.id}:{agent_id}', where
-        session.id = '{channel}_{chat_id}_{timestamp}_{uuid}'.
-        Frontend passes the raw chat_id, so we match any key whose
-        session portion contains the given id.
+        State keys are stored as ``'{chat_id}:{agent_id}'``.
+        The *session_id* parameter should be the raw ``chat_id``
+        (same value the pool uses as its session key).
+        Matching is exact on the ``chat_id`` portion of the key.
         """
         result = []
         for key, state in list(self._sub_agent_states.items()):
             sid_part = key.split(":")[0] if ":" in key else key
-            if sid_part == session_id or session_id in sid_part:
+            if sid_part == session_id:
                 entry = dict(state)
                 profile_id = entry.get("profile_id", "")
                 if self._profile_store:
@@ -703,8 +698,6 @@ class AgentOrchestrator:
                         entry["name"] = profile.get_display_name()
                         entry["icon"] = profile.icon or "🤖"
                     else:
-                        # Profile may have been cleaned up (ephemeral);
-                        # prefer the name/icon already stored in state
                         entry.setdefault("name", profile_id)
                         entry.setdefault("icon", "🤖")
                 else:
@@ -720,17 +713,13 @@ class AgentOrchestrator:
         """Return (iteration, status, tools_count) as a composite progress signal.
 
         Any change in this tuple means the agent is making progress.
-        Tries session.id first, then session.session_key (used by
-        ReasoningEngine as the task storage key), then current_task.
+        Task key now equals the session_id passed to chat_with_session,
+        so exact lookup should always succeed.  Falls back to current_task.
         """
         state = getattr(agent, "agent_state", None)
         if state is None:
             return (-1, "", 0)
         task = state.get_task_for_session(session_id)
-        if task is None and session is not None:
-            sk = getattr(session, "session_key", None)
-            if sk and sk != session_id:
-                task = state.get_task_for_session(sk)
         if task is None:
             task = state.current_task
         if task is None:
@@ -908,7 +897,7 @@ class AgentOrchestrator:
 
         # Pre-register sub-agent state immediately so frontend polling
         # can pick it up before _run_with_progress_timeout starts
-        state_key = f"{session.id}:{to_agent}"
+        state_key = f"{session.chat_id}:{to_agent}"
         profile_name = to_agent
         profile_icon = "🤖"
         if self._profile_store:
@@ -919,7 +908,7 @@ class AgentOrchestrator:
         self._sub_agent_states[state_key] = {
             "agent_id": to_agent,
             "profile_id": to_agent,
-            "session_id": str(session.id),
+            "session_id": session.chat_id,
             "name": profile_name,
             "icon": profile_icon,
             "status": "starting",
@@ -990,15 +979,15 @@ class AgentOrchestrator:
     def purge_session_states(self, session_id: str) -> int:
         """Immediately remove all ``_sub_agent_states`` entries for *session_id*.
 
-        Accepts either a full ``session.id`` or a ``conversation_id`` (chat_id)
-        and uses the same fuzzy-matching logic as ``get_sub_agent_states``.
+        *session_id* should be the raw ``chat_id``.  Matching is exact on the
+        ``chat_id`` portion of the state key (``'{chat_id}:{agent_id}'``).
 
         Returns the number of entries purged.
         """
         to_remove: list[str] = []
         for key in self._sub_agent_states:
             sid_part = key.split(":")[0] if ":" in key else key
-            if sid_part == session_id or session_id in sid_part:
+            if sid_part == session_id:
                 to_remove.append(key)
 
         for key in to_remove:

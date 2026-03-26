@@ -2648,8 +2648,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             (messages, session_type, task_monitor, conversation_id, im_tokens)
         """
         # 1. 对齐 MemoryManager 会话
+        # memory safe_id 统一用 session.session_key 派生，与 im_channel fallback
+        # 和 sessions/manager backfill 的查询逻辑保持一致。
         try:
-            conversation_safe_id = conversation_id.replace(":", "__")
+            _memory_key = (
+                session.session_key
+                if session and hasattr(session, "session_key")
+                else conversation_id
+            )
+            conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
             if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
                 self.memory_manager.start_session(conversation_safe_id)
@@ -3195,7 +3202,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self.agent_state.current_session = None
         self._current_task_monitor = None
         # 重置任务状态，避免已取消/已完成的任务泄漏到下一次会话
-        # 注意：task 的 key 可能是 conversation_id 而非 session_id，两者都要尝试
         _sid = self._current_session_id
         _conv_id = self._current_conversation_id
         _cleaned = set()
@@ -3276,15 +3282,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._current_conversation_id = conversation_id
 
         # 清理上一轮残留的任务状态（按 session 隔离）
-        # 注意：task key 可能是 conversation_id 而非 session_id，两者都要尝试
         _prev_task = None
         _reset_key = session_id
-        for _try_key in (session_id, conversation_id):
-            if _try_key and self.agent_state:
-                _prev_task = self.agent_state.get_task_for_session(_try_key)
-                if _prev_task:
-                    _reset_key = _try_key
-                    break
+        if self.agent_state:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
         if not _prev_task and self.agent_state:
             _prev_task = self.agent_state.current_task
             if _prev_task:
@@ -3303,7 +3304,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
-        self._pending_cancels.pop(conversation_id, None) if conversation_id else None
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期，不让上一轮的错误阻塞本轮
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -3451,15 +3451,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._current_conversation_id = conversation_id
 
         # 清理上一轮残留的任务状态（按 session 隔离）
-        # 注意：task key 可能是 conversation_id 而非 session_id，两者都要尝试
         _prev_task = None
         _reset_key = session_id
-        for _try_key in (session_id, conversation_id):
-            if _try_key and self.agent_state:
-                _prev_task = self.agent_state.get_task_for_session(_try_key)
-                if _prev_task:
-                    _reset_key = _try_key
-                    break
+        if self.agent_state:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
         if not _prev_task and self.agent_state:
             _prev_task = self.agent_state.current_task
             if _prev_task:
@@ -3478,7 +3473,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
-        self._pending_cancels.pop(conversation_id, None) if conversation_id else None
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -3596,16 +3590,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             self._cleanup_session_state(im_tokens)
 
     def _resolve_conversation_id(self, session: Any, session_id: str) -> str:
-        """从 session 中解析稳定的 conversation_id。"""
-        conversation_id = ""
-        try:
-            if session and hasattr(session, "session_key"):
-                conversation_id = session.session_key
-            elif session and hasattr(session, "get_metadata"):
-                conversation_id = session.get_metadata("_session_key") or ""
-        except Exception:
-            conversation_id = ""
-        return conversation_id or session_id
+        """将调用方传入的 session_id 作为规范 conversation_id 直接返回。
+
+        Desktop 路径: session_id = raw chat_id (由前端 conversation_id 传入)
+        IM 路径:      session_id = session.id (由 orchestrator._call_agent 传入)
+        CLI 路径:     session_id = "cli_<uuid>"
+
+        不再取 session.session_key，避免 task key 与 pool key 不一致。
+        """
+        return session_id
 
     def _extract_usage_summary(self, trace: list[dict]) -> dict:
         """从 react_trace 提取轻量 token 用量摘要。
@@ -5367,8 +5360,8 @@ NEXT: 建议的下一步（如有）"""
         if session_id and has_state:
             task = self.agent_state.get_task_for_session(session_id)
             _effective_sid = session_id
-            # session_id 可能是前端 UUID，但 task key 是 conversation_id（如 "desktop:uuid:user"）
-            # 找不到时再尝试 _current_conversation_id / _current_session_id
+            # task key = session_id (raw chat_id)，一般精确匹配即可命中。
+            # 若仍未找到，兜底用 _current_conversation_id / _current_session_id。
             if not task:
                 for _alt_key in (self._current_conversation_id, self._current_session_id):
                     if _alt_key and _alt_key != session_id:

@@ -2105,9 +2105,9 @@ class MessageGateway:
           三段式: "telegram:1241684312:tg_1241684312"  (channel:chat_id:user_id)
           四段式: "telegram:1241684312:tg_1241684312:thread_abc"  (channel:chat_id:user_id:thread_id)
 
-        task key 可能是两种格式（取决于 _resolve_conversation_id 的返回）:
-          a) session.id 格式: "telegram_1241684312_20260219031213_xxx"（下划线分隔）
-          b) gateway session_key 格式: "telegram:1241684312:tg_1241684312[:thread_id]"（冒号分隔）
+        task key 格式为 _resolve_conversation_id 的返回值（即传入的 session_id）:
+          IM 路径: session.id 格式 "telegram_1241684312_20260219031213_xxx"（下划线分隔）
+          CLI 路径: "cli_<uuid>" 格式
         """
         if not agent_ref:
             return None

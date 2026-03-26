@@ -586,14 +586,36 @@ def _setup_session_backfill(agent_or_master):
                 logger.info(f"Session backfill: recovered {backfilled} turns from SQLite")
 
 
-async def start_im_channels(agent_or_master):
-    """启动配置的 IM 通道"""
-    global _message_gateway, _session_manager
+async def init_core_services(agent_or_master):
+    """初始化所有模式（Desktop / IM / CLI）共享的核心服务。
 
-    # SessionManager 必须在 IM 和 Desktop 模式下都可用
+    必须在 start_im_channels / start_api_server 之前调用。
+    幂等——多次调用安全。
+    """
+    global _desktop_pool
+
     await ensure_session_manager()
 
-    # 检查是否有任何通道启用
+    if _desktop_pool is None:
+        from openakita.agents.factory import AgentFactory, AgentInstancePool
+        _desktop_pool = AgentInstancePool(AgentFactory(), idle_timeout=600)
+        await _desktop_pool.start()
+        logger.info("[Main] Desktop AgentInstancePool initialized (idle_timeout=600s)")
+
+    if settings.multi_agent_enabled:
+        await _init_orchestrator()
+
+    _setup_session_backfill(agent_or_master)
+
+
+async def start_im_channels(agent_or_master):
+    """启动配置的 IM 通道。
+
+    仅处理 IM 相关逻辑（MessageGateway、适配器注册）。
+    核心服务（SessionManager、AgentPool、Orchestrator）由 init_core_services() 负责。
+    """
+    global _message_gateway
+
     any_enabled = (
         settings.telegram_enabled
         or settings.feishu_enabled
@@ -607,8 +629,7 @@ async def start_im_channels(agent_or_master):
     )
 
     if not any_enabled:
-        logger.info("No IM channels enabled, SessionManager is still active for Desktop Chat")
-        _setup_session_backfill(agent_or_master)
+        logger.info("No IM channels enabled, skipping IM initialization")
         return
 
     # 自动安装缺失的 IM 通道依赖
@@ -644,16 +665,8 @@ async def start_im_channels(agent_or_master):
         stt_client=stt_client,  # 在线 STT 客户端
     )
 
-    # 初始化 AgentOrchestrator (多 Agent 模式)
-    if settings.multi_agent_enabled:
-        await _init_orchestrator()
-
-    # Desktop Chat per-session Agent pool (always initialized for concurrent streaming)
-    global _desktop_pool
-    from openakita.agents.factory import AgentFactory, AgentInstancePool
-    _desktop_pool = AgentInstancePool(AgentFactory(), idle_timeout=600)
-    await _desktop_pool.start()
-    logger.info("[Main] Desktop AgentInstancePool initialized (idle_timeout=600s)")
+    if _orchestrator is not None:
+        _orchestrator.set_gateway(_message_gateway)
 
     # 注册启用的适配器
     adapters_started = []
@@ -1104,7 +1117,11 @@ async def run_interactive():
     agent_or_master = agent
     agent_name = agent.name
 
-    # 启动 IM 通道
+    # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
+    with console.status("[bold green]正在初始化核心服务...", spinner="dots"):
+        await init_core_services(agent_or_master)
+
+    # 启动 IM 通道（可选）
     im_channels = []
     with console.status("[bold green]正在启动 IM 通道...", spinner="dots"):
         im_channels = await start_im_channels(agent_or_master)
@@ -1112,7 +1129,7 @@ async def run_interactive():
     if im_channels:
         console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
     else:
-        console.print("[yellow]ℹ[/yellow] 未成功启动任何 IM 通道（可能未启用或启动失败）")
+        console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（Desktop Chat 仍可使用）")
 
     console.print()
 
@@ -1715,21 +1732,19 @@ def serve(
 
         agent_or_master = agent
 
-        # 启动 IM 通道
+        # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
+        console.print("[bold green]正在初始化核心服务...[/bold green]")
+        await init_core_services(agent_or_master)
+        console.print("[green]✓[/green] 核心服务已就绪")
+
+        # 启动 IM 通道（可选）
         console.print("[bold green]正在启动 IM 通道...[/bold green]")
         im_channels = await start_im_channels(agent_or_master)
 
-        if not im_channels:
-            console.print("[yellow]⚠[/yellow] 未成功启动任何 IM 通道（HTTP API 仍可使用）")
-
         if im_channels:
             console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
-
-        # 确保多 Agent 模式下 Orchestrator 已初始化
-        # （即使 start_im_channels 因无 IM 通道启用而提前返回，Orchestrator 仍需可用）
-        if settings.multi_agent_enabled and _orchestrator is None:
-            await _init_orchestrator()
-            logger.info("[Main] Orchestrator created as fallback (no IM channels path)")
+        else:
+            console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（HTTP API 仍可使用）")
 
         # 注入 shutdown_event 到网关（供终极重启指令使用）
         if _message_gateway is not None:
