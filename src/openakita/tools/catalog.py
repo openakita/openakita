@@ -300,6 +300,8 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
             cat = tool.get("category")
             if not cat:
                 cat = infer_category(name)
+            if not cat and name in self._tool_sources:
+                cat = "Plugin"
             if cat:
                 groups.setdefault(cat, set()).add(name)
         return groups
