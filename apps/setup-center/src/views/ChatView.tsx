@@ -1780,6 +1780,7 @@ export function ChatView({
     abort: AbortController;
     reader: ReadableStreamDefaultReader<Uint8Array> | null;
     isStreaming: boolean;
+    userStopped: boolean;
     messages: ChatMessage[];
     activeSubAgents: SubAgentEntry[];
     subAgentTasks: SubAgentTask[];
@@ -1926,9 +1927,9 @@ export function ChatView({
   // ── APP 后台恢复：中断已断开的 SSE 流 ──
   // Tauri / Capacitor / mobile browsers kill HTTP streams when the app/tab is
   // in the background.  Desktop browsers keep fetch streams alive across tab
-  // switches, so we only skip the abort for desktop web.
-  // Abort reason "app_resumed" tells the catch handler to attempt recovery from
-  // backend session history instead of marking the conversation as user-cancelled.
+  // switches, so we only register this handler for non-desktop-web platforms.
+  // The catch handler uses sctx.userStopped (positive flag) to decide whether
+  // to show "已中止" vs. attempt recovery — no reliance on abort reason strings.
   useEffect(() => {
     if (IS_WEB && !IS_MOBILE_BROWSER) return;
     const handler = () => {
@@ -2552,7 +2553,8 @@ export function ChatView({
     setMessageQueue(prev => prev.filter(m => m.convId !== convId));
     const ctx = streamContexts.current.get(convId);
     if (ctx) {
-      try { ctx.abort.abort(); } catch {}
+      ctx.userStopped = true;
+      try { ctx.abort.abort("user_stop"); } catch {}
       try { ctx.reader?.cancel().catch(() => {}); } catch {}
       if (ctx.pollingTimer) clearInterval(ctx.pollingTimer);
       streamContexts.current.delete(convId);
@@ -2700,6 +2702,7 @@ export function ChatView({
       abort,
       reader: null,
       isStreaming: true,
+      userStopped: false,
       messages: [...fallbackMessages, userMsg, assistantMsg],
       activeSubAgents: [],
       subAgentTasks: [],
@@ -2758,7 +2761,11 @@ export function ChatView({
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        abort.abort();
+        if (document.hidden) {
+          resetIdleTimer();
+          return;
+        }
+        abort.abort("idle_timeout");
         const c = streamContexts.current.get(thisConvId);
         c?.reader?.cancel().catch(() => {});
       }, IDLE_TIMEOUT_MS);
@@ -3406,19 +3413,17 @@ export function ChatView({
 
       // ── 循环结束后：判断是正常完成还是被用户中止 ──
       if (abort.signal.aborted) {
-        const isAppResume = abort.signal.reason === "app_resumed";
-        if (isAppResume) {
-          // App returned from background — preserve content, attempt recovery
-          updateMessages((prev) => prev.map((m) =>
-            m.id === assistantMsg.id ? { ...m, streaming: false } : m
-          ));
-          attemptRecovery(4000);
-        } else {
+        if (sctx.userStopped) {
           updateMessages((prev) => prev.map((m) =>
             m.id === assistantMsg.id
               ? { ...m, content: m.content || "（已中止）", streaming: false }
               : m
           ));
+        } else {
+          updateMessages((prev) => prev.map((m) =>
+            m.id === assistantMsg.id ? { ...m, streaming: false } : m
+          ));
+          attemptRecovery(4000);
         }
       } else {
         updateMessages((prev) => prev.map((m) =>
@@ -3464,51 +3469,35 @@ export function ChatView({
         }
       }
     } catch (e: unknown) {
-      // Distinguish three abort scenarios:
-      // 1. User clicked stop → abort.signal.aborted && reason !== "app_resumed"
-      // 2. App resumed from background → abort.signal.reason === "app_resumed"
-      // 3. Browser/OS killed connection → DOMException AbortError without our signal
-      const isOurAbort = abort.signal.aborted;
-      const isAppResumeAbort = isOurAbort && abort.signal.reason === "app_resumed";
-      const isUserStop = isOurAbort && !isAppResumeAbort;
-
-      if (isUserStop) {
+      if (sctx.userStopped) {
         updateMessages((prev) => prev.map((m) =>
           m.id === assistantMsg.id ? { ...m, content: m.content || "（已中止）", streaming: false } : m
         ));
       } else {
-        if (isAppResumeAbort) {
-          // App returned from background — the stream is dead but the backend may
-          // still be running.  Preserve whatever content we already received and
-          // attempt recovery below.
+        const isAbortLike =
+          abort.signal.aborted ||
+          (e instanceof DOMException && e.name === "AbortError") ||
+          (e instanceof Error && e.name === "AbortError");
+
+        if (isAbortLike) {
           updateMessages((prev) => prev.map((m) =>
             m.id === assistantMsg.id ? { ...m, streaming: false } : m
           ));
         } else {
-          const isBrowserAbort =
-            (e instanceof DOMException && e.name === "AbortError") ||
-            (e instanceof Error && e.name === "AbortError");
-
-          if (isBrowserAbort) {
-            updateMessages((prev) => prev.map((m) =>
-              m.id === assistantMsg.id ? { ...m, streaming: false } : m
-            ));
-          } else {
-            const errMsg = e instanceof Error ? e.message : String(e);
-            let guidance = t("chat.backendServiceHint");
-            try {
-              const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(5000) });
-              if (healthRes.ok) {
-                guidance = t("chat.backendOnlineUpstreamHint");
-              }
-            } catch { /* health probe failed -> keep backend guidance */ }
-            updateMessages((prev) => prev.map((m) =>
-              m.id === assistantMsg.id ? { ...m, content: m.content || `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
-            ));
-          }
+          const errMsg = e instanceof Error ? e.message : String(e);
+          let guidance = t("chat.backendServiceHint");
+          try {
+            const healthRes = await fetch(`${apiBase}/api/health`, { signal: AbortSignal.timeout(5000) });
+            if (healthRes.ok) {
+              guidance = t("chat.backendOnlineUpstreamHint");
+            }
+          } catch { /* health probe failed -> keep backend guidance */ }
+          updateMessages((prev) => prev.map((m) =>
+            m.id === assistantMsg.id ? { ...m, content: m.content || `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
+          ));
         }
 
-        attemptRecovery(isAppResumeAbort ? 4000 : 3000);
+        attemptRecovery(abort.signal.aborted ? 4000 : 3000);
       }
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
@@ -3581,7 +3570,8 @@ export function ChatView({
     if (!id) return;
     const ctx = streamContexts.current.get(id);
     if (ctx) {
-      ctx.abort.abort();
+      ctx.userStopped = true;
+      ctx.abort.abort("user_stop");
       try { ctx.reader?.cancel().catch(() => {}); } catch {}
       ctx.reader = null;
     }
