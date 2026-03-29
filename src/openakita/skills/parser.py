@@ -87,9 +87,17 @@ class SkillMetadata:
         支持两种格式:
         - 简单名:  ``my-skill``
         - 命名空间: ``owner/repo@skill-name``
+
+        自动修正: 下划线转连字符、大写转小写。
         """
         if not self.name:
             raise ValueError("name field is required")
+
+        # auto-fix: underscores → hyphens, lowercase
+        normalized = self.name.replace("_", "-").lower()
+        if normalized != self.name:
+            logger.debug(f"Skill name auto-normalized: '{self.name}' → '{normalized}'")
+            self.name = normalized
 
         if len(self.name) > 128:
             raise ValueError(f"name must be <= 128 characters, got {len(self.name)}")
@@ -201,20 +209,23 @@ class SkillParser:
         """
         # 解析 frontmatter
         match = self.FRONTMATTER_PATTERN.match(content)
-        if not match:
-            raise ValueError(f"Invalid SKILL.md format: missing YAML frontmatter in {path}")
+        if match:
+            yaml_content = match.group(1)
+            body = match.group(2).strip()
 
-        yaml_content = match.group(1)
-        body = match.group(2).strip()
+            try:
+                data = yaml.safe_load(yaml_content) or {}
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML frontmatter in {path}: {e}")
 
-        # 解析 YAML
-        try:
-            data = yaml.safe_load(yaml_content) or {}
-        except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML frontmatter in {path}: {e}")
-
-        # 构建元数据
-        metadata = self._build_metadata(data, path)
+            metadata = self._build_metadata(data, path)
+        else:
+            # Fallback: no frontmatter — infer metadata from directory name + content
+            metadata, body = self._infer_metadata(content, path)
+            logger.warning(
+                f"SKILL.md missing YAML frontmatter, loaded with inferred metadata: "
+                f"{path} (name={metadata.name})"
+            )
 
         # 验证目录名匹配（命名空间格式取 @ 后部分比较）
         skill_dir = path.parent
@@ -238,6 +249,37 @@ class SkillParser:
             references_dir=references_dir if references_dir.exists() else None,
             assets_dir=assets_dir if assets_dir.exists() else None,
         )
+
+    @staticmethod
+    def _infer_metadata(content: str, path: Path) -> tuple[SkillMetadata, str]:
+        """从目录名和文件内容推导元数据（frontmatter 缺失时的 fallback）。
+
+        - name: 目录名（下划线转连字符，小写）
+        - description: 首个 Markdown 标题或首行非空文本
+        - body: 完整文件内容
+        """
+        dir_name = path.parent.name
+        name = dir_name.replace("_", "-").lower()
+
+        description = ""
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                description = stripped.lstrip("#").strip()
+            else:
+                description = stripped
+            break
+        if not description:
+            description = name
+
+        # 截断过长的 description
+        if len(description) > 1024:
+            description = description[:1021] + "..."
+
+        metadata = SkillMetadata(name=name, description=description)
+        return metadata, content.strip()
 
     def _build_metadata(self, data: dict, path: Path) -> SkillMetadata:
         """从 YAML 数据构建元数据"""
