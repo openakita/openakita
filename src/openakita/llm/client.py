@@ -16,12 +16,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ..core.errors import UserCancelledError
 from .config import get_default_config_path, load_endpoints_config
 from .providers.anthropic import AnthropicProvider
 from .providers.base import LLMProvider
 from .providers.openai import OpenAIProvider
 from .providers.openai_responses import OpenAIResponsesProvider
-from ..core.errors import UserCancelledError
 from .types import (
     AllEndpointsFailedError,
     AudioBlock,
@@ -166,7 +166,7 @@ class LLMClient:
             self._endpoints = sorted(endpoints, key=lambda x: x.priority)
         elif config_path or get_default_config_path().exists():
             self._config_path = config_path or get_default_config_path()
-            self._endpoints, _, _, self._settings = load_endpoints_config(config_path)
+            self._endpoints, _, _, self._settings = load_endpoints_config(self._config_path)
 
         # 创建 Provider 实例
         self._init_providers()
@@ -192,20 +192,6 @@ class LLMClient:
             logger.warning("reload() called but config file not found: %s", self._config_path)
             return False
         try:
-            # Re-read .env so newly written API keys are available in os.environ
-            from dotenv import load_dotenv as _reload_dotenv
-
-            env_path = self._config_path.parent.parent / ".env"
-            if env_path.exists():
-                try:
-                    _reload_dotenv(env_path, override=True)
-                except UnicodeDecodeError:
-                    logger.warning("Failed to reload %s as UTF-8, retrying with system encoding", env_path)
-                    try:
-                        _reload_dotenv(env_path, override=True, encoding=None)
-                    except Exception:
-                        logger.error("Could not reload %s, skipping", env_path)
-
             new_endpoints, _, _, new_settings = load_endpoints_config(self._config_path)
             self._endpoints = new_endpoints
             self._settings = new_settings
@@ -639,7 +625,7 @@ class LLMClient:
                                     reason="用户请求停止",
                                     source="llm_cooldown_wait",
                                 )
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 pass
                         else:
                             await asyncio.sleep(wait_seconds)
