@@ -3599,6 +3599,53 @@ class ReasoningEngine:
         return result, stripped
 
     @staticmethod
+    def _strip_tool_results_for_content_safety(
+        messages: list[dict],
+    ) -> tuple[list[dict], bool]:
+        """Strip recent tool result content that may have triggered content safety filters.
+
+        When the LLM API rejects a request due to content inspection (e.g. DashScope
+        DataInspectionFailed), the cause is typically inappropriate text in the most
+        recent batch of tool results (e.g. web search returning NSFW content).
+
+        This method finds the last user message containing tool_results and replaces
+        each tool_result's content with a safe placeholder, allowing the LLM to
+        continue reasoning with the remaining context.
+        """
+        _PLACEHOLDER = (
+            "[工具返回内容已移除：内容触发了平台安全审核，无法发送给模型。"
+            "请忽略此工具的结果，直接基于已有信息回答用户。]"
+        )
+        stripped = False
+        result = list(messages)
+
+        for i in range(len(result) - 1, -1, -1):
+            msg = result[i]
+            content = msg.get("content")
+            if msg.get("role") != "user" or not isinstance(content, list):
+                continue
+
+            has_tool_results = any(
+                isinstance(item, dict) and item.get("type") == "tool_result"
+                for item in content
+            )
+            if not has_tool_results:
+                continue
+
+            new_content = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_result":
+                    new_content.append({**item, "content": _PLACEHOLDER})
+                    stripped = True
+                else:
+                    new_content.append(item)
+
+            result[i] = {**msg, "content": new_content}
+            break
+
+        return result, stripped
+
+    @staticmethod
     def _truncate_oversized_messages(
         messages: list[dict],
         max_single_tokens: int = 30000,
@@ -3741,6 +3788,32 @@ class ReasoningEngine:
                         state._structural_content_stripped = True
                         working_messages.clear()
                         working_messages.extend(trunc_msgs)
+                        llm_client = getattr(self._brain, "_llm_client", None)
+                        if llm_client:
+                            llm_client.reset_all_cooldowns(
+                                include_structural=True
+                            )
+                        return "retry"
+
+                # 方案 D: 内容安全审核 — 工具结果触发平台内容过滤
+                _content_safety_patterns = [
+                    "data_inspection", "inappropriate content",
+                ]
+                is_content_safety = any(
+                    p in error_lower for p in _content_safety_patterns
+                )
+                if is_content_safety:
+                    cleaned_msgs, did_clean = self._strip_tool_results_for_content_safety(
+                        working_messages
+                    )
+                    if did_clean:
+                        logger.warning(
+                            "[ReAct] Content safety error detected. "
+                            "Stripping recent tool result content and retrying."
+                        )
+                        state._structural_content_stripped = True
+                        working_messages.clear()
+                        working_messages.extend(cleaned_msgs)
                         llm_client = getattr(self._brain, "_llm_client", None)
                         if llm_client:
                             llm_client.reset_all_cooldowns(

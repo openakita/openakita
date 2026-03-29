@@ -162,6 +162,11 @@ class QQBotAdapter(ChannelAdapter):
         # Markdown 能力是否可用（自定义 markdown 需内邀开通，首次失败后自动降级）
         self._markdown_available: bool = True
 
+        # 待投递消息队列：QQ 群聊不支持主动发送，缓存后等用户下条消息时投递
+        # 每条记录为 (入队时间戳, 消息文本)
+        self._pending_messages: dict[str, list[tuple[float, str]]] = {}
+        self._pending_max_per_chat = 5
+
         # 消息去重：Webhook/WebSocket 可能重复投递
         self._seen_message_ids: collections.OrderedDict[str, None] = collections.OrderedDict()
         self._seen_message_ids_max = 500
@@ -241,6 +246,65 @@ class QQBotAdapter(ChannelAdapter):
         except Exception as e:
             logger.warning(f"Failed to make local image publicly accessible: {e}")
             return None
+
+    @staticmethod
+    def _is_proactive_limit_error(exc: BaseException) -> bool:
+        """检测是否为 QQ 群聊主动消息限制错误（11255 invalid request）。"""
+        s = str(exc).lower()
+        return "11255" in s or "invalid request" in s
+
+    def _enqueue_pending(self, chat_id: str, text: str) -> None:
+        """将无法主动发送的消息缓存，等用户下条消息到达时投递。"""
+        pending = self._pending_messages.setdefault(chat_id, [])
+        if len(pending) >= self._pending_max_per_chat:
+            pending.pop(0)
+        pending.append((time.time(), text))
+
+    @staticmethod
+    def _format_pending_delay(queued_at: float) -> str:
+        """将入队到投递的时间差格式化为可读文本。"""
+        delta = int(time.time() - queued_at)
+        if delta < 60:
+            return "刚刚"
+        if delta < 3600:
+            return f"{delta // 60} 分钟前"
+        if delta < 86400:
+            h, m = divmod(delta, 3600)
+            return f"{h} 小时{f' {m // 60} 分钟' if m // 60 else ''}前"
+        return f"{delta // 86400} 天前"
+
+    async def _flush_pending_messages(self, chat_id: str) -> None:
+        """当收到用户新消息时，投递该 chat_id 下缓存的待发消息。"""
+        pending = self._pending_messages.pop(chat_id, [])
+        if not pending:
+            return
+        msg_id = self._last_msg_id.get(chat_id)
+        if not msg_id:
+            self._pending_messages[chat_id] = pending
+            return
+
+        parts: list[str] = []
+        for queued_at, text in pending:
+            delay = self._format_pending_delay(queued_at)
+            parts.append(f"[⏰ {delay}] {text}")
+
+        header = "📬 以下消息因 QQ 群聊限制未能及时发送，现在补发给你：\n"
+        combined = header + "\n\n".join(parts)
+
+        chat_type = self._chat_type_map.get(chat_id, "group")
+        try:
+            if self._client and self._client.api:
+                await self._send_to_target(
+                    self._client.api, chat_type, chat_id,
+                    msg_type=0, content=combined, msg_id=msg_id,
+                )
+            elif self.mode == "webhook":
+                await self._send_text_via_http(chat_type, chat_id, combined, msg_id)
+            logger.info(
+                f"QQ: delivered {len(pending)} pending message(s) to {chat_id}"
+            )
+        except Exception as e:
+            logger.warning(f"QQ: failed to deliver pending messages to {chat_id}: {e}")
 
     async def start(self) -> None:
         """启动 QQ 官方机器人"""
@@ -535,6 +599,8 @@ class QQBotAdapter(ChannelAdapter):
 
             self._log_message(unified)
             await self._emit_message(unified)
+            if event_type == "GROUP_AT_MESSAGE_CREATE":
+                await self._flush_pending_messages(unified.chat_id)
         except Exception as e:
             logger.error(f"Error handling QQ Webhook event {event_type}: {e}")
 
@@ -1179,9 +1245,21 @@ class QQBotAdapter(ChannelAdapter):
 
         # Webhook 模式使用 HTTP API 发送
         if self.mode == "webhook":
-            return await self._send_message_via_http(
-                message, chat_type, msg_id, parse_mode,
-            )
+            try:
+                return await self._send_message_via_http(
+                    message, chat_type, msg_id, parse_mode,
+                )
+            except Exception as e:
+                if chat_type == "group" and self._is_proactive_limit_error(e):
+                    queued_text = message.content.text or ""
+                    if queued_text:
+                        self._enqueue_pending(message.chat_id, queued_text)
+                        logger.info(
+                            f"QQ: proactive group message queued for {message.chat_id} "
+                            f"(webhook, will deliver on next user message)"
+                        )
+                        return ""
+                raise
 
         if not self._client or not self._client.api:
             raise RuntimeError("QQ Official Bot not started")
@@ -1212,6 +1290,15 @@ class QQBotAdapter(ChannelAdapter):
                     text, first_image_url, first_image_path, msg_id, parse_mode,
                 )
         except Exception as e:
+            if chat_type == "group" and self._is_proactive_limit_error(e):
+                queued_text = text or message.content.text or ""
+                if queued_text:
+                    self._enqueue_pending(message.chat_id, queued_text)
+                    logger.info(
+                        f"QQ: proactive group message queued for {message.chat_id} "
+                        f"(will deliver on next user message)"
+                    )
+                    return ""
             logger.error(f"Failed to send QQ Official Bot message: {e}")
             raise
 
@@ -1832,6 +1919,7 @@ def _create_botpy_client(adapter: "QQBotAdapter", is_sandbox: bool = False, **kw
                     return
                 self._adapter._log_message(unified)
                 await self._adapter._emit_message(unified)
+                await self._adapter._flush_pending_messages(unified.chat_id)
             except Exception as e:
                 logger.error(f"Error handling group message: {e}")
 

@@ -40,6 +40,33 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
     except Exception:
         pass
 
+def format_user_friendly_error(error: str) -> str:
+    """Map technical error messages to user-friendly messages for IM channels.
+
+    Keeps the full error in logs; only the return value is shown to the user.
+    """
+    el = error.lower()
+
+    if "data_inspection" in el or "inappropriate content" in el:
+        return (
+            "⚠️ 抱歉，处理过程中获取到的部分内容触发了平台安全审核，"
+            "请换个方式重新提问。"
+        )
+
+    if "all endpoints failed" in el or "allendpointsfailederror" in el:
+        if any(k in el for k in ("api key", "auth", "unauthorized", "401")):
+            return "⚠️ AI 服务认证失败，请检查 API Key 配置是否正确。"
+        if any(k in el for k in ("quota", "rate limit", "429", "余额")):
+            return "⚠️ AI 服务配额已用尽或请求过于频繁，请稍后重试。"
+        return "⚠️ AI 服务暂时不可用，请稍后重试。"
+
+    if "timeout" in el or "timed out" in el:
+        return "⚠️ 处理超时，请稍后重试或简化您的问题。"
+
+    short = error[:120].split("\n")[0]
+    return f"⚠️ 处理出错: {short}"
+
+
 if TYPE_CHECKING:
     from ..core.brain import Brain
     from ..llm.stt_client import STTClient
@@ -3064,18 +3091,29 @@ class MessageGateway:
             for img in message.content.images:
                 if img.local_path and Path(img.local_path).exists():
                     try:
-                        with open(img.local_path, "rb") as f:
-                            image_data = base64.b64encode(f.read()).decode("utf-8")
+                        from .media.image_prep import prepare_image_for_context
+
+                        raw = Path(img.local_path).read_bytes()
+                        result = prepare_image_for_context(
+                            raw, media_type=img.mime_type or "image/jpeg",
+                        )
+                        if result:
+                            b64_data, media_type, _w, _h = result
                             images_data.append(
                                 {
                                     "type": "image",
                                     "source": {
                                         "type": "base64",
-                                        "media_type": img.mime_type or "image/jpeg",
-                                        "data": image_data,
+                                        "media_type": media_type,
+                                        "data": b64_data,
                                     },
-                                    "local_path": img.local_path,  # 也保存路径
+                                    "local_path": img.local_path,
                                 }
+                            )
+                        else:
+                            logger.warning(
+                                f"Image too large to embed, skipping: "
+                                f"{img.local_path}"
                             )
                     except Exception as e:
                         logger.error(f"Failed to read image: {e}")
@@ -3306,7 +3344,7 @@ class MessageGateway:
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
-            return (f"处理出错: {str(e)}", False)
+            return (format_user_friendly_error(str(e)), False)
         finally:
             session.set_metadata("pending_images", None)
             session.set_metadata("pending_videos", None)
@@ -3394,7 +3432,7 @@ class MessageGateway:
                 elif etype == "error":
                     err_msg = event.get("message", "")
                     if not reply_text:
-                        reply_text = f"处理出错: {err_msg}"
+                        reply_text = format_user_friendly_error(err_msg)
                 elif etype == "done":
                     pass
 
@@ -3407,7 +3445,7 @@ class MessageGateway:
         except Exception as e:
             logger.error(f"[IM] Streaming agent error: {e}", exc_info=True)
             if not reply_text:
-                reply_text = f"处理出错: {str(e)}"
+                reply_text = format_user_friendly_error(str(e))
 
         if not reply_text or not reply_text.strip():
             return (reply_text, False)
@@ -3675,7 +3713,7 @@ class MessageGateway:
 
     async def _send_error(self, original: UnifiedMessage, error: str) -> None:
         """
-        发送错误提示
+        发送错误提示（对用户展示友好消息，技术细节仅保留在日志中）
         """
         adapter = self._adapters.get(original.channel)
         if not adapter:
@@ -3683,9 +3721,10 @@ class MessageGateway:
 
         try:
             _meta = {"is_group": (original.metadata or {}).get("is_group", original.chat_type == "group")}
+            friendly = format_user_friendly_error(error)
             await adapter.send_text(
                 chat_id=original.chat_id,
-                text=f"❌ 处理出错: {error}",
+                text=friendly,
                 reply_to=original.thread_id or original.channel_message_id,
                 metadata=_meta,
             )

@@ -593,7 +593,7 @@ _KNOWN_TOOL_NAMES: set[str] = {
     "web_search", "news_search", "browser_navigate", "browser_open",
     "browser_click", "browser_type", "browser_scroll", "browser_screenshot",
     "browser_wait", "browser_close", "browser_go_back", "browser_switch_tab",
-    "browser_get_content", "view_image",
+    "browser_task", "browser_get_content", "view_image",
     "run_shell", "write_file", "read_file", "list_directory",
     "send_message", "reply_message", "create_file", "edit_file",
     "search_files", "delete_file", "move_file", "copy_file",

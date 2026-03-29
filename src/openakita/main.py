@@ -912,12 +912,14 @@ async def start_im_channels(agent_or_master):
 
     async def agent_handler(session, message: str) -> str:
         """通过 Agent 处理消息（运行时检查多Agent模式开关）"""
+        from .channels.gateway import format_user_friendly_error
+
         if settings.multi_agent_enabled and _orchestrator is not None:
             try:
                 return await _orchestrator.handle_message(session, message)
             except Exception as e:
                 logger.error(f"Orchestrator handler error: {e}", exc_info=True)
-                return f"❌ 处理出错: {str(e)}"
+                return format_user_friendly_error(str(e))
 
         try:
             session_messages = session.context.get_messages()
@@ -931,7 +933,7 @@ async def start_im_channels(agent_or_master):
             return response
         except Exception as e:
             logger.error(f"Agent handler error: {e}", exc_info=True)
-            return f"❌ 处理出错: {str(e)}"
+            return format_user_friendly_error(str(e))
 
     agent_handler._agent_ref = agent
     agent_handler.is_stop_command = agent.is_stop_command

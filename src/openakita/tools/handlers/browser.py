@@ -16,7 +16,6 @@
 - view_image: 查看/分析本地图片
 """
 
-import base64
 import logging
 import re
 from pathlib import Path
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_MAX_PIXELS = 1024 * 1024  # 缩放阈值（宽×高），大于此值会缩放
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 # Cross-agent browser lock — shared by all BrowserHandler instances in this
@@ -383,7 +381,10 @@ class BrowserHandler:
 
     @staticmethod
     def _load_image_as_base64(path_str: str) -> tuple[str, str, int, int] | None:
-        """读取图片文件，缩放后编码为 base64。
+        """读取图片文件，压缩到安全大小后编码为 base64。
+
+        委托给 channels.media.image_prep 的共享预处理函数，
+        确保 base64 产出不超过 API payload 限制。
 
         Returns:
             (base64_data, media_type, width, height) 或 None（失败时）
@@ -394,39 +395,9 @@ class BrowserHandler:
         if p.suffix.lower() not in _IMAGE_EXTENSIONS:
             return None
 
-        try:
-            import io
+        from ...channels.media.image_prep import prepare_image_file_for_context
 
-            from PIL import Image
-
-            img = Image.open(p)
-            w, h = img.size
-
-            if w * h > _IMAGE_MAX_PIXELS:
-                ratio = (_IMAGE_MAX_PIXELS / (w * h)) ** 0.5
-                new_w, new_h = int(w * ratio), int(h * ratio)
-                img = img.resize((new_w, new_h), Image.LANCZOS)
-                w, h = new_w, new_h
-
-            if img.mode == "RGBA":
-                img = img.convert("RGB")
-
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            return b64, "image/jpeg", w, h
-        except ImportError:
-            raw = p.read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
-            ext = p.suffix.lower()
-            media_map = {
-                ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
-            }
-            return b64, media_map.get(ext, "image/jpeg"), 0, 0
-        except Exception as e:
-            logger.error(f"[view_image] Failed to load image {path_str}: {e}")
-            return None
+        return prepare_image_file_for_context(p)
 
     async def _handle_view_image(self, params: dict[str, Any]) -> str | list:
         """view_image 工具处理：读取图片并返回多模态 tool result。"""
@@ -436,9 +407,22 @@ class BrowserHandler:
         if not path_str:
             return "❌ view_image 缺少必要参数 'path'。"
 
+        p = Path(path_str)
+        if not p.is_file():
+            return f"❌ 无法读取图片: {path_str}（文件不存在）"
+        if p.suffix.lower() not in _IMAGE_EXTENSIONS:
+            return (
+                f"❌ 不支持的图片格式: {p.suffix}\n"
+                f"支持的格式: {', '.join(sorted(_IMAGE_EXTENSIONS))}"
+            )
         loaded = self._load_image_as_base64(path_str)
         if loaded is None:
-            return f"❌ 无法读取图片: {path_str}（文件不存在或格式不支持）"
+            return (
+                f"❌ 图片过大无法嵌入上下文: {path_str}\n"
+                f"文件大小: {p.stat().st_size / 1024:.0f}KB。"
+                f"请安装 Pillow (pip install Pillow) 以启用自动压缩，"
+                f"或使用更小的图片。"
+            )
 
         b64_data, media_type, w, h = loaded
 

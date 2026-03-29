@@ -3022,45 +3022,130 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 messages.append({"role": "user", "content": compiled_message})
         elif pending_images or pending_videos or audio_blocks or document_blocks:
             # IM 路径: 多模态（图片 + 视频 + 音频 + 文档）
+            # 对齐 audio/PDF 的模式：先检查能力，无能力时降级为文本
             content_parts: list[dict] = []
             _text_for_llm = compiled_message.strip()
-            # 图片占位符替换
-            if pending_images and _text_for_llm and re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", _text_for_llm):
-                _text_for_llm = (
-                    f"用户发送了 {len(pending_images)} 张图片（已附在消息中，请直接查看）。"
-                    "请描述或回应你所看到的图片内容。"
-                )
+
+            llm_client = getattr(self.brain, "_llm_client", None)
+            has_vision = (
+                llm_client and llm_client.has_any_endpoint_with_capability("vision")
+            )
+            has_video = (
+                llm_client and llm_client.has_any_endpoint_with_capability("video")
+            )
+
+            embed_images = pending_images if has_vision else None
+            embed_videos = pending_videos if has_video else None
+
+            # 图片占位符替换（仅在实际嵌入时才改为「请直接查看」）
+            _is_img_placeholder = (
+                _text_for_llm
+                and re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", _text_for_llm)
+            )
+            if pending_images and _is_img_placeholder:
+                if embed_images:
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_images)} 张图片"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的图片内容。"
+                    )
+                else:
+                    _text_for_llm = ""
+
             # 视频占位符替换
-            if pending_videos and _text_for_llm and re.fullmatch(r"(\[视频: [^\]]+\]\s*)+", _text_for_llm):
-                _text_for_llm = (
-                    f"用户发送了 {len(pending_videos)} 个视频（已附在消息中，请直接查看）。"
-                    "请描述或回应你所看到的视频内容。"
+            _is_vid_placeholder = (
+                _text_for_llm
+                and re.fullmatch(r"(\[视频: [^\]]+\]\s*)+", _text_for_llm)
+            )
+            if pending_videos and _is_vid_placeholder:
+                if embed_videos:
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_videos)} 个视频"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的视频内容。"
+                    )
+                else:
+                    _text_for_llm = ""
+
+            # 图片降级提示
+            if pending_images and not has_vision:
+                img_paths = [
+                    img.get("local_path", "")
+                    for img in pending_images if img.get("local_path")
+                ]
+                notice = (
+                    f"[用户发送了 {len(pending_images)} 张图片，"
+                    f"当前模型不支持图片输入"
                 )
+                if img_paths:
+                    notice += (
+                        f"。文件路径: {'; '.join(img_paths)}"
+                        f"。如需查看图片内容，请使用 view_image 工具"
+                    )
+                notice += "]"
+                _text_for_llm = (
+                    f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
+                )
+                logger.info(
+                    f"[Session:{session_id}] No vision endpoint, "
+                    f"degrading {len(pending_images)} images to text notice"
+                )
+
+            # 视频降级提示
+            if pending_videos and not has_video:
+                vid_paths = [
+                    v.get("local_path", "")
+                    for v in pending_videos if v.get("local_path")
+                ]
+                notice = (
+                    f"[用户发送了 {len(pending_videos)} 个视频，"
+                    f"当前模型不支持视频输入"
+                )
+                if vid_paths:
+                    notice += f"。文件路径: {'; '.join(vid_paths)}"
+                notice += "]"
+                _text_for_llm = (
+                    f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
+                )
+                logger.info(
+                    f"[Session:{session_id}] No video endpoint, "
+                    f"degrading {len(pending_videos)} videos to text notice"
+                )
+
+            # 组装 content_parts
             if _text_for_llm:
                 content_parts.append({"type": "text", "text": _text_for_llm})
-            if pending_images:
-                for img_data in pending_images:
-                    content_parts.append(img_data)
-            if pending_videos:
-                for vid_data in pending_videos:
-                    content_parts.append(vid_data)
+            if embed_images:
+                content_parts.extend(embed_images)
+            if embed_videos:
+                content_parts.extend(embed_videos)
             if audio_blocks:
-                for aud_data in audio_blocks:
-                    content_parts.append(aud_data)
+                content_parts.extend(audio_blocks)
             if document_blocks:
-                for doc_data in document_blocks:
-                    content_parts.append(doc_data)
-            messages.append({"role": "user", "content": content_parts})
+                content_parts.extend(document_blocks)
+
+            # 如果所有媒体均已降级为文本，发纯文本消息而非多模态 list
+            has_media = embed_images or embed_videos or audio_blocks or document_blocks
+            if has_media:
+                messages.append({"role": "user", "content": content_parts})
+            else:
+                plain = _text_for_llm or compiled_message
+                messages.append({"role": "user", "content": plain})
+
             media_info = []
-            if pending_images:
-                media_info.append(f"{len(pending_images)} images")
-            if pending_videos:
-                media_info.append(f"{len(pending_videos)} videos")
+            if embed_images:
+                media_info.append(f"{len(embed_images)} images")
+            if embed_videos:
+                media_info.append(f"{len(embed_videos)} videos")
             if audio_blocks:
                 media_info.append(f"{len(audio_blocks)} audio")
             if document_blocks:
                 media_info.append(f"{len(document_blocks)} documents")
-            logger.info(f"[Session:{session_id}] Multimodal message with {', '.join(media_info)}")
+            if media_info:
+                logger.info(
+                    f"[Session:{session_id}] Multimodal message "
+                    f"with {', '.join(media_info)}"
+                )
         else:
             # 普通文本消息
             messages.append({"role": "user", "content": compiled_message})
