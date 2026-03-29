@@ -452,6 +452,183 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean, tool_calls
 
 
+# ── [TOOL_CALL] 标签格式 ──────────────────────────────────
+#
+# kimi-k2-thinking 等模型将工具调用包裹在 [TOOL_CALL]...[/TOOL_CALL] 标签中。
+# 内部格式不固定，已观察到以下变体：
+#
+# A. arrow + --keys:
+#    [TOOL_CALL] {tool => "web_search", "args": {--query "test", --max_results 10}}[/TOOL_CALL]
+# B. 标准 JSON:
+#    [TOOL_CALL] { "tool": "get_org", "args": { "id": "abc" } } [/TOOL_CALL]
+# C. 等号语法:
+#    [TOOL_CALL] {tool = "setup_organization", args = {"action": "get_org"}}[/TOOL_CALL]
+# D. 紧凑多行 JSON:
+#    [TOOL_CALL]{ "tool": "name", "args": {...} }[/TOOL_CALL]
+#
+# 结束标签可以是 [/TOOL_CALL] 或 </invoke>，也可能缺失。
+
+_TOOL_CALL_TAG_DETECT_RE = re.compile(r"\[TOOL_CALL\]", re.IGNORECASE)
+
+_TOOL_CALL_TAG_BLOCK_RE = re.compile(
+    r"\[TOOL_CALL\]\s*(.*?)\s*(?:\[/TOOL_CALL\]|</invoke>)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+_TOOL_CALL_TAG_UNCLOSED_RE = re.compile(
+    r"\[TOOL_CALL\]\s*(\{.+\})\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+_TAG_TOOL_NAME_RE = re.compile(
+    r"""(?:"?(?:tool|name|function)"?\s*(?:=>|=|:)\s*"([^"]+)")""",
+)
+
+_TAG_ARGS_START_RE = re.compile(
+    r"""(?:"?(?:args|arguments|parameters|input)"?\s*(?:=>|=|:)\s*)(\{)""",
+)
+
+
+def _find_matching_brace(text: str, start: int) -> int:
+    """找到与 start 处 '{' 匹配的 '}' 位置，正确跳过引号内的花括号。"""
+    if start >= len(text) or text[start] != "{":
+        return -1
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _extract_tool_from_obj(obj: dict) -> tuple[str, dict] | None:
+    """从已解析的 dict 中提取工具名和参数。"""
+    name = obj.get("tool") or obj.get("name") or obj.get("function")
+    if not name or not isinstance(name, str):
+        return None
+    args = (
+        obj.get("args")
+        or obj.get("arguments")
+        or obj.get("parameters")
+        or obj.get("input")
+        or {}
+    )
+    return name, args if isinstance(args, dict) else {}
+
+
+def _normalize_tag_body(body: str) -> str:
+    """将 arrow/equals/--key 语法标准化为 JSON 兼容格式。"""
+    s = body
+    s = re.sub(r"(\w+)\s*=>\s*", r'"\1": ', s)
+    s = re.sub(r"(\w+)\s*=\s*(?=[\"'{[\d])", r'"\1": ', s)
+    s = re.sub(r"--(\w+)\s+", r'"\1": ', s)
+    return s
+
+
+def _parse_tag_args_block(body: str) -> dict:
+    """从 [TOOL_CALL] 体中提取 args 部分并尝试解析为 dict。"""
+    m = _TAG_ARGS_START_RE.search(body)
+    if not m:
+        return {}
+    brace_start = m.start(1)
+    brace_end = _find_matching_brace(body, brace_start)
+    if brace_end < 0:
+        return {}
+    args_str = body[brace_start : brace_end + 1]
+    for attempt in (args_str, _normalize_tag_body(args_str)):
+        try:
+            result = json.loads(attempt)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return {}
+
+
+def _parse_tool_call_tag_body(body: str) -> tuple[str, dict] | None:
+    """解析 [TOOL_CALL] 标签内的内容，提取工具名和参数。"""
+    body = body.strip()
+    if not body:
+        return None
+
+    for text_to_try in (body, _normalize_tag_body(body)):
+        try:
+            obj = json.loads(text_to_try)
+            if isinstance(obj, dict):
+                result = _extract_tool_from_obj(obj)
+                if result:
+                    return result
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+    name_match = _TAG_TOOL_NAME_RE.search(body)
+    if not name_match:
+        return None
+    tool_name = name_match.group(1)
+    args = _parse_tag_args_block(body)
+    return tool_name, args
+
+
+def _parse_tool_call_tags(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """解析 [TOOL_CALL]...[/TOOL_CALL] 格式的工具调用。"""
+    tool_calls: list[ToolUseBlock] = []
+    spans_to_remove: list[tuple[int, int]] = []
+
+    for m in _TOOL_CALL_TAG_BLOCK_RE.finditer(text):
+        result = _parse_tool_call_tag_body(m.group(1))
+        if result:
+            name, args = result
+            tool_calls.append(ToolUseBlock(
+                id=f"tag_call_{uuid.uuid4().hex[:12]}",
+                name=name,
+                input=args,
+            ))
+            spans_to_remove.append((m.start(), m.end()))
+
+    if not tool_calls:
+        for m in _TOOL_CALL_TAG_UNCLOSED_RE.finditer(text):
+            result = _parse_tool_call_tag_body(m.group(1))
+            if result:
+                name, args = result
+                tool_calls.append(ToolUseBlock(
+                    id=f"tag_call_{uuid.uuid4().hex[:12]}",
+                    name=name,
+                    input=args,
+                ))
+                spans_to_remove.append((m.start(), m.end()))
+
+    if not tool_calls:
+        return text, []
+
+    parts: list[str] = []
+    prev = 0
+    for s, e in sorted(spans_to_remove):
+        parts.append(text[prev:s])
+        prev = e
+    parts.append(text[prev:])
+    clean = "".join(parts).strip()
+
+    clean = re.sub(r"\[/?TOOL_CALL\]", "", clean, flags=re.IGNORECASE).strip()
+    return clean, tool_calls
+
+
 # ── JSON 格式工具调用检测与解析 ──────────────────────────
 # 部分模型（如 Qwen 2.5）在 failover 时会把工具调用以原始 JSON
 # 写入文本响应，而非走结构化 tool_use。典型格式：
@@ -892,6 +1069,11 @@ _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
         "glm",
         re.compile(r"<tool_call>", re.IGNORECASE),
         _parse_glm,
+    ),
+    _TextToolFormat(
+        "tool_call_tag",
+        _TOOL_CALL_TAG_DETECT_RE,
+        _parse_tool_call_tags,
     ),
     # ↓ 以下为 fallback 格式，仅当上方精确格式未匹配时才尝试
     _TextToolFormat(
