@@ -3066,18 +3066,29 @@ class MessageGateway:
             for img in message.content.images:
                 if img.local_path and Path(img.local_path).exists():
                     try:
-                        with open(img.local_path, "rb") as f:
-                            image_data = base64.b64encode(f.read()).decode("utf-8")
+                        from .media.image_prep import prepare_image_for_context
+
+                        raw = Path(img.local_path).read_bytes()
+                        result = prepare_image_for_context(
+                            raw, media_type=img.mime_type or "image/jpeg",
+                        )
+                        if result:
+                            b64_data, media_type, _w, _h = result
                             images_data.append(
                                 {
                                     "type": "image",
                                     "source": {
                                         "type": "base64",
-                                        "media_type": img.mime_type or "image/jpeg",
-                                        "data": image_data,
+                                        "media_type": media_type,
+                                        "data": b64_data,
                                     },
-                                    "local_path": img.local_path,  # 也保存路径
+                                    "local_path": img.local_path,
                                 }
+                            )
+                        else:
+                            logger.warning(
+                                f"Image too large to embed, skipping: "
+                                f"{img.local_path}"
                             )
                     except Exception as e:
                         logger.error(f"Failed to read image: {e}")

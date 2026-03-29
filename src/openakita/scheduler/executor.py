@@ -330,6 +330,7 @@ class TaskExecutor:
         # 桌面通知（独立于 IM 通道，始终尝试）
         try:
             from ..config import settings
+
             if settings.desktop_notify_enabled:
                 from ..core.desktop_notify import notify_task_completed_async
 
@@ -438,7 +439,7 @@ class TaskExecutor:
 
     async def _execute_system_task(self, task: ScheduledTask) -> tuple[bool, str]:
         """
-        执行系统内置任务
+        执行系统内置任务（带超时保护）
 
         直接调用相应的系统方法，不通过 LLM
 
@@ -451,21 +452,35 @@ class TaskExecutor:
         action = task.action
         logger.info(f"Executing system task: {action}")
 
+        # 系统任务也需要超时保护，避免 selfcheck 等任务无限运行
+        SYSTEM_TASK_TIMEOUTS = {
+            "system:daily_selfcheck": 300,  # 5 分钟
+            "system:daily_memory": 600,  # 10 分钟
+            "system:workspace_backup": 300,  # 5 分钟
+        }
+        timeout = SYSTEM_TASK_TIMEOUTS.get(action)
+
         try:
             if action == "system:daily_memory":
-                return await self._system_daily_memory()
-
+                coro = self._system_daily_memory()
             elif action == "system:daily_selfcheck":
-                return await self._system_daily_selfcheck()
-
+                coro = self._system_daily_selfcheck()
             elif action == "system:proactive_heartbeat":
                 return await self._system_proactive_heartbeat(task)
-
             elif action == "system:workspace_backup":
-                return await self._system_workspace_backup()
-
+                coro = self._system_workspace_backup()
             else:
                 return False, f"Unknown system action: {action}"
+
+            if timeout:
+                try:
+                    return await asyncio.wait_for(coro, timeout=timeout)
+                except TimeoutError:
+                    error_msg = f"System task {action} timed out after {timeout}s"
+                    logger.error(f"TaskExecutor: {error_msg}")
+                    return False, error_msg
+            else:
+                return await coro
 
         except Exception as e:
             logger.error(f"System task {action} failed: {e}")
@@ -489,7 +504,9 @@ class TaskExecutor:
             since, until = tracker.get_memory_consolidation_time_range()
 
             if since:
-                logger.info(f"Memory consolidation time range: {since.isoformat()} → {until.isoformat()}")
+                logger.info(
+                    f"Memory consolidation time range: {since.isoformat()} → {until.isoformat()}"
+                )
             else:
                 logger.info("Memory consolidation: first run, processing all records")
 
@@ -584,7 +601,9 @@ class TaskExecutor:
                     persona_manager=self.persona_manager,
                     memory_manager=self.memory_manager,
                 )
-                logger.debug("ProactiveEngine fallback: created new instance (idle_chat unavailable)")
+                logger.debug(
+                    "ProactiveEngine fallback: created new instance (idle_chat unavailable)"
+                )
 
             # 执行心跳
             result = await engine.heartbeat()
@@ -617,7 +636,9 @@ class TaskExecutor:
                                 await sticker_engine.initialize()
                                 sticker = await sticker_engine.get_random_by_mood(sticker_mood)
                                 if sticker:
-                                    local_path = await sticker_engine.download_and_cache(sticker["url"])
+                                    local_path = await sticker_engine.download_and_cache(
+                                        sticker["url"]
+                                    )
                                     if local_path:
                                         adapter = self.gateway.get_adapter(channel)
                                         if adapter:
@@ -628,7 +649,9 @@ class TaskExecutor:
                         logger.info(f"Sent proactive message ({msg_type}) to {channel}/{chat_id}")
                         return True, f"Sent {msg_type} message: {msg_content[:50]}..."
                     except Exception as e:
-                        logger.warning(f"Failed to send proactive message to {channel}/{chat_id}: {e}")
+                        logger.warning(
+                            f"Failed to send proactive message to {channel}/{chat_id}: {e}"
+                        )
 
             return True, f"Generated {msg_type} message but no active IM channel"
 
@@ -691,9 +714,7 @@ class TaskExecutor:
                         adapter = self.gateway.get_adapter(channel)
                         if not adapter or not adapter.is_running:
                             continue
-                        await self._send_report_chunks(
-                            adapter, chat_id, report_md, report_date
-                        )
+                        await self._send_report_chunks(adapter, chat_id, report_md, report_date)
                         pushed = 1
                         push_target = f"{channel}/{chat_id}"
                         break  # 发送成功，停止尝试
@@ -708,16 +729,19 @@ class TaskExecutor:
                         checker.mark_report_as_reported(getattr(report, "date", None))
 
             # 3. 记录自检时间
-            tracker.record_selfcheck({
-                "total_errors": report.total_errors,
-                "fix_success": report.fix_success,
-            })
+            tracker.record_selfcheck(
+                {
+                    "total_errors": report.total_errors,
+                    "fix_success": report.fix_success,
+                }
+            )
 
             # 4. 格式化结果
             push_info = push_target if pushed else "无可用通道（将在用户下次发消息时补推）"
             time_range_info = (
                 f"{since.strftime('%m-%d %H:%M')} → {until.strftime('%m-%d %H:%M')}"
-                if since else "首次运行"
+                if since
+                else "首次运行"
             )
 
             summary = (
@@ -797,9 +821,7 @@ class TaskExecutor:
             return targets
         sessions = session_manager.list_sessions()
         if sessions:
-            sessions.sort(
-                key=lambda s: getattr(s, "last_active", datetime.min), reverse=True
-            )
+            sessions.sort(key=lambda s: getattr(s, "last_active", datetime.min), reverse=True)
             for session in sessions:
                 if getattr(session, "state", None) and str(session.state.value) == "closed":
                     continue

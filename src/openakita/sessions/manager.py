@@ -480,33 +480,69 @@ class SessionManager:
             logger.error(f"Failed to parse {path.name}: {e}")
             return None
 
+    _MEDIA_BLOCK_TYPES = frozenset({
+        "image", "video", "video_url", "audio", "input_audio",
+    })
+
     def _clean_large_content_in_messages(self, messages: list[dict]) -> None:
         """
-        清理消息中的大型数据（如 base64 截图）
+        清理消息中的大型数据（base64 图片/视频、大段 tool_result 等）
 
-        这是一个安全措施，防止大型数据在 session 恢复时导致上下文爆炸
+        session 恢复时调用，防止历史 base64 数据导致上下文爆炸。
         """
         for msg in messages:
             content = msg.get("content")
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        # 检查 tool_result 中的大型内容
-                        if block.get("type") == "tool_result":
-                            result_content = block.get("content", "")
-                            if isinstance(result_content, str) and len(result_content) > 10000:
-                                # 大型内容，检查是否是 base64 图片
-                                if "base64" in result_content.lower() or result_content.startswith(
-                                    "data:image"
-                                ):
-                                    block["content"] = "[图片数据已清理，请重新截图]"
-                                else:
-                                    from openakita.core.tool_executor import smart_truncate
-                                    block["content"], _ = smart_truncate(
-                                        result_content, 4000,
-                                        label="session_restore",
-                                        save_full=True,
-                                    )
+            if not isinstance(content, list):
+                continue
+
+            cleaned: list[dict] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    cleaned.append(block)
+                    continue
+
+                block_type = block.get("type", "")
+
+                # 图片/视频/音频块 → 替换为文字占位符
+                if block_type in self._MEDIA_BLOCK_TYPES:
+                    cleaned.append({
+                        "type": "text",
+                        "text": "[历史媒体内容已清理]",
+                    })
+                    continue
+
+                # image_url 内嵌 data URI → 替换
+                if block_type == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        cleaned.append({
+                            "type": "text",
+                            "text": "[历史图片已清理]",
+                        })
+                        continue
+
+                # tool_result 中的大型内容
+                if block_type == "tool_result":
+                    result_content = block.get("content", "")
+                    if isinstance(result_content, str) and len(result_content) > 10000:
+                        if (
+                            "base64" in result_content.lower()
+                            or result_content.startswith("data:image")
+                        ):
+                            block = dict(block)
+                            block["content"] = "[图片数据已清理，请重新截图]"
+                        else:
+                            from openakita.core.tool_executor import smart_truncate
+                            block = dict(block)
+                            block["content"], _ = smart_truncate(
+                                result_content, 4000,
+                                label="session_restore",
+                                save_full=True,
+                            )
+
+                cleaned.append(block)
+
+            msg["content"] = cleaned
 
     # ==================== 通道注册表 ====================
 
