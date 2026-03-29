@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, IS_TAURI, logger } from "../platform";
+import { invoke, IS_TAURI, logger, relaunchApp } from "../platform";
 import { safeFetch } from "../providers";
 import { envGet } from "../utils";
 import { notifyLoading, notifyError, notifySuccess, dismissLoading } from "../utils/notify";
@@ -203,7 +203,11 @@ export function StatusView(props: StatusViewProps) {
                   await doStopService(effectiveWsId);
                   await waitForServiceDown("http://127.0.0.1:18900", 15000);
                   dismissLoading(_b);
-                  await doStartLocalService(effectiveWsId);
+                  if (IS_TAURI) {
+                    await relaunchApp();
+                  } else {
+                    await doStartLocalService(effectiveWsId);
+                  }
                 } catch (e) { notifyError(String(e)); dismissLoading(_b); }
               }} disabled={!!busy}><RotateCcw size={13} />{t("status.restart")}</Button>
             </>)}
@@ -364,7 +368,11 @@ export function StatusView(props: StatusViewProps) {
           </Button>
         </div>
         {endpointSummary.length === 0 ? (
-          <div className="cardHint">{t("status.noEndpoints")}</div>
+          <div className="cardHint">
+            {!serviceStatus?.running
+              ? <><Loader2 className="inline animate-spin mr-1" size={13} />{t("status.waitingForBackend")}</>
+              : t("status.noEndpoints")}
+          </div>
         ) : (
           <Table>
             <TableHeader>
@@ -495,7 +503,11 @@ export function StatusView(props: StatusViewProps) {
         </div>
         <div className="card" style={{ marginTop: 0 }}>
           <span className="statusCardLabel">Skills</span>
-          {skillSummary ? (
+          {!skillSummary && !serviceStatus?.running ? (
+            <div className="cardHint" style={{ marginTop: 8 }}>
+              <Loader2 className="inline animate-spin mr-1" size={13} />{t("status.waitingForBackend")}
+            </div>
+          ) : skillSummary ? (
             <div style={{ marginTop: 8 }}>
               <div className="statusMetric"><span>{t("status.total")}</span><b>{skillSummary.count}</b></div>
               <div className="statusMetric"><span>{t("skills.system")}</span><b>{skillSummary.systemCount}</b></div>
