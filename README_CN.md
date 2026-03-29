@@ -9,11 +9,20 @@
 </p>
 
 <p align="center">
+  <a href="https://openakita.ai"><img src="https://img.shields.io/badge/🌐_官网-openakita.ai-orange?style=for-the-badge" alt="Official Website" height="28" /></a>
+  &nbsp;
+  <a href="https://github.com/openakita/openakita/releases"><img src="https://img.shields.io/badge/📥_下载-Desktop_App-blue?style=for-the-badge" alt="Download" height="28" /></a>
+  &nbsp;
+  <a href="https://discord.gg/vFwxNVNH"><img src="https://img.shields.io/badge/💬_Discord-加入社区-5865F2?style=for-the-badge" alt="Discord" height="28" /></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License" height="20" />
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python Version" height="20" />
   <img src="https://img.shields.io/github/v/release/openakita/openakita?style=flat-square" alt="Release" height="20" />
   <img src="https://img.shields.io/pypi/v/openakita?color=green&style=flat-square" alt="PyPI" height="20" />
   <img src="https://img.shields.io/github/actions/workflow/status/openakita/openakita/ci.yml?branch=main&style=flat-square" alt="Build Status" height="20" />
+  <img src="https://img.shields.io/github/stars/openakita/openakita?style=flat-square" alt="Stars" height="20" />
 </p>
 
 <p align="center">
@@ -44,7 +53,12 @@ OpenAkita 是一款开源全能 AI 助手——多个 AI Agent 协作分工、�
 
 **全图形化配置，5 分钟上手，全程不用敲一行命令。**
 
-> **下载**：[GitHub Releases](https://github.com/openakita/openakita/releases) — Windows / macOS / Linux
+<p align="center">
+  🌐 <a href="https://openakita.ai"><b>官网 openakita.ai</b></a> &nbsp;|&nbsp;
+  📥 <a href="https://github.com/openakita/openakita/releases"><b>下载桌面端</b></a> &nbsp;|&nbsp;
+  📖 <a href="https://openakita.ai/docs"><b>在线文档</b></a> &nbsp;|&nbsp;
+  💬 <a href="https://discord.gg/vFwxNVNH"><b>Discord 社区</b></a>
+</p>
 
 ---
 
@@ -135,6 +149,8 @@ OpenAkita 是一款开源全能 AI 助手——多个 AI Agent 协作分工、�
 - 模型、IM、技能、定时任务——全部在图形界面配置
 
 > **下载**：[GitHub Releases](https://github.com/openakita/openakita/releases) — Windows (.exe) / macOS (.dmg) / Linux (.deb)
+>
+> 更多信息请访问官网 **[openakita.ai](https://openakita.ai)**
 
 ### 方式二：pip 安装
 
@@ -544,6 +560,8 @@ OpenAkita 对国内用户做了全面优化：
 - **IM 扫码绑定** — 微信、飞书、企微扫码即绑定，无需开发者配置
 - **中英双语界面** — 自动识别系统语言，一键切换
 
+> 了解更多请访问 **[openakita.ai](https://openakita.ai)**
+
 ---
 
 ## 文档
@@ -593,12 +611,17 @@ OpenAkita 对国内用户做了全面优化：
 </table>
 
 <p align="center">
-  <a href="https://discord.gg/vFwxNVNH">Discord</a> · 
-  <a href="https://x.com/openakita">X (Twitter)</a> · 
-  <a href="mailto:zacon365@gmail.com">Email</a>
+  🌐 <a href="https://openakita.ai">官网</a> · 
+  💬 <a href="https://discord.gg/vFwxNVNH">Discord</a> · 
+  🐦 <a href="https://x.com/openakita">X (Twitter)</a> · 
+  📧 <a href="mailto:zacon365@gmail.com">Email</a>
 </p>
 
-[Issues](https://github.com/openakita/openakita/issues) · [Discussions](https://github.com/openakita/openakita/discussions) · [Star](https://github.com/openakita/openakita)
+<p align="center">
+  <a href="https://github.com/openakita/openakita/issues">Issues</a> · 
+  <a href="https://github.com/openakita/openakita/discussions">Discussions</a> · 
+  <a href="https://github.com/openakita/openakita">⭐ Star</a>
+</p>
 
 ---
 
@@ -633,5 +656,6 @@ Apache License 2.0 — 详见 [LICENSE](LICENSE)
 ---
 
 <p align="center">
-  <strong>OpenAkita — 开源多 Agent AI 助手，不只是聊天，是帮你做事的 AI 团队</strong>
+  <strong>OpenAkita — 开源多 Agent AI 助手，不只是聊天，是帮你做事的 AI 团队</strong><br/>
+  <a href="https://openakita.ai">openakita.ai</a>
 </p>
