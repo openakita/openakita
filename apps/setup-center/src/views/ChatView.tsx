@@ -2169,18 +2169,31 @@ export function ChatView({
     }
   }, [serviceRunning]);
 
+  const sessionRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!serviceRunning || sessionRestoreAttempted.current) return;
     sessionRestoreAttempted.current = true;
 
     let cancelled = false;
-    (async () => {
+    let attempt = 0;
+
+    const reconcile = async () => {
+      attempt++;
       try {
         const res = await safeFetch(`${apiBaseUrl}/api/sessions?channel=desktop`);
         if (cancelled) return;
         const data = await res.json();
-        const backendSessions: { id: string; title: string; lastMessage: string; timestamp: number; messageCount: number; agentProfileId?: string }[] = data.sessions || [];
         if (cancelled) return;
+
+        // Backend still loading sessions — retry with backoff (max ~20s total)
+        if (data.ready === false && attempt < 6) {
+          const delay = Math.min(1000 * Math.pow(1.5, attempt - 1), 5000);
+          sessionRetryTimer.current = setTimeout(reconcile, delay);
+          return;
+        }
+
+        const backendSessions: { id: string; title: string; lastMessage: string; timestamp: number; messageCount: number; agentProfileId?: string }[] = data.sessions || [];
 
         // ── Factory reset detection (epoch-based only) ──
         // Only clear local data when data_epoch actually changes, which signals
@@ -2241,9 +2254,20 @@ export function ChatView({
         if (!activeConvId) {
           setActiveConvId(restoredConvs[0].id);
         }
-      } catch { /* backend not available yet, ignore */ }
-    })();
-    return () => { cancelled = true; };
+      } catch {
+        // Network error — retry if backend might still be starting
+        if (!cancelled && attempt < 6) {
+          const delay = Math.min(1000 * Math.pow(1.5, attempt - 1), 5000);
+          sessionRetryTimer.current = setTimeout(reconcile, delay);
+        }
+      }
+    };
+
+    reconcile();
+    return () => {
+      cancelled = true;
+      if (sessionRetryTimer.current) clearTimeout(sessionRetryTimer.current);
+    };
   }, [serviceRunning, apiBaseUrl, activeConvId]);
 
   // ── Multi-device busy state: poll + WS events ──

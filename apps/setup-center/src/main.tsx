@@ -23,7 +23,7 @@ import { App } from "./App";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initTheme } from "./theme";
 import { logger } from "./platform/logger";
-import { copyToClipboard } from "./utils/clipboard";
+import { copyToClipboard, readFromClipboard } from "./utils/clipboard";
 
 // Initialize theme before rendering to catch OS changes
 initTheme();
@@ -212,7 +212,7 @@ setTimeout(() => hideBoot(true), 8000);
         {
           label: "粘贴",
           action: () => {
-            navigator.clipboard.readText().then((text) => {
+            readFromClipboard().then((text) => {
               if (!text) return;
               if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
                 const el = target;
