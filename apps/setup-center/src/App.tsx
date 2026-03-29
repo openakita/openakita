@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, logger } from "./platform";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, logger, relaunchApp } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
 import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
@@ -1655,7 +1655,8 @@ export function App() {
       const wsId = currentWorkspaceId || workspaces[0]?.id;
 
       if (IS_TAURI && wsId && venvDir && dataMode === "local") {
-        // ── Tauri 本地模式：进程级重启（杀旧进程 → 启新进程） ──
+        // ── Tauri 本地模式：停止后端 → 重启整个应用 ──
+        // 避免在同一进程内 stop+start 导致 tao 窗口事件循环崩溃
         try {
           const shutRes = await fetch(`${base}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(2000) });
           if (shutRes.ok) await new Promise((r) => setTimeout(r, 1000));
@@ -1667,20 +1668,9 @@ export function App() {
 
         await waitForServiceDown(base, 15000);
 
-        setRestartOverlay({ phase: "waiting" });
-        try {
-          const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>(
-            "openakita_service_start", { venvDir, workspaceId: wsId },
-          );
-          setServiceStatus(ss);
-        } catch (e) {
-          setRestartOverlay({ phase: "fail" });
-          setTimeout(() => {
-            setRestartOverlay(null);
-            notifyError(t("config.restartFail") + ": " + String(e));
-          }, 2500);
-          return;
-        }
+        setRestartOverlay(null);
+        await relaunchApp();
+        return;
       } else {
         // ── Web / Capacitor 模式：进程内重启（唯一可用方式） ──
         try {
@@ -2418,11 +2408,14 @@ export function App() {
     const _busyId = notifyLoading(t("status.stopping"));
     try {
       await doStopService(wsId);
-      // 轮询等待旧服务完全关闭（端口释放），而非固定延时
       await waitForServiceDown("http://127.0.0.1:18900", 15000);
     } catch { /* ignore stop errors */ }
     dismissLoading(_busyId);
-    await doStartLocalService(wsId);
+    if (IS_TAURI) {
+      await relaunchApp();
+    } else {
+      await doStartLocalService(wsId);
+    }
   }
 
   // ── Check for app updates once desktop version is known (respects auto-update toggle) ──

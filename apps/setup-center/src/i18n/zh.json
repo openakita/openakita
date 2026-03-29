@@ -361,6 +361,7 @@
     "llmEndpoints": "LLM 端点",
     "imChannels": "IM 通道",
     "noEndpoints": "未配置端点，请先在配置中添加",
+    "waitingForBackend": "正在连接后端服务…",
     "keyMissing": "Key 缺失",
     "check": "检测",
     "configured": "已配置",

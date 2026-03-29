@@ -361,6 +361,7 @@
     "llmEndpoints": "LLM Endpoints",
     "imChannels": "IM Channels",
     "noEndpoints": "No endpoints configured",
+    "waitingForBackend": "Connecting to backend…",
     "keyMissing": "Key missing",
     "check": "Check",
     "configured": "Configured",
