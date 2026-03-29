@@ -57,6 +57,9 @@ const PROJECT_TYPE_LABEL: Record<string, string> = { temporary: "临时", perman
 const PROJECT_STATUS_LABEL: Record<string, string> = {
   planning: "规划中", active: "进行中", paused: "暂停", completed: "已完成", archived: "已归档",
 };
+const PROJECT_STATUS_COLOR: Record<string, string> = {
+  planning: "#f59e0b", active: "#3b82f6", paused: "#94a3b8", completed: "#22c55e", archived: "#6b7280",
+};
 
 export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false }: OrgProjectBoardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -77,6 +80,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const [taskDetailLoading, setTaskDetailLoading] = useState(false);
   const [subtasksExpanded, setSubtasksExpanded] = useState(true);
   const [viewTab, setViewTab] = useState<"gantt" | "kanban">("gantt");
+  const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState<string | null>(null);
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -149,6 +153,14 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
     } catch { /* ignore */ }
   };
 
+  const deleteProject = async (projectId: string) => {
+    try {
+      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}`, { method: "DELETE" });
+      if (selectedProjectId === projectId) setSelectedProjectId(null);
+      fetchProjects();
+    } catch { /* ignore */ }
+  };
+
   const updateTaskStatus = async (projectId: string, taskId: string, newStatus: string) => {
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, {
@@ -162,6 +174,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const deleteTask = async (projectId: string, taskId: string) => {
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
+      if (selectedTask?.id === taskId) closeTaskDetail();
       fetchProjects();
     } catch { /* ignore */ }
   };
@@ -225,13 +238,37 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           background: #4f46e5; color: #fff !important;
         }
         .opb-proj-btn--inactive {
-          background: transparent; color: var(--text, #e2e8f0);
+          background: var(--bg-subtle, rgba(100,116,139,0.08)); color: var(--text, #e2e8f0);
           border: 1px solid var(--line, rgba(51,65,85,0.4));
         }
-        .opb-proj-btn--inactive:hover { border-color: var(--primary, #6366f1); color: var(--primary, #6366f1); }
+        .opb-proj-btn--inactive:hover { border-color: var(--primary, #6366f1); color: var(--primary, #6366f1); background: var(--nav-hover, rgba(99,102,241,0.08)); }
         .opb-type-tag {
           font-size: 9px; padding: 1px 5px; border-radius: 3px;
-          background: rgba(255,255,255,0.15); margin-left: 2px;
+          background: var(--bg-subtle, rgba(100,116,139,0.15)); margin-left: 2px;
+          color: var(--muted, #64748b);
+        }
+        .opb-proj-btn--active .opb-type-tag {
+          background: rgba(255,255,255,0.2); color: rgba(255,255,255,0.85);
+        }
+        .opb-proj-color {
+          width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+        }
+        .opb-proj-del {
+          position: absolute; top: -6px; right: -6px;
+          width: 16px; height: 16px; border-radius: 50%;
+          background: var(--danger, #ef4444); color: #fff;
+          border: none; font-size: 11px; line-height: 1;
+          cursor: pointer; display: flex; align-items: center; justify-content: center;
+          opacity: 0.7; transition: opacity 0.15s;
+        }
+        .opb-proj-del:hover { opacity: 1; }
+        .opb-proj-confirm {
+          position: absolute; left: 0; top: 100%; z-index: 10;
+          background: var(--card-bg, #1e293b); border: 1px solid var(--line);
+          border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+          display: flex; gap: 6px; align-items: center; font-size: 11px;
+          white-space: nowrap; margin-top: 4px;
+          color: var(--text, #e2e8f0);
         }
         .opb-view-tabs {
           display: flex; gap: 0; margin-left: auto;
@@ -402,14 +439,33 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       {/* ── Header: project selector + view tabs ── */}
       <div className="opb-header">
         {projects.map(p => (
-          <button
-            key={p.id}
-            className={`opb-proj-btn ${p.id === selectedProjectId ? "opb-proj-btn--active" : "opb-proj-btn--inactive"}`}
-            onClick={() => setSelectedProjectId(p.id)}
-          >
-            {p.name}
-            <span className="opb-type-tag">{PROJECT_TYPE_LABEL[p.project_type] || p.project_type}</span>
-          </button>
+          <div key={p.id} style={{ position: "relative", display: "inline-flex" }}>
+            <button
+              className={`opb-proj-btn ${p.id === selectedProjectId ? "opb-proj-btn--active" : "opb-proj-btn--inactive"}`}
+              onClick={() => setSelectedProjectId(p.id)}
+              onContextMenu={(e) => { e.preventDefault(); setConfirmDeleteProjectId(p.id); }}
+            >
+              <span className="opb-proj-color" style={{ background: PROJECT_STATUS_COLOR[p.status] || "var(--primary, #6366f1)" }} />
+              {p.name}
+              <span className="opb-type-tag">{PROJECT_TYPE_LABEL[p.project_type] || p.project_type}</span>
+            </button>
+            {p.id === selectedProjectId && (
+              <button
+                className="opb-proj-del"
+                onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectId(p.id); }}
+                title="删除项目"
+              >×</button>
+            )}
+            {confirmDeleteProjectId === p.id && (
+              <div className="opb-proj-confirm" onClick={(e) => e.stopPropagation()}>
+                <span>确认删除项目？</span>
+                <button className="opb-action-btn" style={{ background: "#ef4444", color: "#fff", fontSize: 10, padding: "2px 8px" }}
+                  onClick={() => { deleteProject(p.id); setConfirmDeleteProjectId(null); }}>删除</button>
+                <button className="opb-action-btn" style={{ fontSize: 10, padding: "2px 8px", background: "transparent", color: "var(--text, #e2e8f0)", border: "1px solid var(--line)" }}
+                  onClick={() => setConfirmDeleteProjectId(null)}>取消</button>
+              </div>
+            )}
+          </div>
         ))}
         <button
           className="opb-proj-btn opb-proj-btn--inactive"
@@ -749,6 +805,9 @@ function GanttView({
                         <button className="opb-action-btn" style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6", fontSize: 10, padding: "2px 8px" }}
                           onClick={() => onStatusChange(task.id, "in_progress")}>重新派发</button>
                       )}
+                      <button className="opb-action-btn" style={{ color: "#ef4444", fontSize: 10, padding: "2px 6px" }}
+                        onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}
+                        title="删除任务">🗑</button>
                     </div>
                   </div>
                 </div>
@@ -860,6 +919,9 @@ function KanbanView({
                           <button className="opb-action-btn" style={{ color: "#3b82f6", fontSize: 10 }}
                             onClick={() => onStatusChange(task.id, "in_progress")}>↻</button>
                         )}
+                        <button className="opb-action-btn" style={{ color: "#ef4444", fontSize: 10, padding: "1px 4px" }}
+                          onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}
+                          title="删除任务">🗑</button>
                       </div>
                     </div>
                     {(task.progress_pct ?? 0) > 0 && (task.progress_pct ?? 0) < 100 && (
