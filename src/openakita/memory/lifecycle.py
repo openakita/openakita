@@ -565,6 +565,8 @@ class LifecycleManager:
 
         batch_size = 15
         total_batches = math.ceil(len(all_memories) / batch_size)
+        consecutive_risky_skips = 0
+        max_consecutive_risky = 3
 
         for batch_idx, i in enumerate(range(0, len(all_memories), batch_size)):
             if cancel_event and cancel_event.is_set():
@@ -617,14 +619,30 @@ class LifecycleManager:
                     if action in ("delete", "merge"):
                         destructive += 1
                 if destructive > max(3, int(len(batch) * 0.4)):
+                    consecutive_risky_skips += 1
                     logger.warning(
-                        "[Lifecycle] Skip risky review batch %s: destructive=%s/%s",
+                        "[Lifecycle] Skip risky review batch %s: destructive=%s/%s "
+                        "(consecutive=%s/%s)",
                         batch_idx,
                         destructive,
                         len(batch),
+                        consecutive_risky_skips,
+                        max_consecutive_risky,
                     )
                     report["kept"] += len(batch)
+                    if consecutive_risky_skips >= max_consecutive_risky:
+                        remaining = len(all_memories) - (i + len(batch))
+                        logger.warning(
+                            "[Lifecycle] Aborting LLM review: %s consecutive risky "
+                            "batches — LLM appears unreliable for this corpus. "
+                            "Keeping remaining %s memories as-is.",
+                            max_consecutive_risky,
+                            remaining,
+                        )
+                        report["kept"] += remaining
+                        break
                     continue
+                consecutive_risky_skips = 0
 
                 decision_map = {d["id"]: d for d in decisions if isinstance(d, dict) and "id" in d}
 

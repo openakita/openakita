@@ -30,13 +30,13 @@ class TaskExecutor:
         self,
         agent_factory: Callable[[], Any] | None = None,
         gateway: Any | None = None,
-        timeout_seconds: int = 600,  # 10 分钟超时
+        timeout_seconds: int = 1200,  # 20 分钟超时
     ):
         """
         Args:
             agent_factory: Agent 工厂函数
             gateway: 消息网关（用于发送结果通知）
-            timeout_seconds: 执行超时（秒），默认 600 秒（10分钟）
+            timeout_seconds: 执行超时（秒），默认 1200 秒（20分钟）
         """
         self.agent_factory = agent_factory
         self.gateway = gateway
@@ -99,6 +99,17 @@ class TaskExecutor:
         logger.info(
             f"TaskExecutor: executing task {task.id} ({task.name}) [type={task.task_type.value}]"
         )
+
+        # Resolve chat_id at runtime if the task has a channel but no chat_id
+        if task.channel_id and not task.chat_id and self.gateway:
+            sm = getattr(self.gateway, "session_manager", None)
+            if sm:
+                target = sm.get_known_channel_target(task.channel_id)
+                if target:
+                    task.chat_id = target[1]
+                    logger.info(
+                        f"TaskExecutor: resolved chat_id for {task.channel_id} → {task.chat_id}"
+                    )
 
         # 根据任务类型选择执行策略
         if task.is_reminder:
@@ -262,13 +273,22 @@ class TaskExecutor:
             # 3. 构建执行 prompt（简化版，不让 Agent 自己发消息）
             prompt = self._build_prompt(task, suppress_send_to_chat=True)
 
-            # 4. 执行（带超时）
+            # 4. 执行（带超时，支持任务级 metadata.timeout_seconds 覆盖）
+            task_timeout = self.timeout_seconds
+            if task.metadata and isinstance(task.metadata, dict):
+                custom_timeout = task.metadata.get("timeout_seconds")
+                if custom_timeout and isinstance(custom_timeout, (int, float)) and custom_timeout > 0:
+                    task_timeout = int(custom_timeout)
+                    logger.info(
+                        f"TaskExecutor: using task-level timeout {task_timeout}s "
+                        f"(default: {self.timeout_seconds}s)"
+                    )
             try:
                 result = await asyncio.wait_for(
-                    self._run_agent(agent, prompt), timeout=self.timeout_seconds
+                    self._run_agent(agent, prompt), timeout=task_timeout
                 )
             except TimeoutError:
-                error_msg = f"Task execution timed out after {self.timeout_seconds}s"
+                error_msg = f"Task execution timed out after {task_timeout}s"
                 logger.error(f"TaskExecutor: {error_msg}")
                 if not skip_end_notification:
                     await self._send_end_notification(task, success=False, message=error_msg)
@@ -330,6 +350,7 @@ class TaskExecutor:
         # 桌面通知（独立于 IM 通道，始终尝试）
         try:
             from ..config import settings
+
             if settings.desktop_notify_enabled:
                 from ..core.desktop_notify import notify_task_completed_async
 
@@ -424,6 +445,8 @@ class TaskExecutor:
         # 优先使用 Ralph 模式（execute_task_from_message）
         if hasattr(agent, "execute_task_from_message"):
             result = await agent.execute_task_from_message(prompt)
+            if isinstance(result, str):
+                return result
             return result.data if result.success else result.error
         # 降级到普通 chat
         elif hasattr(agent, "chat"):
@@ -438,7 +461,7 @@ class TaskExecutor:
 
     async def _execute_system_task(self, task: ScheduledTask) -> tuple[bool, str]:
         """
-        执行系统内置任务
+        执行系统内置任务（带超时保护）
 
         直接调用相应的系统方法，不通过 LLM
 
@@ -451,21 +474,35 @@ class TaskExecutor:
         action = task.action
         logger.info(f"Executing system task: {action}")
 
+        # 系统任务也需要超时保护，避免 selfcheck 等任务无限运行
+        SYSTEM_TASK_TIMEOUTS = {
+            "system:daily_selfcheck": 300,  # 5 分钟
+            "system:daily_memory": 1800,  # 30 分钟（含 LLM review 大量记忆）
+            "system:workspace_backup": 300,  # 5 分钟
+        }
+        timeout = SYSTEM_TASK_TIMEOUTS.get(action)
+
         try:
             if action == "system:daily_memory":
-                return await self._system_daily_memory()
-
+                coro = self._system_daily_memory()
             elif action == "system:daily_selfcheck":
-                return await self._system_daily_selfcheck()
-
+                coro = self._system_daily_selfcheck()
             elif action == "system:proactive_heartbeat":
                 return await self._system_proactive_heartbeat(task)
-
             elif action == "system:workspace_backup":
-                return await self._system_workspace_backup()
-
+                coro = self._system_workspace_backup()
             else:
                 return False, f"Unknown system action: {action}"
+
+            if timeout:
+                try:
+                    return await asyncio.wait_for(coro, timeout=timeout)
+                except TimeoutError:
+                    error_msg = f"System task {action} timed out after {timeout}s"
+                    logger.error(f"TaskExecutor: {error_msg}")
+                    return False, error_msg
+            else:
+                return await coro
 
         except Exception as e:
             logger.error(f"System task {action} failed: {e}")
@@ -489,7 +526,9 @@ class TaskExecutor:
             since, until = tracker.get_memory_consolidation_time_range()
 
             if since:
-                logger.info(f"Memory consolidation time range: {since.isoformat()} → {until.isoformat()}")
+                logger.info(
+                    f"Memory consolidation time range: {since.isoformat()} → {until.isoformat()}"
+                )
             else:
                 logger.info("Memory consolidation: first run, processing all records")
 
@@ -584,7 +623,9 @@ class TaskExecutor:
                     persona_manager=self.persona_manager,
                     memory_manager=self.memory_manager,
                 )
-                logger.debug("ProactiveEngine fallback: created new instance (idle_chat unavailable)")
+                logger.debug(
+                    "ProactiveEngine fallback: created new instance (idle_chat unavailable)"
+                )
 
             # 执行心跳
             result = await engine.heartbeat()
@@ -617,7 +658,9 @@ class TaskExecutor:
                                 await sticker_engine.initialize()
                                 sticker = await sticker_engine.get_random_by_mood(sticker_mood)
                                 if sticker:
-                                    local_path = await sticker_engine.download_and_cache(sticker["url"])
+                                    local_path = await sticker_engine.download_and_cache(
+                                        sticker["url"]
+                                    )
                                     if local_path:
                                         adapter = self.gateway.get_adapter(channel)
                                         if adapter:
@@ -628,7 +671,9 @@ class TaskExecutor:
                         logger.info(f"Sent proactive message ({msg_type}) to {channel}/{chat_id}")
                         return True, f"Sent {msg_type} message: {msg_content[:50]}..."
                     except Exception as e:
-                        logger.warning(f"Failed to send proactive message to {channel}/{chat_id}: {e}")
+                        logger.warning(
+                            f"Failed to send proactive message to {channel}/{chat_id}: {e}"
+                        )
 
             return True, f"Generated {msg_type} message but no active IM channel"
 
@@ -691,9 +736,7 @@ class TaskExecutor:
                         adapter = self.gateway.get_adapter(channel)
                         if not adapter or not adapter.is_running:
                             continue
-                        await self._send_report_chunks(
-                            adapter, chat_id, report_md, report_date
-                        )
+                        await self._send_report_chunks(adapter, chat_id, report_md, report_date)
                         pushed = 1
                         push_target = f"{channel}/{chat_id}"
                         break  # 发送成功，停止尝试
@@ -708,16 +751,19 @@ class TaskExecutor:
                         checker.mark_report_as_reported(getattr(report, "date", None))
 
             # 3. 记录自检时间
-            tracker.record_selfcheck({
-                "total_errors": report.total_errors,
-                "fix_success": report.fix_success,
-            })
+            tracker.record_selfcheck(
+                {
+                    "total_errors": report.total_errors,
+                    "fix_success": report.fix_success,
+                }
+            )
 
             # 4. 格式化结果
             push_info = push_target if pushed else "无可用通道（将在用户下次发消息时补推）"
             time_range_info = (
                 f"{since.strftime('%m-%d %H:%M')} → {until.strftime('%m-%d %H:%M')}"
-                if since else "首次运行"
+                if since
+                else "首次运行"
             )
 
             summary = (
@@ -797,9 +843,7 @@ class TaskExecutor:
             return targets
         sessions = session_manager.list_sessions()
         if sessions:
-            sessions.sort(
-                key=lambda s: getattr(s, "last_active", datetime.min), reverse=True
-            )
+            sessions.sort(key=lambda s: getattr(s, "last_active", datetime.min), reverse=True)
             for session in sessions:
                 if getattr(session, "state", None) and str(session.state.value) == "closed":
                     continue
@@ -917,7 +961,7 @@ class TaskExecutor:
 # 便捷函数：创建默认执行器
 def create_default_executor(
     gateway: Any | None = None,
-    timeout_seconds: int = 600,  # 10 分钟超时
+    timeout_seconds: int = 1200,  # 20 分钟超时
 ) -> Callable[[ScheduledTask], Awaitable[tuple[bool, str]]]:
     """
     创建默认执行器函数

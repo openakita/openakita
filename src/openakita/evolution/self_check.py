@@ -698,13 +698,12 @@ ID: {result.test_id}
             if not autofix_enabled:
                 logger.info("Selfcheck autofix is disabled, skipping fix attempts")
 
+            MAX_FIX_ATTEMPTS = 3
             for result in analysis_results:
                 error_type = result.get("error_type", "unknown")
                 can_fix = result.get("can_fix", False)
 
-                # 核心系统或非允许类型：只记录到报告，不自动修复
                 if error_type == "core" or error_type not in allowed_fix_types or not can_fix:
-                    # 核心组件错误或不可修复，记录到报告
                     report.core_errors += 1
                     report.core_error_patterns.append(
                         {
@@ -718,11 +717,9 @@ ID: {result.test_id}
                         }
                     )
                 else:
-                    # 工具错误
                     report.tool_errors += 1
 
-                    # 仅当 autofix 开启时尝试修复
-                    if autofix_enabled:
+                    if autofix_enabled and report.fix_attempted < MAX_FIX_ATTEMPTS:
                         report.fix_attempted += 1
 
                         try:
@@ -737,6 +734,11 @@ ID: {result.test_id}
                         except Exception as e:
                             logger.error(f"Fix failed for {result.get('error_id')}: {e}")
                             report.fix_failed += 1
+                    elif autofix_enabled and report.fix_attempted >= MAX_FIX_ATTEMPTS:
+                        logger.info(
+                            f"Skipping fix for {result.get('error_id')}: "
+                            f"max fix attempts ({MAX_FIX_ATTEMPTS}) reached"
+                        )
 
                     # 记录工具错误模式（无论是否修复都记录）
                     report.tool_error_patterns.append(
@@ -1042,9 +1044,7 @@ ID: {result.test_id}
 
         # 追加环境标识，让 LLM 知道当前环境类型
         env_hint = (
-            "production"
-            if settings.selfcheck_autofix
-            else "development（自动修复已关闭，仅分析）"
+            "production" if settings.selfcheck_autofix else "development（自动修复已关闭，仅分析）"
         )
         system_prompt += f"\n\n当前环境: {env_hint}"
 
@@ -1219,22 +1219,21 @@ ID: {result.test_id}
 
         return results
 
-    async def _execute_fix_by_llm_decision(self, analysis: dict, max_retries: int = 2) -> FixRecord:
+    FIX_TIMEOUT_SECONDS = 60
+
+    async def _execute_fix_by_llm_decision(self, analysis: dict, max_retries: int = 1) -> FixRecord:
         """
-        根据 LLM 决策执行修复（使用主 Agent）
-
-        创建一个完整的 Agent 实例来执行修复任务，
-        Agent 拥有完整能力：Soul、User、Memory、工具等。
-
-        建议 5：添加重试机制和脚本级降级策略
+        根据 LLM 决策执行修复（使用主 Agent，带超时保护）
 
         Args:
             analysis: LLM 分析结果（包含 fix_instruction）
-            max_retries: 最大重试次数
+            max_retries: 最大重试次数（默认 1 = 不重试）
 
         Returns:
             FixRecord
         """
+        import asyncio
+
         fix_record = FixRecord(
             error_pattern=analysis.get("error_id", ""),
             component=analysis.get("module", "unknown"),
@@ -1244,7 +1243,6 @@ ID: {result.test_id}
 
         fix_instruction = analysis.get("fix_instruction")
 
-        # 没有修复指令，跳过
         if not fix_instruction or not analysis.get("can_fix", False):
             fix_record.fix_action = f"跳过修复: {analysis.get('fix_reason', '无法自动修复')}"
             fix_record.success = False
@@ -1252,10 +1250,9 @@ ID: {result.test_id}
 
         fix_record.fix_action = f"Agent 执行: {fix_instruction}"
 
-        # 重试循环（建议 5）
         for attempt in range(max_retries):
+            agent = None
             try:
-                # 创建 Agent（不启动 scheduler 避免递归）
                 from ..core.agent import Agent
 
                 agent = Agent()
@@ -1299,14 +1296,14 @@ ID: {result.test_id}
                     ],
                 }
 
-                # 关键：清空历史上下文，使用干净状态
                 agent._context.messages = []
                 agent._conversation_history = []
-                # 清理 CLI Session（如果存在）
-                if hasattr(agent, '_cli_session') and agent._cli_session:
+                if hasattr(agent, "_cli_session") and agent._cli_session:
                     agent._cli_session.context.clear_messages()
+
                 logger.info(
-                    f"SelfChecker: Agent context cleared for fix attempt {attempt + 1}/{max_retries}"
+                    f"SelfChecker: fix attempt {attempt + 1}/{max_retries} "
+                    f"(timeout={self.FIX_TIMEOUT_SECONDS}s)"
                 )
 
                 # 构建修复 prompt
@@ -1326,49 +1323,65 @@ ID: {result.test_id}
 3. **禁止** 进行 Windows/系统层面优化与命令操作（注册表、计划任务、权限修复、服务/进程管理等）；如果需要这些操作，请写入“需人工处理”的结论
 4. 修复后验证结果是否正确（能用轻量验证就做，如 list_skills、list_mcp_servers、读取文件等）
 5. 完成后简要报告修复结果（做了什么、改了哪些文件、验证结果）
+6. 快速定位并修复，无法修复的直接报告"需人工处理"
 
 请开始执行修复。"""
 
-                # 使用 Ralph 模式执行（支持多轮工具调用）
-                if hasattr(agent, "execute_task_from_message"):
-                    result = await agent.execute_task_from_message(fix_prompt)
-                    success = result.success if result else False
-                    result_msg = (
-                        result.data
-                        if result and result.success
-                        else (result.error if result else "无结果")
+                # 带超时执行修复 Agent
+                try:
+                    if hasattr(agent, "execute_task_from_message"):
+                        result = await asyncio.wait_for(
+                            agent.execute_task_from_message(fix_prompt),
+                            timeout=self.FIX_TIMEOUT_SECONDS,
+                        )
+                        success = result.success if result else False
+                        result_msg = (
+                            result.data
+                            if result and result.success
+                            else (result.error if result else "无结果")
+                        )
+                    else:
+                        result_msg = await asyncio.wait_for(
+                            agent.chat(fix_prompt),
+                            timeout=self.FIX_TIMEOUT_SECONDS,
+                        )
+                        success = "失败" not in result_msg and "error" not in result_msg.lower()
+                except TimeoutError:
+                    logger.warning(
+                        f"Fix attempt {attempt + 1} timed out after {self.FIX_TIMEOUT_SECONDS}s"
                     )
-                else:
-                    # 降级到普通 chat
-                    result_msg = await agent.chat(fix_prompt)
-                    success = "失败" not in result_msg and "error" not in result_msg.lower()
+                    success = False
+                    result_msg = f"修复超时（{self.FIX_TIMEOUT_SECONDS}s）"
 
-                # 清理 Agent
                 await agent.shutdown()
+                agent = None
 
-                # 修复成功，记录并返回
                 if success:
                     fix_record.success = True
                     fix_record.verified = True
                     fix_record.verification_result = result_msg if result_msg else ""
                     logger.info(
-                        f"Agent fix completed: {analysis.get('error_id')} - success on attempt {attempt + 1}"
+                        f"Agent fix completed: {analysis.get('error_id')} "
+                        f"- success on attempt {attempt + 1}"
                     )
                     return fix_record
 
-                # 修复失败，记录并继续重试
                 logger.warning(
-                    f"Agent fix attempt {attempt + 1} failed: {result_msg[:100] if result_msg else 'no result'}"
+                    f"Agent fix attempt {attempt + 1} failed: "
+                    f"{result_msg[:100] if result_msg else 'no result'}"
                 )
 
             except Exception as e:
                 logger.error(f"Agent fix attempt {attempt + 1} error: {e}")
+                if agent:
+                    try:
+                        await agent.shutdown()
+                    except Exception:
+                        pass
                 if attempt == max_retries - 1:
-                    # 最后一次重试也失败，尝试脚本级降级
                     logger.info("All retries failed, attempting script-level fallback...")
                     return await self._try_script_level_fix(analysis, fix_record)
 
-        # 所有重试失败，尝试脚本级降级
         return await self._try_script_level_fix(analysis, fix_record)
 
     async def _try_script_level_fix(self, analysis: dict, fix_record: FixRecord) -> FixRecord:

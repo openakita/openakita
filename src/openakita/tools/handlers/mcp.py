@@ -92,6 +92,8 @@ class MCPHandler:
 
         auto_connected = False
         if not client.is_connected(server):
+            from ..mcp_workspace import prepare_chrome_devtools_args
+            await prepare_chrome_devtools_args(client, server)
             result = await client.connect(server)
             if not result.success:
                 return f"❌ 无法连接到 MCP 服务器 {server}: {result.error}"
@@ -189,6 +191,8 @@ class MCPHandler:
         if not client.has_server(server):
             return f"❌ 服务器 {server} 未配置。请先用 add_mcp_server 添加或检查名称"
 
+        from ..mcp_workspace import prepare_chrome_devtools_args
+        await prepare_chrome_devtools_args(client, server)
         result = await client.connect(server)
         if result.success:
             self._sync_catalog(server)

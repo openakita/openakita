@@ -30,6 +30,8 @@ class SkillCatalog:
 ## Available Skills
 
 Use `get_skill_info(skill_name)` to load full instructions when needed.
+Installed skills may come from builtin, user workspace, or project directories.
+Do not infer filesystem paths from the workspace map; `get_skill_info` is authoritative.
 
 {skill_list}
 """

@@ -14,7 +14,7 @@ CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
     "wework_ws": [("websockets", "websockets"), ("cryptography", "cryptography")],
     "onebot": [("websockets", "websockets")],
     "onebot_reverse": [("websockets", "websockets")],
-    "qqbot": [("botpy", "qq-botpy"), ("pilk", "pilk")],
+    "qqbot": [("botpy", "qq-botpy")],
     "wechat": [("httpx", "httpx"), ("Crypto", "pycryptodome")],
 }
 

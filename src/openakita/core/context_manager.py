@@ -118,12 +118,16 @@ class ContextManager:
         """静态版 estimate_tokens，供外部模块无需实例即可调用。"""
         return _shared_estimate_tokens(text)
 
+    _IMAGE_TOKEN_ESTIMATE = 1600
+    _VIDEO_TOKEN_ESTIMATE = 4800
+
     def estimate_messages_tokens(self, messages: list[dict]) -> int:
         """
         估算消息列表的 token 数量（with content-hash caching）。
 
         对每条消息的 content 使用与 estimate_tokens 相同的中英文感知算法，
         并为每条消息加固定结构开销（role / tool_use_id 等约 10 tokens）。
+        多媒体块（图片/视频）使用固定估算值，避免对 base64 数据做文本 token 计算。
         """
         total = 0
         for msg in messages:
@@ -275,6 +279,13 @@ class ContextManager:
         _threshold = _settings.context_compression_threshold
         soft_limit = int(hard_limit * _threshold)
 
+        _overhead_bytes = len(system_prompt.encode("utf-8")) if system_prompt else 0
+        if tools:
+            try:
+                _overhead_bytes += len(json.dumps(tools, ensure_ascii=False, default=str).encode("utf-8"))
+            except Exception:
+                _overhead_bytes += len(tools) * 800
+
         current_tokens = self.estimate_messages_tokens(messages)
 
         logger.info(
@@ -347,7 +358,9 @@ class ContextManager:
 
         if len(groups) <= recent_group_count:
             messages = await self._compress_large_tool_results(messages, threshold=2000)
-            return _end_ctx_span(self._hard_truncate_if_needed(messages, hard_limit, memory_manager))
+            return _end_ctx_span(self._hard_truncate_if_needed(
+                messages, hard_limit, memory_manager, overhead_bytes=_overhead_bytes,
+            ))
 
         early_groups = groups[:-recent_group_count]
         recent_groups = groups[-recent_group_count:]
@@ -385,7 +398,9 @@ class ContextManager:
         compressed = await self._compress_further(compressed, soft_limit)
 
         # Step 5: 硬保底
-        return _end_ctx_span(self._hard_truncate_if_needed(compressed, hard_limit, memory_manager))
+        return _end_ctx_span(self._hard_truncate_if_needed(
+            compressed, hard_limit, memory_manager, overhead_bytes=_overhead_bytes,
+        ))
 
     @staticmethod
     def _find_last_boundary_index(messages: list[dict]) -> int:
@@ -957,16 +972,22 @@ class ContextManager:
         logger.info("[ContextRewriter] Injected post-compression orientation prompt")
         return result
 
+    MAX_PAYLOAD_BYTES = 1_800_000  # 1.8MB — 大多数 API 限制在 2MB
+
     def _hard_truncate_if_needed(
-        self, messages: list[dict], hard_limit: int, memory_manager: object | None = None
+        self, messages: list[dict], hard_limit: int, memory_manager: object | None = None,
+        overhead_bytes: int = 0,
     ) -> list[dict]:
         """硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断。
 
         Uses prefix-sum + binary search for O(n log n) instead of O(n^2).
         """
         current_tokens = self.estimate_messages_tokens(messages)
-        if current_tokens <= hard_limit:
-            return messages
+        need_token_truncation = current_tokens > hard_limit
+
+        if not need_token_truncation:
+            # token 预算内，仍需检查 payload 大小（base64 图片可能导致 payload 超限）
+            return self._strip_oversized_payload(messages, overhead_bytes=overhead_bytes)
 
         logger.error(
             f"[HardTruncate] Still {current_tokens} tokens > hard_limit {hard_limit}. "
@@ -1000,7 +1021,6 @@ class ContextManager:
         if dropped_messages:
             logger.warning(f"[HardTruncate] Dropped {len(dropped_messages)} earliest messages")
 
-        # 将被丢弃的消息入队到提取队列，避免永久丢失
         if dropped_messages and memory_manager is not None:
             self._enqueue_dropped_for_extraction(dropped_messages, memory_manager)
 
@@ -1020,17 +1040,9 @@ class ContextManager:
                         ),
                     }
                 elif isinstance(content, list):
-                    new_content = []
-                    for item in content:
-                        if isinstance(item, dict):
-                            for key in ("text", "content"):
-                                val = item.get(key, "")
-                                if isinstance(val, str) and len(val) > max_chars_per_msg:
-                                    keep_h = int(max_chars_per_msg * 0.7)
-                                    keep_t = int(max_chars_per_msg * 0.2)
-                                    item = dict(item)
-                                    item[key] = val[:keep_h] + "\n...[硬截断]...\n" + val[-keep_t:]
-                        new_content.append(item)
+                    new_content = self._hard_truncate_content_blocks(
+                        content, max_chars_per_msg
+                    )
                     truncated[i] = {**msg, "content": new_content}
 
         truncated.insert(0, {
@@ -1046,7 +1058,97 @@ class ContextManager:
             f"[HardTruncate] Final: {final_tokens} tokens "
             f"(hard_limit={hard_limit}, messages={len(truncated)})"
         )
-        return truncated
+        return self._strip_oversized_payload(truncated, overhead_bytes=overhead_bytes)
+
+    def _strip_oversized_payload(
+        self, messages: list[dict], *, overhead_bytes: int = 0,
+    ) -> list[dict]:
+        """检查序列化 payload 大小，超过 API 限制时移除媒体内容。
+
+        Args:
+            overhead_bytes: system prompt + tools 等非 message 部分的 byte 大小,
+                           从 MAX_PAYLOAD_BYTES 预算中扣除。
+        """
+        effective_limit = self.MAX_PAYLOAD_BYTES - overhead_bytes
+        if effective_limit < 200_000:
+            effective_limit = 200_000
+
+        payload_size = sum(
+            len(json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8"))
+            for msg in messages
+        )
+        if payload_size <= effective_limit:
+            return messages
+
+        logger.warning(
+            f"[PayloadGuard] Serialized payload ~{payload_size} bytes "
+            f"> {effective_limit} limit (overhead={overhead_bytes}). "
+            f"Stripping media from history."
+        )
+        result = list(messages)
+        budget_per_msg = effective_limit // max(len(result), 1)
+        for i, msg in enumerate(result):
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                result[i] = {
+                    **msg,
+                    "content": self._hard_truncate_content_blocks(content, budget_per_msg),
+                }
+        return result
+
+    _MEDIA_BLOCK_TYPES = frozenset({
+        "image", "image_url", "video", "video_url", "audio", "input_audio",
+    })
+
+    @classmethod
+    def _hard_truncate_content_blocks(
+        cls, content: list, max_chars: int,
+    ) -> list:
+        """截断 content block 列表中的大型内容（图片/视频/大文本等）。"""
+        new_content: list = []
+        for item in content:
+            if not isinstance(item, dict):
+                new_content.append(item)
+                continue
+
+            item_type = item.get("type", "")
+
+            if item_type in cls._MEDIA_BLOCK_TYPES:
+                label = {"image": "图片", "image_url": "图片", "video": "视频",
+                         "video_url": "视频", "audio": "音频", "input_audio": "音频"
+                         }.get(item_type, "媒体")
+                new_content.append({
+                    "type": "text",
+                    "text": f"[{label}内容已移除以节省上下文空间]",
+                })
+                logger.warning(f"[HardTruncate] Stripped {item_type} block to free context")
+                continue
+
+            truncated_item = dict(item)
+            for key in ("text", "content"):
+                val = truncated_item.get(key, "")
+                if isinstance(val, str) and len(val) > max_chars:
+                    keep_h = int(max_chars * 0.7)
+                    keep_t = int(max_chars * 0.2)
+                    truncated_item[key] = (
+                        val[:keep_h] + "\n...[硬截断]...\n" + val[-keep_t:]
+                    )
+
+            item_size = len(json.dumps(truncated_item, ensure_ascii=False, default=str))
+            if item_size > max_chars:
+                new_content.append({
+                    "type": "text",
+                    "text": f"[{item_type or 'content'} 数据过大已移除 "
+                            f"(原始 {item_size} 字符)]",
+                })
+                logger.warning(
+                    f"[HardTruncate] Replaced oversized {item_type} block "
+                    f"({item_size} chars > {max_chars} limit)"
+                )
+                continue
+
+            new_content.append(truncated_item)
+        return new_content
 
     @staticmethod
     def _enqueue_dropped_for_extraction(

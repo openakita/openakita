@@ -32,6 +32,7 @@ def sanitize_filename(name: str) -> str:
 # 回调类型定义
 MessageCallback = Callable[[UnifiedMessage], Awaitable[None]]
 EventCallback = Callable[[str, dict], Awaitable[None]]
+FailureCallback = Callable[[str, str], None]  # (adapter_name, reason)
 
 
 class ChannelAdapter(ABC):
@@ -69,6 +70,7 @@ class ChannelAdapter(ABC):
     def __init__(self, *, channel_name: str | None = None, bot_id: str | None = None, agent_profile_id: str = "default"):
         self._message_callback: MessageCallback | None = None
         self._event_callback: EventCallback | None = None
+        self._failure_callback: FailureCallback | None = None
         self._running = False
         if channel_name is not None:
             self.channel_name = channel_name
@@ -246,6 +248,18 @@ class ChannelAdapter(ABC):
         """
         self._event_callback = callback
         logger.debug(f"{self.channel_name}: event callback registered")
+
+    def on_failure(self, callback: FailureCallback) -> None:
+        """注册致命失败回调，由网关设置以更新状态面板。"""
+        self._failure_callback = callback
+
+    def _report_failure(self, reason: str) -> None:
+        """通知网关本适配器已致命失败（认证错误等），使状态面板正确反映离线。"""
+        if self._failure_callback:
+            try:
+                self._failure_callback(self.channel_name, reason)
+            except Exception as e:
+                logger.error(f"{self.channel_name}: failure callback error: {e}")
 
     async def _emit_message(self, message: UnifiedMessage) -> None:
         """触发消息回调"""

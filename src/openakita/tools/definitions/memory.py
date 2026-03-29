@@ -234,4 +234,35 @@ MEMORY_TOOLS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "get_session_context",
+        "category": "Memory",
+        "description": "Get detailed context of the current session, including sub-agent execution records, tool usage history, and full message list. Use when conversation history lacks detail about delegation results or you need to review what happened in this session.",
+        "detail": """获取当前会话的详细上下文信息。
+
+**适用场景**：
+- 对话历史中的信息不够详细，需要查看子 Agent 的完整执行记录
+- 需要回顾当前会话的工具使用历史
+- 需要查看完整的消息列表（含元数据）
+
+**注意**：优先使用对话历史中已有的信息。只有在需要更多细节时才调用此工具。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["summary", "sub_agents", "tools", "messages"],
+                    },
+                    "description": (
+                        "要获取的信息段落。"
+                        "summary=会话概况, sub_agents=子Agent详细执行记录, "
+                        "tools=工具调用历史, messages=完整消息列表"
+                    ),
+                    "default": ["summary", "sub_agents"],
+                },
+            },
+        },
+    },
 ]

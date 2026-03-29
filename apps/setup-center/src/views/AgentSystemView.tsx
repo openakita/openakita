@@ -13,7 +13,7 @@ import { Brain, Loader2, Upload, Download } from "lucide-react";
 import { Section } from "../components/Section";
 import { toast } from "sonner";
 import { safeFetch } from "../providers";
-import { IS_TAURI, saveFileDialog, showInFolder } from "../platform";
+import { IS_TAURI, saveFileDialog, showInFolder, writeTextFile } from "../platform";
 import type { EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
 
@@ -110,7 +110,6 @@ export function AgentSystemView(props: AgentSystemViewProps) {
           filters: [{ name: "Markdown", extensions: ["md"] }],
         });
         if (!chosen) return;
-        const { writeTextFile } = await import("@tauri-apps/plugin-fs");
         await writeTextFile(chosen, text);
         toast.success(t("config.personaTemplateSaved", { path: chosen }), {
           action: { label: t("config.personaOpenFolder"), onClick: () => showInFolder(chosen) },
@@ -127,7 +126,8 @@ export function AgentSystemView(props: AgentSystemViewProps) {
         toast.success(t("config.personaTemplateDownloaded"));
       }
     } catch (e: any) {
-      toast.error(e.message || "Download failed");
+      const msg = e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
+      toast.error(msg || t("config.personaImportError"));
     }
   };
 

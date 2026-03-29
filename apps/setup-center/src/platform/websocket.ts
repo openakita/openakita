@@ -3,9 +3,14 @@
 // Auto-reconnects on disconnect with exponential backoff.
 
 import { IS_TAURI, IS_CAPACITOR } from "./detect";
-import { getAccessToken, isTokenExpiringSoon, refreshAccessToken } from "./auth";
+import { getAccessToken, isTokenExpiringSoon, refreshAccessToken, isTauriRemoteMode } from "./auth";
 import { getActiveServer } from "./servers";
 import { logger } from "./logger";
+
+/** True when WS should be skipped (Tauri local mode — events go via IPC instead). */
+function _skipWs(): boolean {
+  return IS_TAURI && !isTauriRemoteMode();
+}
 
 export type WsEventHandler = (event: string, data: unknown) => void;
 
@@ -22,7 +27,7 @@ function getWsUrl(): string {
   let host: string;
   let proto: string;
 
-  if (IS_CAPACITOR) {
+  if (IS_CAPACITOR || (IS_TAURI && isTauriRemoteMode())) {
     const server = getActiveServer();
     if (!server) return "";
     const url = new URL(server.url);
@@ -114,6 +119,8 @@ function _scheduleReconnect(): void {
  * Works in both Web and Tauri modes.
  */
 export function onWsEvent(handler: WsEventHandler): () => void {
+  if (_skipWs()) return () => {};
+
   _handlers.push(handler);
   // Ensure connection is started
   if (!_ws && !_reconnectTimer) {
@@ -148,6 +155,7 @@ export function disconnectWs(): void {
  * Resets backoff and attempts counter. No-op if no handlers are registered.
  */
 export function reconnectWsNow(): void {
+  if (_skipWs()) return;
   _intentionallyClosed = false;
   if (_reconnectTimer) {
     clearTimeout(_reconnectTimer);

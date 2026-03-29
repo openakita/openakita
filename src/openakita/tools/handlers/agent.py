@@ -61,6 +61,7 @@ class AgentToolHandler:
         agent_id = (params.get("agent_id") or "").strip()
         message = (params.get("message") or "").strip()
         reason = (params.get("reason") or "").strip()
+        context = (params.get("context") or "").strip()
 
         if not agent_id:
             return "❌ agent_id is required"
@@ -83,11 +84,12 @@ class AgentToolHandler:
             f"[AgentToolHandler] Delegation: {current_agent} -> {agent_id} | reason={reason}"
         )
 
-        # Agent Harness: context isolation — build task-focused message
-        # instead of relying on the sub-agent seeing full session history
-        isolated_message = message
+        isolated_message = ""
+        if context:
+            isolated_message += f"[任务背景]\n{context}\n\n"
+        isolated_message += f"[任务指令]\n{message}"
         if reason:
-            isolated_message = f"[委派任务] {message}\n[委派原因] {reason}"
+            isolated_message += f"\n[委派原因] {reason}"
 
         try:
             result = await orchestrator.delegate(
@@ -146,6 +148,7 @@ class AgentToolHandler:
             agent_id = (task.get("agent_id") or "").strip()
             message = (task.get("message") or "").strip()
             reason = (task.get("reason") or "").strip()
+            task_context = (task.get("context") or "").strip()
 
             if agent_id in duplicated_ids:
                 seen_counter[agent_id] = seen_counter.get(agent_id, 0) + 1
@@ -184,6 +187,7 @@ class AgentToolHandler:
                             "display_id": agent_id,
                             "message": message,
                             "reason": reason,
+                            "context": task_context,
                         })
                         continue
 
@@ -192,30 +196,57 @@ class AgentToolHandler:
                 "display_id": agent_id,
                 "message": message,
                 "reason": reason,
+                "context": task_context,
             })
+
+        parent_browser = getattr(self.agent, "browser_manager", None)
 
         async def _run_one(task: dict) -> tuple[str, str]:
             aid = task["agent_id"]
             display = task["display_id"]
             msg = task["message"]
             rsn = task["reason"]
+            ctx = task.get("context", "")
             if not aid or not msg:
                 return display or "?", "❌ agent_id and message are required"
+
+            isolated_msg = ""
+            if ctx:
+                isolated_msg += f"[任务背景]\n{ctx}\n\n"
+            isolated_msg += f"[任务指令]\n{msg}"
+            if rsn:
+                isolated_msg += f"\n[委派原因] {rsn}"
+
             logger.info(
                 f"[AgentToolHandler] Parallel delegation: {current_agent} -> {aid} | reason={rsn}"
             )
+
+            isolated_ctx = None
             try:
+                if parent_browser and parent_browser.is_ready:
+                    try:
+                        isolated_ctx = await parent_browser.create_isolated_context()
+                    except Exception as iso_err:
+                        logger.debug(f"[AgentToolHandler] Browser isolation failed: {iso_err}")
+
                 result = await orchestrator.delegate(
                     session=session,
                     from_agent=current_agent,
                     to_agent=aid,
-                    message=msg,
+                    message=isolated_msg,
                     reason=rsn,
+                    isolated_browser=isolated_ctx,
                 )
                 return display, str(result)
             except BaseException as e:
                 logger.error(f"[AgentToolHandler] Parallel delegation to {aid} failed: {e}")
                 return display, f"❌ Failed: {e}"
+            finally:
+                if isolated_ctx and isolated_ctx is not parent_browser:
+                    try:
+                        await isolated_ctx.stop()
+                    except Exception:
+                        pass
 
         coros = [_run_one(t) for t in resolved_tasks]
         try:

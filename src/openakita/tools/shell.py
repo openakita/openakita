@@ -292,6 +292,18 @@ class ShellTool:
         if env:
             cmd_env.update(env)
 
+        # macOS GUI 应用 PATH 增强：Finder/Dock 启动的 .app 只继承
+        # /usr/bin:/bin:/usr/sbin:/sbin，不含 Homebrew/NVM 等路径。
+        # 复用 path_helper 已缓存的 login shell PATH，使 run_shell
+        # 能找到 brew/node/npm/python3 等用户已安装的工具。
+        try:
+            from ..utils.path_helper import resolve_macos_login_shell_path
+            _shell_path = resolve_macos_login_shell_path()
+            if _shell_path:
+                cmd_env["PATH"] = _shell_path
+        except Exception:
+            pass
+
         # 打包模式：将外置 Python 目录 prepend 到子进程 PATH，
         # 使 `python script.py` 自动找到正确解释器
         try:
@@ -377,6 +389,13 @@ class ShellTool:
         work_dir = cwd or self.default_cwd
 
         cmd_env = os.environ.copy()
+        try:
+            from ..utils.path_helper import resolve_macos_login_shell_path
+            _shell_path = resolve_macos_login_shell_path()
+            if _shell_path:
+                cmd_env["PATH"] = _shell_path
+        except Exception:
+            pass
         try:
             from ..runtime_env import IS_FROZEN, get_python_executable
             if IS_FROZEN:

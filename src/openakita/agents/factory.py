@@ -63,10 +63,12 @@ class AgentFactory:
     - 设置 agent name/icon
     """
 
-    async def create(self, profile: AgentProfile, **kwargs: Any) -> Agent:
+    async def create(
+        self, profile: AgentProfile, *, parent_brain: Any = None, **kwargs: Any,
+    ) -> Agent:
         from openakita.core.agent import Agent
 
-        agent = Agent(name=profile.get_display_name(), **kwargs)
+        agent = Agent(name=profile.get_display_name(), brain=parent_brain, **kwargs)
         agent._agent_profile = profile
 
         await agent.initialize(start_scheduler=False, lightweight=True)
@@ -379,7 +381,13 @@ class AgentInstancePool:
                 entry.touch()
                 return entry.agent
 
-            agent = await self._factory.create(profile)
+            parent_brain = None
+            for k, v in self._pool.items():
+                if k.startswith(f"{session_id}::") and hasattr(v.agent, "brain"):
+                    parent_brain = v.agent.brain
+                    break
+
+            agent = await self._factory.create(profile, parent_brain=parent_brain)
             new_entry = _PoolEntry(agent, profile.id, session_id, current_version)
             self._pool[key] = new_entry
 

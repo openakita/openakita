@@ -349,7 +349,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     }
 
 
-@router.delete("/api/config/endpoint/{name}")
+@router.delete("/api/config/endpoint/{name:path}")
 async def delete_endpoint_by_name(
     name: str, request: Request, endpoint_type: str = "endpoints", clean_env: bool = True
 ):

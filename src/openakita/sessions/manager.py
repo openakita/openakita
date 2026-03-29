@@ -81,6 +81,9 @@ class SessionManager:
         # 签名: (safe_session_id: str) -> list[dict]  (每个 dict 含 role, content, timestamp)
         self._turn_loader = None
 
+        # 会话是否已从磁盘加载完毕（API 层用此判断 ready 语义）
+        self._sessions_loaded = False
+
         # 加载持久化的会话
         self._load_sessions()
 
@@ -431,76 +434,140 @@ class SessionManager:
                 logger.error(f"Error in save loop: {e}")
 
     def _load_sessions(self) -> None:
-        """从文件加载会话"""
+        """从文件加载会话，主文件失败时自动回退到 .bak 备份。"""
         sessions_file = self.storage_path / "sessions.json"
+        backup_file = self.storage_path / "sessions.json.bak"
 
-        if not sessions_file.exists():
+        data = self._try_load_sessions_file(sessions_file)
+        if data is None and backup_file.exists():
+            logger.warning("Main sessions.json failed or missing, trying .bak backup")
+            data = self._try_load_sessions_file(backup_file)
+
+        if data is None:
+            self._sessions_loaded = True
             return
 
+        skipped_expired = 0
+        skipped_error = 0
+        for item in data:
+            try:
+                session = Session.from_dict(item)
+                if not session.is_expired() and session.state != SessionState.CLOSED:
+                    msg_count = len(session.context.messages)
+                    self._clean_large_content_in_messages(session.context.messages)
+                    self._sessions[session.session_key] = session
+                    if msg_count > 0:
+                        logger.debug(
+                            f"Loaded session {session.session_key}: "
+                            f"{msg_count} messages preserved "
+                            f"(last_active: {session.last_active})"
+                        )
+                else:
+                    skipped_expired += 1
+
+                session_ts = session.last_active.isoformat()
+                existing = self._channel_registry.get(session.channel)
+                if not existing or session_ts >= existing.get("last_seen", ""):
+                    self._channel_registry[session.channel] = {
+                        "chat_id": session.chat_id,
+                        "user_id": session.user_id,
+                        "last_seen": session_ts,
+                    }
+            except Exception as e:
+                skipped_error += 1
+                logger.warning(f"Failed to load session: {e}")
+
+        if self._channel_registry:
+            self._save_channel_registry()
+
+        parts = [f"Loaded {len(self._sessions)} sessions from storage"]
+        if skipped_expired:
+            parts.append(f"skipped {skipped_expired} expired")
+        if skipped_error:
+            parts.append(f"skipped {skipped_error} errors")
+        logger.info(f"{parts[0]}" + (f" ({', '.join(parts[1:])})" if len(parts) > 1 else ""))
+
+        self._sessions_loaded = True
+
+    @staticmethod
+    def _try_load_sessions_file(path: Path) -> list[dict] | None:
+        """尝试读取并解析 sessions JSON 文件，失败返回 None。"""
+        if not path.exists():
+            return None
         try:
-            with open(sessions_file, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-
-            skipped_expired = 0
-            for item in data:
-                try:
-                    session = Session.from_dict(item)
-                    if not session.is_expired() and session.state != SessionState.CLOSED:
-                        msg_count = len(session.context.messages)
-                        self._clean_large_content_in_messages(session.context.messages)
-                        self._sessions[session.session_key] = session
-                        if msg_count > 0:
-                            logger.debug(
-                                f"Loaded session {session.session_key}: "
-                                f"{msg_count} messages preserved (last_active: {session.last_active})"
-                            )
-                    else:
-                        skipped_expired += 1
-
-                    self._update_channel_registry(
-                        session.channel, session.chat_id, session.user_id
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to load session: {e}")
-
-            if self._channel_registry:
-                self._save_channel_registry()
-
-            logger.info(
-                f"Loaded {len(self._sessions)} sessions from storage"
-                f"{f' (skipped {skipped_expired} expired)' if skipped_expired else ''}"
-            )
-
+            if isinstance(data, list):
+                return data
+            logger.warning(f"Unexpected sessions format in {path.name}: {type(data).__name__}")
+            return None
         except Exception as e:
-            logger.error(f"Failed to load sessions: {e}")
+            logger.error(f"Failed to parse {path.name}: {e}")
+            return None
+
+    _MEDIA_BLOCK_TYPES = frozenset({
+        "image", "video", "video_url", "audio", "input_audio",
+    })
 
     def _clean_large_content_in_messages(self, messages: list[dict]) -> None:
         """
-        清理消息中的大型数据（如 base64 截图）
+        清理消息中的大型数据（base64 图片/视频、大段 tool_result 等）
 
-        这是一个安全措施，防止大型数据在 session 恢复时导致上下文爆炸
+        session 恢复时调用，防止历史 base64 数据导致上下文爆炸。
         """
         for msg in messages:
             content = msg.get("content")
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        # 检查 tool_result 中的大型内容
-                        if block.get("type") == "tool_result":
-                            result_content = block.get("content", "")
-                            if isinstance(result_content, str) and len(result_content) > 10000:
-                                # 大型内容，检查是否是 base64 图片
-                                if "base64" in result_content.lower() or result_content.startswith(
-                                    "data:image"
-                                ):
-                                    block["content"] = "[图片数据已清理，请重新截图]"
-                                else:
-                                    from openakita.core.tool_executor import smart_truncate
-                                    block["content"], _ = smart_truncate(
-                                        result_content, 4000,
-                                        label="session_restore",
-                                        save_full=True,
-                                    )
+            if not isinstance(content, list):
+                continue
+
+            cleaned: list[dict] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    cleaned.append(block)
+                    continue
+
+                block_type = block.get("type", "")
+
+                # 图片/视频/音频块 → 替换为文字占位符
+                if block_type in self._MEDIA_BLOCK_TYPES:
+                    cleaned.append({
+                        "type": "text",
+                        "text": "[历史媒体内容已清理]",
+                    })
+                    continue
+
+                # image_url 内嵌 data URI → 替换
+                if block_type == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        cleaned.append({
+                            "type": "text",
+                            "text": "[历史图片已清理]",
+                        })
+                        continue
+
+                # tool_result 中的大型内容
+                if block_type == "tool_result":
+                    result_content = block.get("content", "")
+                    if isinstance(result_content, str) and len(result_content) > 10000:
+                        if (
+                            "base64" in result_content.lower()
+                            or result_content.startswith("data:image")
+                        ):
+                            block = dict(block)
+                            block["content"] = "[图片数据已清理，请重新截图]"
+                        else:
+                            from openakita.core.tool_executor import smart_truncate
+                            block = dict(block)
+                            block["content"], _ = smart_truncate(
+                                result_content, 4000,
+                                label="session_restore",
+                                save_full=True,
+                            )
+
+                cleaned.append(block)
+
+            msg["content"] = cleaned
 
     # ==================== 通道注册表 ====================
 

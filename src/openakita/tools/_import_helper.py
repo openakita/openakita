@@ -53,8 +53,6 @@ _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
     # -- 浏览器自动化 (已直接打包) --
     "playwright": (None, None, "playwright"),
     "playwright.async_api": (None, None, "playwright"),
-    "browser_use": (None, None, "browser-use"),
-    "langchain_openai": (None, None, "langchain-openai"),
     # -- 向量记忆 --
     "sentence_transformers": ("vector-memory", "向量记忆增强", "sentence-transformers"),
     "chromadb": ("vector-memory", "向量记忆增强", "chromadb"),

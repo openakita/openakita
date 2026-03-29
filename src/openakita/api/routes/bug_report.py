@@ -36,7 +36,6 @@ KEY_PACKAGES = [
     "pydantic",
     "mcp",
     "playwright",
-    "browser-use",
     "chromadb",
     "sentence-transformers",
     "lark-oapi",

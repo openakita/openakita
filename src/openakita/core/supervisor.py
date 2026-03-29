@@ -94,9 +94,8 @@ EXTREME_ITERATION_THRESHOLD = 50
 SELF_CHECK_INTERVAL = 10
 UNPRODUCTIVE_WINDOW = 5
 UNPRODUCTIVE_ADMIN_TOOLS = frozenset({
-    "create_todo", "update_todo_step", "search_memory", "add_memory",
-    "list_directory", "get_plan_status", "create_plan", "update_plan_step",
-    "complete_plan",
+    "create_todo", "update_todo_step", "get_todo_status", "complete_todo",
+    "search_memory", "add_memory", "list_directory",
 })
 
 

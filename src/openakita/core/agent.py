@@ -134,7 +134,11 @@ def _ensure_desktop():
 
 logger = logging.getLogger(__name__)
 
-# 上下文管理常量（已迁移至 context_manager.py / config.py，保留 DEFAULT_MAX_CONTEXT_TOKENS 导入）
+# 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
+from .context_manager import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
+COMPRESSION_RATIO = 0.15
+LARGE_TOOL_RESULT_THRESHOLD = 5000
+MIN_RECENT_TURNS = 4
 
 # 小上下文窗口模型的核心工具白名单（仅保留最基本的执行能力）
 SMALL_CTX_CORE_TOOLS = {
@@ -257,6 +261,8 @@ class Agent:
         "中止",
         "终止",
         "不要了",
+        "/stop", "/停止", "/取消", "/cancel", "/abort",
+        "kill", "kill all",
     }
 
     SKIP_COMMANDS = {
@@ -269,6 +275,7 @@ class Agent:
         "skip this",
         "换个方法",
         "太慢了",
+        "/skip", "/跳过",
     }
 
     # ---- Task-local properties ----
@@ -336,12 +343,13 @@ class Agent:
         self,
         name: str | None = None,
         api_key: str | None = None,
+        brain: Brain | None = None,
     ):
         self.name = name or settings.agent_name
 
         # 初始化核心组件
         self.identity = Identity()
-        self.brain = Brain(api_key=api_key)
+        self.brain = brain or Brain(api_key=api_key)
         self.ralph = RalphLoop(
             max_iterations=settings.max_iterations,
             on_iteration=self._on_iteration,
@@ -373,7 +381,6 @@ class Agent:
         self.mcp_catalog = _shared_mcp_catalog
         self.browser_manager = None  # 在 _start_builtin_mcp_servers 中启动
         self.pw_tools = None
-        self.bu_runner = None
         self._builtin_mcp_count = 0
 
         # 恢复运行时状态（必须在工具目录构建之前，否则 multi_agent_enabled 等可能还是旧值）
@@ -612,6 +619,16 @@ class Agent:
         "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
     })
 
+    # Categories deferred from first few turns to reduce token overhead.
+    # These tools are included once intent hints or explicit user request is detected.
+    _DEFERRED_CATEGORIES: frozenset[str] = frozenset({
+        "IM Channel",      # IM platform tools — only needed for channel operations
+        "Scheduled",       # scheduler tools — only needed when setting up schedules
+        "Agent Package",   # agent packaging — rarely needed in normal conversation
+        "Persona",         # persona traits — deferred until personality discussion
+        "Config",          # config management — rarely needed
+    })
+
     @property
     def _effective_tools(self) -> list[dict]:
         """Tools available for the current call context.
@@ -619,11 +636,13 @@ class Agent:
         Filtering layers (applied in order):
         0. Sanity: drop entries without a valid name (e.g. malformed plugin defs)
         1. Sub-agent restriction: remove delegation tools
-        2. Intent-driven: filter by IntentResult.tool_hints (category-based),
+        2. Tiered loading: exclude _DEFERRED_CATEGORIES when no intent hints
+           request them (saves ~20 tool definitions on first turn)
+        3. Intent-driven: filter by IntentResult.tool_hints (category-based),
            but always keep infrastructure categories (System, Memory, Plan,
            Skills, Skill Store, MCP) so the LLM can recall context, orchestrate
            plans, invoke skills/MCP, and use meta tools regardless of intent.
-        3. Context window: reduce set for small models
+        4. Context window: reduce set for small models
         """
         tools = [t for t in self._tools if t.get("name")]
         dropped = len(self._tools) - len(tools)
@@ -637,21 +656,41 @@ class Agent:
             tools = [t for t in tools if t.get("name") not in self._agent_tool_names]
 
         intent = getattr(self, "_current_intent", None)
-        if intent and intent.tool_hints and hasattr(self, "tool_catalog"):
+        intent_hints = set(intent.tool_hints) if intent and intent.tool_hints else set()
+
+        if intent_hints and hasattr(self, "tool_catalog"):
             tool_groups = self.tool_catalog.get_tool_groups()
             allowed: set[str] = set()
             for cat in self._ALWAYS_KEEP_CATEGORIES:
                 allowed |= tool_groups.get(cat, set())
-            for hint in intent.tool_hints:
+            for hint in intent_hints:
                 allowed |= tool_groups.get(hint, set())
             tools = [t for t in tools if t.get("name") in allowed]
+        elif hasattr(self, "tool_catalog"):
+            deferred_cats = self._DEFERRED_CATEGORIES - intent_hints
+            if deferred_cats:
+                tool_groups = self.tool_catalog.get_tool_groups()
+                deferred_names: set[str] = set()
+                for cat in deferred_cats:
+                    deferred_names |= tool_groups.get(cat, set())
+                if deferred_names:
+                    before = len(tools)
+                    tools = [
+                        t for t in tools if t.get("name") not in deferred_names
+                    ]
+                    if len(tools) < before:
+                        logger.debug(
+                            "[Agent] tiered loading: deferred %d tools from %s",
+                            before - len(tools),
+                            sorted(deferred_cats),
+                        )
 
         ctx = self._get_raw_context_window()
         if 0 < ctx < 8000:
             tools = [t for t in tools if t.get("name") in SMALL_CTX_CORE_TOOLS]
         elif 0 < ctx < 32000:
-            allowed = SMALL_CTX_CORE_TOOLS | MEDIUM_CTX_EXTRA_TOOLS
-            tools = [t for t in tools if t.get("name") in allowed]
+            allowed_ctx = SMALL_CTX_CORE_TOOLS | MEDIUM_CTX_EXTRA_TOOLS
+            tools = [t for t in tools if t.get("name") in allowed_ctx]
 
         return tools
 
@@ -975,7 +1014,6 @@ class Agent:
         self._context.system = self._build_system_prompt(base_prompt, use_compiled=True)
 
         if lightweight:
-            self._inject_browser_use_llm_config()
             self._initialized = True
             return
 
@@ -1017,9 +1055,6 @@ class Agent:
                 logger.info(f"Loaded {len(persona_memories)} persona traits from memory")
         except Exception as e:
             logger.debug(f"[Persona] trait loading skipped: {e}")
-
-        # === browser_task 依赖的 LLM 配置注入 ===
-        self._inject_browser_use_llm_config()
 
         self._initialized = True
         total_mcp = self.mcp_catalog.server_count + self._builtin_mcp_count
@@ -1126,11 +1161,18 @@ class Agent:
             "browser",
             create_browser_handler(self),
             [
-                "browser_task",
                 "browser_open",
                 "browser_navigate",
+                "browser_click",
+                "browser_type",
+                "browser_scroll",
+                "browser_wait",
+                "browser_execute_js",
                 "browser_get_content",
                 "browser_screenshot",
+                "browser_list_tabs",
+                "browser_switch_tab",
+                "browser_new_tab",
                 "browser_close",
                 "view_image",
                 "browser_click",
@@ -1579,9 +1621,12 @@ class Agent:
             } & all_server_names
 
         if auto_connect_ids:
+            from ..tools.mcp_workspace import prepare_chrome_devtools_args
+
             synced_any = False
             for server_name in auto_connect_ids:
                 try:
+                    await prepare_chrome_devtools_args(self.mcp_client, server_name)
                     result = await self.mcp_client.connect(server_name)
                     if result.success:
                         logger.info(f"Auto-connected MCP server: {server_name} ({result.tool_count} tools)")
@@ -1615,45 +1660,13 @@ class Agent:
             if pw_hint:
                 logger.warning(f"浏览器自动化不可用: {pw_hint}")
             else:
-                from ..tools.browser import BrowserManager, BrowserUseRunner, PlaywrightTools
+                from ..tools.browser import BrowserManager, PlaywrightTools
 
                 self.browser_manager = BrowserManager()
                 self.pw_tools = PlaywrightTools(self.browser_manager)
-                self.bu_runner = BrowserUseRunner(self.browser_manager)
                 logger.info("Initialized browser service (Playwright)")
         except Exception as e:
             logger.warning(f"Failed to start browser service: {e}")
-
-    def _inject_browser_use_llm_config(self) -> None:
-        """将当前 LLM 端点配置注入 BrowserUseRunner（browser_task 依赖 OpenAI-compatible LLM）。"""
-        try:
-            bu_runner = getattr(self, "bu_runner", None)
-            if not bu_runner:
-                return
-            llm_client = getattr(self.brain, "_llm_client", None)
-            if not llm_client:
-                return
-            provider = None
-            current = llm_client.get_current_model()
-            if current and current.name in llm_client.providers:
-                p = llm_client.providers[current.name]
-                if getattr(p.config, "api_type", "") == "openai" and p.is_healthy:
-                    provider = p
-            if provider is None:
-                for p in llm_client.providers.values():
-                    if getattr(p.config, "api_type", "") == "openai" and p.is_healthy:
-                        provider = p
-                        break
-            if provider:
-                api_key = provider.config.get_api_key()
-                if api_key:
-                    bu_runner.set_llm_config({
-                        "model": provider.config.model,
-                        "api_key": api_key,
-                        "base_url": provider.config.base_url.rstrip("/"),
-                    })
-        except Exception as e:
-            logger.debug(f"[BrowserUseRunner] LLM config injection skipped/failed: {e}")
 
     async def _start_scheduler(self) -> None:
         """启动定时任务调度器"""
@@ -1902,6 +1915,7 @@ class Agent:
         task_description: str = "",
         session_type: str = "cli",
         tools_enabled: bool = True,
+        session: "Session | None" = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2)
@@ -1913,6 +1927,7 @@ class Agent:
             task_description: 任务描述 (用于检索相关记忆)
             session_type: 会话类型 "cli" 或 "im"
             tools_enabled: 是否启用工具（CHAT 轻量路径传 False）
+            session: 当前 Session 实例（用于提取元数据）
 
         Returns:
             编译后的系统提示词
@@ -1925,11 +1940,38 @@ class Agent:
         ctx_window = self._get_raw_context_window()
         intent = getattr(self, "_current_intent", None)
         _mem_keywords = intent.memory_keywords if intent else None
+
+        model_display = ""
+        try:
+            conv_id = session.id if session else None
+            model_info = self.brain.get_current_model_info(conversation_id=conv_id)
+            if isinstance(model_info, dict) and "model" in model_info:
+                model_display = model_info["model"]
+        except Exception:
+            pass
+
+        session_context = None
+        if session:
+            try:
+                sub_records = getattr(session.context, "sub_agent_records", None) or []
+                session_context = {
+                    "session_id": session.id,
+                    "channel": getattr(session, "channel", "unknown"),
+                    "chat_type": getattr(session, "chat_type", "private"),
+                    "message_count": len(session.context.messages) if session.context else 0,
+                    "has_sub_agents": bool(sub_records),
+                    "sub_agent_count": len(sub_records),
+                }
+            except Exception:
+                pass
+
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description, session_type=session_type, context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
             tools_enabled=tools_enabled,
             memory_keywords=_mem_keywords,
+            model_display_name=model_display,
+            session_context=session_context,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -2391,6 +2433,75 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             )
         return result
 
+    async def _compress_large_tool_results(
+        self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
+    ) -> list[dict]:
+        """压缩超大 tool_result / tool_use.input，使用 LLM 摘要。
+
+        逐条扫描，tokens > threshold 的 tool_result 调 LLM 压缩为精简摘要，
+        保留结构（role/type 等不变）。
+        """
+        from .tool_executor import OVERFLOW_MARKER
+
+        result = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                new_content = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        raw_content = item.get("content", "")
+                        if isinstance(raw_content, list):
+                            text_parts = [
+                                p.get("text", "")
+                                for p in raw_content
+                                if isinstance(p, dict) and p.get("type") == "text"
+                            ]
+                            result_text = "\n".join(text_parts)
+                        else:
+                            result_text = str(raw_content)
+                        if OVERFLOW_MARKER in result_text:
+                            new_content.append(item)
+                            continue
+                        result_tokens = self._estimate_tokens(result_text)
+                        if result_tokens > threshold:
+                            target_tokens = max(int(result_tokens * COMPRESSION_RATIO), 100)
+                            compressed_text = await self._llm_compress_text(
+                                result_text, target_tokens, context_type="tool_result"
+                            )
+                            new_item = dict(item)
+                            new_item["content"] = compressed_text
+                            new_content.append(new_item)
+                            logger.info(
+                                f"Compressed tool_result from {result_tokens} to "
+                                f"~{self._estimate_tokens(compressed_text)} tokens"
+                            )
+                        else:
+                            new_content.append(item)
+                    elif isinstance(item, dict) and item.get("type") == "tool_use":
+                        input_text = json.dumps(item.get("input", {}), ensure_ascii=False)
+                        input_tokens = self._estimate_tokens(input_text)
+                        if input_tokens > threshold:
+                            target_tokens = max(int(input_tokens * COMPRESSION_RATIO), 100)
+                            compressed_input = await self._llm_compress_text(
+                                input_text, target_tokens, context_type="tool_input"
+                            )
+                            new_item = dict(item)
+                            new_item["input"] = {"compressed_summary": compressed_input}
+                            new_content.append(new_item)
+                            logger.info(
+                                f"Compressed tool_use input from {input_tokens} to "
+                                f"~{self._estimate_tokens(compressed_input)} tokens"
+                            )
+                        else:
+                            new_content.append(item)
+                    else:
+                        new_content.append(item)
+                result.append({**msg, "content": new_content})
+            else:
+                result.append(msg)
+        return result
+
     async def _cancellable_await(self, coro, cancel_event: asyncio.Event | None = None):
         """将任意协程包装为可被 cancel_event 立即中断的操作。
 
@@ -2423,6 +2534,416 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             reason=self._cancel_reason or "用户请求停止",
             source="cancellable_await",
         )
+
+    async def _llm_compress_text(
+        self, text: str, target_tokens: int, context_type: str = "general"
+    ) -> str:
+        """
+        使用 LLM 压缩一段文本到目标 token 数
+
+        Args:
+            text: 要压缩的文本
+            target_tokens: 目标 token 数
+            context_type: 上下文类型（tool_result/tool_input/conversation）
+
+        Returns:
+            压缩后的文本
+        """
+        # 如果文本本身超出 LLM 上下文能处理的范围，先做硬截断
+        max_input = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN
+        if len(text) > max_input:
+            # 保留头尾，中间截断
+            head_size = int(max_input * 0.6)
+            tail_size = int(max_input * 0.3)
+            text = text[:head_size] + "\n...(中间内容过长已省略)...\n" + text[-tail_size:]
+
+        target_chars = target_tokens * CHARS_PER_TOKEN
+
+        if context_type == "tool_result":
+            system_prompt = (
+                "你是一个信息压缩助手。请将以下工具执行结果压缩为简洁摘要，"
+                "保留关键数据、状态码、错误信息和重要输出，去掉冗余细节。"
+            )
+        elif context_type == "tool_input":
+            system_prompt = (
+                "你是一个信息压缩助手。请将以下工具调用参数压缩为简洁摘要，"
+                "保留关键参数名和值，去掉冗余内容。"
+            )
+        else:
+            system_prompt = (
+                "你是一个对话压缩助手。请将以下对话内容压缩为简洁摘要，"
+                "保留用户意图、关键决策、执行结果和当前状态。"
+            )
+
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="context_compress",
+            operation_detail=context_type,
+        ))
+        try:
+            response = await self._cancellable_await(
+                self.brain.messages_create_async(
+                    model=self.brain.model,
+                    max_tokens=target_tokens,
+                    system=system_prompt,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
+                        }
+                    ],
+                    use_thinking=False,
+                )
+            )
+
+            summary = ""
+            for block in response.content:
+                if block.type == "text":
+                    summary += block.text
+                elif block.type == "thinking" and hasattr(block, "thinking"):
+                    # thinking 块 fallback：当模型把摘要放在 thinking 中时
+                    if not summary:
+                        summary = block.thinking if isinstance(block.thinking, str) else str(block.thinking)
+
+            # 如果仍然为空，记录警告并回退到硬截断
+            if not summary.strip():
+                logger.warning(
+                    f"[Compress] LLM returned empty summary (tokens_out={response.usage.output_tokens}), "
+                    f"falling back to hard truncation"
+                )
+                if len(text) > target_chars:
+                    head = int(target_chars * 0.7)
+                    tail = int(target_chars * 0.2)
+                    return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+                return text
+
+            return summary.strip()
+
+        except UserCancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"LLM compression failed: {e}")
+            if len(text) > target_chars:
+                head = int(target_chars * 0.7)
+                tail = int(target_chars * 0.2)
+                return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+            return text
+        finally:
+            reset_tracking_context(_tt)
+
+    def _extract_message_text(self, msg: dict) -> str:
+        """
+        从消息中提取文本内容（包括 tool_use/tool_result 结构化信息）
+
+        Args:
+            msg: 消息字典
+
+        Returns:
+            提取的文本内容
+        """
+        role = "用户" if msg["role"] == "user" else "助手"
+        content = msg.get("content", "")
+
+        if isinstance(content, str):
+            return f"{role}: {content}\n"
+
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        texts.append(item.get("text", ""))
+                    elif item.get("type") == "tool_use":
+                        from .tool_executor import smart_truncate as _st
+                        name = item.get("name", "unknown")
+                        input_data = item.get("input", {})
+                        input_summary = json.dumps(input_data, ensure_ascii=False)
+                        input_summary, _ = _st(input_summary, 3000, save_full=False, label="compress_input")
+                        texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
+                    elif item.get("type") == "tool_result":
+                        from .tool_executor import smart_truncate as _st
+                        raw_content = item.get("content", "")
+                        if isinstance(raw_content, list):
+                            text_parts = [
+                                p.get("text", "")
+                                for p in raw_content
+                                if isinstance(p, dict) and p.get("type") == "text"
+                            ]
+                            result_text = "\n".join(text_parts)
+                        else:
+                            result_text = str(raw_content)
+                        result_text, _ = _st(result_text, 10000, save_full=False, label="compress_result")
+                        is_error = item.get("is_error", False)
+                        status = "错误" if is_error else "成功"
+                        texts.append(f"[工具结果({status}): {result_text}]")
+            if texts:
+                return f"{role}: {' '.join(texts)}\n"
+
+        return ""
+
+    async def _summarize_messages_chunked(
+        self, messages: list[dict], target_tokens: int
+    ) -> str:
+        """
+        分块 LLM 摘要消息列表
+
+        将消息按 CHUNK_MAX_TOKENS 分块，每块独立调 LLM 压缩，
+        最后将所有块的摘要拼接。如果摘要拼接后还很长，再做一次汇总压缩。
+
+        Args:
+            messages: 要摘要的消息列表
+            target_tokens: 最终目标 token 数
+
+        Returns:
+            摘要文本
+        """
+        if not messages:
+            return ""
+
+        # 将消息转换为文本并分块
+        chunks: list[str] = []
+        current_chunk = ""
+        current_chunk_tokens = 0
+
+        for msg in messages:
+            msg_text = self._extract_message_text(msg)
+            msg_tokens = self._estimate_tokens(msg_text)
+
+            if current_chunk_tokens + msg_tokens > CHUNK_MAX_TOKENS and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = msg_text
+                current_chunk_tokens = msg_tokens
+            else:
+                current_chunk += msg_text
+                current_chunk_tokens += msg_tokens
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        if not chunks:
+            return ""
+
+        logger.info(f"Splitting {len(messages)} messages into {len(chunks)} chunks for compression")
+
+        # 每块独立压缩
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            chunk_tokens = self._estimate_tokens(chunk)
+            # 每块的目标 = 总目标 / 块数（均分）
+            chunk_target = max(int(target_tokens / len(chunks)), 100)
+
+            _tt2 = set_tracking_context(TokenTrackingContext(
+                operation_type="context_compress",
+                operation_detail=f"chunk_{i}",
+            ))
+            try:
+                response = await self._cancellable_await(
+                    self.brain.messages_create_async(
+                        model=self.brain.model,
+                        max_tokens=chunk_target,
+                        system=(
+                            "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
+                            "要求：\n"
+                            "1. 保留用户的原始意图和关键指令\n"
+                            "2. 保留工具调用的名称、关键参数和执行结果（成功/失败/关键输出）\n"
+                            "3. 保留重要的状态变化和决策\n"
+                            "4. 去掉重复信息、冗余输出和中间过程细节\n"
+                            "5. 使用简练的描述，不需要保留原文格式"
+                        ),
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
+                                    f"约 {chunk_tokens} tokens）压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内:\n\n"
+                                    f"{chunk}"
+                                ),
+                            }
+                        ],
+                        use_thinking=False,
+                    )
+                )
+
+                summary = ""
+                for block in response.content:
+                    if block.type == "text":
+                        summary += block.text
+                    elif block.type == "thinking" and hasattr(block, "thinking"):
+                        # thinking 块 fallback：当模型把摘要放在 thinking 中时
+                        if not summary:
+                            summary = block.thinking if isinstance(block.thinking, str) else str(block.thinking)
+
+                if not summary.strip():
+                    # 摘要为空，回退到硬截断
+                    logger.warning(f"[Compress] Chunk {i + 1} returned empty summary, using hard truncation")
+                    max_chars = chunk_target * CHARS_PER_TOKEN
+                    if len(chunk) > max_chars:
+                        chunk_summaries.append(
+                            chunk[:max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                        )
+                    else:
+                        chunk_summaries.append(chunk)
+                else:
+                    chunk_summaries.append(summary.strip())
+                    logger.info(
+                        f"Chunk {i + 1}/{len(chunks)}: {chunk_tokens} -> "
+                        f"~{self._estimate_tokens(summary)} tokens"
+                    )
+
+            except UserCancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
+                max_chars = chunk_target * CHARS_PER_TOKEN
+                if len(chunk) > max_chars:
+                    chunk_summaries.append(
+                        chunk[:max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                    )
+                else:
+                    chunk_summaries.append(chunk)
+            finally:
+                reset_tracking_context(_tt2)
+
+        # 拼接所有块摘要
+        combined = "\n---\n".join(chunk_summaries)
+        combined_tokens = self._estimate_tokens(combined)
+
+        # 如果拼接后还超过目标的 2 倍，再做一次汇总压缩
+        if combined_tokens > target_tokens * 2 and len(chunks) > 1:
+            logger.info(
+                f"Combined summary still large ({combined_tokens} tokens), "
+                f"doing final consolidation..."
+            )
+            combined = await self._llm_compress_text(
+                combined, target_tokens, context_type="conversation"
+            )
+
+        return combined
+
+    async def _compress_further(self, messages: list[dict], max_tokens: int) -> list[dict]:
+        """
+        递归压缩：减少保留的最近组数量，继续压缩（保证 tool 配对完整性）
+
+        Args:
+            messages: 当前消息列表
+            max_tokens: 目标 token 上限
+
+        Returns:
+            压缩后的消息列表
+        """
+        current_tokens = self._estimate_messages_tokens(messages)
+
+        if current_tokens <= max_tokens:
+            return messages
+
+        # 按组边界切割，保留最近 2 组（比 _compress_context 的 MIN_RECENT_TURNS 更少）
+        groups = self._group_messages(messages)
+        recent_group_count = min(2, len(groups))
+
+        if len(groups) <= recent_group_count:
+            # 只有最近的几个组了，做最后一次 tool_result 压缩
+            logger.warning("Cannot compress further, attempting final tool_result compression")
+            return await self._compress_large_tool_results(messages, threshold=1000)
+
+        early_groups = groups[:-recent_group_count]
+        recent_groups = groups[-recent_group_count:]
+
+        early_messages = [msg for group in early_groups for msg in group]
+        recent_messages = [msg for group in recent_groups for msg in group]
+
+        # 用 LLM 压缩早期消息
+        early_tokens = self._estimate_messages_tokens(early_messages)
+        target = max(int(early_tokens * COMPRESSION_RATIO), 100)
+        summary = await self._summarize_messages_chunked(early_messages, target)
+
+        compressed = ContextManager._inject_summary_into_recent(summary, recent_messages)
+
+        compressed_tokens = self._estimate_messages_tokens(compressed)
+        logger.info(
+            f"Further compressed context from {current_tokens} to {compressed_tokens} tokens"
+        )
+        return compressed
+
+    def _hard_truncate_if_needed(self, messages: list[dict], hard_limit: int) -> list[dict]:
+        """
+        硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断保证能提交到 API
+
+        策略：
+        1. 从最早的消息开始丢弃，保留最近的消息
+        2. 将丢弃的消息入队到提取队列避免永久丢失
+        3. 对剩余消息中仍然过大的单条内容做字符级截断
+        4. 添加截断提示让模型知道上下文不完整
+        """
+        current_tokens = self._estimate_messages_tokens(messages)
+        if current_tokens <= hard_limit:
+            return messages
+
+        logger.error(
+            f"[HardTruncate] LLM compression insufficient! "
+            f"Still {current_tokens} tokens > hard_limit {hard_limit}. "
+            f"Applying hard truncation to guarantee API submission."
+        )
+
+        truncated = list(messages)
+        dropped_messages: list[dict] = []
+        while len(truncated) > 2 and self._estimate_messages_tokens(truncated) > hard_limit:
+            removed = truncated.pop(0)
+            dropped_messages.append(removed)
+            removed_role = removed.get("role", "?")
+            logger.warning(f"[HardTruncate] Dropped earliest message (role={removed_role})")
+
+        if dropped_messages:
+            from .context_manager import ContextManager
+            ContextManager._enqueue_dropped_for_extraction(dropped_messages, self.memory_manager)
+
+        # 策略二：如果只剩 2 条还是超限，对单条消息内容做字符级截断
+        if self._estimate_messages_tokens(truncated) > hard_limit:
+            max_chars_per_msg = (hard_limit * CHARS_PER_TOKEN) // max(len(truncated), 1)
+            for i, msg in enumerate(truncated):
+                content = msg.get("content", "")
+                if isinstance(content, str) and len(content) > max_chars_per_msg:
+                    keep_head = int(max_chars_per_msg * 0.7)
+                    keep_tail = int(max_chars_per_msg * 0.2)
+                    truncated[i] = {
+                        **msg,
+                        "content": (
+                            content[:keep_head]
+                            + "\n\n...[内容过长已硬截断]...\n\n"
+                            + content[-keep_tail:]
+                        ),
+                    }
+                elif isinstance(content, list):
+                    # 对 list 类型内容，截断其中过大的文本块
+                    new_content = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            for key in ("text", "content"):
+                                val = item.get(key, "")
+                                if isinstance(val, str) and len(val) > max_chars_per_msg:
+                                    keep_h = int(max_chars_per_msg * 0.7)
+                                    keep_t = int(max_chars_per_msg * 0.2)
+                                    item = dict(item)
+                                    item[key] = (
+                                        val[:keep_h]
+                                        + "\n...[硬截断]...\n"
+                                        + val[-keep_t:]
+                                    )
+                        new_content.append(item)
+                    truncated[i] = {**msg, "content": new_content}
+
+        truncated.insert(0, {
+            "role": "user",
+            "content": (
+                "[context_note: 早期对话已自动整理] "
+                "请正常回复，保持详细程度和输出质量不变。"
+            ),
+        })
+
+        final_tokens = self._estimate_messages_tokens(truncated)
+        logger.warning(
+            f"[HardTruncate] Final: {final_tokens} tokens "
+            f"(hard_limit={hard_limit}, messages={len(truncated)})"
+        )
+        return truncated
 
     async def chat(self, message: str, session_id: str | None = None) -> str:
         """
@@ -2533,8 +3054,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             (messages, session_type, task_monitor, conversation_id, im_tokens)
         """
         # 1. 对齐 MemoryManager 会话
+        # memory safe_id 统一用 session.session_key 派生，与 im_channel fallback
+        # 和 sessions/manager backfill 的查询逻辑保持一致。
         try:
-            conversation_safe_id = conversation_id.replace(":", "__")
+            _memory_key = (
+                session.session_key
+                if session and hasattr(session, "session_key")
+                else conversation_id
+            )
+            conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
             if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
                 self.memory_manager.start_session(conversation_safe_id)
@@ -2759,22 +3287,62 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             history_messages = history_messages[:-1]
 
         _STRIP_MARKERS = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"]
+        _RE_TIME_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}\]\s")
 
         messages: list[dict] = []
         for msg in history_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
+            ts = msg.get("timestamp", "")
             if role == "assistant":
                 for _marker in _STRIP_MARKERS:
-                    if _marker in content:
-                        content = content[:content.index(_marker)]
+                    while _marker in content:
+                        idx = content.index(_marker)
+                        before = content[:idx]
+                        after = content[idx + len(_marker):]
+                        next_section = -1
+                        for sep in ("\n\n[", "\n\n##", "\n\n---"):
+                            pos = after.find(sep)
+                            if pos != -1 and (next_section == -1 or pos < next_section):
+                                next_section = pos
+                        if next_section != -1:
+                            content = before + after[next_section:]
+                        else:
+                            content = before
                 if content.startswith("[执行摘要]") or content.startswith("[子Agent工作总结]"):
                     content = ""
             if role in ("user", "assistant") and content:
+                if ts and isinstance(content, str):
+                    try:
+                        t = datetime.fromisoformat(ts)
+                        time_prefix = f"[{t.strftime('%H:%M')}] "
+                        if not _RE_TIME_PREFIX.match(content):
+                            content = time_prefix + content
+                    except Exception:
+                        pass
                 if messages and messages[-1]["role"] == role:
                     messages[-1]["content"] += "\n" + content
                 else:
                     messages.append({"role": role, "content": content})
+
+        # 10.5 注入子 Agent 委派结果摘要到最后一条 assistant 消息
+        if session and hasattr(session, "context"):
+            sub_records = getattr(session.context, "sub_agent_records", None)
+            if sub_records and messages:
+                summary_parts = []
+                for r in sub_records:
+                    name = r.get("agent_name", "unknown")
+                    preview = r.get("result_preview", "")
+                    if preview:
+                        summary_parts.append(f"- {name}: {preview[:500]}")
+                if summary_parts:
+                    delegation_summary = (
+                        "\n\n[委派任务执行记录]\n" + "\n".join(summary_parts)
+                    )
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i]["role"] == "assistant":
+                            messages[i]["content"] += delegation_summary
+                            break
 
         # 上下文连续标记（合并到当前用户消息前缀，避免插入假 assistant 回复破坏对话连贯性）
         _has_history = bool(messages)
@@ -2878,13 +3446,8 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 # Tier 3: 本地 Whisper（已由 Gateway 处理，transcription 已在 input_text 中）
                 # 不需要额外操作
 
-        # 如果有历史消息，给当前用户消息加上连续提示前缀
-        if _has_history and compiled_message:
-            compiled_message = (
-                "[以上是之前的对话历史，仅供参考。"
-                "请直接回应我的最新消息，不要重复或重新执行历史中已完成的操作：]\n"
-                + compiled_message
-            )
+        if _has_history and compiled_message and isinstance(compiled_message, str):
+            compiled_message = f"[最新消息]\n{compiled_message}"
 
         # === 角色交替保护 ===
         # 如果历史末尾是 user 消息（通常由上下文边界标记产生），
@@ -2908,12 +3471,23 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 att_url = getattr(att, "url", None) or ""
                 att_name = getattr(att, "name", None) or "file"
                 att_mime = getattr(att, "mime_type", None) or att_type
-                if att_type == "image" and att_url:
+
+                is_image = (
+                    att_type == "image"
+                    or (att_mime or "").startswith("image/")
+                    or (att_url or "").startswith("data:image/")
+                )
+                is_video = (
+                    att_type == "video"
+                    or (att_mime or "").startswith("video/")
+                    or (att_url or "").startswith("data:video/")
+                )
+
+                if is_image and att_url:
                     content_blocks.append({"type": "image_url", "image_url": {"url": att_url}})
-                elif att_type == "video" and att_url:
+                elif is_video and att_url:
                     content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
                 elif att_type == "document" and att_url:
-                    # PDF 等文档 — 通过 URL 下载后交给后端处理
                     content_blocks.append({
                         "type": "text",
                         "text": f"[文档: {att_name} ({att_mime})] URL: {att_url}",
@@ -2929,45 +3503,130 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 messages.append({"role": "user", "content": compiled_message})
         elif pending_images or pending_videos or audio_blocks or document_blocks:
             # IM 路径: 多模态（图片 + 视频 + 音频 + 文档）
+            # 对齐 audio/PDF 的模式：先检查能力，无能力时降级为文本
             content_parts: list[dict] = []
             _text_for_llm = compiled_message.strip()
-            # 图片占位符替换
-            if pending_images and _text_for_llm and re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", _text_for_llm):
-                _text_for_llm = (
-                    f"用户发送了 {len(pending_images)} 张图片（已附在消息中，请直接查看）。"
-                    "请描述或回应你所看到的图片内容。"
-                )
+
+            llm_client = getattr(self.brain, "_llm_client", None)
+            has_vision = (
+                llm_client and llm_client.has_any_endpoint_with_capability("vision")
+            )
+            has_video = (
+                llm_client and llm_client.has_any_endpoint_with_capability("video")
+            )
+
+            embed_images = pending_images if has_vision else None
+            embed_videos = pending_videos if has_video else None
+
+            # 图片占位符替换（仅在实际嵌入时才改为「请直接查看」）
+            _is_img_placeholder = (
+                _text_for_llm
+                and re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", _text_for_llm)
+            )
+            if pending_images and _is_img_placeholder:
+                if embed_images:
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_images)} 张图片"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的图片内容。"
+                    )
+                else:
+                    _text_for_llm = ""
+
             # 视频占位符替换
-            if pending_videos and _text_for_llm and re.fullmatch(r"(\[视频: [^\]]+\]\s*)+", _text_for_llm):
-                _text_for_llm = (
-                    f"用户发送了 {len(pending_videos)} 个视频（已附在消息中，请直接查看）。"
-                    "请描述或回应你所看到的视频内容。"
+            _is_vid_placeholder = (
+                _text_for_llm
+                and re.fullmatch(r"(\[视频: [^\]]+\]\s*)+", _text_for_llm)
+            )
+            if pending_videos and _is_vid_placeholder:
+                if embed_videos:
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_videos)} 个视频"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的视频内容。"
+                    )
+                else:
+                    _text_for_llm = ""
+
+            # 图片降级提示
+            if pending_images and not has_vision:
+                img_paths = [
+                    img.get("local_path", "")
+                    for img in pending_images if img.get("local_path")
+                ]
+                notice = (
+                    f"[用户发送了 {len(pending_images)} 张图片，"
+                    f"当前模型不支持图片输入"
                 )
+                if img_paths:
+                    notice += (
+                        f"。文件路径: {'; '.join(img_paths)}"
+                        f"。如需查看图片内容，请使用 view_image 工具"
+                    )
+                notice += "]"
+                _text_for_llm = (
+                    f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
+                )
+                logger.info(
+                    f"[Session:{session_id}] No vision endpoint, "
+                    f"degrading {len(pending_images)} images to text notice"
+                )
+
+            # 视频降级提示
+            if pending_videos and not has_video:
+                vid_paths = [
+                    v.get("local_path", "")
+                    for v in pending_videos if v.get("local_path")
+                ]
+                notice = (
+                    f"[用户发送了 {len(pending_videos)} 个视频，"
+                    f"当前模型不支持视频输入"
+                )
+                if vid_paths:
+                    notice += f"。文件路径: {'; '.join(vid_paths)}"
+                notice += "]"
+                _text_for_llm = (
+                    f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
+                )
+                logger.info(
+                    f"[Session:{session_id}] No video endpoint, "
+                    f"degrading {len(pending_videos)} videos to text notice"
+                )
+
+            # 组装 content_parts
             if _text_for_llm:
                 content_parts.append({"type": "text", "text": _text_for_llm})
-            if pending_images:
-                for img_data in pending_images:
-                    content_parts.append(img_data)
-            if pending_videos:
-                for vid_data in pending_videos:
-                    content_parts.append(vid_data)
+            if embed_images:
+                content_parts.extend(embed_images)
+            if embed_videos:
+                content_parts.extend(embed_videos)
             if audio_blocks:
-                for aud_data in audio_blocks:
-                    content_parts.append(aud_data)
+                content_parts.extend(audio_blocks)
             if document_blocks:
-                for doc_data in document_blocks:
-                    content_parts.append(doc_data)
-            messages.append({"role": "user", "content": content_parts})
+                content_parts.extend(document_blocks)
+
+            # 如果所有媒体均已降级为文本，发纯文本消息而非多模态 list
+            has_media = embed_images or embed_videos or audio_blocks or document_blocks
+            if has_media:
+                messages.append({"role": "user", "content": content_parts})
+            else:
+                plain = _text_for_llm or compiled_message
+                messages.append({"role": "user", "content": plain})
+
             media_info = []
-            if pending_images:
-                media_info.append(f"{len(pending_images)} images")
-            if pending_videos:
-                media_info.append(f"{len(pending_videos)} videos")
+            if embed_images:
+                media_info.append(f"{len(embed_images)} images")
+            if embed_videos:
+                media_info.append(f"{len(embed_videos)} videos")
             if audio_blocks:
                 media_info.append(f"{len(audio_blocks)} audio")
             if document_blocks:
                 media_info.append(f"{len(document_blocks)} documents")
-            logger.info(f"[Session:{session_id}] Multimodal message with {', '.join(media_info)}")
+            if media_info:
+                logger.info(
+                    f"[Session:{session_id}] Multimodal message "
+                    f"with {', '.join(media_info)}"
+                )
         else:
             # 普通文本消息
             messages.append({"role": "user", "content": compiled_message})
@@ -3112,7 +3771,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self.agent_state.current_session = None
         self._current_task_monitor = None
         # 重置任务状态，避免已取消/已完成的任务泄漏到下一次会话
-        # 注意：task 的 key 可能是 conversation_id 而非 session_id，两者都要尝试
         _sid = self._current_session_id
         _conv_id = self._current_conversation_id
         _cleaned = set()
@@ -3193,15 +3851,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._current_conversation_id = conversation_id
 
         # 清理上一轮残留的任务状态（按 session 隔离）
-        # 注意：task key 可能是 conversation_id 而非 session_id，两者都要尝试
         _prev_task = None
         _reset_key = session_id
-        for _try_key in (session_id, conversation_id):
-            if _try_key and self.agent_state:
-                _prev_task = self.agent_state.get_task_for_session(_try_key)
-                if _prev_task:
-                    _reset_key = _try_key
-                    break
+        if self.agent_state:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
         if not _prev_task and self.agent_state:
             _prev_task = self.agent_state.current_task
             if _prev_task:
@@ -3220,7 +3873,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
-        self._pending_cancels.pop(conversation_id, None) if conversation_id else None
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期，不让上一轮的错误阻塞本轮
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -3414,15 +4066,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._current_conversation_id = conversation_id
 
         # 清理上一轮残留的任务状态（按 session 隔离）
-        # 注意：task key 可能是 conversation_id 而非 session_id，两者都要尝试
         _prev_task = None
         _reset_key = session_id
-        for _try_key in (session_id, conversation_id):
-            if _try_key and self.agent_state:
-                _prev_task = self.agent_state.get_task_for_session(_try_key)
-                if _prev_task:
-                    _reset_key = _try_key
-                    break
+        if self.agent_state:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
         if not _prev_task and self.agent_state:
             _prev_task = self.agent_state.current_task
             if _prev_task:
@@ -3441,7 +4088,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
-        self._pending_cancels.pop(conversation_id, None) if conversation_id else None
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -3496,6 +4142,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
+                session=session,
             )
 
             # 注入 TaskDefinition
@@ -3585,6 +4232,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 # Normal CHAT path (non-fast): uses main model, no tools
                 _chat_prompt = await self._build_system_prompt_compiled(
                     task_description="", session_type=session_type, tools_enabled=False,
+                    session=session,
                 )
                 try:
                     response = await self.brain.messages_create_async(
@@ -3771,16 +4419,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         return system_prompt, mode
 
     def _resolve_conversation_id(self, session: Any, session_id: str) -> str:
-        """从 session 中解析稳定的 conversation_id。"""
-        conversation_id = ""
-        try:
-            if session and hasattr(session, "session_key"):
-                conversation_id = session.session_key
-            elif session and hasattr(session, "get_metadata"):
-                conversation_id = session.get_metadata("_session_key") or ""
-        except Exception:
-            conversation_id = ""
-        return conversation_id or session_id
+        """将调用方传入的 session_id 作为规范 conversation_id 直接返回。
+
+        Desktop 路径: session_id = raw chat_id (由前端 conversation_id 传入)
+        IM 路径:      session_id = session.id (由 orchestrator._call_agent 传入)
+        CLI 路径:     session_id = "cli_<uuid>"
+
+        不再取 session.session_key，避免 task key 与 pool key 不一致。
+        """
+        return session_id
 
     def _extract_usage_summary(self, trace: list[dict]) -> dict:
         """从 react_trace 提取轻量 token 用量摘要。
@@ -4365,7 +5012,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
 ### 任务类消息
 - 如果已执行 write_file 工具，说明文件已保存，保存任务完成
-- 如果已执行 browser_task/browser_navigate 等浏览器工具，说明浏览器操作已执行
+- 如果已执行 browser_navigate/browser_click 等浏览器工具，说明浏览器操作已执行
 - 工具执行成功即表示该操作完成，不要求响应文本中包含文件内容
 - 如果响应只是说"现在开始..."、"让我..."且没有工具执行，说明任务还在进行中
 - 如果响应包含明确的操作确认（如"已完成"、"已发送"、"已保存"），任务完成
@@ -4411,7 +5058,7 @@ NEXT: 建议的下一步（如有）"""
         ))
         try:
             llm_task = asyncio.create_task(
-                self.brain.messages_create_async(**kwargs)
+                self.brain.messages_create_async(cancel_event=cancel_event, **kwargs)
             )
             cancel_waiter = asyncio.create_task(cancel_event.wait())
 
@@ -4556,6 +5203,7 @@ NEXT: 建议的下一步（如有）"""
             task_description="",
             session_type=session_type,
             tools_enabled=False,
+            session=self._current_session,
         )
 
         for attempt in range(1 + self._LIGHTWEIGHT_EMPTY_MAX_RETRIES):
@@ -4638,6 +5286,7 @@ NEXT: 建议的下一步（如有）"""
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
+                session=session or self._current_session,
             )
         else:
             system_prompt = self._context.system
@@ -4719,12 +5368,10 @@ NEXT: 建议的下一步（如有）"""
 
         # 选择 System Prompt
         if use_session_prompt:
-            # 使用 Session 专用的 System Prompt，但仍需包含完整的工具信息
-            # 否则 LLM 不知道有哪些工具可用（MCP、Skill、Tools）
-            # 使用异步版本构建系统提示词，避免向量搜索阻塞事件循环
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
+                session=session or self._current_session,
             )
         else:
             system_prompt = self._context.system
@@ -5614,8 +6261,8 @@ NEXT: 建议的下一步（如有）"""
         if session_id and has_state:
             task = self.agent_state.get_task_for_session(session_id)
             _effective_sid = session_id
-            # session_id 可能是前端 UUID，但 task key 是 conversation_id（如 "desktop:uuid:user"）
-            # 找不到时再尝试 _current_conversation_id / _current_session_id
+            # task key = session_id (raw chat_id)，一般精确匹配即可命中。
+            # 若仍未找到，兜底用 _current_conversation_id / _current_session_id。
             if not task:
                 for _alt_key in (self._current_conversation_id, self._current_session_id):
                     if _alt_key and _alt_key != session_id:
@@ -6008,7 +6655,7 @@ NEXT: 建议的下一步（如有）"""
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ============================================
-        # Plan 强制检查（仅 Agent 模式下的 todo 跟踪）
+        # Todo 强制检查（仅 Agent 模式；plan/ask 模式跳过）
         # ============================================
         _effective_mode = getattr(self.tool_executor, "_current_mode", "agent")
         if _effective_mode not in ("plan", "ask"):
@@ -6568,8 +7215,7 @@ NEXT: 建议的下一步（如有）"""
                     ))
                     try:
                         summary_response = await self._cancellable_await(
-                            asyncio.to_thread(
-                                self.brain.messages_create,
+                            self.brain.messages_create_async(
                                 max_tokens=1000,
                                 system=_build_effective_system_prompt_task(),
                                 messages=messages,

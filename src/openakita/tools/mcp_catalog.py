@@ -166,7 +166,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         instructions: str | None = None,
     ) -> None:
         """
-        注册内置 MCP 服务器 (如 browser-use)
+        注册内置 MCP 服务器
 
         Args:
             identifier: 服务器 ID

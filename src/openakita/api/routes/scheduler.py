@@ -378,6 +378,34 @@ async def list_channels(request: Request):
                         "display_name": "",
                     })
 
+    # 4. Running gateway adapters — show configured bots even without sessions
+    adapters = getattr(gateway, "_adapters", {})
+    started = getattr(gateway, "_started_adapters", set())
+    for adapter_name, adapter in adapters.items():
+        if adapter_name in skip_channels:
+            continue
+        if not getattr(adapter, "is_running", False) and adapter_name not in started:
+            continue
+        already_listed = any(
+            adapter_name == entry["channel_id"] for entry in results
+        )
+        if already_listed:
+            continue
+        fallback_chat_id = ""
+        if session_manager:
+            target = session_manager.get_known_channel_target(adapter_name)
+            if target:
+                fallback_chat_id = target[1]
+        _add_or_merge({
+            "channel_id": adapter_name,
+            "chat_id": fallback_chat_id,
+            "user_id": None,
+            "last_active": "",
+            "chat_name": "",
+            "chat_type": "private",
+            "display_name": "",
+        })
+
     alias_store = getattr(gateway, "chat_aliases", None)
     if alias_store:
         for entry in results:

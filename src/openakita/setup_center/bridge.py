@@ -208,6 +208,14 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         try:
             resp = await client.get(url, headers={"Authorization": auth_header})
             resp.raise_for_status()
+            ct = (resp.headers.get("content-type") or "").lower()
+            if "json" not in ct:
+                preview = resp.text[:200].strip()
+                raise ValueError(
+                    f"API 返回了非 JSON 响应 (content-type: {ct})。"
+                    f"请检查 Base URL 是否正确（通常需要以 /v1 结尾）。"
+                    f"\n响应预览: {preview}"
+                )
             data = resp.json()
         except httpx.HTTPStatusError:
             raise

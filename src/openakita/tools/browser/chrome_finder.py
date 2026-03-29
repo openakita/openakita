@@ -169,6 +169,29 @@ def detect_chrome_devtools_mcp() -> dict:
     return result
 
 
+async def detect_chrome_cdp_port(
+    ports: tuple[int, ...] = (9222, 9223, 9225),
+    timeout: float = 2.0,
+) -> int | None:
+    """探测本机 Chrome CDP 调试端口，返回第一个可用端口号，没有则返回 None。"""
+    try:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            for port in ports:
+                try:
+                    resp = await client.get(
+                        f"http://127.0.0.1:{port}/json/version", timeout=timeout,
+                    )
+                    if resp.status_code == 200:
+                        return port
+                except Exception:
+                    continue
+    except ImportError:
+        pass
+    return None
+
+
 async def check_mcp_chrome_extension(port: int = 12306, timeout: float = 2.0) -> bool:
     """检测 mcp-chrome 扩展是否正在运行"""
     try:

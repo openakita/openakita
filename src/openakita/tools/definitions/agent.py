@@ -63,6 +63,14 @@ AGENT_TOOLS = [
                     ),
                     "default": "default",
                 },
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "为子Agent提供的背景上下文（可选）。"
+                        "子Agent可能看不到完整对话历史，请提供完成任务所需的关键信息"
+                        "（已知结论、相关约束、期望输出格式等）。"
+                    ),
+                },
                 "run_in_background": {
                     "type": "boolean",
                     "description": "是否后台运行。后台子代理不阻塞主代理，结果稍后可查。",
@@ -196,6 +204,10 @@ AGENT_TOOLS = [
                             "reason": {
                                 "type": "string",
                                 "description": "委派原因（可选）",
+                            },
+                            "context": {
+                                "type": "string",
+                                "description": "为子Agent提供的背景上下文（可选）",
                             },
                         },
                         "required": ["agent_id", "message"],

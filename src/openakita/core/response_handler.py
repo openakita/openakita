@@ -53,6 +53,10 @@ def strip_thinking_tags(text: str) -> str:
     cleaned = re.sub(r"<<\|tool_calls_section_begin\|>>.*$", "", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"<\?xml[^>]*\?>\s*", "", cleaned)
 
+    # 兜底：清理孤立的开标签（无闭合，从标签到字符串末尾）
+    cleaned = re.sub(r"<thinking>\s*.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<think>\s*.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+
     return cleaned.strip()
 
 
@@ -113,6 +117,9 @@ def strip_tool_simulation_text(text: str) -> str:
     return "\n".join(cleaned_lines).strip()
 
 
+_LEADING_TIMESTAMP_RE = re.compile(r"^\s*\[\d{1,2}:\d{2}\]\s*")
+
+
 def clean_llm_response(text: str) -> str:
     """
     清理 LLM 响应文本。
@@ -121,6 +128,7 @@ def clean_llm_response(text: str) -> str:
     1. strip_thinking_tags - 移除思考标签
     2. strip_tool_simulation_text - 移除模拟工具调用
     3. strip_intent_tag - 移除意图声明标记
+    4. strip leading [HH:MM] timestamp leaked from historical message formatting
     """
     if not text:
         return text
@@ -128,6 +136,7 @@ def clean_llm_response(text: str) -> str:
     cleaned = strip_thinking_tags(text)
     cleaned = strip_tool_simulation_text(cleaned)
     _, cleaned = parse_intent_tag(cleaned)
+    cleaned = _LEADING_TIMESTAMP_RE.sub("", cleaned)
 
     return cleaned.strip()
 
@@ -414,10 +423,20 @@ NEXT: 建议的下一步"""
         """获取最后一条用户请求"""
         from .tool_executor import smart_truncate
 
+        def _strip_context_prefix(text: str) -> str:
+            """移除对话历史前缀，提取真正的用户输入。"""
+            _marker = "：]"
+            if text.startswith("[以上是之前的对话历史"):
+                idx = text.find(_marker)
+                if idx != -1:
+                    text = text[idx + len(_marker):].strip()
+            return text
+
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 content = msg.get("content", "")
                 if isinstance(content, str) and not content.startswith("[系统]"):
+                    content = _strip_context_prefix(content)
                     result, _ = smart_truncate(content, 3000, save_full=False, label="user_request")
                     return result
                 elif isinstance(content, list):
@@ -425,6 +444,7 @@ NEXT: 建议的下一步"""
                         if isinstance(part, dict) and part.get("type") == "text":
                             text = part.get("text", "")
                             if not text.startswith("[系统]"):
+                                text = _strip_context_prefix(text)
                                 result, _ = smart_truncate(text, 3000, save_full=False, label="user_request")
                                 return result
         return ""

@@ -110,21 +110,27 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const persistRef = useRef({ apiBaseUrl, convId });
   persistRef.current = { apiBaseUrl, convId };
 
-  const persistMessages = useCallback(async (msgs: { role: string; content: string }[]) => {
+  const persistMessages = useCallback(async (msgs: { role: string; content: string }[], replace = false) => {
     const { apiBaseUrl: base, convId: cid } = persistRef.current;
     const url = `${base}/api/sessions/${encodeURIComponent(cid)}/messages`;
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: msgs }),
+        body: JSON.stringify({ messages: msgs, replace }),
       });
       const data = await res.json();
-      console.log(`[OrgChat] Persisted ${msgs.length} messages for ${cid}:`, data);
+      console.log(`[OrgChat] Persisted ${msgs.length} messages (replace=${replace}) for ${cid}:`, data);
     } catch (err) {
       console.error(`[OrgChat] Failed to persist messages for ${cid}:`, err);
     }
   }, []);
+
+  const messagesRef = useRef<ChatMsg[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const handleClear = useCallback(async () => {
     setMessages([]);
@@ -245,6 +251,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     } finally {
       unsubProgress();
       setSending(false);
+      // Persist full conversation to backend (replace mode) so history
+      // survives component unmount.  Only if still mounted — when unmounted,
+      // messagesRef is stale and would overwrite the server bridge's correct data.
+      if (mountedRef.current) {
+        setTimeout(() => {
+          if (!mountedRef.current) return;
+          const all = messagesRef.current.filter(m => !m.streaming);
+          if (all.length > 0) {
+            persistMessages(all.map(m => ({ role: m.role, content: m.content })), true);
+          }
+        }, 100);
+      }
     }
   }, [input, sending, orgId, nodeId, apiBaseUrl, persistMessages]);
 

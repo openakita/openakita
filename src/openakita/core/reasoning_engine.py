@@ -1691,6 +1691,12 @@ class ReasoningEngine:
             task_id=state.task_id,
         )
         await broadcast_event("pet-status-update", {"status": "error"})
+        if max_iterations < 30:
+            return (
+                f"已达到最大迭代次数（{max_iterations}）。"
+                f"当前 MAX_ITERATIONS={max_iterations} 设置过低，"
+                f"建议调整为 100~300 以支持复杂任务。"
+            )
         return "已达到最大工具调用次数，请重新描述您的需求。"
 
     # ==================== 流式输出 (SSE) ====================
@@ -2302,7 +2308,7 @@ class ReasoningEngine:
                                 logger.warning(
                                     f"[ModeGuard] Blocked '{t_name}' in {_effective_mode} mode"
                                 )
-                                yield {"type": "tool_call_start", "tool": t_name, "args": t_args, "id": t_id}
+                                yield {"type": "tool_call_start", "tool": t_name, "name": t_name, "args": t_args, "id": t_id}
                                 yield {
                                     "type": "tool_call_end", "tool": t_name,
                                     "result": _blocked_msg[:_SSE_RESULT_PREVIEW_CHARS],
@@ -2315,7 +2321,7 @@ class ReasoningEngine:
                                 continue
                             # chain_text: 工具描述
                             yield {"type": "chain_text", "content": self._describe_tool_call(t_name, t_args)}
-                            yield {"type": "tool_call_start", "tool": t_name, "args": t_args, "id": t_id}
+                            yield {"type": "tool_call_start", "tool": t_name, "name": t_name, "args": t_args, "id": t_id}
                             await broadcast_event("pet-status-update", {"status": "tool_execution", "tool_name": t_name})
                             # PolicyEngine 检查
                             from .policy import PolicyDecision, get_policy_engine
@@ -2434,7 +2440,7 @@ class ReasoningEngine:
                             logger.warning(
                                 f"[ModeGuard] Blocked '{tool_name}' in {_effective_mode} mode"
                             )
-                            yield {"type": "tool_call_start", "tool": tool_name, "args": tool_args, "id": tool_id}
+                            yield {"type": "tool_call_start", "tool": tool_name, "name": tool_name, "args": tool_args, "id": tool_id}
                             yield {
                                 "type": "tool_call_end", "tool": tool_name,
                                 "result": _blocked_msg[:_SSE_RESULT_PREVIEW_CHARS],
@@ -2449,7 +2455,7 @@ class ReasoningEngine:
                         _tool_desc = self._describe_tool_call(tool_name, tool_args)
                         yield {"type": "chain_text", "content": _tool_desc}
 
-                        yield {"type": "tool_call_start", "tool": tool_name, "args": tool_args, "id": tool_id}
+                        yield {"type": "tool_call_start", "tool": tool_name, "name": tool_name, "args": tool_args, "id": tool_id}
                         await broadcast_event("pet-status-update", {"status": "tool_execution", "tool_name": tool_name})
 
                         # PolicyEngine 检查（与 execute_batch 一致）
@@ -2880,7 +2886,15 @@ class ReasoningEngine:
                 task_description=task_description,
                 task_id=state.task_id,
             )
-            yield {"type": "text_delta", "content": "\n\n（已达到最大迭代次数）"}
+            if max_iterations < 30:
+                hint = (
+                    f"\n\n（已达到最大迭代次数 {max_iterations}。"
+                    f"当前 MAX_ITERATIONS={max_iterations} 设置过低，"
+                    f"建议在设置中调整为 100~300 以支持复杂任务）"
+                )
+            else:
+                hint = "\n\n（已达到最大迭代次数）"
+            yield {"type": "text_delta", "content": hint}
             yield {"type": "done"}
 
         except Exception as e:
@@ -3641,7 +3655,32 @@ class ReasoningEngine:
                 has_todo_pending = self._has_active_todo_pending(conversation_id)
                 effective_max = max_verify_retries * 2 if has_todo_pending else max_verify_retries
 
+                is_in_progress_promise = self._is_in_progress_promise(cleaned_text)
+
                 if verify_incomplete_count >= effective_max:
+                    if is_in_progress_promise and verify_incomplete_count <= effective_max + 1:
+                        logger.warning(
+                            "[TaskVerify] Verify retries exhausted but response is an "
+                            "in-progress promise (no actual execution). "
+                            "Forcing one final tool-execution round."
+                        )
+                        working_messages.append({
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": decision.text_content}],
+                            "reasoning_content": decision.thinking_content or None,
+                        })
+                        working_messages.append({
+                            "role": "user",
+                            "content": (
+                                "[系统] ⚠️ 严重警告：你已经连续多轮只是在描述将要做什么，"
+                                "但从未实际调用工具执行。系统日志确认你没有生成任何文件。"
+                                "文字描述≠实际执行。"
+                                "请立即调用 run_shell 或 write_file 等工具来完成实际操作，"
+                                "不要再输出任何描述性文字。"
+                            ),
+                        })
+                        return (working_messages, no_tool_call_count, verify_incomplete_count,
+                                no_confirmation_text_count, max_no_tool_retries)
                     return cleaned_text
 
                 # 继续循环
@@ -3659,13 +3698,23 @@ class ReasoningEngine:
                             "请立即继续执行下一个 pending 步骤。"
                         ),
                     })
+                elif is_in_progress_promise:
+                    working_messages.append({
+                        "role": "user",
+                        "content": (
+                            "[系统] ⚠️ 你的上一条回复只是在描述将要执行的操作，"
+                            "但系统日志确认你没有调用任何工具（tool_calls=0）。"
+                            "文字描述不等于实际执行。"
+                            "请立即调用所需工具来完成任务，不要只输出文字说明。"
+                        ),
+                    })
                 else:
                     working_messages.append({
                         "role": "user",
                         "content": (
                             "[系统提示] 根据复核判断，用户请求可能还有未完成的部分。"
-                            "如果你认为已经完成，请直接给用户一个总结回复；"
-                            "如果确实还有剩余步骤，请继续执行。"
+                            "如果确实还有剩余步骤，请继续调用工具执行；"
+                            "如果已全部完成，请给用户一个包含结果的总结回复。"
                         ),
                     })
                 return (working_messages, no_tool_call_count, verify_incomplete_count,
@@ -3698,6 +3747,18 @@ class ReasoningEngine:
                         "[ForceToolCall] LLM returned empty confirmation; using fallback summary from tool history"
                     )
                     return fallback
+
+                # thinking 内容不为空时，从 thinking 中提取可用信息
+                if decision.thinking_content:
+                    thinking_text = decision.thinking_content.strip()
+                    if len(thinking_text) > 20:
+                        logger.warning(
+                            "[ForceToolCall] LLM returned empty visible text but has thinking content; "
+                            "extracting summary from thinking"
+                        )
+                        preview = thinking_text[:500]
+                        return f"（以下为模型内部推理摘要，原始回复未生成可见文本）\n\n{preview}"
+
                 return (
                     "⚠️ 大模型返回异常：工具已执行，但多次未返回任何可见文本确认，任务已中断。"
                     "请重试、或切换到更稳定的端点/模型后再继续。"
@@ -3894,6 +3955,53 @@ class ReasoningEngine:
         return result, stripped
 
     @staticmethod
+    def _strip_tool_results_for_content_safety(
+        messages: list[dict],
+    ) -> tuple[list[dict], bool]:
+        """Strip recent tool result content that may have triggered content safety filters.
+
+        When the LLM API rejects a request due to content inspection (e.g. DashScope
+        DataInspectionFailed), the cause is typically inappropriate text in the most
+        recent batch of tool results (e.g. web search returning NSFW content).
+
+        This method finds the last user message containing tool_results and replaces
+        each tool_result's content with a safe placeholder, allowing the LLM to
+        continue reasoning with the remaining context.
+        """
+        _PLACEHOLDER = (
+            "[工具返回内容已移除：内容触发了平台安全审核，无法发送给模型。"
+            "请忽略此工具的结果，直接基于已有信息回答用户。]"
+        )
+        stripped = False
+        result = list(messages)
+
+        for i in range(len(result) - 1, -1, -1):
+            msg = result[i]
+            content = msg.get("content")
+            if msg.get("role") != "user" or not isinstance(content, list):
+                continue
+
+            has_tool_results = any(
+                isinstance(item, dict) and item.get("type") == "tool_result"
+                for item in content
+            )
+            if not has_tool_results:
+                continue
+
+            new_content = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_result":
+                    new_content.append({**item, "content": _PLACEHOLDER})
+                    stripped = True
+                else:
+                    new_content.append(item)
+
+            result[i] = {**msg, "content": new_content}
+            break
+
+        return result, stripped
+
+    @staticmethod
     def _truncate_oversized_messages(
         messages: list[dict],
         max_single_tokens: int = 30000,
@@ -3962,6 +4070,88 @@ class ReasoningEngine:
 
         return result, truncated
 
+    @staticmethod
+    def _force_hard_truncate(
+        working_messages: list[dict],
+        target_tokens: int,
+    ) -> bool:
+        """强制截断对话历史以适应上下文窗口。
+
+        保留 system prompt（第一条）和最近的消息，从中间丢弃
+        较早的消息，直到估算 token 数降到 target_tokens 以下。
+        返回 True 表示确实做了截断。
+        """
+        from .context_manager import ContextManager
+
+        total = ContextManager.static_estimate_tokens(
+            str([m.get("content", "") for m in working_messages])
+        )
+        if total <= target_tokens:
+            return False
+
+        system_msgs = []
+        rest_msgs = []
+        for msg in working_messages:
+            if msg.get("role") == "system":
+                system_msgs.append(msg)
+            else:
+                rest_msgs.append(msg)
+
+        if len(rest_msgs) <= 2:
+            return False
+
+        keep_recent = max(2, len(rest_msgs) // 3)
+        recent = rest_msgs[-keep_recent:]
+
+        total = ContextManager.static_estimate_tokens(
+            str([m.get("content", "") for m in system_msgs + recent])
+        )
+
+        middle = rest_msgs[:-keep_recent]
+        added_back: list[dict] = []
+
+        for msg in reversed(middle):
+            msg_tokens = ContextManager.static_estimate_tokens(
+                str(msg.get("content", ""))
+            )
+            if total + msg_tokens < target_tokens:
+                added_back.insert(0, msg)
+                total += msg_tokens
+            else:
+                break
+
+        dropped = len(middle) - len(added_back)
+        if dropped <= 0:
+            return False
+
+        truncation_notice = {
+            "role": "system",
+            "content": (
+                f"[注意] 由于模型上下文窗口限制，已自动丢弃 {dropped} 条"
+                "较早的对话消息。请基于剩余上下文继续回答。"
+            ),
+        }
+
+        new_messages = (
+            system_msgs + added_back + [truncation_notice] + recent
+        )
+        working_messages.clear()
+        working_messages.extend(new_messages)
+
+        logger.info(
+            "[ReAct] Force hard truncate: dropped %d messages, "
+            "kept %d (system=%d, recovered=%d, recent=%d), "
+            "estimated tokens ~%d → target %d",
+            dropped,
+            len(new_messages),
+            len(system_msgs),
+            len(added_back),
+            len(recent),
+            total,
+            target_tokens,
+        )
+        return True
+
     def _handle_llm_error(
         self,
         error: Exception,
@@ -4018,12 +4208,25 @@ class ReasoningEngine:
                 # 方案 C: 上下文溢出 — 媒体剥离无效时尝试截断超大文本
                 error_lower = str(error).lower()
                 _ctx_overflow_patterns = [
-                    "context length", "too many tokens",
-                    "token limit",
+                    "context length", "context size",
+                    "too many tokens", "token limit",
+                    "context_length_exceeded", "context window",
+                    "max_tokens", "input too long",
+                    "payload too large", "request entity too large",
+                    "larger than allowed", "(413)",
                 ]
                 is_ctx_overflow = any(
                     p in error_lower for p in _ctx_overflow_patterns
                 ) or ("maximum" in error_lower and "length" in error_lower)
+                if not is_ctx_overflow:
+                    is_ctx_overflow = (
+                        "exceeded" in error_lower
+                        and ("context" in error_lower or "token" in error_lower)
+                    )
+                if not is_ctx_overflow:
+                    is_ctx_overflow = (
+                        "payload" in error_lower and "larger" in error_lower
+                    )
                 if is_ctx_overflow:
                     trunc_msgs, did_trunc = self._truncate_oversized_messages(
                         working_messages
@@ -4036,6 +4239,60 @@ class ReasoningEngine:
                         state._structural_content_stripped = True
                         working_messages.clear()
                         working_messages.extend(trunc_msgs)
+                        llm_client = getattr(self._brain, "_llm_client", None)
+                        if llm_client:
+                            llm_client.reset_all_cooldowns(
+                                include_structural=True
+                            )
+                        return "retry"
+
+                    # 方案 C2: 单条截断无效（多条小消息累积溢出）
+                    # 强制按当前上下文预算的 50% 做硬截断
+                    if len(working_messages) > 3:
+                        from .context_manager import ContextManager
+                        cm = self._context_manager
+                        budget = cm.get_max_context_tokens() if cm else 60000
+                        reduced_budget = budget // 2
+                        force_truncated = self._force_hard_truncate(
+                            working_messages, reduced_budget
+                        )
+                        if force_truncated:
+                            logger.warning(
+                                "[ReAct] Context overflow: individual messages "
+                                "are small but total exceeds model limit. "
+                                "Force-truncating conversation history to %d "
+                                "tokens and retrying.",
+                                reduced_budget,
+                            )
+                            state._structural_content_stripped = True
+                            llm_client = getattr(
+                                self._brain, "_llm_client", None
+                            )
+                            if llm_client:
+                                llm_client.reset_all_cooldowns(
+                                    include_structural=True
+                                )
+                            return "retry"
+
+                # 方案 D: 内容安全审核 — 工具结果触发平台内容过滤
+                _content_safety_patterns = [
+                    "data_inspection", "inappropriate content",
+                ]
+                is_content_safety = any(
+                    p in error_lower for p in _content_safety_patterns
+                )
+                if is_content_safety:
+                    cleaned_msgs, did_clean = self._strip_tool_results_for_content_safety(
+                        working_messages
+                    )
+                    if did_clean:
+                        logger.warning(
+                            "[ReAct] Content safety error detected. "
+                            "Stripping recent tool result content and retrying."
+                        )
+                        state._structural_content_stripped = True
+                        working_messages.clear()
+                        working_messages.extend(cleaned_msgs)
                         llm_client = getattr(self._brain, "_llm_client", None)
                         if llm_client:
                             llm_client.reset_all_cooldowns(
@@ -4183,6 +4440,113 @@ class ReasoningEngine:
                 if isinstance(part, dict) and part.get("type")
             }
             return "tool_result" not in part_types
+        return False
+
+    @staticmethod
+    def _is_in_progress_promise(text: str) -> bool:
+        """检测响应是否为'进行中承诺'——模型声称正在执行但实际未调用工具。
+
+        典型特征：响应很短，包含"正在生成"、"稍等"等进度描述，
+        但没有任何实际的执行结果或完整内容。
+        """
+        import re
+        _text = (text or "").strip()
+        if len(_text) > 500:
+            return False
+        promise_patterns = [
+            r"正在.*(?:生成|创建|制作|处理|执行|准备)",
+            r"(?:生成|创建|制作|处理).*中",
+            r"稍等",
+            r"马上.*(?:生成|创建|完成)",
+            r"请.*(?:稍候|等待|等一下)",
+            r"立即.*(?:开始|为你|帮你)",
+            r"文[件档].*(?:生成|创建)中",
+        ]
+        return any(re.search(pat, _text) for pat in promise_patterns)
+
+    @staticmethod
+    def _is_confirmation_response(text: str) -> bool:
+        """检测模型回复是否为确认式回复（要求用户确认后再执行）。
+
+        典型场景：语音识别后确认识别结果、复述执行计划等待确认。
+        这类回复不应触发 ForceToolCall 重试——模型是有意征询用户意见。
+        """
+        import re
+        _text = text.strip()
+        if len(_text) < 10:
+            return False
+        _tail = _text[-200:] if len(_text) > 200 else _text
+        confirmation_patterns = [
+            r"确认后.*(?:回复|发送|输入)",
+            r"请(?:回复|发送|输入).*[\"「]?确认[\"」]?",
+            r"(?:是否|请)确认",
+            r"请确认以上",
+            r"确认.*(?:准确|正确|无误)",
+        ]
+        return any(re.search(pat, _tail) for pat in confirmation_patterns)
+
+    @staticmethod
+    def _is_conversational_reply(text: str, messages: list[dict]) -> bool:
+        """判断无 intent 标记的回复是否为合法的对话式回复。
+
+        许多模型（如 kimi-for-coding、部分 OpenAI 兼容端点）不会可靠地
+        输出 [REPLY]/[ACTION] 标记。此方法通过启发式规则区分：
+        - 对话回复（回答问题、闲聊、说明能力）→ True → 直接返回
+        - 伪执行断言（声称已完成操作但未调用工具）→ False → ForceToolCall
+        """
+        _text = (text or "").strip()
+        if not _text or len(_text) < 5:
+            return False
+
+        _action_claims = (
+            "已完成", "已执行", "已保存", "已发送", "已创建", "已修改",
+            "已删除", "已上传", "已下载", "已安装", "已设置", "已配置",
+            "我已经", "操作完成", "任务完成", "执行成功", "文件已",
+            "脚本已", "命令已", "已写入", "已生成文件",
+        )
+        if any(claim in _text for claim in _action_claims):
+            return False
+
+        last_user_text = ""
+        for msg in reversed(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                if content.startswith("[系统]") or content.startswith("[系统提示]"):
+                    continue
+                last_user_text = content
+                break
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        t = part.get("text", "")
+                        if not t.startswith("[系统]") and not t.startswith("[系统提示]"):
+                            last_user_text = t
+                            break
+                if last_user_text:
+                    break
+
+        _ctx_prefix = "[以上是之前的对话历史"
+        if _ctx_prefix in last_user_text:
+            idx = last_user_text.find("：]")
+            if idx != -1:
+                last_user_text = last_user_text[idx + 2:].strip()
+
+        _question_markers = ("?", "？", "吗", "吗？", "嘛", "呢", "不", "能不能", "可以")
+        if any(m in last_user_text for m in _question_markers):
+            return True
+
+        _greeting_patterns = (
+            "你好", "在吗", "在嘛", "在不在", "嗨", "hello", "hi ",
+            "干嘛", "干啥", "你在", "早上好", "晚上好", "下午好",
+        )
+        _lower = last_user_text.lower().strip()
+        if any(_lower.startswith(g) or _lower == g for g in _greeting_patterns):
+            return True
+        if len(last_user_text.strip()) <= 10:
+            return True
+
         return False
 
     @staticmethod

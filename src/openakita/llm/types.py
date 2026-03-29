@@ -9,7 +9,6 @@ LLM 统一类型定义
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-
 _OPENAI_ENDPOINT_SUFFIXES = (
     "/chat/completions", "/completions", "/embeddings", "/models", "/responses",
 )
@@ -221,6 +220,12 @@ class ToolUseBlock(ContentBlock):
     input: dict  # JSON 对象，非字符串
     provider_extra: dict | None = None  # provider 透传字段（如 Gemini thought_signature）
     type: str = field(default="tool_use", init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.input, dict):
+            from ..tools.input_normalizer import normalize_tool_input
+
+            self.input = normalize_tool_input(self.name, self.input)
 
     def to_dict(self) -> dict:
         return {

@@ -130,28 +130,22 @@ class PromptCompiler:
             if compiled and compiled.strip():
                 output_path.write_text(compiled, encoding="utf-8")
                 results[target] = output_path
-                logger.info(f"[Compiler] LLM compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}")
+                logger.info(
+                    f"[Compiler] LLM compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}"
+                )
 
-        (runtime_dir / ".compiled_at").write_text(
-            datetime.now().isoformat(), encoding="utf-8"
-        )
+        (runtime_dir / ".compiled_at").write_text(datetime.now().isoformat(), encoding="utf-8")
         return results
 
     async def _compile_with_llm(self, content: str, config: dict) -> str:
         """Try LLM compilation, fall back to rules if unavailable."""
         if self.brain:
             try:
-                prompt = config["user"].format(
-                    content=content, max_tokens=config["max_tokens"]
-                )
+                prompt = config["user"].format(content=content, max_tokens=config["max_tokens"])
                 if hasattr(self.brain, "think_lightweight"):
-                    response = await self.brain.think_lightweight(
-                        prompt, system=config["system"]
-                    )
+                    response = await self.brain.think_lightweight(prompt, system=config["system"])
                 else:
-                    response = await self.brain.think(
-                        prompt, system=config["system"]
-                    )
+                    response = await self.brain.think(prompt, system=config["system"])
                 result = (getattr(response, "content", None) or str(response)).strip()
                 if result:
                     return result
@@ -196,9 +190,7 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
             results[target] = output_path
             logger.info(f"[Compiler] Rule compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}")
 
-    (runtime_dir / ".compiled_at").write_text(
-        datetime.now().isoformat(), encoding="utf-8"
-    )
+    (runtime_dir / ".compiled_at").write_text(datetime.now().isoformat(), encoding="utf-8")
     return results
 
 
@@ -208,9 +200,38 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
 
 _RELEVANCE_KEYWORDS: dict[str, list[str]] = {
     "agent_core": [
-        "ralph", "wiggum", "铁律", "永不放弃", "任务执行", "执行流程",
-        "self-check", "prohibited", "禁止", "proactive", "主动",
-        "self-healing", "自修复", "成长循环", "growth", "每轮自检",
+        "ralph",
+        "wiggum",
+        "铁律",
+        "永不放弃",
+        "任务执行",
+        "执行流程",
+        "self-check",
+        "prohibited",
+        "禁止",
+        "proactive",
+        "主动",
+        "self-healing",
+        "自修复",
+        "成长循环",
+        "growth",
+        "每轮自检",
+    ],
+    "agent_tooling": [
+        "工具",
+        "tool",
+        "技能",
+        "skill",
+        "mcp",
+        "脚本",
+        "script",
+        "优先级",
+        "priority",
+        "临时脚本",
+        "能力扩展",
+        "capability",
+        "敷衍",
+        "没有工具",
     ],
     "user": ["基本", "技术", "偏好", "profile", "习惯", "工作"],
     "persona_custom": ["性格", "风格", "沟通", "偏好", "特质"],
@@ -219,10 +240,42 @@ _RELEVANCE_KEYWORDS: dict[str, list[str]] = {
 # Sections to explicitly exclude per target (avoid cross-contamination)
 _EXCLUDE_SECTIONS: dict[str, list[str]] = {
     "agent_core": [
-        "tool priority", "工具选择", "工具使用", "临时脚本", "没有工具",
-        "environment", "环境", "build", "running", "multi-agent",
-        "orchestration", "codebase", "code style", "skill definition",
-        "operational notes", "learned patterns", "common issues",
+        "tool priority",
+        "工具选择",
+        "工具使用",
+        "临时脚本",
+        "没有工具",
+        "environment",
+        "环境",
+        "build",
+        "running",
+        "multi-agent",
+        "orchestration",
+        "codebase",
+        "code style",
+        "skill definition",
+        "operational notes",
+        "learned patterns",
+        "common issues",
+    ],
+    "agent_tooling": [
+        "ralph",
+        "wiggum",
+        "铁律",
+        "永不放弃",
+        "backpressure",
+        "self-check",
+        "environment",
+        "环境",
+        "build",
+        "running",
+        "multi-agent",
+        "orchestration",
+        "codebase",
+        "code style",
+        "skill definition",
+        "operational notes",
+        "validation",
     ],
 }
 
@@ -309,7 +362,6 @@ def _is_relevant_section(section: str, target: str) -> bool:
 
 _STATIC_FALLBACKS: dict[str, str] = {
     # SOUL.md 不再需要 fallback — 全文直接注入
-
     "agent_core": """\
 ## 核心执行原则
 
@@ -340,6 +392,34 @@ _STATIC_FALLBACKS: dict[str, str] = {
 - 放弃任务（除非用户明确取消）
 - 只回复文字而不调用工具（任务场景下）
 - 说"做不到" — 应该搜索/安装/创建能力""",
+    "agent_tooling": """\
+## 工具使用原则
+
+### 核心原则：任务必须通过工具或脚本完成
+不使用工具/脚本 = 没有真正执行任务
+
+### 工具选择顺序
+1. **已安装技能** — 技能可能来自内置目录、用户工作区目录或项目目录；不要猜路径，使用 `list_skills` / `get_skill_info`
+2. **MCP 服务器工具** — 通过 MCP 协议调用的外部工具
+3. **Shell 命令** — 系统命令和脚本
+4. **临时脚本** — write_file 写脚本 + run_shell 执行
+5. **网络搜索 + 安装** — 搜索 GitHub 找到并安装新能力
+6. **自己编写技能** — 用 skill-creator 创建永久技能
+
+### 能力扩展协议（缺少能力时）
+1. **搜索** — 先查已安装 skills，再搜索网络
+2. **安装** — 找到合适的 skill → 直接安装并加载
+3. **创建** — 没有现成的 → 用 skill-creator 创建
+4. **记录** — 新能力获取后，更新经验记忆
+缺少能力 = 需要获取能力 = 获取能力 = 继续任务。中间没有"报告给用户"这一步。
+
+### 禁止的敷衍行为
+- ❌ "这个功能我暂时没有"
+- ❌ "你需要自己去..."
+- ❌ "我建议你手动..."
+- ❌ 只回复文字而不调用任何工具
+- ✅ "让我来处理" → 立即调用工具执行
+- ✅ "这个功能我还没有，让我创建一个" → skill-creator 或临时脚本""",
 }
 
 
@@ -363,9 +443,7 @@ def check_compiled_outdated(identity_dir: Path, max_age_hours: int = 24) -> bool
     if not timestamp_file.exists():
         return True
     try:
-        compiled_at = datetime.fromisoformat(
-            timestamp_file.read_text(encoding="utf-8").strip()
-        )
+        compiled_at = datetime.fromisoformat(timestamp_file.read_text(encoding="utf-8").strip())
         age = datetime.now() - compiled_at
         if age.total_seconds() > max_age_hours * 3600:
             return True
@@ -398,14 +476,22 @@ def get_compiled_content(identity_dir: Path) -> dict[str, str]:
 def compile_soul(content: str) -> str:
     """Deprecated: SOUL.md is now injected as full text, no compilation needed."""
     import re
+
     content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
     return content.strip()
+
 
 def compile_agent_core(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["agent_core"])
 
+
+def compile_agent_tooling(content: str) -> str:
+    return _compile_with_rules(content, {"target": "agent_tooling", "max_tokens": 300})
+
+
 def compile_user(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["user"])
+
 
 def compile_persona(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["persona_custom"])

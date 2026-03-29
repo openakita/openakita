@@ -1,12 +1,17 @@
 """
 Browser 工具定义
 
-包含浏览器自动化相关的工具（遵循 tool-definition-spec.md 规范）：
-- browser_navigate: 导航到 URL（搜索类任务推荐直接拼 URL 参数）
-- browser_task: 智能浏览器任务（适合复杂交互，不适合简单搜索）
+包含浏览器自动化相关的工具（遵循 tool-definition-spec.md 规范，全部基于 Playwright）：
 - browser_open: 启动浏览器 + 状态查询
+- browser_navigate: 导航到 URL（搜索类任务推荐直接拼 URL 参数）
+- browser_click: 点击页面元素
+- browser_type: 输入文本
+- browser_scroll: 滚动页面
+- browser_wait: 等待元素出现
+- browser_execute_js: 执行 JavaScript
 - browser_get_content: 获取页面内容
 - browser_screenshot: 截取页面截图
+- browser_list_tabs / browser_switch_tab / browser_new_tab: 标签页管理
 - view_image: 查看/分析本地图片
 - browser_close: 关闭浏览器
 """
@@ -16,87 +21,6 @@ from .base import build_detail
 # ==================== 工具定义 ====================
 
 BROWSER_TOOLS = [
-    # ---------- browser_task ----------
-    {
-        "name": "browser_task",
-        "category": "Browser",
-        "description": "Intelligent browser task - delegates to browser-use Agent for complex multi-step interactions. Best for: (1) Complex workflows like login + fill form + submit, (2) Tasks requiring multiple clicks and interactions on the SAME page. **NOT recommended for search tasks** - use browser_navigate with URL params instead (e.g. https://www.baidu.com/s?wd=keyword). If browser_task fails once, switch to manual steps (browser_navigate + browser_get_content).",
-        "related_tools": [
-            {"name": "web_search", "relation": "仅需快速获取搜索结果（无需页面交互）时改用 web_search，更快更省资源"},
-            {"name": "browser_navigate", "relation": "搜索类任务优先使用，拼 URL 参数直达"},
-            {
-                "name": "view_image",
-                "relation": "browser_task 完成后务必截图+view_image 验证结果",
-            },
-        ],
-        "detail": build_detail(
-            summary="智能浏览器任务 - 委托 browser-use Agent 自动执行复杂交互。",
-            scenarios=[
-                "复杂网页交互（如：登录 → 填表 → 提交）",
-                "需要多次点击、选择的操作（如：筛选 → 排序 → 翻页）",
-                "不确定具体步骤的复杂任务",
-            ],
-            params_desc={
-                "task": "要完成的任务描述，越详细越好。例如：'登录后填写表单并提交'",
-                "max_steps": "最大执行步骤数，默认15步。复杂任务可以增加。",
-            },
-            workflow_steps=[
-                "描述你想完成的任务",
-                "browser-use Agent 自动分析任务",
-                "自动规划执行步骤",
-                "逐步执行并处理异常",
-                "返回执行结果",
-            ],
-            notes=[
-                "⚠️ 搜索类任务请不要用 browser_task！直接用 browser_navigate 拼 URL 参数更可靠",
-                "⚠️ 如果 browser_task 失败 1 次，立即切换为手动分步操作",
-                "适合需要多次 UI 交互的复杂场景（登录、填表、筛选等）",
-                "通过 CDP 复用已启动的浏览器",
-                "任务描述要清晰具体，避免歧义",
-                "任务完成后用 browser_screenshot + view_image 验证结果",
-            ],
-        ),
-        "triggers": [
-            "When task involves complex multi-step UI interactions (login, form filling, etc.)",
-            "When exact steps are unclear and the task requires intelligent planning",
-            "When managing multiple tabs or complex page interactions",
-        ],
-        "prerequisites": [],
-        "warnings": [
-            "Do NOT use for search tasks - use browser_navigate with URL params instead",
-            "If browser_task fails once, immediately switch to manual browser tools",
-            "Always verify results with browser_screenshot + view_image after completion",
-        ],
-        "examples": [
-            {
-                "scenario": "淘宝筛选排序（复杂交互）",
-                "params": {
-                    "task": "在淘宝商品列表页筛选价格200-500元，按销量排序"
-                },
-                "expected": "Agent automatically: filters price → sorts by sales",
-            },
-            {
-                "scenario": "表单填写",
-                "params": {"task": "填写注册表单：用户名test，邮箱test@example.com，点击提交"},
-                "expected": "Agent fills form fields and submits",
-            },
-        ],
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "要完成的任务描述，例如：'打开淘宝搜索机械键盘，筛选价格200-500元，按销量排序'",
-                },
-                "max_steps": {
-                    "type": "integer",
-                    "description": "最大执行步骤数，默认15。复杂任务可以增加。",
-                    "default": 15,
-                },
-            },
-            "required": ["task"],
-        },
-    },
     # ---------- browser_open ---------- (合并了 browser_status)
     {
         "name": "browser_open",
@@ -147,7 +71,7 @@ BROWSER_TOOLS = [
         ],
         "related_tools": [
             {"name": "browser_navigate", "relation": "打开后导航到目标 URL（搜索任务推荐直接拼 URL 参数）"},
-            {"name": "browser_task", "relation": "仅在需要复杂 UI 交互时使用"},
+            {"name": "browser_click", "relation": "点击页面元素进行交互"},
             {"name": "browser_close", "relation": "使用完毕后关闭"},
         ],
         "input_schema": {
@@ -166,9 +90,9 @@ BROWSER_TOOLS = [
     {
         "name": "browser_navigate",
         "category": "Browser",
-        "description": "Navigate browser to URL. **Recommended for search tasks** - directly use URL with query params (e.g. https://www.baidu.com/s?wd=keyword, https://image.baidu.com/search/index?tn=baiduimage&word=keyword, https://www.google.com/search?q=keyword). Much more reliable than browser_task for searches. Auto-starts browser if not running.",
+        "description": "Navigate browser to URL. **Recommended for search tasks** - directly use URL with query params (e.g. https://www.baidu.com/s?wd=keyword, https://image.baidu.com/search/index?tn=baiduimage&word=keyword, https://www.google.com/search?q=keyword). Auto-starts browser if not running.",
         "detail": build_detail(
-            summary="导航到指定 URL。搜索类任务推荐直接拼 URL 参数，比 browser_task 更可靠。",
+            summary="导航到指定 URL。搜索类任务推荐直接拼 URL 参数。",
             scenarios=[
                 "搜索类任务：直接用 URL 参数（如 baidu.com/s?wd=关键词）",
                 "打开网页查看内容",
@@ -196,7 +120,6 @@ BROWSER_TOOLS = [
             "When user asks to search for something on the web",
             "When user asks to open a webpage",
             "When starting web automation task with a known URL",
-            "When browser_task has failed - use URL params as fallback",
         ],
         "prerequisites": [],
         "warnings": [],
@@ -214,9 +137,9 @@ BROWSER_TOOLS = [
         ],
         "related_tools": [
             {"name": "browser_get_content", "relation": "导航后获取页面文本内容"},
+            {"name": "browser_click", "relation": "导航后点击页面元素"},
             {"name": "browser_screenshot", "relation": "导航后截图"},
             {"name": "view_image", "relation": "截图后查看图片内容，验证页面状态"},
-            {"name": "browser_task", "relation": "仅在需要复杂 UI 交互（登录、填表）时使用"},
         ],
         "input_schema": {
             "type": "object",
@@ -255,7 +178,7 @@ BROWSER_TOOLS = [
             "When verifying page content after navigation",
         ],
         "prerequisites": [
-            "Page must be loaded (browser_navigate called or browser_task completed)",
+            "Page must be loaded (browser_navigate called)",
         ],
         "warnings": [],
         "examples": [
@@ -329,7 +252,7 @@ BROWSER_TOOLS = [
             "When debugging page display issues",
         ],
         "prerequisites": [
-            "Page must be loaded (browser_navigate called or browser_task completed)",
+            "Page must be loaded (browser_navigate called)",
         ],
         "warnings": [],
         "examples": [
@@ -365,6 +288,332 @@ BROWSER_TOOLS = [
                     "default": False,
                 },
                 "path": {"type": "string", "description": "保存路径（可选，不填自动生成）"},
+            },
+            "required": [],
+        },
+    },
+    # ---------- browser_click ----------
+    {
+        "name": "browser_click",
+        "category": "Browser",
+        "description": "Click an element on the current page. Use CSS selector or visible text to identify the target element.",
+        "detail": build_detail(
+            summary="点击页面上的元素。支持 CSS 选择器或可见文本定位。",
+            scenarios=[
+                "点击按钮、链接",
+                "选择下拉菜单选项",
+                "点击表单控件",
+            ],
+            params_desc={
+                "selector": "CSS 选择器（如 'button.submit', '#login-btn', 'a.product-link'）",
+                "text": "元素的可见文本（如 '提交', '登录'）。selector 和 text 至少提供一个",
+            },
+            notes=[
+                "selector 和 text 至少提供一个",
+                "优先使用 selector 精确定位，text 用于模糊匹配",
+                "点击前建议先用 browser_get_content 确认元素存在",
+            ],
+        ),
+        "triggers": [
+            "When user asks to click a button or link",
+            "When interacting with page elements",
+        ],
+        "prerequisites": ["Page must be loaded"],
+        "warnings": [],
+        "examples": [
+            {
+                "scenario": "点击提交按钮",
+                "params": {"selector": "button[type='submit']"},
+                "expected": "Clicks the submit button",
+            },
+            {
+                "scenario": "点击文本链接",
+                "params": {"text": "登录"},
+                "expected": "Clicks element containing text '登录'",
+            },
+        ],
+        "related_tools": [
+            {"name": "browser_get_content", "relation": "点击前确认页面元素"},
+            {"name": "browser_screenshot", "relation": "点击后截图验证"},
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS 选择器（如 'button.submit', '#login-btn'）",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "元素的可见文本（如 '提交', '登录'）",
+                },
+            },
+            "required": [],
+        },
+    },
+    # ---------- browser_type ----------
+    {
+        "name": "browser_type",
+        "category": "Browser",
+        "description": "Type text into an input field on the current page. Identifies the field by CSS selector.",
+        "detail": build_detail(
+            summary="在输入框中输入文本。",
+            scenarios=[
+                "填写搜索框",
+                "填写表单字段（用户名、密码、邮箱等）",
+                "在文本区域输入内容",
+            ],
+            params_desc={
+                "selector": "输入框的 CSS 选择器（如 'input[name=\"username\"]', '#search-box'）",
+                "text": "要输入的文本",
+                "clear": "是否先清空输入框（默认 True）",
+            },
+            notes=[
+                "默认会先清空输入框再输入",
+                "设置 clear=False 可追加文本",
+            ],
+        ),
+        "triggers": [
+            "When filling form fields",
+            "When typing in search boxes",
+        ],
+        "prerequisites": ["Page must be loaded"],
+        "warnings": [],
+        "examples": [
+            {
+                "scenario": "在搜索框输入",
+                "params": {"selector": "#search-box", "text": "机械键盘"},
+                "expected": "Types '机械键盘' into the search box",
+            },
+        ],
+        "related_tools": [
+            {"name": "browser_click", "relation": "输入后可能需要点击提交按钮"},
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "输入框的 CSS 选择器",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "要输入的文本",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "是否先清空输入框（默认 True）",
+                    "default": True,
+                },
+            },
+            "required": ["selector", "text"],
+        },
+    },
+    # ---------- browser_scroll ----------
+    {
+        "name": "browser_scroll",
+        "category": "Browser",
+        "description": "Scroll the page up or down by a specified amount of pixels.",
+        "detail": build_detail(
+            summary="滚动页面。",
+            scenarios=[
+                "查看页面下方内容",
+                "滚动到特定区域",
+                "浏览长页面",
+            ],
+            params_desc={
+                "direction": "滚动方向：'up' 或 'down'（默认 'down'）",
+                "amount": "滚动像素数（默认 500）",
+            },
+        ),
+        "triggers": [
+            "When content is below the visible area",
+            "When browsing long pages",
+        ],
+        "prerequisites": ["Page must be loaded"],
+        "warnings": [],
+        "examples": [
+            {
+                "scenario": "向下滚动",
+                "params": {"direction": "down", "amount": 500},
+                "expected": "Scrolls down 500 pixels",
+            },
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["up", "down"],
+                    "description": "滚动方向",
+                    "default": "down",
+                },
+                "amount": {
+                    "type": "integer",
+                    "description": "滚动像素数",
+                    "default": 500,
+                },
+            },
+            "required": [],
+        },
+    },
+    # ---------- browser_wait ----------
+    {
+        "name": "browser_wait",
+        "category": "Browser",
+        "description": "Wait for a specific element to appear on the page. Useful after navigation or clicks that trigger dynamic content loading.",
+        "detail": build_detail(
+            summary="等待页面元素出现。适用于动态加载内容的场景。",
+            scenarios=[
+                "等待页面加载完成",
+                "等待 AJAX 请求完成后元素出现",
+                "等待弹窗出现",
+            ],
+            params_desc={
+                "selector": "要等待的元素的 CSS 选择器",
+                "timeout": "超时时间（毫秒），默认 30000（30秒）",
+            },
+        ),
+        "triggers": [
+            "After navigation when page uses dynamic loading",
+            "After click that triggers AJAX content",
+        ],
+        "prerequisites": ["Page must be loaded"],
+        "warnings": [],
+        "examples": [
+            {
+                "scenario": "等待搜索结果加载",
+                "params": {"selector": ".search-results", "timeout": 10000},
+                "expected": "Waits up to 10s for search results to appear",
+            },
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "要等待的元素的 CSS 选择器",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "超时时间（毫秒），默认 30000",
+                    "default": 30000,
+                },
+            },
+            "required": ["selector"],
+        },
+    },
+    # ---------- browser_execute_js ----------
+    {
+        "name": "browser_execute_js",
+        "category": "Browser",
+        "description": "Execute JavaScript code on the current page. Returns the evaluation result.",
+        "detail": build_detail(
+            summary="在当前页面执行 JavaScript 代码。",
+            scenarios=[
+                "获取页面上的特定数据",
+                "修改页面状态",
+                "调用页面上的 JavaScript 函数",
+                "获取 DOM 元素属性",
+            ],
+            params_desc={
+                "script": "要执行的 JavaScript 代码",
+            },
+            notes=[
+                "代码在页面上下文中执行",
+                "可以返回序列化的结果",
+            ],
+        ),
+        "triggers": [
+            "When extracting specific data from page DOM",
+            "When no built-in tool covers the needed operation",
+        ],
+        "prerequisites": ["Page must be loaded"],
+        "warnings": ["Be careful with destructive JS operations"],
+        "examples": [
+            {
+                "scenario": "获取页面标题",
+                "params": {"script": "document.title"},
+                "expected": "Returns the page title",
+            },
+            {
+                "scenario": "获取所有链接",
+                "params": {"script": "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).slice(0, 20)"},
+                "expected": "Returns first 20 links with text and href",
+            },
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script": {
+                    "type": "string",
+                    "description": "要执行的 JavaScript 代码",
+                },
+            },
+            "required": ["script"],
+        },
+    },
+    # ---------- browser_list_tabs ----------
+    {
+        "name": "browser_list_tabs",
+        "category": "Browser",
+        "description": "List all open browser tabs with their URLs and titles.",
+        "detail": build_detail(
+            summary="列出所有打开的浏览器标签页。",
+            scenarios=["查看当前打开了哪些页面", "在多标签操作中定位目标标签"],
+        ),
+        "triggers": ["When managing multiple tabs"],
+        "prerequisites": ["Browser must be running"],
+        "warnings": [],
+        "examples": [
+            {"scenario": "列出所有标签", "params": {}, "expected": "Returns list of tabs"},
+        ],
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    # ---------- browser_switch_tab ----------
+    {
+        "name": "browser_switch_tab",
+        "category": "Browser",
+        "description": "Switch to a specific browser tab by index (0-based).",
+        "detail": build_detail(
+            summary="切换到指定索引的标签页（从 0 开始）。",
+            scenarios=["在多标签操作中切换页面"],
+            params_desc={"index": "标签页索引（从 0 开始）"},
+        ),
+        "triggers": ["When switching between tabs"],
+        "prerequisites": ["Browser must be running with multiple tabs"],
+        "warnings": [],
+        "examples": [
+            {"scenario": "切换到第二个标签", "params": {"index": 1}, "expected": "Switches to tab at index 1"},
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer", "description": "标签页索引（从 0 开始）", "default": 0},
+            },
+            "required": ["index"],
+        },
+    },
+    # ---------- browser_new_tab ----------
+    {
+        "name": "browser_new_tab",
+        "category": "Browser",
+        "description": "Open a new browser tab, optionally navigating to a URL.",
+        "detail": build_detail(
+            summary="打开新标签页，可选导航到指定 URL。",
+            scenarios=["需要在新标签页中打开链接", "保留当前页面同时查看其他内容"],
+            params_desc={"url": "要在新标签页打开的 URL（可选，不填则打开空白页）"},
+        ),
+        "triggers": ["When opening a link in a new tab"],
+        "prerequisites": ["Browser must be running"],
+        "warnings": [],
+        "examples": [
+            {"scenario": "新标签打开页面", "params": {"url": "https://www.baidu.com"}, "expected": "Opens Baidu in new tab"},
+        ],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "要打开的 URL（可选）"},
             },
             "required": [],
         },

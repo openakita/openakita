@@ -108,6 +108,22 @@ USER_PROFILE_ITEMS = [
         priority=4,
         category="communication",
     ),
+    UserProfileItem(
+        key="indent_style",
+        name="缩进风格",
+        description="代码缩进偏好（如 2空格/4空格/tab）",
+        question="你写代码时习惯用 2 空格、4 空格还是 Tab 缩进？",
+        priority=5,
+        category="communication",
+    ),
+    UserProfileItem(
+        key="code_style",
+        name="代码风格",
+        description="代码格式化/风格偏好（如 PEP8, Google Style, Prettier 等）",
+        question="你习惯遵循哪种代码风格规范？",
+        priority=5,
+        category="communication",
+    ),
     # === 工作习惯 (优先级 4) ===
     UserProfileItem(
         key="work_hours",

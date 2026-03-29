@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime
@@ -21,6 +22,7 @@ from typing import Any
 from ..config import settings
 from ..tools.errors import ToolError, classify_error
 from ..tools.handlers import SystemHandlerRegistry
+from ..tools.input_normalizer import normalize_tool_input
 from ..tracing.tracer import get_tracer
 from .agent_state import TaskState
 
@@ -250,6 +252,9 @@ class ToolExecutor:
         Returns:
             工具执行结果字符串
         """
+        if isinstance(tool_input, dict):
+            tool_input = normalize_tool_input(tool_name, tool_input)
+
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ★ 拦截 JSON 解析失败的工具调用（参数被 API 截断）
@@ -571,6 +576,14 @@ class ToolExecutor:
                 from ..llm.converters.tools import PARSE_ERROR_KEY
                 if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
                     success = False
+
+                if success and isinstance(result_str, str) and result_str.lstrip().startswith("{"):
+                    try:
+                        payload, _ = json.JSONDecoder().raw_decode(result_str.lstrip())
+                        if isinstance(payload, dict) and payload.get("error") is True:
+                            success = False
+                    except Exception:
+                        pass
 
                 # 终端输出工具返回结果（便于调试与观察）
                 _preview = result_str if len(result_str) <= 800 else result_str[:800] + "\n... (已截断)"

@@ -745,6 +745,14 @@ class OpenAIProvider(LLMProvider):
                     f"[OpenAI] Local endpoint '{self.name}': stripped thinking params {_stripped}"
                 )
 
+        # ── 端点级 thinking 参数剥离 ──
+        # 若端点曾因 thinking/reasoning_effort 返回 400，
+        # 客户端自愈逻辑已在 provider 上标记 _thinking_params_unsupported，
+        # 此处作为最终安全网，确保不再发送任何 thinking 相关参数。
+        if getattr(self, '_thinking_params_unsupported', False):
+            for _tp in ("thinking", "reasoning_effort", "enable_thinking", "thinking_budget"):
+                body.pop(_tp, None)
+
         # ── 请求体卫生检查 ──
         # extra_params 的 body.update() 是盲覆盖，可能将精心计算的参数（如 max_tokens）
         # 替换为无效值。在 return 前做最终校验，确保发出的请求体始终合法。

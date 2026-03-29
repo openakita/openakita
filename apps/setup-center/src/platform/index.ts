@@ -147,6 +147,22 @@ export async function readFileBase64(path: string): Promise<string> {
   return tauriInvoke<string>("read_file_base64", { path });
 }
 
+/** Write text content to a local file. Only available in Tauri. */
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  if (!IS_TAURI)
+    throw new Error("writeTextFile is only available in Tauri");
+  const { writeTextFile: _writeTextFile } = await import("@tauri-apps/plugin-fs");
+  await _writeTextFile(path, content);
+}
+
+/** Write binary data to a local file. Only available in Tauri. */
+export async function writeFile(path: string, data: Uint8Array): Promise<void> {
+  if (!IS_TAURI)
+    throw new Error("writeFile is only available in Tauri");
+  const { writeFile: _writeFile } = await import("@tauri-apps/plugin-fs");
+  await _writeFile(path, data);
+}
+
 // ---------------------------------------------------------------------------
 // HTTP proxy (bypass CORS in Tauri webview; direct fetch on web)
 // ---------------------------------------------------------------------------

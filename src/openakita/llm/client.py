@@ -10,19 +10,18 @@ LLM 统一客户端
 """
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ..core.errors import UserCancelledError
 from .config import get_default_config_path, load_endpoints_config
 from .providers.anthropic import AnthropicProvider
 from .providers.base import LLMProvider
 from .providers.openai import OpenAIProvider
 from .providers.openai_responses import OpenAIResponsesProvider
-from ..core.errors import UserCancelledError
 from .types import (
     AllEndpointsFailedError,
     AudioBlock,
@@ -202,7 +201,7 @@ class LLMClient:
             self._endpoints = sorted(endpoints, key=lambda x: x.priority)
         elif config_path or get_default_config_path().exists():
             self._config_path = config_path or get_default_config_path()
-            self._endpoints, _, _, self._settings = load_endpoints_config(config_path)
+            self._endpoints, _, _, self._settings = load_endpoints_config(self._config_path)
 
         # 创建 Provider 实例
         self._init_providers()
@@ -228,20 +227,6 @@ class LLMClient:
             logger.warning("reload() called but config file not found: %s", self._config_path)
             return False
         try:
-            # Re-read .env so newly written API keys are available in os.environ
-            from dotenv import load_dotenv as _reload_dotenv
-
-            env_path = self._config_path.parent.parent / ".env"
-            if env_path.exists():
-                try:
-                    _reload_dotenv(env_path, override=True)
-                except UnicodeDecodeError:
-                    logger.warning("Failed to reload %s as UTF-8, retrying with system encoding", env_path)
-                    try:
-                        _reload_dotenv(env_path, override=True, encoding=None)
-                    except Exception:
-                        logger.error("Could not reload %s, skipping", env_path)
-
             new_endpoints, _, _, new_settings = load_endpoints_config(self._config_path)
             self._endpoints = new_endpoints
             self._settings = new_settings
@@ -745,7 +730,7 @@ class LLMClient:
                                     reason="用户请求停止",
                                     source="llm_cooldown_wait",
                                 )
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 pass
                         else:
                             await asyncio.sleep(wait_seconds)
@@ -1187,6 +1172,33 @@ class LLMClient:
                         await asyncio.sleep(0.5)
                         continue  # 用修正后的参数重试当前端点
 
+                    # ── 自愈: 端点不支持 thinking / reasoning_effort 参数 ──
+                    # NVIDIA NIM、部分 OpenAI 兼容端点不接受 OpenAI 风格的
+                    # thinking: {"type": "enabled"} 或 reasoning_effort 参数，
+                    # 会返回 400 (extra_forbidden / unsupported parameter)。
+                    # 运行时检测并自动关闭 thinking，避免维护端点黑名单。
+                    _thinking_reject_patterns = [
+                        "extra_forbidden",
+                        "extra inputs are not permitted",
+                        "unsupported parameter",
+                    ]
+                    _err_lower = error_str.lower()
+                    _is_thinking_rejected = (
+                        any(p in _err_lower for p in _thinking_reject_patterns)
+                        and ("thinking" in _err_lower or "reasoning_effort" in _err_lower)
+                    )
+                    if _is_thinking_rejected and not getattr(request, '_thinking_stripped', False):
+                        request._thinking_stripped = True  # type: ignore[attr-defined]
+                        request.enable_thinking = False
+                        request.thinking_depth = None
+                        provider._thinking_params_unsupported = True  # type: ignore[attr-defined]
+                        logger.info(
+                            f"[LLM] endpoint={provider.name} rejected thinking params, "
+                            f"self-healing: disabling thinking mode, retrying"
+                        )
+                        await asyncio.sleep(0.5)
+                        continue
+
                     # 检测不可重试的结构性错误（重试不会修复，浪费配额）
                     non_retryable_patterns = [
                         "invalid_request_error",
@@ -1200,6 +1212,10 @@ class LLMClient:
                         "missing 'reasoning_content'",
                         "data_inspection_failed",  # DashScope 内容审查拒绝
                         "inappropriate content",   # DashScope 审查的错误描述文本
+                        "(413)",                    # HTTP 413 Payload Too Large
+                        "payload too large",
+                        "request entity too large",
+                        "larger than allowed",      # kimi: "JSON payload ... is larger than allowed"
                     ]
                     is_non_retryable = any(
                         pattern in error_str.lower() for pattern in non_retryable_patterns
@@ -1215,6 +1231,8 @@ class LLMClient:
                             "payload too large",
                             "request entity too large",
                             "content too large",
+                            "larger than allowed",   # kimi: "JSON payload ... is larger than allowed"
+                            "(413)",                 # HTTP 413 状态码
                             "context length",
                             "too many tokens",
                             "string too long",
@@ -1753,20 +1771,20 @@ class LLMClient:
         if not self._config_path:
             return
 
-        # 读取原配置
-        with open(self._config_path, encoding="utf-8") as f:
-            config_data = json.load(f)
+        from ..utils.atomic_io import read_json_safe, safe_json_write
 
-        # 更新端点优先级
+        config_data = read_json_safe(self._config_path)
+        if config_data is None:
+            logger.warning("Cannot save config: no existing config to update")
+            return
+
         name_to_priority = {ep.name: ep.priority for ep in self._endpoints}
         for ep_data in config_data.get("endpoints", []):
             name = ep_data.get("name")
             if name in name_to_priority:
                 ep_data["priority"] = name_to_priority[name]
 
-        # 写回文件
-        with open(self._config_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=2, ensure_ascii=False)
+        safe_json_write(self._config_path, config_data)
 
     async def close(self):
         """关闭所有 Provider"""

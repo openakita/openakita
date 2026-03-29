@@ -31,8 +31,15 @@
     "process:default",
     "process:allow-restart",
     "process:allow-exit",
+    "clipboard-manager:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
     "dialog:default",
     "dialog:allow-save",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
     {
       "identifier": "http:default",
       "allow": [

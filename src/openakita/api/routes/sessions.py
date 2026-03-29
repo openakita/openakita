@@ -17,9 +17,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _broadcast_session_event(event: str, data: dict) -> None:
+    """Broadcast a session lifecycle event via WebSocket."""
+    try:
+        from .websocket import broadcast_event
+
+        await broadcast_event(event, data)
+    except Exception:
+        pass
+
+
 class GenerateTitleRequest(BaseModel):
     message: str = Field(..., description="用户第一条消息")
     reply: str = Field("", description="AI 回复摘要（可选）")
+    conversation_id: str = Field("", description="会话 ID（用于跨设备标题同步）")
 
 
 @router.get("/api/sessions")
@@ -29,7 +40,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     Returns a list of conversations with metadata, ordered by last_active desc.
     """
     session_manager = getattr(request.app.state, "session_manager", None)
-    if not session_manager:
+    if not session_manager or not getattr(session_manager, "_sessions_loaded", False):
         wac = getattr(request.app.state, "web_access_config", None)
         return {"sessions": [], "data_epoch": wac.data_epoch if wac else "", "ready": False}
 
@@ -52,14 +63,16 @@ async def list_sessions(request: Request, channel: str = "desktop"):
             if isinstance(last_content, str):
                 last_msg_content = last_content[:100]
 
-        result.append({
-            "id": s.chat_id,
-            "title": title or "对话",
-            "lastMessage": last_msg_content,
-            "timestamp": int(s.last_active.timestamp() * 1000),
-            "messageCount": len(msgs),
-            "agentProfileId": getattr(s.context, "agent_profile_id", "default"),
-        })
+        result.append(
+            {
+                "id": s.chat_id,
+                "title": title or "对话",
+                "lastMessage": last_msg_content,
+                "timestamp": int(s.last_active.timestamp() * 1000),
+                "messageCount": len(msgs),
+                "agentProfileId": getattr(s.context, "agent_profile_id", "default"),
+            }
+        )
 
     data_epoch = ""
     wac = getattr(request.app.state, "web_access_config", None)
@@ -104,7 +117,7 @@ async def get_session_history(
         if role == "assistant":
             for marker in _STRIP_MARKERS:
                 if marker in content:
-                    content = content[:content.index(marker)]
+                    content = content[: content.index(marker)]
             if content.startswith("[执行摘要]") or content.startswith("[子Agent工作总结]"):
                 content = ""
         ts = msg.get("timestamp", "")
@@ -112,6 +125,7 @@ async def get_session_history(
         if ts:
             try:
                 from datetime import datetime
+
                 dt = datetime.fromisoformat(ts)
                 epoch_ms = int(dt.timestamp() * 1000)
             except Exception:
@@ -167,21 +181,26 @@ async def delete_session(
     # Release busy-lock unconditionally — the conversation is being deleted,
     # so any in-progress state is no longer relevant.
     from .conversation_lifecycle import get_lifecycle_manager
+
     await get_lifecycle_manager().finish(conversation_id)
 
     session_key = f"{channel}:{conversation_id}:{user_id}"
     removed = session_manager.close_session(session_key)
     if removed:
         logger.info(f"[Sessions] Deleted session via API: {session_key}")
+        await _broadcast_session_event(
+            "chat:conversation_deleted",
+            {
+                "conversation_id": conversation_id,
+            },
+        )
     else:
         logger.debug(f"[Sessions] Session not found for deletion: {session_key}")
 
     return {"ok": True, "removed": removed}
 
 
-def _cancel_tasks_for_session(
-    request: Request, conversation_id: str, session_id: str
-) -> None:
+def _cancel_tasks_for_session(request: Request, conversation_id: str, session_id: str) -> None:
     """Best-effort cancel of running tasks before session deletion.
 
     Two levels of cancellation:
@@ -222,6 +241,7 @@ class AppendMessageRequest(BaseModel):
 
 class AppendBatchRequest(BaseModel):
     messages: list[AppendMessageRequest] = Field(..., description="Messages to append")
+    replace: bool = Field(False, description="If true, replace all existing messages")
 
 
 @router.post("/api/sessions/{conversation_id}/messages")
@@ -250,11 +270,14 @@ async def append_session_messages(
     if not session:
         return {"ok": False, "error": "failed to create session"}
 
+    if body.replace:
+        session.context.clear_messages()
+
     for msg in body.messages:
         session.add_message(msg.role, msg.content)
 
     session_manager.mark_dirty()
-    return {"ok": True, "count": len(body.messages)}
+    return {"ok": True, "count": len(body.messages), "replaced": body.replace}
 
 
 @router.post("/api/sessions/generate-title")
@@ -265,6 +288,7 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
         return {"title": body.message[:20] or "新对话"}
 
     from .chat import _resolve_agent
+
     actual_agent = _resolve_agent(agent)
     if not actual_agent or not actual_agent.brain:
         return {"title": body.message[:20] or "新对话"}
@@ -287,9 +311,21 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
             system="你是标题生成助手。只输出标题文字，不要任何额外内容。",
             max_tokens=50,
         )
-        title = response.content.strip().strip('"\'"\u201c\u201d\u2018\u2019\u300c\u300d\u3010\u3011').strip()  # noqa: B005
+        title = (
+            response.content.strip()
+            .strip('"\'"\u201c\u201d\u2018\u2019\u300c\u300d\u3010\u3011')
+            .strip()
+        )  # noqa: B005
         if not title or len(title) > 30:
             title = body.message[:20] or "新对话"
+        if body.conversation_id:
+            await _broadcast_session_event(
+                "chat:title_update",
+                {
+                    "conversation_id": body.conversation_id,
+                    "title": title,
+                },
+            )
         return {"title": title}
     except Exception as e:
         logger.warning(f"[Sessions] Title generation failed: {e}")

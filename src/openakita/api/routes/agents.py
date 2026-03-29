@@ -548,14 +548,18 @@ async def get_topology(request: Request):
     from openakita.config import settings
 
     pool = getattr(request.app.state, "agent_pool", None)
-    orchestrator = getattr(request.app.state, "orchestrator", None)
-    if orchestrator is None:
-        try:
-            from openakita.main import _orchestrator
-            orchestrator = _orchestrator
-        except (ImportError, AttributeError):
-            pass
     session_manager = getattr(request.app.state, "session_manager", None)
+
+    # Always prefer the module-level _orchestrator — AgentToolHandler writes
+    # sub-agent states to this instance, so we must read from the same one.
+    orchestrator = None
+    try:
+        from openakita.main import _orchestrator
+        orchestrator = _orchestrator
+    except (ImportError, AttributeError):
+        pass
+    if orchestrator is None:
+        orchestrator = getattr(request.app.state, "orchestrator", None)
 
     profile_map: dict[str, dict] = {}
     hidden_profile_ids: set[str] = set()
@@ -611,7 +615,9 @@ async def get_topology(request: Request):
                 if agent_inst is not None:
                     astate = getattr(agent_inst, "agent_state", None)
                     if astate:
-                        task = astate.get_task_for_session(sid) or astate.current_task
+                        task = astate.get_task_for_session(sid)
+                        if task is None:
+                            task = astate.current_task
                         if task and task.is_active:
                             status = "running"
                             iteration = task.iteration
@@ -692,7 +698,7 @@ async def get_topology(request: Request):
                         })
                         edges.append({"from": parent_node_id, "to": sub_id, "type": "delegate"})
             except Exception as exc:
-                logger.debug(f"[Topology] sub-agent states error for {sid}: {exc}")
+                logger.warning(f"[Topology] sub-agent states error for {sid}: {exc}")
 
     # Include sessions from session_manager that aren't in the pool
     # (e.g. conversations whose agent instances were reaped due to idle timeout).

@@ -5,12 +5,14 @@ LLM 端点配置加载
 """
 
 import json
+import locale
 import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from ..utils.atomic_io import read_json_safe, safe_write
 from .types import ConfigurationError, EndpointConfig
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,82 @@ def _strip_bom(raw: bytes) -> bytes:
     if raw.startswith(b"\xef\xbb\xbf"):
         return raw[3:]
     return raw
+
+
+def _read_text_robust(path: Path) -> str:
+    """Read a text file with BOM stripping and encoding fallback."""
+    if not path.exists():
+        return ""
+    raw = _strip_bom(path.read_bytes())
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning(
+            "Failed to decode %s as UTF-8, falling back to system encoding",
+            path,
+        )
+        try:
+            return raw.decode(locale.getpreferredencoding(False), errors="replace")
+        except Exception:
+            return raw.decode("utf-8", errors="replace")
+
+
+def _parse_env_content(content: str) -> dict[str, str]:
+    """Parse .env content into key-value pairs."""
+    env: dict[str, str] = {}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            inner = value[1:-1]
+            if "\\" in inner:
+                inner = (
+                    inner.replace("\\\\", "\x00")
+                    .replace('\\"', '"')
+                    .replace("\x00", "\\")
+                )
+            value = inner
+        else:
+            for sep in (" #", "\t#"):
+                idx = value.find(sep)
+                if idx != -1:
+                    value = value[:idx].rstrip()
+                    break
+        env[key] = value
+    return env
+
+
+def _get_workspace_dir_from_config_path(config_path: Path) -> Path:
+    """Infer workspace root from an endpoint config path."""
+    config_path = Path(config_path)
+    if config_path.parent.name == "data":
+        return config_path.parent.parent
+    return config_path.parent
+
+
+def get_workspace_dir(config_path: Path | None = None) -> Path:
+    """Return the workspace root associated with an endpoints config path."""
+    resolved_path = Path(config_path) if config_path is not None else get_default_config_path()
+    return _get_workspace_dir_from_config_path(resolved_path)
+
+
+def get_workspace_env_path(config_path: Path | None = None) -> Path:
+    """Return the .env path associated with an endpoints config path."""
+    return get_workspace_dir(config_path) / ".env"
+
+
+def read_workspace_env_values(config_path: Path | None = None) -> dict[str, str]:
+    """Read the workspace .env as a plain dict without mutating os.environ."""
+    env_path = get_workspace_env_path(config_path)
+    if not env_path.exists():
+        return {}
+    return _parse_env_content(_read_text_robust(env_path))
 
 
 def _safe_load_dotenv(env_path: Path) -> None:
@@ -58,37 +136,15 @@ def _safe_load_dotenv(env_path: Path) -> None:
         logger.error("Unexpected error loading %s: %s", env_path, e)
 
 
-def _load_env():
-    """Discover and load the nearest .env file.
-
-    Search order: CWD (up to 3 levels) → package directory (up to 5 levels).
-    """
-    cwd = Path.cwd()
-    current = cwd
-    for _ in range(3):
-        env_path = current / ".env"
-        if env_path.exists():
-            _safe_load_dotenv(env_path)
-            logger.info("Loaded .env from %s", env_path)
-            return
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
-
-    current = Path(__file__).parent
-    for _ in range(5):
-        env_path = current / ".env"
-        if env_path.exists():
-            _safe_load_dotenv(env_path)
-            logger.info("Loaded .env from %s", env_path)
-            return
-        current = current.parent
-
-    logger.debug("No .env file found in search paths (CWD=%s)", cwd)
-
-
-_load_env()
+def ensure_env_loaded(config_path: Path | None = None) -> Path | None:
+    """Load the workspace .env associated with the given config path."""
+    env_path = get_workspace_env_path(config_path)
+    if env_path.exists():
+        _safe_load_dotenv(env_path)
+        logger.info("Loaded .env from %s", env_path)
+        return env_path
+    logger.debug("No .env file found at %s", env_path)
+    return None
 
 _workspace_env_loaded: set[str] = set()
 
@@ -152,6 +208,9 @@ def get_default_config_path() -> Path:
     return cwd / "data" / "llm_endpoints.json"
 
 
+ensure_env_loaded()
+
+
 def load_endpoints_config(
     config_path: Path | None = None,
 ) -> tuple[list[EndpointConfig], list[EndpointConfig], list[EndpointConfig], dict]:
@@ -172,36 +231,33 @@ def load_endpoints_config(
         config_path = get_default_config_path()
 
     config_path = Path(config_path)
+    env_values = read_workspace_env_values(config_path)
 
     _ensure_workspace_env_loaded(config_path)
 
-    if not config_path.exists():
+    data = read_json_safe(config_path)
+    if data is None:
         logger.warning(f"Config file not found: {config_path}, using empty config")
         return [], [], [], {}
-
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        raise ConfigurationError(f"Invalid JSON in config file: {e}")
-    except Exception as e:
-        raise ConfigurationError(f"Failed to read config file: {e}")
 
     def _parse_endpoint_list(key: str) -> list[EndpointConfig]:
         result = []
         for ep_data in data.get(key, []):
             try:
-                endpoint = EndpointConfig.from_dict(ep_data)
+                ep_payload = dict(ep_data)
+                env_var = ep_payload.get("api_key_env")
+                if not ep_payload.get("api_key") and env_var:
+                    ep_payload["api_key"] = env_values.get(env_var) or os.environ.get(env_var)
+
+                endpoint = EndpointConfig.from_dict(ep_payload)
                 if not endpoint.enabled:
                     logger.info(f"Skipping disabled endpoint '{endpoint.name}'")
                     continue
-                if endpoint.api_key_env:
-                    api_key = os.environ.get(endpoint.api_key_env)
-                    if not api_key:
-                        logger.warning(
-                            f"API key not found for endpoint '{endpoint.name}': "
-                            f"env var '{endpoint.api_key_env}' is not set"
-                        )
+                if endpoint.api_key_env and not endpoint.get_api_key():
+                    logger.warning(
+                        f"API key not found for endpoint '{endpoint.name}': "
+                        f"env var '{endpoint.api_key_env}' is not set"
+                    )
                 result.append(endpoint)
             except Exception as e:
                 logger.error(f"Failed to parse endpoint config ({key}): {e}")
@@ -255,7 +311,6 @@ def save_endpoints_config(
         config_path = get_default_config_path()
 
     config_path = Path(config_path)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
 
     data: dict = {
         "endpoints": [ep.to_dict() for ep in endpoints],
@@ -274,8 +329,8 @@ def save_endpoints_config(
         "fallback_on_error": True,
     }
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    safe_write(config_path, content)
 
     logger.info(f"Saved {len(endpoints)} endpoints to {config_path}")
 
@@ -327,6 +382,11 @@ def validate_config(config_path: Path | None = None) -> list[str]:
     """
     errors = []
 
+    if config_path is not None:
+        raw_path = Path(config_path)
+        if raw_path.exists() and read_json_safe(raw_path) is None:
+            return [f"Invalid JSON in config file: {raw_path}"]
+
     try:
         endpoints, compiler_endpoints, stt_endpoints, settings = load_endpoints_config(config_path)
     except ConfigurationError as e:
@@ -339,12 +399,10 @@ def validate_config(config_path: Path | None = None) -> list[str]:
         prefix = f"[{label}] " if label else ""
         for ep in eps:
             # 检查 API Key
-            if ep.api_key_env:
-                api_key = os.environ.get(ep.api_key_env)
-                if not api_key:
-                    errors.append(
-                        f"{prefix}Endpoint '{ep.name}': API key env var '{ep.api_key_env}' not set"
-                    )
+            if ep.api_key_env and not ep.get_api_key():
+                errors.append(
+                    f"{prefix}Endpoint '{ep.name}': API key env var '{ep.api_key_env}' not set"
+                )
 
             # 检查 API 类型
             if ep.api_type not in ("anthropic", "openai"):

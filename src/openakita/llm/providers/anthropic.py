@@ -9,7 +9,11 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from ..converters.tools import has_text_tool_calls, parse_text_tool_calls
+from ..converters.tools import (
+    convert_tools_to_anthropic,
+    has_text_tool_calls,
+    parse_text_tool_calls,
+)
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -265,7 +269,7 @@ class AnthropicProvider(LLMProvider):
             body["system"] = request.system
 
         if request.tools:
-            body["tools"] = [tool.to_dict() for tool in request.tools]
+            body["tools"] = convert_tools_to_anthropic(request.tools)
 
         if request.temperature != 1.0:
             body["temperature"] = request.temperature

@@ -45,6 +45,32 @@ class SkillsMode(str, Enum):
     ALL = "all"  # 全部技能
 
 
+_SKILLS_MODE_ALIASES: dict[str, str] = {
+    "only": "inclusive",
+}
+
+
+def safe_agent_type(value: Any) -> AgentType:
+    """将任意值安全转换为 AgentType，无法识别时回退到 CUSTOM。"""
+    if isinstance(value, AgentType):
+        return value
+    try:
+        return AgentType(value)
+    except (ValueError, KeyError, TypeError):
+        return AgentType.CUSTOM
+
+
+def safe_skills_mode(value: Any) -> SkillsMode:
+    """将任意值安全转换为 SkillsMode，支持别名映射，无法识别时回退到 ALL。"""
+    if isinstance(value, SkillsMode):
+        return value
+    try:
+        raw = _SKILLS_MODE_ALIASES.get(value, value)
+        return SkillsMode(raw)
+    except (ValueError, KeyError, TypeError):
+        return SkillsMode.ALL
+
+
 # SYSTEM Profile 中不可被用户修改的身份字段（其余均可自定义）
 _SYSTEM_IMMUTABLE_FIELDS = frozenset({
     "id", "type", "created_by",
@@ -114,10 +140,8 @@ class AgentProfile:
     inherit_from: str | None = None
 
     def __post_init__(self):
-        if isinstance(self.type, str):
-            self.type = AgentType(self.type)
-        if isinstance(self.skills_mode, str):
-            self.skills_mode = SkillsMode(self.skills_mode)
+        self.type = safe_agent_type(self.type)
+        self.skills_mode = safe_skills_mode(self.skills_mode)
         if not self.created_at:
             self.created_at = datetime.now(timezone.utc).isoformat()
 
@@ -138,10 +162,6 @@ class AgentProfile:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentProfile:
         data = dict(data)
-        if "type" in data:
-            data["type"] = AgentType(data["type"])
-        if "skills_mode" in data:
-            data["skills_mode"] = SkillsMode(data["skills_mode"])
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)

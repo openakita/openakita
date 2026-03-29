@@ -18,6 +18,7 @@ from .multimodal import (
 from .tools import (
     convert_tool_calls_from_openai,
     convert_tool_result_to_openai,
+    convert_tools_to_anthropic,
     convert_tools_to_openai,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "convert_messages_from_openai",
     "convert_system_to_openai",
     # Tools
+    "convert_tools_to_anthropic",
     "convert_tools_to_openai",
     "convert_tool_calls_from_openai",
     "convert_tool_result_to_openai",
