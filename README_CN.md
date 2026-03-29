@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://openakita.ai"><img src="https://img.shields.io/badge/🌐_官网-openakita.ai-orange?style=for-the-badge" alt="Official Website" height="28" /></a>
   &nbsp;
-  <a href="https://github.com/openakita/openakita/releases"><img src="https://img.shields.io/badge/📥_下载-Desktop_App-blue?style=for-the-badge" alt="Download" height="28" /></a>
+  <a href="https://openakita.ai/download"><img src="https://img.shields.io/badge/📥_下载-Desktop_App-blue?style=for-the-badge" alt="Download" height="28" /></a>
   &nbsp;
   <a href="https://discord.gg/vFwxNVNH"><img src="https://img.shields.io/badge/💬_Discord-加入社区-5865F2?style=for-the-badge" alt="Discord" height="28" /></a>
 </p>
@@ -55,7 +55,7 @@ OpenAkita 是一款开源全能 AI 助手——多个 AI Agent 协作分工、�
 
 <p align="center">
   🌐 <a href="https://openakita.ai"><b>官网 openakita.ai</b></a> &nbsp;|&nbsp;
-  📥 <a href="https://github.com/openakita/openakita/releases"><b>下载桌面端</b></a> &nbsp;|&nbsp;
+  📥 <a href="https://openakita.ai/download"><b>下载桌面端</b></a> &nbsp;|&nbsp;
   📖 <a href="https://openakita.ai/docs"><b>在线文档</b></a> &nbsp;|&nbsp;
   💬 <a href="https://discord.gg/vFwxNVNH"><b>Discord 社区</b></a>
 </p>
@@ -148,7 +148,7 @@ OpenAkita 是一款开源全能 AI 助手——多个 AI Agent 协作分工、�
 - 中国用户自动切换国内镜像
 - 模型、IM、技能、定时任务——全部在图形界面配置
 
-> **下载**：[GitHub Releases](https://github.com/openakita/openakita/releases) — Windows (.exe) / macOS (.dmg) / Linux (.deb)
+> **下载**：[GitHub Releases](https://openakita.ai/download) — Windows (.exe) / macOS (.dmg) / Linux (.deb)
 >
 > 更多信息请访问官网 **[openakita.ai](https://openakita.ai)**
 

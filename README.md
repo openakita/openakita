@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://openakita.ai"><img src="https://img.shields.io/badge/🌐_Website-openakita.ai-orange?style=for-the-badge" alt="Official Website" height="28" /></a>
   &nbsp;
-  <a href="https://github.com/openakita/openakita/releases"><img src="https://img.shields.io/badge/📥_Download-Desktop_App-blue?style=for-the-badge" alt="Download" height="28" /></a>
+  <a href="https://openakita.ai/download"><img src="https://img.shields.io/badge/📥_Download-Desktop_App-blue?style=for-the-badge" alt="Download" height="28" /></a>
   &nbsp;
   <a href="https://discord.gg/vFwxNVNH"><img src="https://img.shields.io/badge/💬_Discord-Join_Community-5865F2?style=for-the-badge" alt="Discord" height="28" /></a>
 </p>
@@ -54,7 +54,7 @@ OpenAkita is an open-source, all-in-one AI assistant — multiple AI Agents work
 
 <p align="center">
   🌐 <a href="https://openakita.ai"><b>Website openakita.ai</b></a> &nbsp;|&nbsp;
-  📥 <a href="https://github.com/openakita/openakita/releases"><b>Download Desktop App</b></a> &nbsp;|&nbsp;
+  📥 <a href="https://openakita.ai/download"><b>Download Desktop App</b></a> &nbsp;|&nbsp;
   📖 <a href="https://openakita.ai/docs"><b>Documentation</b></a> &nbsp;|&nbsp;
   💬 <a href="https://discord.gg/vFwxNVNH"><b>Discord Community</b></a>
 </p>
@@ -67,7 +67,7 @@ OpenAkita is an open-source, all-in-one AI assistant — multiple AI Agents work
 
 **No installation required** — download the desktop app and start chatting:
 
-1. **Download** the installer from [GitHub Releases](https://github.com/openakita/openakita/releases)
+1. **Download** the installer from [GitHub Releases](https://openakita.ai/download)
 2. **Install** and follow the onboarding wizard
 3. **Enter your API Key** (get one from [Anthropic](https://console.anthropic.com/) or [DeepSeek](https://platform.deepseek.com/))
 4. **Try your first task**: Type "Create a calculator" and watch it work
@@ -193,7 +193,7 @@ Web search · Desktop automation · File management · Browser automation · Sch
 - Chinese users get automatic mirror switching
 - Models, IM channels, skills, schedules — all configured in the GUI
 
-> **Download**: [GitHub Releases](https://github.com/openakita/openakita/releases) — Windows (.exe) / macOS (.dmg) / Linux (.deb)
+> **Download**: [GitHub Releases](https://openakita.ai/download) — Windows (.exe) / macOS (.dmg) / Linux (.deb)
 >
 > Learn more at **[openakita.ai](https://openakita.ai)**
 
