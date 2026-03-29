@@ -50,7 +50,6 @@ from ..llm.converters.tools import PARSE_ERROR_KEY
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
-_MIN_ITERATIONS = 15
 
 # ---------------------------------------------------------------------------
 # Mode-based tool filtering
@@ -682,7 +681,7 @@ class ReasoningEngine:
             "model": self._brain.model,
         })
 
-        max_iterations = max(_MIN_ITERATIONS, settings.max_iterations)
+        max_iterations = settings.max_iterations
         self._empty_content_retries = 0
 
         # 进度回调辅助（安全调用，忽略异常）
@@ -1849,7 +1848,7 @@ class ReasoningEngine:
             state.original_user_messages = [
                 msg for msg in messages if self._is_human_user_message(msg)
             ]
-            max_iterations = max(_MIN_ITERATIONS, settings.max_iterations)
+            max_iterations = settings.max_iterations
             self._empty_content_retries = 0
             working_messages = list(messages)
 
