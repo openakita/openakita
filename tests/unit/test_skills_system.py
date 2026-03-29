@@ -1,10 +1,8 @@
 """L1 Unit Tests: Skill registry, loader, and parser."""
 
-import pytest
-from pathlib import Path
 
-from openakita.skills.registry import SkillRegistry, SkillEntry
 from openakita.skills.loader import SkillLoader
+from openakita.skills.registry import SkillEntry, SkillRegistry
 
 
 class TestSkillRegistry:
@@ -32,6 +30,7 @@ class TestSkillRegistry:
 class TestSkillEntry:
     def test_create_entry(self):
         entry = SkillEntry(
+            skill_id="test-skill",
             name="test-skill",
             description="A test skill",
             system=False,
@@ -41,6 +40,7 @@ class TestSkillEntry:
 
     def test_to_tool_schema(self):
         entry = SkillEntry(
+            skill_id="search-tool",
             name="search-tool",
             description="Search the web",
             tool_name="web_search",

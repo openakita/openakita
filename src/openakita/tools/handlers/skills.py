@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...core.tool_executor import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
 from ...skills.events import notify_skills_changed
+from ...skills.exposure import build_skill_exposure
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -74,7 +75,11 @@ class SkillsHandler:
         """列出所有技能，区分启用/禁用状态"""
         all_skills = self.agent.skill_registry.list_all(include_disabled=True)
         if not all_skills:
-            return "当前没有已安装的技能\n\n提示: 技能应放在 skills/ 目录下，每个技能是一个包含 SKILL.md 的文件夹"
+            return (
+                "当前没有已安装的技能\n\n"
+                "提示: 技能可能来自内置目录、用户工作区目录或项目目录。"
+                "每个技能都应包含 SKILL.md；需要准确路径时请使用 get_skill_info。"
+            )
 
         system_skills = [s for s in all_skills if s.system]
         enabled_external = [s for s in all_skills if not s.system and not s.disabled]
@@ -89,36 +94,56 @@ class SkillsHandler:
         if system_skills:
             output += f"**系统技能 ({len(system_skills)})** [全部启用]:\n"
             for skill in system_skills:
+                exposed = build_skill_exposure(skill)
                 auto = "自动" if not skill.disable_model_invocation else "手动"
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
                 output += f"- {name_part} [{auto}] - {skill.description}\n"
+                output += (
+                    f"  source={exposed.origin_label}"
+                    + (f", tool={exposed.tool_name}" if exposed.tool_name else "")
+                    + (f", handler={exposed.handler}" if exposed.handler else "")
+                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
+                    + "\n"
+                )
             output += "\n"
 
         if enabled_external:
             output += f"**已启用外部技能 ({len(enabled_external)})**:\n"
             for skill in enabled_external:
+                exposed = build_skill_exposure(skill)
                 auto = "自动" if not skill.disable_model_invocation else "手动"
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
                 output += f"- {name_part} [{auto}]\n"
-                output += f"  {skill.description}\n\n"
+                output += f"  {skill.description}\n"
+                output += (
+                    f"  source={exposed.origin_label}"
+                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
+                    + "\n\n"
+                )
 
         if disabled_external:
-            output += f"**已禁用外部技能 ({len(disabled_external)})** [需在技能面板启用后才可使用]:\n"
+            output += (
+                f"**已禁用外部技能 ({len(disabled_external)})** [需在技能面板启用后才可使用]:\n"
+            )
             for skill in disabled_external:
+                exposed = build_skill_exposure(skill)
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
                 output += f"- {name_part} [已禁用]\n"
-                output += f"  {skill.description}\n\n"
+                output += f"  {skill.description}\n"
+                output += (
+                    f"  source={exposed.origin_label}"
+                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
+                    + "\n\n"
+                )
 
         return self._truncate_skill_content("list_skills", output)
 
     # Markdown 链接中引用同目录 .md 文件的正则：
     #   [`filename.md`](filename.md)  或  [filename.md](filename.md)
-    _MD_LINK_RE = re.compile(
-        r"\[`?([a-zA-Z0-9_-]+\.md)`?\]\(([a-zA-Z0-9_-]+\.md)\)"
-    )
+    _MD_LINK_RE = re.compile(r"\[`?([a-zA-Z0-9_-]+\.md)`?\]\(([a-zA-Z0-9_-]+\.md)\)")
 
     @staticmethod
     def _inline_referenced_files(body: str, skill_dir: Path) -> str:
@@ -151,14 +176,9 @@ class SkillsHandler:
                 logger.warning(f"Failed to read referenced file {ref_path}: {e}")
                 continue
 
-            appendices.append(
-                f"\n\n---\n\n"
-                f"# [Inlined Reference] {filename}\n\n"
-                f"{ref_content}"
-            )
+            appendices.append(f"\n\n---\n\n# [Inlined Reference] {filename}\n\n{ref_content}")
             logger.info(
-                f"[SkillInline] Inlined {filename} ({len(ref_content)} chars) "
-                f"from {skill_dir.name}"
+                f"[SkillInline] Inlined {filename} ({len(ref_content)} chars) from {skill_dir.name}"
             )
 
         if appendices:
@@ -207,19 +227,38 @@ class SkillsHandler:
                 f"请检查技能名称是否正确，或使用 list_skills 查看所有可用技能。"
             )
 
+        exposed = build_skill_exposure(skill)
         body = skill.get_body() or "(无详细指令)"
 
         # 自动内联 SKILL.md body 中引用的同目录 .md 文件
-        if skill.skill_path:
-            skill_dir = Path(skill.skill_path).parent
+        if exposed.skill_path:
+            skill_dir = Path(exposed.skill_path).parent
             body = self._inline_referenced_files(body, skill_dir)
 
         output = f"# 技能: {skill.name}\n\n"
+        output += f"**ID**: {skill.skill_id}\n"
         output += f"**描述**: {skill.description}\n"
+        output += f"**来源**: {exposed.origin_label}\n"
+        if exposed.skill_dir:
+            output += f"**路径**: {exposed.skill_dir}\n"
+        if exposed.root_dir:
+            output += f"**根目录**: {exposed.root_dir}\n"
         if skill.system:
             output += "**类型**: 系统技能\n"
             output += f"**工具名**: {skill.tool_name}\n"
             output += f"**处理器**: {skill.handler}\n"
+        else:
+            output += "**类型**: 外部技能\n"
+        if exposed.instruction_only:
+            output += "**脚本**: instruction-only (no executable scripts)\n"
+        else:
+            output += f"**可执行脚本**: {', '.join(exposed.scripts)}\n"
+        if exposed.references:
+            output += f"**参考文档**: {', '.join(exposed.references)}\n"
+        output += (
+            "**路径规则**: 技能可能来自多个目录，不要根据 workspace map 猜测 skill 文件位置；"
+            "以上面的来源和路径为准。\n"
+        )
         if skill.license:
             output += f"**许可证**: {skill.license}\n"
         if skill.compatibility:
@@ -250,7 +289,7 @@ class SkillsHandler:
                     f"❌ 脚本执行失败:\n{output}\n\n"
                     f"**This skill is instruction-only (no scripts).** "
                     f"DO NOT retry run_skill_script.\n"
-                    f"Use `get_skill_info(\"{skill_name}\")` to read instructions, "
+                    f'Use `get_skill_info("{skill_name}")` to read instructions, '
                     f"then write Python code via `write_file` and execute via `run_shell`."
                 )
             elif "not found" in output_lower and "available scripts:" in output_lower:
@@ -261,7 +300,7 @@ class SkillsHandler:
             elif "not found" in output_lower or "未找到" in output_lower:
                 return (
                     f"❌ 脚本执行失败:\n{output}\n\n"
-                    f"**建议**: 如果不确定用法，使用 `get_skill_info(\"{skill_name}\")` 查看技能完整指令。\n"
+                    f'**建议**: 如果不确定用法，使用 `get_skill_info("{skill_name}")` 查看技能完整指令。\n'
                     f"对于指令型技能，应改用 write_file + run_shell 方式执行代码。"
                 )
             elif "timed out" in output_lower or "超时" in output:
@@ -316,6 +355,7 @@ class SkillsHandler:
         # 查找技能目录（使用项目根目录，避免依赖 CWD）
         try:
             from openakita.config import settings
+
             skills_dir = settings.project_root / "skills"
         except Exception:
             skills_dir = Path("skills")
@@ -397,7 +437,6 @@ class SkillsHandler:
             logger.error(f"Failed to reload skill {skill_name}: {e}")
             return f"❌ 重新加载技能时出错: {e}"
 
-
     def _manage_skill_enabled(self, params: dict) -> str:
         """批量启用/禁用外部技能"""
         import json
@@ -410,6 +449,7 @@ class SkillsHandler:
 
         try:
             from openakita.config import settings
+
             cfg_path = settings.project_root / "data" / "skills.json"
         except Exception:
             cfg_path = Path.cwd() / "data" / "skills.json"
@@ -485,7 +525,12 @@ class SkillsHandler:
         # 热重载
         try:
             from openakita.core.agent import _collect_preset_referenced_skills
-            effective = loader.compute_effective_allowlist(existing_allowlist) if loader else existing_allowlist
+
+            effective = (
+                loader.compute_effective_allowlist(existing_allowlist)
+                if loader
+                else existing_allowlist
+            )
             agent_skills = _collect_preset_referenced_skills()
             if loader:
                 loader.prune_external_by_allowlist(effective, agent_referenced_skills=agent_skills)
