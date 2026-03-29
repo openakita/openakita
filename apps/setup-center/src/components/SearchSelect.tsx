@@ -37,8 +37,7 @@ export function SearchSelect({
   const filtered = useMemo(() => {
     if (!hasOptions) return [];
     const q = search.trim().toLowerCase();
-    const list = q ? options.filter((x) => x.toLowerCase().includes(q)) : options;
-    return list.slice(0, 200);
+    return q ? options.filter((x) => x.toLowerCase().includes(q)) : options;
   }, [options, search, hasOptions]);
 
   useEffect(() => {

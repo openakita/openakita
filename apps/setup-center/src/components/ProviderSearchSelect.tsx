@@ -44,10 +44,9 @@ export function ProviderSearchSelect({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = q
+    return q
       ? allOptions.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
       : allOptions;
-    return list.slice(0, 200);
   }, [allOptions, search]);
 
   const showDrop = open && !disabled;
