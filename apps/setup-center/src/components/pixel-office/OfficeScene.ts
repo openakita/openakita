@@ -97,7 +97,7 @@ export class OfficeScene extends Phaser.Scene {
   };
 
   private rebuildScene() {
-    if (!this.orgData) return;
+    if (!this.orgData || !this.sys?.game?.renderer) return;
 
     // Clean up
     this.agentSprites.forEach(s => s.destroy());

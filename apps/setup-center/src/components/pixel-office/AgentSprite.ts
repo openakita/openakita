@@ -53,6 +53,7 @@ export class AgentSprite {
   }
 
   private ensureTexture(key: string, config: AgentSpriteConfig) {
+    if (!this.scene.sys?.game?.renderer) return;
     if (this.scene.textures.exists(key)) return;
 
     const composer = CharacterComposer.getInstance();
