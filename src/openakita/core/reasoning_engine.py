@@ -4222,6 +4222,22 @@ class ReasoningEngine:
         if len(last_user_text.strip()) <= 10:
             return True
 
+        # 信息请求类：用户要求总结/解释/列出等，属于对话回复而非工具操作。
+        # 但如果用户同时要求保存/发送等动作，则仍需工具调用，不可跳过。
+        _info_request_patterns = (
+            "总结", "汇总", "回顾", "梳理", "盘点",
+            "列出", "列举",
+            "解释", "说明", "概述", "介绍",
+            "是什么", "什么意思", "什么区别", "怎么理解",
+        )
+        _action_verbs_in_request = (
+            "保存", "写入", "写到", "发送", "导出", "上传",
+            "创建文件", "生成文件", "写文件",
+        )
+        if any(p in last_user_text for p in _info_request_patterns):
+            if not any(v in last_user_text for v in _action_verbs_in_request):
+                return True
+
         return False
 
     @staticmethod

@@ -84,8 +84,12 @@ class SessionContext:
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def add_message(self, role: str, content: str, **metadata) -> None:
-        """添加消息"""
+        """添加消息（自动跳过连续重复的同角色同内容消息）"""
         with self._msg_lock:
+            if (self.messages
+                    and self.messages[-1].get("role") == role
+                    and self.messages[-1].get("content") == content):
+                return
             self.messages.append(
                 {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **metadata}
             )
