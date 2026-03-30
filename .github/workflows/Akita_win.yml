@@ -264,13 +264,42 @@ jobs:
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust 缓存（AVX2 + BMI2 双重优化版）
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            apps/setup-center/src-tauri -> target
-          prefix-key: "windows-avx2-bmi2-release"
-          shared-key: "avx2-bmi2-opt"
+      # ========== 强制清除所有 Rust 缓存 ==========
+      - name: 强制清除所有 Rust 缓存（防止旧代码污染）
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "🧹 强制清除所有 Rust 缓存"
+          echo "=========================================="
+          
+          # 清除 cargo 本地缓存
+          if [ -d "$HOME/.cargo/registry/cache" ]; then
+            echo "清除 cargo registry 缓存..."
+            rm -rf "$HOME/.cargo/registry/cache"/*
+          fi
+          
+          if [ -d "$HOME/.cargo/registry/index" ]; then
+            echo "清除 cargo registry 索引..."
+            rm -rf "$HOME/.cargo/registry/index"/*
+          fi
+          
+          if [ -d "$HOME/.cargo/git/db" ]; then
+            echo "清除 cargo git 缓存..."
+            rm -rf "$HOME/.cargo/git/db"/*
+          fi
+          
+          # 清除项目中的 target 目录
+          TARGET_DIR="apps/setup-center/src-tauri/target"
+          if [ -d "$TARGET_DIR" ]; then
+            echo "清除项目 target 目录: $TARGET_DIR"
+            rm -rf "$TARGET_DIR"
+          fi
+          
+          # 清除任何残留的构建产物
+          rm -rf apps/setup-center/src-tauri/target
+          rm -rf apps/setup-center/src-tauri/.cargo-lock
+          
+          echo "✅ 所有 Rust 缓存已强制清除"
 
       - name: 构建 Web 前端
         working-directory: apps/setup-center
@@ -367,7 +396,6 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           set -euo pipefail
-          rm -rf target/debug/build
           MAX_ATTEMPTS=3
           ATTEMPT=1
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
