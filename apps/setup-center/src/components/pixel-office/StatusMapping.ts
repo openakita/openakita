@@ -8,9 +8,9 @@ export interface AreaDef {
 }
 
 export const STATUS_TO_AREA: Record<NodeStatus, AreaType> = {
-  idle: 'break',
+  idle: 'department',
   busy: 'department',
-  waiting: 'public',
+  waiting: 'department',
   error: 'debug',
   offline: 'entrance',
   frozen: 'department',

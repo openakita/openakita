@@ -35,15 +35,15 @@ export class AgentSprite {
     this.ensureTexture(textureKey, config);
 
     this.sprite = scene.add.image(x, y, textureKey);
-    this.sprite.setScale(2);
+    this.sprite.setScale(1.5);
     this.sprite.setDepth(10);
 
-    this.nameLabel = scene.add.text(x, y + 20, config.name, {
-      fontSize: '8px',
-      fontFamily: 'monospace',
+    this.nameLabel = scene.add.text(x, y + 28, config.name, {
+      fontSize: '11px',
+      fontFamily: '"Microsoft YaHei", "PingFang SC", monospace',
       color: '#ffffff',
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      padding: { x: 2, y: 1 },
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      padding: { x: 3, y: 1 },
       align: 'center',
     });
     this.nameLabel.setOrigin(0.5, 0);
@@ -76,7 +76,7 @@ export class AgentSprite {
   private addIdleFloat() {
     this.scene.tweens.add({
       targets: this.sprite,
-      y: this.sprite.y - 2,
+      y: this.sprite.y - 3,
       duration: 1200,
       yoyo: true,
       repeat: -1,
@@ -99,9 +99,9 @@ export class AgentSprite {
       duration: Math.max(duration, 200),
       ease: 'Quad.easeInOut',
       onUpdate: () => {
-        this.nameLabel.setPosition(this.sprite.x, this.sprite.y + 20);
+        this.nameLabel.setPosition(this.sprite.x, this.sprite.y + 28);
         if (this.bubbleText) {
-          this.bubbleText.setPosition(this.sprite.x, this.sprite.y - 30);
+          this.bubbleText.setPosition(this.sprite.x, this.sprite.y - 35);
         }
       },
       onComplete: () => {
@@ -117,14 +117,14 @@ export class AgentSprite {
     this.clearBubble();
 
     const truncated = text.length > 20 ? text.slice(0, 20) + '…' : text;
-    this.bubbleText = this.scene.add.text(this.sprite.x, this.sprite.y - 30, truncated, {
-      fontSize: '7px',
-      fontFamily: 'monospace',
+    this.bubbleText = this.scene.add.text(this.sprite.x, this.sprite.y - 35, truncated, {
+      fontSize: '11px',
+      fontFamily: '"Microsoft YaHei", "PingFang SC", monospace',
       color: '#333333',
-      backgroundColor: '#FFFFFFDD',
-      padding: { x: 3, y: 2 },
+      backgroundColor: '#FFFFFFEE',
+      padding: { x: 5, y: 3 },
       align: 'center',
-      wordWrap: { width: 100 },
+      wordWrap: { width: 140 },
     });
     this.bubbleText.setOrigin(0.5, 1);
     this.bubbleText.setDepth(20);
@@ -132,7 +132,7 @@ export class AgentSprite {
     this.scene.tweens.add({
       targets: this.bubbleText,
       alpha: { from: 0, to: 1 },
-      y: this.sprite.y - 35,
+      y: this.sprite.y - 42,
       duration: 200,
     });
 
@@ -142,15 +142,15 @@ export class AgentSprite {
   }
 
   showEmote(emote: string) {
-    const emoteText = this.scene.add.text(this.sprite.x, this.sprite.y - 25, emote, {
-      fontSize: '14px',
+    const emoteText = this.scene.add.text(this.sprite.x, this.sprite.y - 30, emote, {
+      fontSize: '18px',
     });
     emoteText.setOrigin(0.5, 1);
     emoteText.setDepth(25);
 
     this.scene.tweens.add({
       targets: emoteText,
-      y: this.sprite.y - 45,
+      y: this.sprite.y - 55,
       alpha: 0,
       duration: 1500,
       onComplete: () => emoteText.destroy(),
@@ -174,7 +174,7 @@ export class AgentSprite {
 
   setPosition(x: number, y: number) {
     this.sprite.setPosition(x, y);
-    this.nameLabel.setPosition(x, y + 20);
+    this.nameLabel.setPosition(x, y + 28);
   }
 
   updateConfig(config: Partial<AgentSpriteConfig>) {

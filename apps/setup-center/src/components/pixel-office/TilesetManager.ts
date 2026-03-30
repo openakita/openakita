@@ -1,6 +1,7 @@
 import type { SceneTheme } from './SceneTheme';
 
-export const TILE_SIZE = 16;
+export const TILE_SIZE = 32;
+export const TILESET_CELL = 16;
 
 export const TILE = {
   EMPTY: 0,
@@ -54,14 +55,14 @@ export class TilesetManager {
 
   constructor() {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = TILE_SIZE * this.tileCount;
-    this.canvas.height = TILE_SIZE;
+    this.canvas.width = TILESET_CELL * this.tileCount;
+    this.canvas.height = TILESET_CELL;
     this.ctx = this.canvas.getContext('2d')!;
   }
 
   generateTileset(theme: SceneTheme): HTMLCanvasElement {
     const ctx = this.ctx;
-    const S = TILE_SIZE;
+    const S = TILESET_CELL;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     const floorRgb = hexToRgb(theme.palette.floor[0]);

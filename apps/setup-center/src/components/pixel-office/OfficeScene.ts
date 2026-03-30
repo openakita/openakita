@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { EventBus } from './EventBus';
-import { TilesetManager, TILE_SIZE } from './TilesetManager';
+import { TilesetManager, TILE_SIZE, TILESET_CELL } from './TilesetManager';
 import { generateLayout, type RoomDef, type LayoutResult } from './RoomGenerator';
 import { AgentSprite, type AgentSpriteConfig } from './AgentSprite';
 import { ActivitySystem, type Activity } from './ActivitySystem';
@@ -59,10 +59,16 @@ export class OfficeScene extends Phaser.Scene {
     EventBus.on('activity-start', this.onActivityStart, this);
     EventBus.on('activity-end', this.onActivityEnd, this);
 
-    // Camera controls
-    this.input.on('wheel', (_p: unknown, _gx: unknown, _gy: unknown, _gz: unknown, dy: number) => {
+    // Camera controls — Phaser wheel: (pointer, over, deltaX, deltaY, deltaZ)
+    this.input.on('wheel', (
+      _pointer: Phaser.Input.Pointer,
+      _over: Phaser.GameObjects.GameObject[],
+      _dx: number,
+      deltaY: number,
+    ) => {
       const cam = this.cameras.main;
-      cam.zoom = Phaser.Math.Clamp(cam.zoom + (dy > 0 ? -0.1 : 0.1), 0.5, 3);
+      const factor = deltaY > 0 ? 0.9 : 1.1;
+      cam.zoom = Phaser.Math.Clamp(cam.zoom * factor, 0.25, 5);
     });
 
     let dragStart: { x: number; y: number } | null = null;
@@ -172,7 +178,7 @@ export class OfficeScene extends Phaser.Scene {
         if (tileId === 0) continue;
         ctx.drawImage(
           tilesetCanvas,
-          tileId * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE,
+          tileId * TILESET_CELL, 0, TILESET_CELL, TILESET_CELL,
           col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE,
         );
       }
@@ -194,15 +200,16 @@ export class OfficeScene extends Phaser.Scene {
     for (const room of this.layout.rooms) {
       const label = this.add.text(
         (room.x + room.w / 2) * TILE_SIZE,
-        room.y * TILE_SIZE - 2,
+        room.y * TILE_SIZE - 4,
         room.label,
         {
-          fontSize: '7px',
-          fontFamily: 'monospace',
-          color: this.currentTheme.palette.accent,
-          backgroundColor: 'rgba(0,0,0,0.6)',
-          padding: { x: 3, y: 1 },
+          fontSize: '13px',
+          fontFamily: '"Microsoft YaHei", "PingFang SC", monospace',
+          color: '#ffffff',
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          padding: { x: 6, y: 3 },
           align: 'center',
+          shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true },
         },
       );
       label.setOrigin(0.5, 1);
