@@ -1,151 +1,261 @@
-.pixelOfficeRoot {
+/* ── Root layout ─────────────────────────────────────────── */
+.poRoot {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   background: var(--bg, #1a1a2e);
-  border-radius: 12px;
   overflow: hidden;
-  gap: 0;
 }
 
-.pixelOfficeCanvas {
+/* ── Header ─────────────────────────────────────────────── */
+.poHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-card, #1e1e30);
+  border-bottom: 1px solid var(--line, #2a2a40);
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.poTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg, #e0e0e0);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.poOrgSelect {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line, #3a3a50);
+  background: var(--bg, #252538);
+  color: var(--fg, #ccc);
+  outline: none;
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.poOrgSelect:focus {
+  border-color: var(--accent, #4A90D9);
+}
+
+.poHeaderInfo {
+  font-size: 12px;
+  color: var(--muted, #777);
+  white-space: nowrap;
+}
+
+/* ── Canvas area ────────────────────────────────────────── */
+.poCanvas {
   flex: 1;
-  min-height: 0;
+  min-height: 200px;
   position: relative;
+  overflow: hidden;
 }
 
-.pixelOfficeCanvas canvas {
+.poCanvas canvas {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
 
-.pixelOfficeBottomBar {
+.poCanvasOverlay {
+  position: absolute;
+  inset: 0;
   display: flex;
-  gap: 0;
-  height: 180px;
-  min-height: 120px;
-  max-height: 240px;
-  border-top: 2px solid var(--line, #333);
-  background: var(--bg-card, #1e1e2e);
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 20, 35, 0.7);
+  pointer-events: none;
+}
+
+.poCanvasLoading {
+  font-size: 14px;
+  color: var(--muted, #888);
+  padding: 12px 24px;
+  border-radius: 8px;
+  background: rgba(30, 30, 48, 0.9);
+  border: 1px solid var(--line, #333);
+}
+
+/* ── Bottom bar ─────────────────────────────────────────── */
+.poBottom {
+  display: flex;
+  height: 220px;
+  min-height: 160px;
+  max-height: 280px;
+  border-top: 1px solid var(--line, #2a2a40);
+  background: var(--bg-card, #1e1e30);
   flex-shrink: 0;
 }
 
-.pixelPanel {
+/* ── Panel (shared) ─────────────────────────────────────── */
+.poPanel {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 8px;
   overflow: hidden;
-  border-right: 1px solid var(--line, #333);
+  border-right: 1px solid var(--line, #2a2a40);
 }
 
-.pixelPanel:last-child {
+.poPanel:last-child {
   border-right: none;
 }
 
-.pixelPanelTitle {
-  font-size: 10px;
+.poPanelHeader {
+  font-size: 12px;
   font-weight: 700;
-  font-family: monospace;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--muted, #888);
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--line, #333);
-  image-rendering: pixelated;
+  color: var(--fg, #bbb);
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--line, #252540);
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
 }
 
-.pixelPanelContent {
+.poPanelBody {
   flex: 1;
   overflow-y: auto;
-  font-size: 11px;
-  font-family: monospace;
-  color: var(--fg, #ccc);
-  line-height: 1.5;
+  padding: 6px 10px;
 }
 
-.pixelPanelContent::-webkit-scrollbar {
-  width: 4px;
+.poPanelBody::-webkit-scrollbar {
+  width: 5px;
 }
 
-.pixelPanelContent::-webkit-scrollbar-track {
+.poPanelBody::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.pixelPanelContent::-webkit-scrollbar-thumb {
-  background: var(--muted, #555);
-  border-radius: 2px;
+.poPanelBody::-webkit-scrollbar-thumb {
+  background: var(--muted, #444);
+  border-radius: 3px;
 }
 
-.eventLogEntry {
-  display: flex;
-  gap: 6px;
-  padding: 2px 0;
-  border-bottom: 1px solid var(--line, #222);
-  align-items: flex-start;
-}
-
-.eventLogTime {
+.poEmpty {
   color: var(--muted, #666);
-  font-size: 9px;
-  white-space: nowrap;
-  min-width: 50px;
+  font-size: 12px;
+  padding: 16px 4px;
+  text-align: center;
 }
 
-.eventLogType {
+/* ── Event Log ──────────────────────────────────────────── */
+.poLogRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line, #1e1e35);
+}
+
+.poLogTime {
+  color: var(--muted, #666);
+  font-size: 11px;
+  font-family: 'Consolas', 'SF Mono', monospace;
+  white-space: nowrap;
+  min-width: 56px;
+  flex-shrink: 0;
+}
+
+.poLogTag {
+  display: inline-block;
+  font-size: 10px;
   font-weight: 600;
-  font-size: 10px;
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
   white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: center;
 }
 
-.eventLogMsg {
-  color: var(--fg, #aaa);
-  font-size: 10px;
+.poLogMsg {
+  color: var(--fg, #bbb);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── Agent List ─────────────────────────────────────────── */
+.poAgentRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.poAgentRow:hover {
+  background: var(--line, #282840);
+}
+
+.poAgentInfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.poAgentName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg, #ddd);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agentListItem {
+.poAgentDept {
+  font-size: 10px;
+  color: var(--muted, #666);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poAgentStatus {
+  font-size: 11px;
+  white-space: nowrap;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 4px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.agentListItem:hover {
-  background: var(--line, #333);
-}
-
-.agentListDot {
+.poStatusDot {
+  display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.agentListName {
-  font-size: 11px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* ── Theme selector ─────────────────────────────────────── */
+.poThemePanel {
+  max-width: 260px;
+  min-width: 200px;
+  flex: 0 0 auto;
 }
 
-.agentListStatus {
-  font-size: 9px;
-  color: var(--muted, #888);
-  margin-left: auto;
+.poThemeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 6px;
+  align-content: flex-start;
 }
 
-.themeCard {
-  display: inline-flex;
+.poThemeCard {
+  display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
@@ -154,64 +264,31 @@
   border: 2px solid transparent;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
-  min-width: 60px;
+  background: none;
+  color: inherit;
+  font: inherit;
 }
 
-.themeCard:hover {
-  background: var(--line, #333);
+.poThemeCard:hover {
+  background: var(--line, #282840);
 }
 
-.themeCard.active {
+.poThemeCard.active {
   border-color: var(--accent, #4A90D9);
-  background: var(--line, #333);
+  background: var(--line, #282840);
 }
 
-.themeCardSwatch {
-  width: 24px;
-  height: 24px;
+.poThemeSwatch {
+  width: 36px;
+  height: 28px;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  image-rendering: pixelated;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.themeCardLabel {
-  font-size: 9px;
-  font-family: monospace;
-  color: var(--fg, #ccc);
+.poThemeName {
+  font-size: 10px;
+  color: var(--fg, #bbb);
   text-align: center;
   white-space: nowrap;
-}
-
-.pixelOfficeToolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-card, #1e1e2e);
-  border-bottom: 1px solid var(--line, #333);
-  flex-shrink: 0;
-}
-
-.pixelOfficeToolbar button {
-  font-size: 11px;
-  font-family: monospace;
-  padding: 3px 8px;
-  border: 1px solid var(--line, #444);
-  background: var(--bg, #2a2a3a);
-  color: var(--fg, #ccc);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.pixelOfficeToolbar button:hover {
-  background: var(--line, #444);
-}
-
-.pixelOfficeToolbar .toolbarTitle {
-  font-size: 13px;
-  font-weight: 700;
-  font-family: monospace;
-  color: var(--fg, #eee);
-  image-rendering: pixelated;
+  line-height: 1.3;
 }
