@@ -459,6 +459,25 @@ class OpenAIProvider(LLMProvider):
 
         content_blocks: list = []
         text = "".join(text_parts)
+        has_native_tool_calls = bool(tool_calls)
+
+        # 文本格式工具调用提取（与 _parse_response 对齐）
+        # stream-only 端点的模型可能在文本中输出 [TOOL_CALL]/dot-style 等格式
+        if text and not has_native_tool_calls:
+            if has_text_tool_calls(text):
+                logger.info(
+                    f"[TEXT_TOOL_PARSE] Detected text-based tool calls "
+                    f"from stream response ({self.name})"
+                )
+                clean_text, text_tool_calls = parse_text_tool_calls(text)
+                if text_tool_calls:
+                    text = clean_text
+                    content_blocks.extend(text_tool_calls)
+                    logger.info(
+                        f"[TEXT_TOOL_PARSE] Extracted {len(text_tool_calls)} "
+                        f"tool calls from stream text"
+                    )
+
         if text:
             content_blocks.append(TextBlock(text=text))
 
@@ -473,7 +492,10 @@ class OpenAIProvider(LLMProvider):
                 input=args,
             ))
 
-        if tool_calls and stop_reason != StopReason.MAX_TOKENS:
+        has_any_tool_calls = has_native_tool_calls or any(
+            isinstance(b, ToolUseBlock) for b in content_blocks
+        )
+        if has_any_tool_calls and stop_reason != StopReason.MAX_TOKENS:
             stop_reason = StopReason.TOOL_USE
 
         return LLMResponse(
