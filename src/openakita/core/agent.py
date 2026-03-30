@@ -1141,273 +1141,92 @@ class Agent:
         将各个模块的处理器注册到 handler_registry
         """
         # 文件系统
-        self.handler_registry.register(
-            "filesystem",
-            create_filesystem_handler(self),
-            ["run_shell", "write_file", "read_file", "edit_file",
-             "list_directory", "grep", "glob", "delete_file"],
-        )
+        self.handler_registry.register("filesystem", create_filesystem_handler(self))
 
         # 记忆系统
-        self.handler_registry.register(
-            "memory",
-            create_memory_handler(self),
-            ["consolidate_memories", "add_memory", "search_memory", "get_memory_stats",
-             "list_recent_tasks", "trace_memory", "search_conversation_traces"],
-        )
+        self.handler_registry.register("memory", create_memory_handler(self))
 
         # 浏览器
-        self.handler_registry.register(
-            "browser",
-            create_browser_handler(self),
-            [
-                "browser_open",
-                "browser_navigate",
-                "browser_click",
-                "browser_type",
-                "browser_scroll",
-                "browser_wait",
-                "browser_execute_js",
-                "browser_get_content",
-                "browser_screenshot",
-                "browser_list_tabs",
-                "browser_switch_tab",
-                "browser_new_tab",
-                "browser_close",
-                "view_image",
-                "browser_click",
-                "browser_type",
-                "browser_scroll",
-                "browser_wait",
-                "browser_execute_js",
-                "browser_list_tabs",
-                "browser_switch_tab",
-                "browser_new_tab",
-            ],
-        )
+        self.handler_registry.register("browser", create_browser_handler(self))
 
         # 定时任务
-        self.handler_registry.register(
-            "scheduled",
-            create_scheduled_handler(self),
-            [
-                "schedule_task",
-                "list_scheduled_tasks",
-                "cancel_scheduled_task",
-                "update_scheduled_task",
-                "trigger_scheduled_task",
-            ],
-        )
+        self.handler_registry.register("scheduled", create_scheduled_handler(self))
 
         # MCP
-        self.handler_registry.register(
-            "mcp",
-            create_mcp_handler(self),
-            [
-                "list_mcp_servers",
-                "get_mcp_instructions",
-                "call_mcp_tool",
-                "add_mcp_server",
-                "remove_mcp_server",
-                "connect_mcp_server",
-                "disconnect_mcp_server",
-                "reload_mcp_servers",
-            ],
-        )
+        self.handler_registry.register("mcp", create_mcp_handler(self))
 
         # 用户档案
-        self.handler_registry.register(
-            "profile",
-            create_profile_handler(self),
-            ["get_user_profile", "update_user_profile", "skip_profile_question"],
-        )
+        self.handler_registry.register("profile", create_profile_handler(self))
 
         # Plan 模式
-        self.handler_registry.register(
-            "plan",
-            create_todo_handler(self),
-            ["create_todo", "update_todo_step", "get_todo_status", "complete_todo",
-             "create_plan_file", "exit_plan_mode"],
-        )
+        self.handler_registry.register("plan", create_todo_handler(self))
 
         # 系统工具
-        self.handler_registry.register(
-            "system",
-            create_system_handler(self),
-            [
-                "ask_user",
-                "get_tool_info",
-                "get_session_logs",
-                "enable_thinking",
-                "set_task_timeout",
-                "generate_image",
-                "get_workspace_map",
-            ],
-        )
+        self.handler_registry.register("system", create_system_handler(self))
 
         # IM 渠道
-        self.handler_registry.register(
-            "im_channel",
-            create_im_channel_handler(self),
-            ["deliver_artifacts", "get_voice_file", "get_image_file", "get_chat_history",
-             "get_chat_info", "get_user_info", "get_chat_members", "get_recent_messages"],
-        )
+        self.handler_registry.register("im_channel", create_im_channel_handler(self))
 
         # 技能管理
-        self.handler_registry.register(
-            "skills",
-            create_skills_handler(self),
-            [
-                "list_skills",
-                "get_skill_info",
-                "run_skill_script",
-                "get_skill_reference",
-                "install_skill",
-                "load_skill",
-                "reload_skill",
-                "manage_skill_enabled",
-            ],
-        )
+        self.handler_registry.register("skills", create_skills_handler(self))
 
         # Web 搜索
-        self.handler_registry.register(
-            "web_search",
-            create_web_search_handler(self),
-            ["web_search", "news_search"],
-        )
+        self.handler_registry.register("web_search", create_web_search_handler(self))
 
         # Web Fetch（轻量 URL 内容获取）
-        self.handler_registry.register(
-            "web_fetch",
-            create_web_fetch_handler(self),
-            ["web_fetch"],
-        )
+        self.handler_registry.register("web_fetch", create_web_fetch_handler(self))
 
         # Code Quality（linter 诊断）
-        self.handler_registry.register(
-            "code_quality",
-            create_code_quality_handler(self),
-            ["read_lints"],
-        )
+        self.handler_registry.register("code_quality", create_code_quality_handler(self))
 
         # Semantic Search
-        self.handler_registry.register(
-            "search",
-            create_search_handler(self),
-            ["semantic_search"],
-        )
+        self.handler_registry.register("search", create_search_handler(self))
 
         # Mode Switch
-        self.handler_registry.register(
-            "mode",
-            create_mode_handler(self),
-            ["switch_mode"],
-        )
+        self.handler_registry.register("mode", create_mode_handler(self))
 
         # Notebook
-        self.handler_registry.register(
-            "notebook",
-            create_notebook_handler(self),
-            ["edit_notebook"],
-        )
+        self.handler_registry.register("notebook", create_notebook_handler(self))
 
         # 人格系统
-        self.handler_registry.register(
-            "persona",
-            create_persona_handler(self),
-            ["switch_persona", "update_persona_trait", "toggle_proactive", "get_persona_profile"],
-        )
+        self.handler_registry.register("persona", create_persona_handler(self))
 
         # 表情包
-        self.handler_registry.register(
-            "sticker",
-            create_sticker_handler(self),
-            ["send_sticker"],
-        )
+        self.handler_registry.register("sticker", create_sticker_handler(self))
 
         # 系统配置
-        self.handler_registry.register(
-            "config",
-            create_config_handler(self),
-            ["system_config"],
-        )
+        self.handler_registry.register("config", create_config_handler(self))
 
         # 插件查询
-        self.handler_registry.register(
-            "plugins",
-            create_plugins_handler(self),
-            ["list_plugins", "get_plugin_info"],
-        )
+        self.handler_registry.register("plugins", create_plugins_handler(self))
 
         # Agent 包（导入/导出）
-        self.handler_registry.register(
-            "agent_package",
-            create_agent_package_handler(self),
-            ["export_agent", "import_agent", "list_exportable_agents", "inspect_agent_package"],
-        )
+        self.handler_registry.register("agent_package", create_agent_package_handler(self))
 
         # Agent Hub + Skill Store（平台交互，仅在 hub_enabled 时注册）
         if settings.hub_enabled:
-            self.handler_registry.register(
-                "agent_hub",
-                create_agent_hub_handler(self),
-                ["search_hub_agents", "install_hub_agent", "publish_agent", "get_hub_agent_detail"],
-            )
-            self.handler_registry.register(
-                "skill_store",
-                create_skill_store_handler(self),
-                ["search_store_skills", "install_store_skill", "get_store_skill_detail", "submit_skill_repo"],
-            )
+            self.handler_registry.register("agent_hub", create_agent_hub_handler(self))
+            self.handler_registry.register("skill_store", create_skill_store_handler(self))
 
         # 桌面工具（仅 Windows 且依赖可用时注册，与 _tools/ToolCatalog 保持一致）
         if _ensure_desktop():
-            self.handler_registry.register(
-                "desktop",
-                create_desktop_handler(self),
-                [
-                    "desktop_screenshot",
-                    "desktop_find_element",
-                    "desktop_click",
-                    "desktop_type",
-                    "desktop_hotkey",
-                    "desktop_scroll",
-                    "desktop_window",
-                    "desktop_wait",
-                    "desktop_inspect",
-                ],
-            )
+            self.handler_registry.register("desktop", create_desktop_handler(self))
 
         # OpenCLI（网站操作，仅在 opencli 已安装时注册）
         if opencli_available():
-            self.handler_registry.register(
-                "opencli",
-                create_opencli_handler(self),
-                ["opencli_list", "opencli_run", "opencli_doctor"],
-            )
+            self.handler_registry.register("opencli", create_opencli_handler(self))
             logger.info("OpenCLI handler registered (opencli detected on PATH)")
 
         # CLI-Anything（桌面软件控制，仅在有 cli-anything-* 工具时注册）
         if cli_anything_available():
-            self.handler_registry.register(
-                "cli_anything",
-                create_cli_anything_handler(self),
-                ["cli_anything_discover", "cli_anything_run", "cli_anything_help"],
-            )
+            self.handler_registry.register("cli_anything", create_cli_anything_handler(self))
             logger.info("CLI-Anything handler registered (cli-anything-* tools detected)")
 
         # Multi-agent tools (only when multi_agent_enabled)
         if settings.multi_agent_enabled:
-            self.handler_registry.register(
-                "agent",
-                create_agent_tool_handler(self),
-                ["delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent"],
-            )
+            self.handler_registry.register("agent", create_agent_tool_handler(self))
             from ..tools.handlers.org_setup import create_handler as create_org_setup_handler
-            self.handler_registry.register(
-                "org_setup",
-                create_org_setup_handler(self),
-                ["setup_organization"],
-            )
+            self.handler_registry.register("org_setup", create_org_setup_handler(self))
 
         logger.info(
             f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools"

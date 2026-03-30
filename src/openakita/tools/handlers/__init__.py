@@ -51,15 +51,29 @@ class SystemHandlerRegistry:
         Args:
             handler_name: 处理器名称（如 'browser', 'filesystem'）
             handler: 处理器函数，签名为 (tool_name, params) -> str
-            tool_names: 该处理器处理的工具名称列表（可选，用于快速查找）
+            tool_names: 该处理器处理的工具名称列表。
+                如果为 None，自动从 handler 所属实例的 TOOLS 属性读取
+                （handler 是 bound method 时通过 __self__.TOOLS 获取）。
         """
         self._handlers[handler_name] = handler
+
+        if tool_names is None:
+            owner = getattr(handler, "__self__", None)
+            tool_names = getattr(owner, "TOOLS", None)
 
         if tool_names:
             for tool_name in tool_names:
                 self._tool_to_handler[tool_name] = handler_name
+        else:
+            logger.warning(
+                "Handler '%s' registered with 0 tools — "
+                "add a TOOLS class attribute to the handler class",
+                handler_name,
+            )
 
-        logger.info(f"Registered system handler: {handler_name}")
+        logger.info(
+            "Registered handler: %s (%d tools)", handler_name, len(tool_names or []),
+        )
 
     def unregister(self, handler_name: str) -> bool:
         """

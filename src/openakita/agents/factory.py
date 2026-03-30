@@ -54,6 +54,35 @@ ESSENTIAL_SYSTEM_SKILLS: frozenset[str] = frozenset({
 })
 
 
+class _GlobalStoreSource:
+    """Adapter that exposes a global UnifiedStore as a RetrievalEngine external source.
+
+    Used by isolated-memory agents with memory_inherit_global=True to also
+    retrieve from the shared global memory during search.
+
+    RetrievalEngine._call_external_sources_sync expects:
+      - ``source.source_name: str``
+      - ``async source.retrieve(query, limit) -> list[dict]``
+        each dict with keys: id, content, relevance
+    """
+
+    source_name = "global_memory"
+
+    def __init__(self, global_store):
+        self._store = global_store
+
+    async def retrieve(self, query: str, limit: int = 8) -> list[dict]:
+        memories = self._store.search_semantic(query, limit=limit)
+        results = []
+        for mem in memories:
+            results.append({
+                "id": f"global::{mem.id}",
+                "content": mem.to_markdown(),
+                "relevance": 0.6,
+            })
+        return results
+
+
 class AgentFactory:
     """
     根据 AgentProfile 创建 Agent 实例。
@@ -98,6 +127,14 @@ class AgentFactory:
                 base_prompt, use_compiled=True,
             )
 
+        # ── 身份隔离 ──
+        if profile.identity_mode == "custom":
+            self._apply_identity_override(agent, profile)
+
+        # ── 记忆隔离 ──
+        if profile.memory_mode == "isolated":
+            self._apply_memory_isolation(agent, profile)
+
         if profile.custom_prompt:
             agent._custom_prompt_suffix = profile.custom_prompt
 
@@ -111,6 +148,8 @@ class AgentFactory:
             f"tools_mode={profile.tools_mode}, "
             f"mcp_mode={profile.mcp_mode}, "
             f"plugins_mode={profile.plugins_mode}, "
+            f"identity_mode={profile.identity_mode}, "
+            f"memory_mode={profile.memory_mode}, "
             f"preferred_endpoint={profile.preferred_endpoint or 'auto'})"
         )
         return agent
@@ -239,6 +278,80 @@ class AgentFactory:
             f"MCP filter applied: mode={profile.mcp_mode}, "
             f"servers={profile.mcp_servers}, "
             f"remaining={filtered.server_count} servers"
+        )
+
+    @staticmethod
+    def _apply_identity_override(agent: Agent, profile: AgentProfile) -> None:
+        """加载 Profile 专属身份文件，覆盖 agent.identity 并重建 system prompt。"""
+        from .identity_resolver import ProfileIdentityResolver
+        from .profile import get_profile_store
+
+        store = get_profile_store()
+        profile_dir = store.ensure_profile_dir(profile.id)
+        profile_identity_dir = profile_dir / "identity"
+
+        from ..config import settings
+        global_identity_dir = settings.identity_path
+
+        resolver = ProfileIdentityResolver(profile_identity_dir, global_identity_dir)
+        identity = resolver.build_identity()
+        identity.load()
+
+        agent.identity = identity
+
+        if hasattr(agent, "_context"):
+            base_prompt = identity.get_system_prompt()
+            agent._context.system = agent._build_system_prompt(
+                base_prompt, use_compiled=True,
+            )
+
+        logger.info(
+            f"Identity override applied: profile={profile.id}, "
+            f"dir={profile_identity_dir}"
+        )
+
+    @staticmethod
+    def _apply_memory_isolation(agent: Agent, profile: AgentProfile) -> None:
+        """替换 agent.memory_manager 为独立的 MemoryManager 实例。"""
+        from ..config import settings
+        from ..memory.manager import MemoryManager
+        from .profile import get_profile_store
+
+        store = get_profile_store()
+        profile_dir = store.ensure_profile_dir(profile.id)
+        memory_dir = profile_dir / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+
+        memory_md_path = (profile_dir / "identity" / "MEMORY.md")
+        if not memory_md_path.exists():
+            memory_md_path = settings.memory_path
+
+        isolated_mm = MemoryManager(
+            data_dir=memory_dir,
+            memory_md_path=memory_md_path,
+            brain=agent.brain,
+            embedding_model=settings.embedding_model,
+            embedding_device=settings.embedding_device,
+            model_download_source=settings.model_download_source,
+            search_backend=settings.search_backend,
+            embedding_api_provider=settings.embedding_api_provider,
+            embedding_api_key=settings.embedding_api_key,
+            embedding_api_model=settings.embedding_api_model,
+            agent_id=profile.id,
+        )
+
+        if profile.memory_inherit_global:
+            global_store = agent.memory_manager.store
+            isolated_mm._global_store_ref = global_store
+            isolated_mm.retrieval_engine._external_sources.append(
+                _GlobalStoreSource(global_store)
+            )
+
+        agent.memory_manager = isolated_mm
+
+        logger.info(
+            f"Memory isolation applied: profile={profile.id}, "
+            f"dir={memory_dir}, inherit_global={profile.memory_inherit_global}"
         )
 
     @staticmethod

@@ -1,0 +1,431 @@
+/* Override parent .content padding/overflow for full-bleed layout */
+.content:has(.poRoot) {
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+/* ── Root ─────────────────────────────────────────────────── */
+.poRoot {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #12122a;
+  color: #d0d0d0;
+  font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+  overflow: hidden;
+
+  /* Override global CSS variables so that styles.css global rules
+     (e.g. button:not([data-slot]) { background: var(--panel2) })
+     resolve to dark values inside the pixel office, regardless of
+     whether the app itself is in light or dark mode. */
+  --panel2: #22223c;
+  --panel: rgba(24, 24, 40, 0.88);
+  --text: #d0d0d0;
+  --line: #2a2a4a;
+  --bg-app: #12122a;
+  --bg: #12122a;
+  --bg1: #1a1a36;
+  --muted: rgba(255, 255, 255, 0.55);
+  --muted2: rgba(255, 255, 255, 0.35);
+  --border: #2a2a4a;
+  --fg: #d0d0d0;
+  --card-bg: #1a1a36;
+  --nav-hover: rgba(90, 156, 245, 0.08);
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.poHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  background: linear-gradient(180deg, #1e1e38 0%, #181830 100%);
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+.poHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.poOrgName {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #e0e0f0;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.poOrgNameDim {
+  opacity: 0.4;
+}
+
+.poNodeCount {
+  font-size: 11px;
+  color: #5a5a80;
+  background: #22223c;
+  padding: 1px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.poOrgSwitcher {
+  position: relative;
+}
+
+.poRoot .poOrgSwitchBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: #252548 !important;
+  border: 1px solid #3a3a5a !important;
+  border-radius: 5px !important;
+  padding: 0 !important;
+  color: #7777a0;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.poRoot .poOrgSwitchBtn:hover {
+  background: #32325a !important;
+  color: #aab;
+}
+
+.poOrgBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.poOrgDropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a36;
+  border: 1px solid #33335a;
+  border-radius: 8px;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  z-index: 100;
+  overflow: hidden;
+  animation: poDropFade 0.12s ease-out;
+}
+
+@keyframes poDropFade {
+  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.poRoot .poOrgDropItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 8px 16px !important;
+  color: #9999b8;
+  font-size: 12px;
+  font-weight: normal;
+  letter-spacing: normal;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.poRoot .poOrgDropItem:hover {
+  background: #26265a !important;
+  color: #ccccee;
+}
+
+.poRoot .poOrgDropItem.active {
+  color: #5a9cf5;
+  font-weight: 600;
+  background: #20204a !important;
+}
+
+.poOrgDropDivider {
+  height: 1px;
+  background: #33335a;
+  margin: 4px 12px;
+}
+
+.poHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.poHeaderInfo {
+  font-size: 11px;
+  color: #6a6a8a;
+}
+
+/* ── Canvas ─────────────────────────────────────────────── */
+.poCanvas {
+  flex: 1 1 0;
+  min-height: 100px;
+  position: relative;
+  overflow: hidden;
+  background: #0f0f22;
+}
+
+.poCanvas canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.poCanvasOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 15, 34, 0.75);
+  pointer-events: none;
+}
+
+.poCanvasLoading {
+  font-size: 13px;
+  color: #8888aa;
+  padding: 12px 24px;
+  border-radius: 8px;
+  background: #1a1a36e6;
+  border: 1px solid #2a2a50;
+}
+
+/* ── Fold toggle ────────────────────────────────────────── */
+.poRoot .poFoldToggle {
+  flex-shrink: 0;
+  background: #18182e !important;
+  border: none !important;
+  border-top: 1px solid #2a2a48 !important;
+  border-radius: 0 !important;
+  color: #5a5a80;
+  font-size: 10px;
+  font-family: inherit;
+  padding: 4px 0 !important;
+  cursor: pointer;
+  text-align: center;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: color 0.15s, background 0.15s;
+}
+
+.poRoot .poFoldToggle:hover {
+  color: #8888aa;
+  background: #1e1e3e !important;
+}
+
+/* ── Bottom bar ─────────────────────────────────────────── */
+.poBottom {
+  display: flex;
+  height: 180px;
+  min-height: 120px;
+  border-top: 1px solid #2a2a4a;
+  background: #161632;
+  flex-shrink: 0;
+}
+
+/* ── Panel shared ───────────────────────────────────────── */
+.poPanel {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.poPanel + .poPanel {
+  border-left: 1px solid #22224a;
+}
+
+.poPanelHeader {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8888aa;
+  padding: 7px 12px 5px;
+  border-bottom: 1px solid #1e1e40;
+  flex-shrink: 0;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.poPanelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.poPanelBody::-webkit-scrollbar { width: 4px; }
+.poPanelBody::-webkit-scrollbar-track { background: transparent; }
+.poPanelBody::-webkit-scrollbar-thumb { background: #3a3a5a; border-radius: 2px; }
+
+.poEmpty {
+  color: #555578;
+  font-size: 11px;
+  padding: 16px 4px;
+  text-align: center;
+}
+
+/* ── Event log ──────────────────────────────────────────── */
+.poLogRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid #1a1a38;
+}
+
+.poLogTime {
+  color: #5a5a80;
+  font-size: 10px;
+  font-family: "Consolas", "SF Mono", monospace;
+  white-space: nowrap;
+  min-width: 50px;
+  flex-shrink: 0;
+}
+
+.poLogTag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 30px;
+  text-align: center;
+}
+
+.poLogMsg {
+  color: #b0b0cc;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── Agent list ─────────────────────────────────────────── */
+.poAgentRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.poAgentRow:hover {
+  background: #22224a;
+}
+
+.poAgentInfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.poAgentName {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ddddf0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poAgentDept {
+  font-size: 9px;
+  color: #6a6a90;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poAgentStatus {
+  font-size: 10px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: #9999bb;
+}
+
+.poStatusDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Theme selector ─────────────────────────────────────── */
+.poThemePanel {
+  max-width: 220px;
+  min-width: 160px;
+  flex: 0 0 auto;
+}
+
+.poThemeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 4px;
+  align-content: flex-start;
+}
+
+.poRoot .poThemeCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px !important;
+  border-radius: 5px !important;
+  border: 2px solid transparent !important;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: transparent !important;
+  color: inherit;
+  font: inherit;
+  font-weight: normal;
+  letter-spacing: normal;
+}
+
+.poRoot .poThemeCard:hover {
+  background: #22224a !important;
+}
+
+.poRoot .poThemeCard.active {
+  border-color: #5a9cf5 !important;
+  background: #22224a !important;
+}
+
+.poThemeSwatch {
+  width: 32px;
+  height: 24px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.poThemeName {
+  font-size: 9px;
+  color: #9999b0;
+  text-align: center;
+  white-space: nowrap;
+  line-height: 1.2;
+}

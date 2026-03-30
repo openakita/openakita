@@ -74,14 +74,6 @@ class BrowserHandler:
         "browser_new_tab",
         "browser_close",
         "view_image",
-        "browser_click",
-        "browser_type",
-        "browser_scroll",
-        "browser_wait",
-        "browser_execute_js",
-        "browser_list_tabs",
-        "browser_switch_tab",
-        "browser_new_tab",
     ]
 
     # browser_get_content 默认最大字符数

@@ -17,6 +17,7 @@ import { IdentityView } from "./views/IdentityView";
 import { AgentDashboardView } from "./views/AgentDashboardView";
 import { AgentManagerView } from "./views/AgentManagerView";
 import { OrgEditorView } from "./views/OrgEditorView";
+import { PixelOfficeView } from "./views/PixelOfficeView";
 import { FeedbackModal } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
@@ -104,6 +105,7 @@ const _HASH_TO_VIEW: Record<string, ViewId> = {
   "scheduler": "scheduler", "memory": "memory", "status": "status",
   "token-stats": "token_stats", "identity": "identity",
   "dashboard": "dashboard", "org-editor": "org_editor",
+  "pixel-office": "pixel_office",
   "agent-manager": "agent_manager", "agent-store": "agent_store",
   "skill-store": "skill_store", "wizard": "wizard", "docs": "docs",
   "security": "security",
@@ -4733,6 +4735,14 @@ export function App() {
         <OrgEditorView
           apiBaseUrl={apiBaseUrl}
           visible={view === "org_editor"}
+        />
+      );
+    }
+    if (view === "pixel_office") {
+      return (
+        <PixelOfficeView
+          apiBaseUrl={apiBaseUrl}
+          visible={view === "pixel_office"}
         />
       );
     }

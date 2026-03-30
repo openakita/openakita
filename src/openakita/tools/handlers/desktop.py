@@ -36,6 +36,8 @@ DESKTOP_TOOLS = [
 class DesktopHandler:
     """桌面自动化工具处理器"""
 
+    TOOLS = DESKTOP_TOOLS
+
     def __init__(self, agent):
         self.agent = agent
         self._desktop_handler = None

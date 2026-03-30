@@ -152,6 +152,9 @@ class MemoryManager:
         # Track pending async tasks to await on shutdown
         self._pending_tasks: set[asyncio.Task] = set()
 
+        # Global store fallback for isolated agents (set by AgentFactory)
+        self._global_store_ref: UnifiedStore | None = None
+
         # Load existing memories
         self._load_memories()
 

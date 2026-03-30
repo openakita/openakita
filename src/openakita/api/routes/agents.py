@@ -525,6 +525,150 @@ async def update_profile_visibility(profile_id: str, body: ProfileVisibilityRequ
     return {"status": "ok", "profile": updated.to_dict()}
 
 
+# ─── Profile identity & memory isolation routes ─────────────────────────
+
+
+class IdentityFileRequest(BaseModel):
+    content: str = ""
+
+
+_ALLOWED_IDENTITY_FILES = frozenset({"SOUL.md", "AGENT.md", "USER.md", "MEMORY.md"})
+
+
+@router.post("/api/agents/profiles/{profile_id}/identity/init")
+async def init_profile_identity(profile_id: str):
+    """Initialize the profile-specific identity directory."""
+    from openakita.agents.profile import get_profile_store
+
+    store = get_profile_store()
+    profile = store.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+
+    profile_dir = store.ensure_profile_dir(profile_id)
+    identity_dir = profile_dir / "identity"
+
+    from openakita.agents.identity_resolver import ProfileIdentityResolver
+    from openakita.config import settings
+
+    resolver = ProfileIdentityResolver(identity_dir, settings.identity_path)
+    resolver.ensure_independent_files()
+
+    return {"status": "ok", "identity_dir": str(identity_dir)}
+
+
+@router.get("/api/agents/profiles/{profile_id}/identity/{filename}")
+async def read_profile_identity_file(profile_id: str, filename: str):
+    """Read a profile-specific identity file. Returns global content if profile has none."""
+    if filename not in _ALLOWED_IDENTITY_FILES:
+        raise HTTPException(status_code=400, detail=f"Invalid identity file: {filename}")
+
+    from openakita.agents.profile import get_profile_store
+    from openakita.config import settings
+
+    store = get_profile_store()
+    profile = store.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+
+    profile_dir = store.get_profile_dir(profile_id)
+    profile_path = profile_dir / "identity" / filename
+    global_path = settings.identity_path / filename
+
+    content = ""
+    source = "global"
+    if profile_path.exists():
+        content = profile_path.read_text(encoding="utf-8")
+        source = "profile"
+    elif global_path.exists():
+        content = global_path.read_text(encoding="utf-8")
+        source = "global"
+
+    return {"content": content, "source": source, "filename": filename}
+
+
+@router.put("/api/agents/profiles/{profile_id}/identity/{filename}")
+async def write_profile_identity_file(profile_id: str, filename: str, body: IdentityFileRequest):
+    """Write a profile-specific identity file."""
+    if filename not in _ALLOWED_IDENTITY_FILES:
+        raise HTTPException(status_code=400, detail=f"Invalid identity file: {filename}")
+
+    from openakita.agents.profile import get_profile_store
+
+    store = get_profile_store()
+    profile = store.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+
+    profile_dir = store.ensure_profile_dir(profile_id)
+    identity_dir = profile_dir / "identity"
+    identity_dir.mkdir(parents=True, exist_ok=True)
+
+    fp = identity_dir / filename
+    fp.write_text(body.content, encoding="utf-8")
+
+    logger.info(f"[Agents API] Wrote identity file {filename} for profile {profile_id}")
+    return {"status": "ok", "filename": filename}
+
+
+@router.get("/api/agents/profiles/{profile_id}/memory/stats")
+async def get_profile_memory_stats(profile_id: str):
+    """Get memory statistics for an isolated profile."""
+    from openakita.agents.profile import get_profile_store
+
+    store = get_profile_store()
+    profile = store.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+
+    profile_dir = store.get_profile_dir(profile_id)
+    memory_dir = profile_dir / "memory"
+    db_path = memory_dir / "openakita.db"
+
+    if not db_path.exists():
+        return {"exists": False, "semantic_count": 0, "db_size_bytes": 0}
+
+    import aiosqlite
+    semantic_count = 0
+    try:
+        async with aiosqlite.connect(str(db_path)) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM semantic_memories"
+            )
+            row = await cursor.fetchone()
+            semantic_count = row[0] if row else 0
+    except Exception:
+        pass
+
+    return {
+        "exists": True,
+        "semantic_count": semantic_count,
+        "db_size_bytes": db_path.stat().st_size,
+    }
+
+
+@router.delete("/api/agents/profiles/{profile_id}/data")
+async def delete_profile_data(profile_id: str):
+    """Delete the profile-specific data directory (identity + memory)."""
+    import shutil
+
+    from openakita.agents.profile import get_profile_store
+
+    store = get_profile_store()
+    profile = store.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+
+    profile_dir = store.get_profile_dir(profile_id)
+    if profile_dir.is_dir():
+        shutil.rmtree(profile_dir, ignore_errors=True)
+
+    store.update(profile_id, {"identity_mode": "shared", "memory_mode": "shared"})
+
+    logger.info(f"[Agents API] Deleted profile data dir for {profile_id}")
+    return {"status": "ok"}
+
+
 @router.get("/api/agents/health")
 async def get_agent_health():
     """Get health metrics from the orchestrator."""

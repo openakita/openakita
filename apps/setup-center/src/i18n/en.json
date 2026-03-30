@@ -1392,7 +1392,21 @@
     "batchExport": "Batch Export ({{count}})",
     "batchExportNone": "Please select agents to export first",
     "batchExportDone": "Exported {{count}} agent(s)",
-    "selectForBatch": "Select for batch operation"
+    "selectForBatch": "Select for batch operation",
+    "isolationTitle": "Isolation Config",
+    "identityMode": "Custom Identity",
+    "identityModeHint": "Use profile-specific identity files",
+    "memoryMode": "Isolated Memory",
+    "memoryModeHint": "Give this agent its own memory store",
+    "inheritGlobal": "Inherit global memory",
+    "inheritGlobalHint": "Allow reading from global memory (read-only)",
+    "identityInheritHint": "Leave empty to inherit system default",
+    "sourceGlobal": "Source: System Default",
+    "sourceProfile": "Source: Agent Custom",
+    "saveFile": "Save File",
+    "identitySaveSuccess": "Identity file saved",
+    "identitySaveFailed": "Failed to save identity file",
+    "semanticCount": "{{count}} semantic memories"
   },
   "dashboard": {
     "title": "Agent Dashboard",
