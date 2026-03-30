@@ -129,6 +129,9 @@ class AgentProfile:
     category: str = ""
     hidden: bool = False
 
+    # 像素形象（前端像素办公室/聊天头像渲染用）
+    pixel_appearance: dict | None = None
+
     # 用户自定义标记：系统预设被用户编辑后置 True，升级时不再覆盖
     user_customized: bool = False
 

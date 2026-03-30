@@ -1,0 +1,217 @@
+.pixelOfficeRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg, #1a1a2e);
+  border-radius: 12px;
+  overflow: hidden;
+  gap: 0;
+}
+
+.pixelOfficeCanvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.pixelOfficeCanvas canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.pixelOfficeBottomBar {
+  display: flex;
+  gap: 0;
+  height: 180px;
+  min-height: 120px;
+  max-height: 240px;
+  border-top: 2px solid var(--line, #333);
+  background: var(--bg-card, #1e1e2e);
+  flex-shrink: 0;
+}
+
+.pixelPanel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  overflow: hidden;
+  border-right: 1px solid var(--line, #333);
+}
+
+.pixelPanel:last-child {
+  border-right: none;
+}
+
+.pixelPanelTitle {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted, #888);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line, #333);
+  image-rendering: pixelated;
+}
+
+.pixelPanelContent {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--fg, #ccc);
+  line-height: 1.5;
+}
+
+.pixelPanelContent::-webkit-scrollbar {
+  width: 4px;
+}
+
+.pixelPanelContent::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pixelPanelContent::-webkit-scrollbar-thumb {
+  background: var(--muted, #555);
+  border-radius: 2px;
+}
+
+.eventLogEntry {
+  display: flex;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line, #222);
+  align-items: flex-start;
+}
+
+.eventLogTime {
+  color: var(--muted, #666);
+  font-size: 9px;
+  white-space: nowrap;
+  min-width: 50px;
+}
+
+.eventLogType {
+  font-weight: 600;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.eventLogMsg {
+  color: var(--fg, #aaa);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentListItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.agentListItem:hover {
+  background: var(--line, #333);
+}
+
+.agentListDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.agentListName {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentListStatus {
+  font-size: 9px;
+  color: var(--muted, #888);
+  margin-left: auto;
+}
+
+.themeCard {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  min-width: 60px;
+}
+
+.themeCard:hover {
+  background: var(--line, #333);
+}
+
+.themeCard.active {
+  border-color: var(--accent, #4A90D9);
+  background: var(--line, #333);
+}
+
+.themeCardSwatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  image-rendering: pixelated;
+}
+
+.themeCardLabel {
+  font-size: 9px;
+  font-family: monospace;
+  color: var(--fg, #ccc);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.pixelOfficeToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-card, #1e1e2e);
+  border-bottom: 1px solid var(--line, #333);
+  flex-shrink: 0;
+}
+
+.pixelOfficeToolbar button {
+  font-size: 11px;
+  font-family: monospace;
+  padding: 3px 8px;
+  border: 1px solid var(--line, #444);
+  background: var(--bg, #2a2a3a);
+  color: var(--fg, #ccc);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.pixelOfficeToolbar button:hover {
+  background: var(--line, #444);
+}
+
+.pixelOfficeToolbar .toolbarTitle {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: monospace;
+  color: var(--fg, #eee);
+  image-rendering: pixelated;
+}

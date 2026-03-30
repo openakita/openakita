@@ -423,6 +423,23 @@ ORG_NODE_TOOLS: list[dict] = [
             "required": ["node_id", "tools"],
         },
     },
+    # ── 像素形象 ──
+    {
+        "name": "org_set_appearance",
+        "description": "设置自己的像素形象。可以直接指定各项参数，也可以用自然语言描述想要的形象。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "形象描述，如'戴眼镜的瘦高程序员，蓝色头发'"},
+                "body_type": {"type": "string", "enum": ["slim", "average", "stocky"]},
+                "skin_tone": {"type": "integer", "minimum": 0, "maximum": 5},
+                "hair_style": {"type": "integer", "minimum": 0, "maximum": 5},
+                "hair_color": {"type": "string", "description": "十六进制颜色如 #FF6B6B"},
+                "outfit_color": {"type": "string"},
+                "accessory": {"type": "string", "enum": ["none", "glasses", "headphones", "hardhat", "beret", "crown", "tie", "mask"]},
+            },
+        },
+    },
     # ── 项目任务进度与查询 ──
     {
         "name": "org_report_progress",
