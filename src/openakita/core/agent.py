@@ -3350,6 +3350,14 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 if content.startswith("[执行摘要]") or content.startswith("[子Agent工作总结]"):
                     content = ""
             if role in ("user", "assistant") and content:
+                # 从消息元数据中提取时间戳，注入 [HH:MM] 前缀帮助 LLM 理解时序
+                _ts = msg.get("timestamp", "")
+                if _ts:
+                    try:
+                        _dt = datetime.fromisoformat(_ts)
+                        content = f"[{_dt.strftime('%H:%M')}] {content}"
+                    except (ValueError, TypeError):
+                        pass
                 if messages and messages[-1]["role"] == role:
                     messages[-1]["content"] += "\n" + content
                 else:
@@ -3460,8 +3468,8 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         # 如果有历史消息，给当前用户消息加上连续提示前缀
         if _has_history and compiled_message:
             compiled_message = (
-                "[以上是之前的对话历史，仅供参考。"
-                "请直接回应我的最新消息，不要重复或重新执行历史中已完成的操作：]\n"
+                "[以上是之前的对话历史。"
+                "请直接回应以下最新消息，不要重复执行历史中已完成的操作：]\n"
                 + compiled_message
             )
 

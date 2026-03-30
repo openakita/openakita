@@ -4273,6 +4273,18 @@ class ReasoningEngine:
         if any(m in last_user_text for m in _question_markers):
             return True
 
+        # 信息整理/回顾类请求：纯文本回复即为合法结果，无需工具。
+        # 注意：_action_claims 已在上方先行检测 LLM 回复，
+        # 若 LLM 声称"已保存/已执行"但未调工具，不会到达此处。
+        _info_request_patterns = (
+            "总结", "汇总", "回顾", "梳理", "盘点",
+            "列出", "列举",
+            "解释", "说明", "概述", "介绍",
+            "是什么", "什么意思", "什么区别", "怎么理解",
+        )
+        if any(p in last_user_text for p in _info_request_patterns):
+            return True
+
         _greeting_patterns = (
             "你好", "在吗", "在嘛", "在不在", "嗨", "hello", "hi ",
             "干嘛", "干啥", "你在", "早上好", "晚上好", "下午好",

@@ -86,6 +86,10 @@ class SessionContext:
     def add_message(self, role: str, content: str, **metadata) -> None:
         """添加消息"""
         with self._msg_lock:
+            if self.messages:
+                last = self.messages[-1]
+                if last.get("role") == role and last.get("content") == content:
+                    return
             self.messages.append(
                 {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **metadata}
             )
