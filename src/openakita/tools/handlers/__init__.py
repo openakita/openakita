@@ -64,8 +64,16 @@ class SystemHandlerRegistry:
         if tool_names:
             for tool_name in tool_names:
                 self._tool_to_handler[tool_name] = handler_name
+        else:
+            logger.warning(
+                "Handler '%s' registered with 0 tools — "
+                "add a TOOLS class attribute to the handler class",
+                handler_name,
+            )
 
-        logger.info(f"Registered system handler: {handler_name}")
+        logger.info(
+            "Registered handler: %s (%d tools)", handler_name, len(tool_names or []),
+        )
 
     def unregister(self, handler_name: str) -> bool:
         """
