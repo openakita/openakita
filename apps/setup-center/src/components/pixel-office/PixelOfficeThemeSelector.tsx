@@ -10,9 +10,9 @@ export function PixelOfficeThemeSelector({
   const themes = listThemes();
 
   return (
-    <div className="pixelPanel" style={{ maxWidth: 280 }}>
-      <div className="pixelPanelTitle">🎨 场景主题</div>
-      <div className="pixelPanelContent" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignContent: 'flex-start' }}>
+    <div className="poPanel poThemePanel">
+      <div className="poPanelHeader">场景主题</div>
+      <div className="poPanelBody poThemeGrid">
         {themes.map(theme => (
           <ThemeCard
             key={theme.id}
@@ -28,18 +28,18 @@ export function PixelOfficeThemeSelector({
 
 function ThemeCard({ theme, active, onClick }: { theme: SceneTheme; active: boolean; onClick: () => void }) {
   return (
-    <div
-      className={`themeCard ${active ? 'active' : ''}`}
+    <button
+      className={`poThemeCard${active ? ' active' : ''}`}
       onClick={onClick}
       title={theme.description}
     >
       <div
-        className="themeCardSwatch"
+        className="poThemeSwatch"
         style={{
-          background: `linear-gradient(135deg, ${theme.palette.floor[0]} 25%, ${theme.palette.wall[0]} 50%, ${theme.palette.accent} 75%)`,
+          background: `linear-gradient(135deg, ${theme.palette.floor[0]} 30%, ${theme.palette.wall[0]} 60%, ${theme.palette.accent} 100%)`,
         }}
       />
-      <div className="themeCardLabel">{theme.name}</div>
-    </div>
+      <span className="poThemeName">{theme.name}</span>
+    </button>
   );
 }

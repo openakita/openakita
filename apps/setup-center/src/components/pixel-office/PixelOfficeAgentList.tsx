@@ -36,13 +36,14 @@ export function PixelOfficeAgentList({
   onAgentClick?: (nodeId: string) => void;
 }) {
   return (
-    <div className="pixelPanel">
-      <div className="pixelPanelTitle">👥 成员 ({agents.length})</div>
-      <div className="pixelPanelContent">
+    <div className="poPanel">
+      <div className="poPanelHeader">成员 ({agents.length})</div>
+      <div className="poPanelBody">
+        {agents.length === 0 && <div className="poEmpty">暂无成员</div>}
         {agents.map(a => (
           <div
             key={a.nodeId}
-            className="agentListItem"
+            className="poAgentRow"
             onClick={() => onAgentClick?.(a.nodeId)}
           >
             <PixelAvatar
@@ -51,13 +52,16 @@ export function PixelOfficeAgentList({
               profileIcon={a.icon}
               profileName={a.name}
               appearance={a.pixelAppearance as never}
-              size={20}
+              size={24}
             />
-            <span className="agentListName">{a.name}</span>
-            <span className="agentListStatus" style={{ color: STATUS_COLOR[a.status] ?? '#888' }}>
+            <div className="poAgentInfo">
+              <span className="poAgentName">{a.name}</span>
+              {a.department && <span className="poAgentDept">{a.department}</span>}
+            </div>
+            <span className="poAgentStatus" style={{ color: STATUS_COLOR[a.status] ?? '#888' }}>
+              <span className="poStatusDot" style={{ background: STATUS_COLOR[a.status] ?? '#888' }} />
               {STATUS_LABEL[a.status] ?? a.status}
             </span>
-            <div className="agentListDot" style={{ background: STATUS_COLOR[a.status] ?? '#888' }} />
           </div>
         ))}
       </div>

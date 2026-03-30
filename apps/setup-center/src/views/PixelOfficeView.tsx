@@ -27,7 +27,6 @@ export function PixelOfficeView({
   const gameRef = useRef<GameRef>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Fetch org list
   useEffect(() => {
     if (!visible) return;
     (async () => {
@@ -45,7 +44,6 @@ export function PixelOfficeView({
     })();
   }, [apiBaseUrl, visible, selectedOrgId]);
 
-  // Poll org data
   useEffect(() => {
     if (!visible || !selectedOrgId) return;
     let mounted = true;
@@ -56,7 +54,6 @@ export function PixelOfficeView({
         if (!resp.ok || !mounted) return;
         const org = await resp.json();
 
-        // Fetch agent profiles
         const profilesResp = await safeFetch(`${apiBaseUrl}/api/agents/profiles`);
         const profilesData = profilesResp.ok ? await profilesResp.json() : {};
         const profiles: Record<string, unknown> = profilesData.profiles ?? profilesData ?? {};
@@ -70,7 +67,7 @@ export function PixelOfficeView({
           profileMap[pid] = {
             name: (p?.name as string) ?? node.role_title ?? node.id,
             color: (p?.color as string) ?? '#4A90D9',
-            icon: (p?.icon as string) ?? '🤖',
+            icon: (p?.icon as string) ?? undefined,
             pixel_appearance: (p?.pixel_appearance as Record<string, unknown>) ?? null,
           };
           agentList.push({
@@ -102,7 +99,6 @@ export function PixelOfficeView({
     return () => { mounted = false; clearInterval(interval); };
   }, [apiBaseUrl, visible, selectedOrgId]);
 
-  // WebSocket for live events
   useEffect(() => {
     if (!visible || !selectedOrgId) return;
     const wsBase = apiBaseUrl.replace(/^http/, 'ws');
@@ -123,7 +119,7 @@ export function PixelOfficeView({
         if (eventType?.startsWith('org:')) {
           EventBus.emit('org-event', eventType, msg.payload ?? msg.data ?? msg);
         }
-      } catch { /* ignore non-JSON */ }
+      } catch { /* ignore */ }
     };
 
     ws.onerror = () => {};
@@ -135,7 +131,6 @@ export function PixelOfficeView({
     };
   }, [apiBaseUrl, visible, selectedOrgId]);
 
-  // Event log
   const handleEventLog = useCallback((entry: unknown) => {
     setEventLog(prev => {
       const next = [...prev, entry as EventLogEntry];
@@ -145,25 +140,19 @@ export function PixelOfficeView({
 
   if (!visible) return null;
 
-  return (
-    <div className="pixelOfficeRoot">
-      {/* Toolbar */}
-      <div className="pixelOfficeToolbar">
-        <span className="toolbarTitle">🏢 像素办公室</span>
+  const selectedOrg = orgList.find(o => o.id === selectedOrgId);
 
-        {orgList.length > 1 && (
+  return (
+    <div className="poRoot">
+      {/* Header */}
+      <header className="poHeader">
+        <h2 className="poTitle">像素办公室</h2>
+
+        {orgList.length > 0 && (
           <select
+            className="poOrgSelect"
             value={selectedOrgId}
             onChange={e => setSelectedOrgId(e.target.value)}
-            style={{
-              fontSize: 11,
-              fontFamily: 'monospace',
-              padding: '2px 6px',
-              borderRadius: 4,
-              border: '1px solid var(--line, #444)',
-              background: 'var(--bg, #2a2a3a)',
-              color: 'var(--fg, #ccc)',
-            }}
           >
             {orgList.map(o => (
               <option key={o.id} value={o.id}>{o.name || o.id}</option>
@@ -173,25 +162,34 @@ export function PixelOfficeView({
 
         <div style={{ flex: 1 }} />
 
-        {!orgData && (
-          <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>
-            {selectedOrgId ? '加载组织数据中...' : '请先创建一个组织'}
-          </span>
+        {orgData && (
+          <span className="poHeaderInfo">{orgData.nodes.length} 个节点</span>
         )}
-      </div>
+        {!orgData && selectedOrgId && (
+          <span className="poHeaderInfo">加载中…</span>
+        )}
+        {!selectedOrgId && (
+          <span className="poHeaderInfo">请先创建一个组织</span>
+        )}
+      </header>
 
-      {/* Phaser canvas */}
-      <div className="pixelOfficeCanvas">
+      {/* Canvas */}
+      <div className="poCanvas">
         <PhaserGame
           ref={gameRef}
           themeId={themeId}
           orgData={orgData}
           onEventLog={handleEventLog}
         />
+        {!orgData && selectedOrgId && (
+          <div className="poCanvasOverlay">
+            <div className="poCanvasLoading">加载组织数据…</div>
+          </div>
+        )}
       </div>
 
-      {/* Bottom panels */}
-      <div className="pixelOfficeBottomBar">
+      {/* Bottom bar */}
+      <div className="poBottom">
         <PixelOfficeEventLog entries={eventLog} />
         <PixelOfficeAgentList agents={agents} />
         <PixelOfficeThemeSelector

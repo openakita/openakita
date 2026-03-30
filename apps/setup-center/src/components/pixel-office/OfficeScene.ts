@@ -150,10 +150,11 @@ export class OfficeScene extends Phaser.Scene {
     const worldW = this.layout.mapWidth * TILE_SIZE;
     const worldH = this.layout.mapHeight * TILE_SIZE;
     this.cameras.main.centerOn(worldW / 2, worldH / 2);
-    this.cameras.main.zoom = Math.min(
-      this.cameras.main.width / worldW,
-      this.cameras.main.height / worldH,
-      2,
+    const camW = this.cameras.main.width || 800;
+    const camH = this.cameras.main.height || 600;
+    this.cameras.main.zoom = Math.max(
+      Math.min(camW / worldW, camH / worldH, 2),
+      0.15,
     );
   }
 
