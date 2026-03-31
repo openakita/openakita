@@ -685,8 +685,6 @@ async def start_im_channels(agent_or_master):
     _message_gateway = MessageGateway(
         session_manager=_session_manager,
         agent_handler=None,  # 稍后设置
-        whisper_model=settings.whisper_model,  # 从配置读取 Whisper 模型
-        whisper_language=settings.whisper_language,  # 语音识别语言
         stt_client=stt_client,  # 在线 STT 客户端
     )
 

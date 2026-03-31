@@ -1894,7 +1894,7 @@ search_github → install_skill → 使用
 以下功能**系统已经内置**，当用户提到时，不要尝试"开发"或"实现"，而是直接使用：
 
 1. **语音转文字** - 系统**已自动处理**语音识别！
-   - 用户发送的语音消息会被系统**自动**转写为文字（通过本地 Whisper medium 模型）
+   - 用户发送的语音消息会被系统**自动**转写为文字（通过在线 STT 服务）
    - ⚠️ **消息来源判断规则**（必须严格遵守）：
      - 带 `[来源:语音转写]` 前缀 → 该消息是语音消息的转写结果
      - 带 `[语音转文字: ...]` 或 `[语音内容: ...]` 标签 → 该消息包含语音转写内容
@@ -1910,12 +1910,12 @@ search_github → install_skill → 使用
 3. **Telegram 配对** - 已内置配对验证机制
 
 **当用户说"帮我实现语音转文字"时**：
-- ❌ 不要开始写代码、安装 whisper、配置 ffmpeg
+- ❌ 不要开始写代码、安装依赖、配置 ffmpeg
 - ❌ 不要调用语音识别技能或工具去处理
-- ✅ 告诉用户"语音转文字已内置并自动运行，请发送语音测试"
+- ✅ 告诉用户"语音转文字已内置（需配置在线 STT 端点），请发送语音测试"
 
 **语音消息处理流程**：
-1. 用户发送语音 → 2. 系统自动下载并用 Whisper 转文字 → 3. 你收到的是带 `[来源:语音转写]` 前缀的转写文字
+1. 用户发送语音 → 2. 系统自动下载并通过在线 STT 转文字 → 3. 你收到的是带 `[来源:语音转写]` 前缀的转写文字
 4. 只有当你看到"[语音识别失败]"或"自动识别失败"时，才需要用 get_voice_file 工具获取文件路径并手动处理
 5. **再次强调**：没有语音标记的消息就是普通文本输入，直接按文本处理即可
 
@@ -3411,7 +3411,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                         compiled_message += f"\n[文档附件: {fname}，本地路径: {local_path}]"
                         logger.warning(f"[Session:{session_id}] PDF text extraction empty, path provided")
 
-        # 三级音频决策：LLM原生audio > 在线STT > 本地Whisper
+        # 二级音频决策：LLM原生audio > 在线STT
         audio_blocks = []
         if pending_audio:
             llm_client = getattr(self.brain, "_llm_client", None)
@@ -3449,7 +3449,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                         local_path = aud.get("local_path", "")
                         existing_transcription = aud.get("transcription")
                         if existing_transcription:
-                            continue  # 已有 Whisper 结果，不重复调用
+                            continue  # 已有转写结果，不重复调用
                         if local_path and Path(local_path).exists():
                             try:
                                 stt_result = await stt_client.transcribe(local_path)
@@ -3462,8 +3462,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                                     logger.info(f"[Session:{session_id}] Audio → online STT: {stt_result[:50]}...")
                             except Exception as e:
                                 logger.warning(f"[Session:{session_id}] Online STT failed: {e}")
-                # Tier 3: 本地 Whisper（已由 Gateway 处理，transcription 已在 input_text 中）
-                # 不需要额外操作
+                # Gateway 已处理的转写结果已包含在 input_text 中
 
         # 如果有历史消息，给当前用户消息加上连续提示前缀
         if _has_history and compiled_message:

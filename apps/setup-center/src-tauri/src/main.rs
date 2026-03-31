@@ -3686,7 +3686,6 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = w.unminimize();
                     let _ = w.set_focus();
                 }
-                let _ = app.emit("open_status", serde_json::json!({}));
             }
             TrayIconEvent::DoubleClick {
                 button: MouseButton::Left,
@@ -3698,7 +3697,6 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = w.unminimize();
                     let _ = w.set_focus();
                 }
-                let _ = app.emit("open_status", serde_json::json!({}));
             }
             _ => {}
         })

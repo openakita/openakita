@@ -1,6 +1,7 @@
 # OpenAkita 用户反馈函数（阿里云函数计算 FC 3.0）
 
 接收用户反馈（错误报告 / 功能建议），存储到阿里云 OSS，自动创建 GitHub Issue 用于跟踪管理。
+支持用户查询反馈处理进度、接收开发者回复的邮件通知、邮件退订。
 
 替代之前的 Cloudflare Worker，确保中国大陆用户可正常提交反馈。
 
@@ -12,9 +13,16 @@
 用户 → FeedbackModal → Python 后端 ──POST /prepare──→ 【FC 函数】→ 验证码 + 频率限制
                                   ←─ upload_url ────←
                                   ──PUT zip───────→ 【OSS 直传】
-                                  ──POST /complete──→ 【FC 函数】→ 创建 GitHub Issue
+                                  ──POST /complete──→ 【FC 函数】→ 创建 GitHub Issue + 生成 feedback_token
                                            ↕
                                     阿里云人机验证 2.0
+
+用户 → 我的反馈页面 → Python 后端 ──GET /status/{id}──→ 【FC 函数】→ 读取 OSS 元数据
+                              ──POST /status/batch──→ 【FC 函数】→ 批量读取状态
+                              ──POST /reply/{id}───→ 【FC 函数】→ 代发评论到 GitHub + 写入 OSS
+
+GitHub Issue ──webhook──→ 【FC 函数 /webhook/github】→ 更新 OSS 元数据 + 邮件通知用户
+                          （双重去重：[User Reply] 前缀 + PAT 账号匹配）
 ```
 
 **核心设计**：大文件（ZIP）通过 Pre-signed URL 直传到 OSS，FC 函数只处理轻量 JSON 请求，
@@ -74,6 +82,19 @@
    - 有效期：1 年（到期前记得续期）
 3. 复制 Token（`github_pat_xxx...`）
 
+### 第 4.5 步：配置 GitHub Webhook（接收 Issue 事件）
+
+> **此步骤在第 5 步之后执行**（需要先获得 FC 的公网 URL），这里提前列出便于通读流程。
+
+1. 进入 GitHub 仓库 → **Settings** → **Webhooks** → **Add webhook**
+2. 配置：
+   - **Payload URL**: `https://<你的FC触发器URL>/webhook/github`
+   - **Content type**: `application/json`
+   - **Secret**: 自定义一个随机字符串（必须与 FC 环境变量 `GITHUB_WEBHOOK_SECRET` 一致）
+   - **Which events**: 选择 **Let me select individual events** → 勾选 **Issues** 和 **Issue comments**
+3. 点击 **Add webhook**
+4. 在 Webhook 页面查看 **Recent Deliveries**，确认 `ping` 事件返回 `200`
+
 ### 第 5 步：创建 FC 函数
 
 1. 进入 [函数计算 FC 3.0 控制台](https://fcnext.console.aliyun.com/)
@@ -113,9 +134,12 @@
    | `OSS_ACCESS_KEY_SECRET` | `xxxxxx` | 第 2 步 RAM 子账号 |
    | `GITHUB_TOKEN` | `github_pat_xxx` | 第 4 步 |
    | `GITHUB_REPO` | `openakita/openakita` | 固定值 |
+   | `GITHUB_WEBHOOK_SECRET` | 自定义随机字符串 | 第 4.5 步（GitHub Webhook 签名校验，与 GitHub 端配置一致） |
+   | `GITHUB_PAT_LOGIN` | PAT 所属的 GitHub 用户名 | 可选，用于 Webhook 去重（识别 PAT 代发的评论）。填写第 4 步中 PAT 所属的 GitHub 账户用户名 |
    | `CAPTCHA_SCENE_ID` | 控制台的「场景ID」 | 第 3 步（留空则跳过验证码校验） |
-   | `NOTIFY_EMAIL` | `dev@example.com` | 可选，接收邮件通知 |
-   | `RESEND_API_KEY` | `re_xxx` | 可选，Resend 邮件服务 |
+   | `NOTIFY_EMAIL` | `dev@example.com` | 可选，接收开发者内部邮件通知 |
+   | `RESEND_API_KEY` | `re_xxx` | 可选，Resend 邮件服务（同时用于开发者通知和用户回复通知） |
+   | `PUBLIC_URL` | `https://feedback-openakita.fzstack.com` | 可选，FC 公网地址（用于生成退订链接）。注意：FC 保留 `FC_` 前缀，不能用 `FC_PUBLIC_URL` |
 
 6. **创建 HTTP 触发器**：
    - 进入 **触发器** 页签 → **创建触发器**
@@ -165,8 +189,16 @@ CAPTCHA_PREFIX=你的prefix身份标
 3. 检查：
    - [ ] FC `/prepare` 正常返回 `upload_url` 和 `report_date`
    - [ ] OSS Bucket 中出现了 `feedback/<日期>/<id>/report.zip` 和 `metadata.json`
-   - [ ] FC `/complete/{id}` 正常返回并创建了 GitHub Issue
+   - [ ] `metadata.json` 包含 `contact_email`、`feedback_token` 等新字段
+   - [ ] OSS `_index/<id>.json` 索引文件已创建
+   - [ ] FC `/complete/{id}` 正常返回 `feedback_token` 和 `issue_url`
    - [ ] `openakita/openakita` 仓库中出现了带标签的 Issue
+   - [ ] FC `/status/{id}?token=xxx` 正确返回状态和回复列表
+   - [ ] 在 GitHub Issue 下评论后，Webhook 触发 FC 更新 `developer_replies`
+   - [ ] 用户邮件通知正常发送（如已配置 `RESEND_API_KEY` 和 `contact_email`）
+   - [ ] 退订链接正常工作（`/unsubscribe/{id}?token=xxx`）
+   - [ ] 用户回复功能：前端发送回复 → FC 代发到 GitHub Issue → 本地列表即时显示
+   - [ ] 用户回复 Webhook 去重：代发的 `[User Reply]` 评论不会被再次追加到 `developer_replies`
    - [ ] 人机验证弹窗正常弹出（如已配置）
 
 ---
@@ -185,7 +217,10 @@ CAPTCHA_PREFIX=你的prefix身份标
   ├── OSS_ACCESS_KEY_SECRET   → ⚠️ 密钥
   ├── OSS_PUBLIC_ENDPOINT     → 外网 Endpoint（可选，用于生成 Pre-signed URL）
   ├── GITHUB_TOKEN            → ⚠️ 密钥
-  └── RESEND_API_KEY          → ⚠️ 密钥（可选）
+  ├── GITHUB_WEBHOOK_SECRET   → ⚠️ 密钥（Webhook 签名校验）
+  ├── GITHUB_PAT_LOGIN        → 公开用户名（可选，Webhook 去重）
+  ├── RESEND_API_KEY          → ⚠️ 密钥（可选）
+  └── PUBLIC_URL              → 公开地址（用于退订链接，非密钥）
 ```
 
 **开源代码仓库中不包含任何密钥。** Pre-signed URL 有效期仅 10 分钟，
@@ -201,12 +236,44 @@ openakita-feedback/
     2026-03-08/
       abc123def456/
         report.zip         # 反馈包（ZIP，含 metadata、日志、截图）
-        metadata.json      # 结构化元数据 + 状态 + Issue 链接
+        metadata.json      # 结构化元数据 + 状态 + Issue 链接 + 开发者回复
     2026-03-09/
       ...
+  _index/
+    abc123def456.json      # 快速索引: {date, feedback_token} — 避免遍历日期目录
+    xyz789.json
   _ratelimit/
     ip/<ip>/<date>.txt     # 单 IP 每日计数器
     global/<date>.txt      # 全局每日计数器
+```
+
+### metadata.json 完整结构
+
+```json
+{
+  "id": "abc123def456",
+  "type": "bug",
+  "title": "应用启动后崩溃",
+  "summary": "点击设置后白屏...",
+  "system_info": "OS: Windows 10 ...",
+  "status": "open",
+  "ip": "1.2.3.4",
+  "date": "2026-03-08",
+  "contact_email": "user@example.com",
+  "contact_wechat": "",
+  "email_unsubscribed": false,
+  "feedback_token": "aBcDeFgHiJkL_1234567890ab",
+  "labels": ["bug", "status:open", "os:Windows"],
+  "developer_replies": [
+    { "author": "dev-username", "body": "已确认此问题", "created_at": "2026-03-09T12:30:00Z" },
+    { "author": "user", "body": "感谢回复，已解决", "created_at": "2026-03-10T08:00:00Z", "source": "user_reply" }
+  ],
+  "created_at": "2026-03-08T08:00:00+00:00",
+  "completed_at": "2026-03-08T08:01:30+00:00",
+  "resolved_at": null,
+  "github_issue_url": "https://github.com/openakita/openakita/issues/42",
+  "size_bytes": 123456
+}
 ```
 
 ## API 接口
@@ -223,9 +290,15 @@ openakita-feedback/
   "type": "bug",
   "summary": "点击设置后白屏...",
   "system_info": "OS: Windows 10 | Python: 3.11 | OpenAkita: 1.25.9",
+  "contact_email": "user@example.com",
+  "contact_wechat": "wx_user123",
   "captcha_verify_param": "{\"sceneId\":\"xxx\",\"certifyId\":\"xxx\",\"deviceToken\":\"xxx==\",...}"
 }
 ```
+
+新增字段：
+- `contact_email`（可选）— 用户邮箱，用于接收开发者回复通知
+- `contact_wechat`（可选）— 用户微信号，预留字段供未来微信通知
 
 **响应（200）：**
 ```json
@@ -240,7 +313,7 @@ openakita-feedback/
 
 ### POST /complete/{id}
 
-确认上传完成，创建 GitHub Issue。
+确认上传完成，创建 GitHub Issue，生成 `feedback_token` 用于用户后续查询。
 
 **请求体（JSON）：**
 ```json
@@ -254,9 +327,134 @@ openakita-feedback/
 {
   "status": "ok",
   "report_id": "abc123def456",
+  "feedback_token": "aBcDeFgHiJkL_1234567890ab",
   "issue_url": "https://github.com/openakita/openakita/issues/42"
 }
 ```
+
+`feedback_token` 由客户端本地存储，用于后续查询状态（无需登录）。
+
+### GET /status/{report_id}?token=xxx
+
+查询单条反馈的处理状态和开发者回复。
+
+**查询参数：**
+- `token`（必填）— 提交时返回的 `feedback_token`
+
+**响应（200）：**
+```json
+{
+  "report_id": "abc123def456",
+  "title": "应用启动后崩溃",
+  "type": "bug",
+  "status": "in_progress",
+  "labels": ["bug", "status:in_progress", "os:Windows"],
+  "created_at": "2026-03-09T08:00:00+00:00",
+  "completed_at": "2026-03-09T08:01:30+00:00",
+  "resolved_at": null,
+  "github_issue_url": "https://github.com/openakita/openakita/issues/42",
+  "developer_replies": [
+    {
+      "author": "dev-username",
+      "body": "已确认此问题，将在下个版本修复。",
+      "created_at": "2026-03-09T12:30:00Z",
+      "source": "developer"
+    }
+  ],
+  "latest_reply_at": "2026-03-09T12:30:00Z"
+}
+```
+
+### POST /status/batch
+
+批量查询多条反馈状态（最多 50 条）。
+
+**请求体（JSON）：**
+```json
+{
+  "items": [
+    { "report_id": "abc123def456", "token": "aBcDeFgHiJkL_1234567890ab" },
+    { "report_id": "xyz789", "token": "mNoPqRsT_9876543210yz" }
+  ]
+}
+```
+
+**响应（200）：**
+```json
+{
+  "results": {
+    "abc123def456": { "report_id": "abc123def456", "status": "in_progress", "..." : "..." },
+    "xyz789": { "error": "not_found" }
+  }
+}
+```
+
+### POST /reply/{report_id}
+
+用户通过前端回复反馈，由 bot 账号代发评论到 GitHub Issue。
+
+**请求体（JSON）：**
+```json
+{
+  "token": "aBcDeFgHiJkL_1234567890ab",
+  "body": "谢谢回复，问题在升级后已解决。"
+}
+```
+
+**验证：**
+- `token` 必须与提交时返回的 `feedback_token` 一致
+- `body` 非空，最长 2000 字符
+- 每条反馈每天最多 20 条用户回复（防滥用）
+
+**处理逻辑：**
+1. 验证 token 和频率限制
+2. 读取 metadata 获取 `github_issue_url`，提取 issue number
+3. 调用 GitHub API 发评论，格式为 `**[User Reply]**\n\n{用户内容}`
+4. 将回复追加到 OSS metadata 的 `developer_replies`，带 `"source": "user_reply"` 标记
+
+**响应（200）：**
+```json
+{
+  "status": "ok",
+  "comment_url": "https://github.com/openakita/openakita/issues/42#issuecomment-xxx"
+}
+```
+
+**错误响应：**
+- `400` — 未关联 GitHub Issue、reply body 为空或过长
+- `401` — 缺少 token
+- `403` — token 无效
+- `429` — 当日回复次数已达上限（20 条）
+- `502` — GitHub API 调用失败
+
+### POST /webhook/github
+
+接收 GitHub Webhook 事件（`issues` 和 `issue_comment`），自动更新 OSS 中的反馈元数据。
+
+**验证方式**：HMAC-SHA256 签名（`X-Hub-Signature-256` 头）
+
+**处理逻辑**：
+- `issue_comment.created` — 提取评论内容追加到 `developer_replies`，触发用户邮件通知
+  - 自动跳过 Bot 账号评论（`user.type == "Bot"` 或 `login` 以 `[bot]` 结尾）
+  - 双重去重跳过用户代发回复：评论 body 以 `**[User Reply]**` 开头，或评论者匹配 `GITHUB_PAT_LOGIN`
+- `issues.closed` — 更新状态为 `resolved`
+- `issues.reopened` — 更新状态为 `open`
+- `issues.labeled/unlabeled` — 同步 `status:xxx` 标签到 metadata
+
+**响应（200）：**
+```json
+{
+  "status": "ok",
+  "report_id": "abc123def456",
+  "updated": true
+}
+```
+
+### GET /unsubscribe/{report_id}?token=xxx
+
+用户点击邮件中的退订链接，关闭该反馈的邮件通知。
+
+返回 HTML 页面确认退订成功。
 
 ### GET /health
 

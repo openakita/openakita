@@ -937,6 +937,69 @@ button.btnApplyRestart:hover {
   background: rgba(0, 0, 0, 0.12);
 }
 
+/* Feedback reply markdown content */
+.feedbackMdContent {
+  font-size: 13px;
+  line-height: 1.65;
+  color: inherit;
+}
+.feedbackMdContent p {
+  margin: 0.3em 0;
+}
+.feedbackMdContent p:first-child {
+  margin-top: 0;
+}
+.feedbackMdContent p:last-child {
+  margin-bottom: 0;
+}
+.feedbackMdContent strong {
+  font-weight: 600;
+}
+.feedbackMdContent ul,
+.feedbackMdContent ol {
+  padding-left: 18px;
+  margin: 0.3em 0;
+}
+.feedbackMdContent li {
+  margin: 0.15em 0;
+}
+.feedbackMdContent code {
+  background: var(--bg-app, rgba(0,0,0,0.06));
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.feedbackMdContent pre {
+  background: var(--bg-app, rgba(0,0,0,0.04));
+  border: 1px solid var(--line, rgba(0,0,0,0.1));
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 6px 0;
+}
+.feedbackMdContent pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+.feedbackMdContent blockquote {
+  border-left: 3px solid var(--brand, #3b82f6);
+  margin: 0.3em 0;
+  padding: 2px 10px;
+  color: var(--muted, #888);
+}
+.feedbackMdContent a {
+  color: var(--brand, #3b82f6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.feedbackMdContent hr {
+  border: none;
+  border-top: 1px solid var(--line, rgba(0,0,0,0.1));
+  margin: 8px 0;
+}
+
 /* Bouncing dots animation */
 .dotBounce {
   display: inline-block;

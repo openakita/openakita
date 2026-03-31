@@ -16,11 +16,12 @@ import { IdentityView } from "./views/IdentityView";
 import { AgentDashboardView } from "./views/AgentDashboardView";
 import { AgentManagerView } from "./views/AgentManagerView";
 import { OrgEditorView } from "./views/OrgEditorView";
-import { FeedbackModal } from "./views/FeedbackModal";
+import { FeedbackModal, type FeedbackPrefill } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
 import { AgentStoreView } from "./views/AgentStoreView";
 import { SkillStoreView } from "./views/SkillStoreView";
+import { MyFeedbackView } from "./views/MyFeedbackView";
 import { LLMView } from "./views/LLMView";
 import { StatusView } from "./views/StatusView";
 import type {
@@ -295,6 +296,9 @@ export function App() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [feedbackPrefill, setFeedbackPrefill] = useState<FeedbackPrefill | null>(null);
+  const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0);
+  const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const [multiAgentEnabled, setMultiAgentEnabled] = useState(false);
   const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
@@ -1487,6 +1491,21 @@ export function App() {
 
   useEffect(() => { fetchAgentMode(); }, [fetchAgentMode]);
 
+  // ── Unread feedback count polling ──
+  useEffect(() => {
+    if (!serviceStatus?.running) return;
+    const poll = async () => {
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/feedback-unread-count`, { signal: AbortSignal.timeout(5000) });
+        const data = await res.json();
+        setUnreadFeedbackCount(data.unread_count ?? 0);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const timer = setInterval(poll, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [serviceStatus?.running, dataMode, apiBaseUrl]);
+
   const toggleMultiAgent = useCallback(async () => {
     const next = !multiAgentEnabled;
     try {
@@ -1785,7 +1804,7 @@ export function App() {
           "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
           "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
           "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
-          "WHISPER_MODEL", "WHISPER_LANGUAGE", "GITHUB_TOKEN",
+          "GITHUB_TOKEN",
         ];
       case "agent":
         return [
@@ -2755,7 +2774,7 @@ export function App() {
       "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
       "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
       "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
-      "WHISPER_MODEL", "WHISPER_LANGUAGE", "GITHUB_TOKEN",
+      "GITHUB_TOKEN",
     ];
 
     const list = skillsDetail || [];
@@ -3046,10 +3065,7 @@ export function App() {
       "LOG_FORMAT",
       "LOG_TO_CONSOLE",
       "LOG_TO_FILE",
-      // github/whisper
       "GITHUB_TOKEN",
-      "WHISPER_MODEL",
-      "WHISPER_LANGUAGE",
       // memory / embedding
       "EMBEDDING_MODEL",
       "EMBEDDING_DEVICE",
@@ -3466,18 +3482,6 @@ export function App() {
 
             <div className="divider" />
             <div className="grid3">
-              {FC({ k: "WHISPER_MODEL", label: "WHISPER_MODEL", help: "tiny/base/small/medium/large", options: [
-                { value: "tiny", label: "tiny (~39MB)" },
-                { value: "base", label: "base (~74MB)" },
-                { value: "small", label: "small (~244MB)" },
-                { value: "medium", label: "medium (~769MB)" },
-                { value: "large", label: "large (~1.5GB)" },
-              ], placeholder: "base" })}
-              {FS({ k: "WHISPER_LANGUAGE", label: "WHISPER_LANGUAGE", options: [
-                { value: "zh", label: "中文 (zh)" },
-                { value: "en", label: "English (en)" },
-                { value: "auto", label: "Auto (自动检测)" },
-              ] })}
               {FT({ k: "GITHUB_TOKEN", label: "GITHUB_TOKEN", placeholder: "", type: "password", help: "用于搜索/下载技能" })}
               {FT({ k: "DATABASE_PATH", label: "DATABASE_PATH", placeholder: "data/agent.db" })}
             </div>
@@ -4760,6 +4764,19 @@ export function App() {
         </div>
       );
     }
+    if (view === "my_feedback") {
+      return (
+        <MyFeedbackView
+          apiBaseUrl={httpApiBase()}
+          serviceRunning={serviceStatus?.running ?? false}
+          refreshTrigger={feedbackRefreshKey}
+          onOpenFeedbackModal={(prefill) => {
+            setFeedbackPrefill(prefill ?? null);
+            setBugReportOpen(true);
+          }}
+        />
+      );
+    }
     switch (stepId) {
       case "llm":
         return renderLLM();
@@ -4931,9 +4948,9 @@ export function App() {
         desktopVersion={desktopVersion}
         backendVersion={backendVersion}
         serviceRunning={serviceStatus?.running ?? false}
-        onBugReport={() => setBugReportOpen(true)}
         onRefreshStatus={async () => { await refreshStatus(undefined, undefined, true); }}
         isWeb={IS_WEB}
+        unreadFeedbackCount={unreadFeedbackCount}
       />
 
       <main className="main">
@@ -5292,8 +5309,10 @@ export function App() {
       {/* Feedback Modal (Bug Report + Feature Request) */}
       <FeedbackModal
         open={bugReportOpen}
-        onClose={() => setBugReportOpen(false)}
+        onClose={() => { setBugReportOpen(false); setFeedbackPrefill(null); }}
         apiBase={httpApiBase()}
+        prefill={feedbackPrefill}
+        onNavigateToMyFeedback={() => { setFeedbackRefreshKey((k) => k + 1); setView("my_feedback"); }}
       />
     </div>
     </EnvFieldContext.Provider>

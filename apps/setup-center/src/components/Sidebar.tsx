@@ -11,7 +11,7 @@ import {
 import logoUrl from "../assets/logo.png";
 import { openExternalUrl } from "../platform";
 
-type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "docs";
+type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "token_stats" | "mcp" | "scheduler" | "memory" | "identity" | "dashboard" | "org_editor" | "agent_manager" | "agent_store" | "skill_store" | "my_feedback" | "docs";
 
 export type SidebarProps = {
   collapsed: boolean;
@@ -30,10 +30,10 @@ export type SidebarProps = {
   desktopVersion: string;
   backendVersion: string | null;
   serviceRunning: boolean;
-  onBugReport: () => void;
   onRefreshStatus: () => Promise<void>;
   isWeb?: boolean;
   mobileOpen?: boolean;
+  unreadFeedbackCount?: number;
 };
 
 const stepIcons: Partial<Record<StepId, React.ReactNode>> = {
@@ -57,7 +57,8 @@ export function Sidebar({
   disabledViews, multiAgentEnabled, onToggleMultiAgent,
   storeVisible,
   desktopVersion, backendVersion, serviceRunning,
-  onBugReport, onRefreshStatus, isWeb, mobileOpen,
+  onRefreshStatus, isWeb, mobileOpen,
+  unreadFeedbackCount,
 }: SidebarProps) {
   const { t } = useTranslation();
 
@@ -256,14 +257,21 @@ export function Sidebar({
             </span>
             {serviceRunning && (
               <span
-                onClick={onBugReport}
+                onClick={() => onViewChange("my_feedback")}
                 title={t("feedback.trigger")}
-                style={{ cursor: "pointer", opacity: 1, color: "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 2 }}
+                style={{ cursor: "pointer", opacity: 1, color: "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 2, position: "relative" }}
                 onMouseEnter={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "underline"; }}
                 onMouseLeave={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "none"; }}
               >
                 <IconBug size={12} />
                 <span className="feedbackText" style={{ fontSize: 11 }}>{t("feedback.trigger")}</span>
+                {(unreadFeedbackCount ?? 0) > 0 && (
+                  <span style={{
+                    position: "absolute", top: -4, right: -6,
+                    width: 7, height: 7, borderRadius: "50%",
+                    background: "#ef4444",
+                  }} />
+                )}
               </span>
             )}
             <span
@@ -313,11 +321,18 @@ export function Sidebar({
             </span>
             {serviceRunning && (
               <span
-                onClick={onBugReport}
+                onClick={() => onViewChange("my_feedback")}
                 title={t("feedback.trigger")}
-                style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
+                style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer", position: "relative" }}
               >
                 <IconBug size={14} />
+                {(unreadFeedbackCount ?? 0) > 0 && (
+                  <span style={{
+                    position: "absolute", top: -2, right: -2,
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: "#ef4444",
+                  }} />
+                )}
               </span>
             )}
           </div>

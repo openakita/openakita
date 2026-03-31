@@ -141,23 +141,6 @@ class Settings(BaseSettings):
     log_to_console: bool = Field(default=True, description="是否输出到控制台")
     log_to_file: bool = Field(default=True, description="是否输出到文件")
 
-    # === Whisper 语音识别 ===
-    whisper_enabled: bool = Field(
-        default=False,
-        description="是否启用本地 Whisper 语音识别（模型较大，占用内存高；关闭后使用在线 STT）",
-    )
-    whisper_model: str = Field(
-        default="base", description="Whisper 模型 (tiny/base/small/medium/large)"
-    )
-    whisper_language: str = Field(
-        default="zh",
-        description=(
-            "Whisper 语音识别语言: "
-            "zh(中文) | en(英文，自动使用更小更快的 .en 模型) | "
-            "auto(自动检测语言) | 其他语言代码"
-        ),
-    )
-
     # === 全局代理配置 ===
     # 用于 LLM API 请求的代理（如果透明代理不生效）
     http_proxy: str = Field(default="", description="HTTP 代理地址 (如 http://127.0.0.1:7890)")

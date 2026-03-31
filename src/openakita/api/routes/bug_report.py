@@ -6,6 +6,7 @@ Feedback routes: GET /api/system-info, POST /api/bug-report, POST /api/feature-r
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -17,7 +18,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +373,10 @@ async def get_feedback_config():
         return {"captcha_scene_id": "", "captcha_prefix": ""}
 
 
+def _sse_event(event_type: str, data: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 async def _upload_to_worker(
     *,
     report_id: str,
@@ -381,6 +386,8 @@ async def _upload_to_worker(
     extra_info: str,
     captcha_verify_param: str,
     zip_bytes: bytes,
+    contact_email: str = "",
+    contact_wechat: str = "",
 ) -> dict:
     """Upload feedback via pre-signed URL direct upload (three-phase flow).
 
@@ -404,7 +411,6 @@ async def _upload_to_worker(
 
     try:
         async with httpx.AsyncClient() as client:
-            # Phase 1: request pre-signed upload URL from FC
             prepare_resp = await client.post(
                 f"{base}/prepare",
                 json={
@@ -414,29 +420,36 @@ async def _upload_to_worker(
                     "summary": summary[:2000],
                     "system_info": extra_info[:2000],
                     "captcha_verify_param": captcha_verify_param,
+                    "contact_email": contact_email,
+                    "contact_wechat": contact_wechat,
                 },
                 timeout=15,
             )
 
             if prepare_resp.status_code == 429:
-                raise HTTPException(status_code=429, detail="Rate limit reached, please try later")
+                raise HTTPException(
+                    status_code=429, detail="Rate limit reached, please try later"
+                )
             if prepare_resp.status_code == 403:
                 raise HTTPException(status_code=403, detail="Verification failed")
             if prepare_resp.status_code >= 400:
                 try:
-                    detail = prepare_resp.json().get("error", prepare_resp.text[:200])
+                    detail = prepare_resp.json().get(
+                        "error", prepare_resp.text[:200]
+                    )
                 except Exception:
                     detail = prepare_resp.text[:200]
-                logger.error("Prepare failed: %s %s", prepare_resp.status_code, detail)
-                raise HTTPException(status_code=502, detail=f"Cloud service error: {detail}")
+                logger.error(
+                    "Prepare failed: %s %s", prepare_resp.status_code, detail
+                )
+                raise HTTPException(
+                    status_code=502, detail=f"Cloud service error: {detail}"
+                )
 
             prepare_data = prepare_resp.json()
             upload_url = prepare_data["upload_url"]
             report_date = prepare_data["report_date"]
 
-            # Phase 2: upload ZIP directly to OSS via pre-signed URL
-            #   No Content-Type header — must match the (empty) Content-Type
-            #   used during pre-signed URL signing, otherwise OSS returns 403.
             oss_resp = await client.put(
                 upload_url,
                 content=zip_bytes,
@@ -450,21 +463,27 @@ async def _upload_to_worker(
                 )
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Direct upload to storage failed ({oss_resp.status_code})",
+                    detail=(
+                        "Direct upload to storage failed"
+                        f" ({oss_resp.status_code})"
+                    ),
                 )
 
-            # Phase 3: notify FC that upload is complete → creates GitHub Issue
             complete_resp = await client.post(
                 f"{base}/complete/{report_id}",
                 json={"report_date": report_date},
                 timeout=30,
             )
+            feedback_token = None
             issue_url = None
             if complete_resp.status_code == 200:
-                issue_url = complete_resp.json().get("issue_url")
+                resp_data = complete_resp.json()
+                issue_url = resp_data.get("issue_url")
+                feedback_token = resp_data.get("feedback_token")
             else:
                 logger.warning(
-                    "Complete phase returned %s (non-fatal)", complete_resp.status_code,
+                    "Complete phase returned %s (non-fatal)",
+                    complete_resp.status_code,
                 )
 
         return {
@@ -472,6 +491,7 @@ async def _upload_to_worker(
             "report_id": report_id,
             "size_bytes": len(zip_bytes),
             "issue_url": issue_url,
+            "feedback_token": feedback_token,
         }
 
     except httpx.HTTPError as e:
@@ -512,9 +532,13 @@ async def _try_upload_or_save(
     extra_info: str,
     captcha_verify_param: str,
     zip_bytes: bytes,
+    contact_email: str = "",
+    contact_wechat: str = "",
 ) -> dict:
     """Try uploading to the cloud function. On failure, save locally and return
     a response that tells the frontend about the local fallback."""
+    from . import feedback_store
+
     try:
         result = await _upload_to_worker(
             report_id=report_id,
@@ -524,6 +548,15 @@ async def _try_upload_or_save(
             extra_info=extra_info,
             captcha_verify_param=captcha_verify_param,
             zip_bytes=zip_bytes,
+            contact_email=contact_email,
+            contact_wechat=contact_wechat,
+        )
+        await feedback_store.save_record(
+            report_id=report_id,
+            feedback_token=result.get("feedback_token"),
+            title=title,
+            report_type=report_type,
+            contact_email=contact_email,
         )
         return result
     except HTTPException as exc:
@@ -531,6 +564,13 @@ async def _try_upload_or_save(
         logger.warning(
             "Cloud upload failed (%s %s), saved locally: %s",
             exc.status_code, exc.detail, local_path,
+        )
+        await feedback_store.save_record(
+            report_id=report_id,
+            feedback_token=None,
+            title=title,
+            report_type=report_type,
+            contact_email=contact_email,
         )
         return {
             "status": "upload_failed",
@@ -543,6 +583,13 @@ async def _try_upload_or_save(
         local_path = _save_zip_locally(report_id, zip_bytes)
         logger.warning(
             "Cloud upload failed (%s), saved locally: %s", exc, local_path,
+        )
+        await feedback_store.save_record(
+            report_id=report_id,
+            feedback_token=None,
+            title=title,
+            report_type=report_type,
+            contact_email=contact_email,
         )
         return {
             "status": "upload_failed",
@@ -577,27 +624,20 @@ async def _pack_images(zf: zipfile.ZipFile, images: list[UploadFile] | None) -> 
         zf.writestr(f"images/{i:02d}_{img.filename or f'image{ext}'}", content)
 
 
-@router.post("/api/bug-report")
-async def submit_bug_report(
-    title: str = Form(...),
-    description: str = Form(...),
-    captcha_verify_param: str = Form("none"),
-    steps: str = Form(""),
-    upload_logs: bool = Form(True),
-    upload_debug: bool = Form(True),
-    contact_email: str = Form(""),
-    contact_wechat: str = Form(""),
-    images: list[UploadFile] | None = File(None),  # noqa: B008
-):
-    """Submit a bug report with system info, logs, and LLM debug files."""
-    if len(title) < 2 or len(title) > 200:
-        raise HTTPException(status_code=400, detail="标题需要 2-200 个字符")
-    if len(description) < 2:
-        raise HTTPException(status_code=400, detail="请填写「错误描述」字段（标题下方的文本框）")
-
-    report_id = uuid.uuid4().hex[:12]
-    sys_info = _collect_system_info()
-
+async def _build_bug_zip(
+    *,
+    report_id: str,
+    title: str,
+    description: str,
+    steps: str,
+    sys_info: dict,
+    contact_email: str,
+    contact_wechat: str,
+    images: list[UploadFile] | None,
+    upload_logs: bool,
+    upload_debug: bool,
+) -> bytes:
+    """Build a bug report ZIP package and return the raw bytes."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         metadata: dict = {
@@ -607,14 +647,17 @@ async def submit_bug_report(
             "description": description,
             "steps": steps,
             "system_info": sys_info,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         if contact_email or contact_wechat:
             metadata["contact"] = {
                 "email": contact_email,
                 "wechat": contact_wechat,
             }
-        zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
+        zf.writestr(
+            "metadata.json",
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+        )
 
         await _pack_images(zf, images)
 
@@ -635,24 +678,29 @@ async def submit_bug_report(
             err_data = _tail_file(error_log, LOG_TAIL_BYTES)
             if err_data:
                 zf.writestr("logs/error.log", err_data)
-            serve_data = _tail_file(logs_dir / "openakita-serve.log", LOG_TAIL_BYTES)
+            serve_data = _tail_file(
+                logs_dir / "openakita-serve.log", LOG_TAIL_BYTES
+            )
             if serve_data:
                 zf.writestr("logs/openakita-serve.log", serve_data)
 
-            # frontend.log lives in the global ~/.openakita/logs/ dir (Tauri-managed)
             global_logs = _resolve_global_logs_dir()
-            fe_data = _tail_file(global_logs / "frontend.log", FRONTEND_LOG_TAIL_BYTES)
+            fe_data = _tail_file(
+                global_logs / "frontend.log", FRONTEND_LOG_TAIL_BYTES
+            )
             if fe_data:
                 zf.writestr("logs/frontend.log", fe_data)
-            crash_data = _tail_file(global_logs / "crash.log", FRONTEND_LOG_TAIL_BYTES)
+            crash_data = _tail_file(
+                global_logs / "crash.log", FRONTEND_LOG_TAIL_BYTES
+            )
             if crash_data:
                 zf.writestr("logs/crash.log", crash_data)
 
-            # Multi-agent delegation logs (recent 3 days, max 2 MB)
             data_dir = _resolve_data_dir()
             _add_dir_recent(
                 zf, data_dir / "delegation_logs", "delegation_logs",
-                patterns=("*.jsonl",), max_total_bytes=2 * 1024 * 1024,
+                patterns=("*.jsonl",),
+                max_total_bytes=2 * 1024 * 1024,
             )
 
         if upload_debug:
@@ -662,70 +710,395 @@ async def submit_bug_report(
                     zf.write(df, f"llm_debug/{df.name}")
                 except Exception:
                     pass
-            # ReAct reasoning traces (recent 3 days, max 5 MB)
             _add_dir_recent(
                 zf, data_dir / "react_traces", "react_traces",
-                patterns=("*.json",), max_total_bytes=5 * 1024 * 1024,
+                patterns=("*.json",),
+                max_total_bytes=5 * 1024 * 1024,
             )
-            # Agent traces (recent 3 days, max 2 MB)
             _add_dir_recent(
                 zf, data_dir / "traces", "traces",
-                patterns=("*.json",), max_total_bytes=2 * 1024 * 1024,
+                patterns=("*.json",),
+                max_total_bytes=2 * 1024 * 1024,
             )
-            # Orchestration org events (recent 3 days, max 2 MB)
             _add_dir_recent(
                 zf, data_dir / "orgs", "orgs",
-                patterns=("*.jsonl", "*.md"), max_total_bytes=2 * 1024 * 1024,
+                patterns=("*.jsonl", "*.md"),
+                max_total_bytes=2 * 1024 * 1024,
             )
-            # Tool output overflow (recent 3 days, max 2 MB)
             _add_dir_recent(
                 zf, data_dir / "tool_overflow", "tool_overflow",
-                patterns=("*.txt",), max_total_bytes=2 * 1024 * 1024,
+                patterns=("*.txt",),
+                max_total_bytes=2 * 1024 * 1024,
             )
-            # Failure analysis reports (recent 3 days, max 1 MB)
             _add_dir_recent(
                 zf, data_dir / "failure_analysis", "failure_analysis",
                 max_total_bytes=1 * 1024 * 1024,
             )
-            # Task retrospects (recent 3 days, max 1 MB)
             _add_dir_recent(
                 zf, data_dir / "retrospects", "retrospects",
-                patterns=("*.jsonl",), max_total_bytes=1 * 1024 * 1024,
+                patterns=("*.jsonl",),
+                max_total_bytes=1 * 1024 * 1024,
             )
-            # Small state files — always include
-            _add_file(zf, data_dir / "runtime_state.json", "state/runtime_state.json")
-            _add_file(zf, data_dir / "sub_agent_states.json", "state/sub_agent_states.json")
-            _add_file(zf, data_dir / "backend.heartbeat", "state/backend.heartbeat")
-            _add_file(zf, data_dir / "sessions" / "sessions.json", "state/sessions.json")
+            _add_file(
+                zf, data_dir / "runtime_state.json",
+                "state/runtime_state.json",
+            )
+            _add_file(
+                zf, data_dir / "sub_agent_states.json",
+                "state/sub_agent_states.json",
+            )
+            _add_file(
+                zf, data_dir / "backend.heartbeat",
+                "state/backend.heartbeat",
+            )
+            _add_file(
+                zf, data_dir / "sessions" / "sessions.json",
+                "state/sessions.json",
+            )
             _add_file(
                 zf, data_dir / "sessions" / "channel_registry.json",
                 "state/channel_registry.json",
             )
-            _add_file(zf, data_dir / "scheduler" / "tasks.json", "state/scheduler_tasks.json")
+            _add_file(
+                zf, data_dir / "scheduler" / "tasks.json",
+                "state/scheduler_tasks.json",
+            )
             _add_file(
                 zf, data_dir / "scheduler" / "executions.json",
                 "state/scheduler_executions.json",
             )
-            # Sanitized config snapshot
             try:
                 config_snapshot = _collect_sanitized_config()
                 if config_snapshot:
                     zf.writestr(
                         "state/sanitized_config.json",
-                        json.dumps(config_snapshot, ensure_ascii=False, indent=2),
+                        json.dumps(
+                            config_snapshot, ensure_ascii=False, indent=2
+                        ),
                     )
             except Exception:
                 pass
 
-    sys_info_brief = f"OS: {sys_info.get('os', '?')} | Python: {sys_info.get('python', '?')} | OpenAkita: {sys_info.get('openakita_version', '?')}"
-    return await _try_upload_or_save(
-        report_id=report_id,
-        report_type="bug",
-        title=title,
-        summary=description,
-        extra_info=sys_info_brief,
-        captcha_verify_param=captcha_verify_param,
-        zip_bytes=buf.getvalue(),
+    return buf.getvalue()
+
+
+async def _upload_with_progress(
+    *,
+    report_id: str,
+    report_type: str,
+    title: str,
+    summary: str,
+    extra_info: str,
+    captcha_verify_param: str,
+    contact_email: str,
+    contact_wechat: str,
+    zip_bytes: bytes,
+):
+    """Async generator performing 3-phase upload with progress.
+
+    Yields ``(event_type, data_dict)`` tuples.  The final yield is either
+    ``("complete", {...})`` or ``("error", {...})``.
+    """
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        local_path = _save_zip_locally(report_id, zip_bytes)
+        yield ("complete", {
+            "status": "upload_failed",
+            "report_id": report_id,
+            "error": "Bug report endpoint not configured",
+            "local_path": str(local_path),
+            "download_url": f"/api/feedback-download/{report_id}",
+        })
+        return
+
+    if len(zip_bytes) > MAX_ZIP_SIZE:
+        yield ("error", {
+            "detail": (
+                f"Package too large: "
+                f"{len(zip_bytes) / 1024 / 1024:.1f} MB (max 30 MB)"
+            ),
+        })
+        return
+
+    import httpx
+
+    base = endpoint.rstrip("/")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # Phase 1: prepare
+            yield ("progress", {
+                "phase": "preparing", "percent": 33,
+                "detail": "连接云端服务...",
+            })
+
+            prepare_resp = await client.post(
+                f"{base}/prepare",
+                json={
+                    "report_id": report_id,
+                    "title": title[:200],
+                    "type": report_type,
+                    "summary": summary[:2000],
+                    "system_info": extra_info[:2000],
+                    "captcha_verify_param": captcha_verify_param,
+                    "contact_email": contact_email,
+                    "contact_wechat": contact_wechat,
+                },
+                timeout=15,
+            )
+
+            if prepare_resp.status_code == 429:
+                yield ("error", {
+                    "detail": "Rate limit reached, please try later",
+                })
+                return
+            if prepare_resp.status_code == 403:
+                yield ("error", {"detail": "Verification failed"})
+                return
+            if prepare_resp.status_code >= 400:
+                try:
+                    detail = prepare_resp.json().get(
+                        "error", prepare_resp.text[:200]
+                    )
+                except Exception:
+                    detail = prepare_resp.text[:200]
+                yield ("error", {
+                    "detail": f"Cloud service error: {detail}",
+                })
+                return
+
+            prepare_data = prepare_resp.json()
+            upload_url = prepare_data["upload_url"]
+            report_date = prepare_data["report_date"]
+
+            # Phase 2: OSS upload with chunked progress tracking
+            total = len(zip_bytes)
+            chunk_size = 64 * 1024
+            sent_bytes = 0
+
+            async def chunked_body():
+                nonlocal sent_bytes
+                for i in range(0, total, chunk_size):
+                    chunk = zip_bytes[i:i + chunk_size]
+                    yield chunk
+                    sent_bytes = min(i + chunk_size, total)
+
+            upload_task = asyncio.create_task(
+                client.put(
+                    upload_url,
+                    content=chunked_body(),
+                    headers={"Content-Length": str(total)},
+                    timeout=180,
+                )
+            )
+
+            try:
+                while not upload_task.done():
+                    await asyncio.sleep(0.3)
+                    pct = 35 + int((sent_bytes / max(total, 1)) * 55)
+                    yield ("progress", {
+                        "phase": "uploading",
+                        "percent": min(pct, 89),
+                        "detail": (
+                            f"上传中（{sent_bytes / 1048576:.1f}"
+                            f" / {total / 1048576:.1f} MB）"
+                        ),
+                    })
+            except GeneratorExit:
+                upload_task.cancel()
+                try:
+                    await upload_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                return
+
+            oss_resp = upload_task.result()
+
+            if oss_resp.status_code >= 400:
+                logger.error(
+                    "OSS direct upload failed: status=%s",
+                    oss_resp.status_code,
+                )
+                local_path = _save_zip_locally(report_id, zip_bytes)
+                yield ("complete", {
+                    "status": "upload_failed",
+                    "report_id": report_id,
+                    "error": (
+                        "Direct upload to storage failed"
+                        f" ({oss_resp.status_code})"
+                    ),
+                    "local_path": str(local_path),
+                    "download_url": (
+                        f"/api/feedback-download/{report_id}"
+                    ),
+                })
+                return
+
+            # Phase 3: complete
+            yield ("progress", {
+                "phase": "completing", "percent": 92,
+                "detail": "创建反馈记录...",
+            })
+
+            complete_resp = await client.post(
+                f"{base}/complete/{report_id}",
+                json={"report_date": report_date},
+                timeout=30,
+            )
+
+            feedback_token = None
+            issue_url = None
+            if complete_resp.status_code == 200:
+                resp_data = complete_resp.json()
+                issue_url = resp_data.get("issue_url")
+                feedback_token = resp_data.get("feedback_token")
+            else:
+                logger.warning(
+                    "Complete phase returned %s (non-fatal)",
+                    complete_resp.status_code,
+                )
+
+            yield ("complete", {
+                "status": "ok",
+                "report_id": report_id,
+                "size_bytes": total,
+                "issue_url": issue_url,
+                "feedback_token": feedback_token,
+            })
+
+    except Exception as e:
+        logger.error("Upload error: %s", e, exc_info=True)
+        try:
+            local_path = _save_zip_locally(report_id, zip_bytes)
+            yield ("complete", {
+                "status": "upload_failed",
+                "report_id": report_id,
+                "error": str(e),
+                "local_path": str(local_path),
+                "download_url": (
+                    f"/api/feedback-download/{report_id}"
+                ),
+            })
+        except Exception:
+            yield ("error", {"detail": str(e)})
+
+
+@router.post("/api/bug-report")
+async def submit_bug_report(
+    title: str = Form(...),
+    description: str = Form(...),
+    captcha_verify_param: str = Form("none"),
+    steps: str = Form(""),
+    upload_logs: bool = Form(True),
+    upload_debug: bool = Form(True),
+    contact_email: str = Form(""),
+    contact_wechat: str = Form(""),
+    images: list[UploadFile] | None = File(None),  # noqa: B008
+):
+    """Submit a bug report with system info, logs, and LLM debug files
+    (SSE stream)."""
+    if len(title) < 2 or len(title) > 200:
+        raise HTTPException(
+            status_code=400, detail="标题需要 2-200 个字符"
+        )
+    if len(description) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="请填写「错误描述」字段（标题下方的文本框）",
+        )
+
+    report_id = uuid.uuid4().hex[:12]
+
+    async def event_stream():
+        from . import feedback_store
+
+        try:
+            yield _sse_event("progress", {
+                "phase": "collecting", "percent": 5,
+                "detail": "收集系统信息...",
+            })
+            sys_info = _collect_system_info()
+
+            yield _sse_event("progress", {
+                "phase": "building", "percent": 10,
+                "detail": "打包诊断数据...",
+            })
+            zip_bytes = await _build_bug_zip(
+                report_id=report_id,
+                title=title,
+                description=description,
+                steps=steps,
+                sys_info=sys_info,
+                contact_email=contact_email,
+                contact_wechat=contact_wechat,
+                images=images,
+                upload_logs=upload_logs,
+                upload_debug=upload_debug,
+            )
+
+            yield _sse_event("progress", {
+                "phase": "built", "percent": 30,
+                "detail": (
+                    f"打包完成（{len(zip_bytes) / 1048576:.1f} MB）"
+                    "，准备上传..."
+                ),
+            })
+
+            sys_info_brief = (
+                f"OS: {sys_info.get('os', '?')} | "
+                f"Python: {sys_info.get('python', '?')} | "
+                f"OpenAkita: "
+                f"{sys_info.get('openakita_version', '?')}"
+            )
+
+            result_data: dict = {}
+            async for evt_type, evt_data in _upload_with_progress(
+                report_id=report_id,
+                report_type="bug",
+                title=title,
+                summary=description,
+                extra_info=sys_info_brief,
+                captcha_verify_param=captcha_verify_param,
+                contact_email=contact_email,
+                contact_wechat=contact_wechat,
+                zip_bytes=zip_bytes,
+            ):
+                if evt_type in ("complete", "error"):
+                    result_data = evt_data
+                    result_data["_evt_type"] = evt_type
+                else:
+                    yield _sse_event(evt_type, evt_data)
+
+            yield _sse_event("progress", {
+                "phase": "saving", "percent": 95,
+                "detail": "保存本地记录...",
+            })
+            try:
+                await feedback_store.save_record(
+                    report_id=report_id,
+                    feedback_token=result_data.get("feedback_token"),
+                    title=title,
+                    report_type="bug",
+                    contact_email=contact_email,
+                )
+            except Exception as save_err:
+                logger.warning(
+                    "Local feedback save failed: %s", save_err
+                )
+
+            final_type = result_data.pop("_evt_type", "complete")
+            yield _sse_event(final_type, result_data)
+
+        except Exception as e:
+            logger.error(
+                "Bug report SSE error: %s", e, exc_info=True
+            )
+            yield _sse_event("error", {"detail": str(e)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -738,43 +1111,358 @@ async def submit_feature_request(
     contact_wechat: str = Form(""),
     images: list[UploadFile] | None = File(None),  # noqa: B008
 ):
-    """Submit a feature/requirement request with optional contact info and attachments."""
+    """Submit a feature/requirement request (SSE stream)."""
     if len(title) < 2 or len(title) > 200:
-        raise HTTPException(status_code=400, detail="需求名称需要 2-200 个字符")
+        raise HTTPException(
+            status_code=400, detail="需求名称需要 2-200 个字符"
+        )
     if len(description) < 2:
-        raise HTTPException(status_code=400, detail="请填写「需求描述」字段")
+        raise HTTPException(
+            status_code=400, detail="请填写「需求描述」字段"
+        )
 
     report_id = uuid.uuid4().hex[:12]
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        metadata = {
-            "report_id": report_id,
-            "type": "feature",
-            "title": title,
-            "description": description,
-            "contact": {
-                "email": contact_email,
-                "wechat": contact_wechat,
-            },
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        }
-        zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
-        await _pack_images(zf, images)
+    async def event_stream():
+        from . import feedback_store
 
-    contact_brief = " | ".join(
-        f for f in [
-            f"Email: {contact_email}" if contact_email else "",
-            f"WeChat: {contact_wechat}" if contact_wechat else "",
-        ] if f
-    ) or "(no contact)"
+        try:
+            yield _sse_event("progress", {
+                "phase": "building", "percent": 10,
+                "detail": "打包需求数据...",
+            })
 
-    return await _try_upload_or_save(
-        report_id=report_id,
-        report_type="feature",
-        title=title,
-        summary=description,
-        extra_info=contact_brief,
-        captcha_verify_param=captcha_verify_param,
-        zip_bytes=buf.getvalue(),
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                metadata = {
+                    "report_id": report_id,
+                    "type": "feature",
+                    "title": title,
+                    "description": description,
+                    "contact": {
+                        "email": contact_email,
+                        "wechat": contact_wechat,
+                    },
+                    "created_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                }
+                zf.writestr(
+                    "metadata.json",
+                    json.dumps(
+                        metadata, ensure_ascii=False, indent=2
+                    ),
+                )
+                await _pack_images(zf, images)
+            zip_bytes = buf.getvalue()
+
+            yield _sse_event("progress", {
+                "phase": "built", "percent": 25,
+                "detail": (
+                    f"打包完成（{len(zip_bytes) / 1048576:.1f} MB）"
+                    "，准备上传..."
+                ),
+            })
+
+            contact_brief = " | ".join(
+                f for f in [
+                    f"Email: {contact_email}"
+                    if contact_email else "",
+                    f"WeChat: {contact_wechat}"
+                    if contact_wechat else "",
+                ] if f
+            ) or "(no contact)"
+
+            result_data: dict = {}
+            async for evt_type, evt_data in _upload_with_progress(
+                report_id=report_id,
+                report_type="feature",
+                title=title,
+                summary=description,
+                extra_info=contact_brief,
+                captcha_verify_param=captcha_verify_param,
+                contact_email=contact_email,
+                contact_wechat=contact_wechat,
+                zip_bytes=zip_bytes,
+            ):
+                if evt_type in ("complete", "error"):
+                    result_data = evt_data
+                    result_data["_evt_type"] = evt_type
+                else:
+                    yield _sse_event(evt_type, evt_data)
+
+            yield _sse_event("progress", {
+                "phase": "saving", "percent": 95,
+                "detail": "保存本地记录...",
+            })
+            try:
+                await feedback_store.save_record(
+                    report_id=report_id,
+                    feedback_token=result_data.get("feedback_token"),
+                    title=title,
+                    report_type="feature",
+                    contact_email=contact_email,
+                )
+            except Exception as save_err:
+                logger.warning(
+                    "Local feedback save failed: %s", save_err
+                )
+
+            final_type = result_data.pop("_evt_type", "complete")
+            yield _sse_event(final_type, result_data)
+
+        except Exception as e:
+            logger.error(
+                "Feature request SSE error: %s", e, exc_info=True
+            )
+            yield _sse_event("error", {"detail": str(e)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─── Feedback tracking endpoints ───
+
+
+@router.get("/api/feedback-history")
+async def get_feedback_history():
+    """Return local feedback submission records for the
+    My Feedback page."""
+    from . import feedback_store
+    return await feedback_store.get_all_records()
+
+
+@router.get("/api/feedback-unread-count")
+async def get_feedback_unread_count():
+    """Return count of feedback items with unread developer
+    replies."""
+    from . import feedback_store
+    return {"unread_count": await feedback_store.get_unread_count()}
+
+
+@router.get("/api/feedback-status/{report_id}")
+async def get_feedback_status(report_id: str):
+    """Proxy status query to FC for a single feedback record."""
+    import httpx
+
+    from . import feedback_store
+
+    record = await feedback_store.get_record(report_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    if not record.get("feedback_token"):
+        return {
+            "status": "local_only",
+            "report_id": report_id,
+            "source": "local",
+        }
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        return {
+            "status": record.get("cached_status", "pending"),
+            "report_id": report_id,
+            "source": "cache",
+        }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{endpoint.rstrip('/')}/status/{report_id}",
+                params={"token": record["feedback_token"]},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                replies = data.get("developer_replies", [])
+                external = [
+                    r for r in replies
+                    if r.get("source") != "user_reply"
+                ]
+                last_reply = (
+                    external[-1].get("created_at")
+                    if external
+                    else None
+                )
+                await feedback_store.update_status(
+                    report_id,
+                    cached_status=data.get("status", "pending"),
+                    last_reply_at=last_reply,
+                    last_checked_at=now,
+                )
+                data["source"] = "live"
+                return data
+            else:
+                logger.warning(
+                    "FC status query returned %s for %s",
+                    resp.status_code, report_id,
+                )
+                return {
+                    "status": record.get(
+                        "cached_status", "pending"
+                    ),
+                    "report_id": report_id,
+                    "source": "cache",
+                    "error": f"FC returned {resp.status_code}",
+                }
+    except Exception as e:
+        logger.warning(
+            "FC status query failed for %s: %s", report_id, e
+        )
+        return {
+            "status": record.get("cached_status", "pending"),
+            "report_id": report_id,
+            "source": "cache",
+        }
+
+
+@router.post("/api/feedback-status/batch")
+async def get_feedback_status_batch():
+    """Batch status query - fetches status for all tracked
+    feedback records."""
+    import httpx
+
+    from . import feedback_store
+
+    records = await feedback_store.get_all_records()
+    trackable = [r for r in records if r.get("has_token")]
+
+    if not trackable:
+        return {"results": {}}
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        return {
+            "results": {
+                r["report_id"]: {
+                    "status": r["cached_status"],
+                    "source": "cache",
+                }
+                for r in trackable
+            },
+        }
+
+    items: list[dict] = []
+    for r in trackable:
+        token = r.get("feedback_token")
+        if token:
+            items.append({"report_id": r["report_id"], "token": token})
+
+    if not items:
+        return {"results": {}}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{endpoint.rstrip('/')}/status/batch",
+                json={"items": items[:50]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("results", {})
+                for rid, info in results.items():
+                    if isinstance(info, dict) and "error" not in info:
+                        replies = info.get(
+                            "developer_replies", []
+                        )
+                        external = [
+                            r for r in replies
+                            if r.get("source") != "user_reply"
+                        ]
+                        last_reply = (
+                            external[-1].get("created_at")
+                            if external
+                            else None
+                        )
+                        await feedback_store.update_status(
+                            rid,
+                            cached_status=info.get(
+                                "status", "pending"
+                            ),
+                            last_reply_at=last_reply,
+                        )
+                        info["source"] = "live"
+                return {"results": results}
+            else:
+                logger.warning(
+                    "FC batch status returned %s", resp.status_code
+                )
+    except Exception as e:
+        logger.warning("FC batch status query failed: %s", e)
+
+    return {
+        "results": {
+            r["report_id"]: {
+                "status": r["cached_status"],
+                "source": "cache",
+            }
+            for r in trackable
+        },
+    }
+
+
+@router.post("/api/feedback-reply/{report_id}")
+async def post_feedback_reply(report_id: str, body: dict):
+    """Proxy user reply to FC /reply/{report_id}, which posts to GitHub."""
+    import httpx
+
+    from . import feedback_store
+
+    reply_text = (body.get("body") or "").strip()
+    if not reply_text:
+        raise HTTPException(status_code=400, detail="Reply body is required")
+    if len(reply_text) > 2000:
+        raise HTTPException(status_code=400, detail="Reply too long (max 2000)")
+
+    record = await feedback_store.get_record(report_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    if not record.get("feedback_token"):
+        raise HTTPException(status_code=400, detail="No cloud token for this record")
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        raise HTTPException(status_code=503, detail="Bug report endpoint not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{endpoint.rstrip('/')}/reply/{report_id}",
+                json={"token": record["feedback_token"], "body": reply_text},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                await feedback_store.update_status(
+                    report_id, last_checked_at=now,
+                )
+                return resp.json()
+            try:
+                detail = resp.json().get("error", resp.text[:200])
+            except Exception:
+                detail = resp.text[:200]
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Reply proxy error for %s: %s", report_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.delete("/api/feedback-history/{report_id}")
+async def delete_feedback_record(report_id: str):
+    """Delete a local feedback record (does not affect cloud
+    data)."""
+    from . import feedback_store
+    deleted = await feedback_store.delete_record(report_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="Record not found"
+        )
+    return {"status": "ok"}
