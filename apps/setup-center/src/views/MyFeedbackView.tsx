@@ -53,6 +53,7 @@ type MyFeedbackViewProps = {
   apiBaseUrl: string;
   serviceRunning: boolean;
   onOpenFeedbackModal?: (prefill?: FeedbackPrefill) => void;
+  refreshTrigger?: number;
 };
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; border?: string }> = {
@@ -83,7 +84,7 @@ function statusKey(status: string): string {
   return map[status] ?? "statusPending";
 }
 
-export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal }: MyFeedbackViewProps) {
+export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal, refreshTrigger }: MyFeedbackViewProps) {
   const { t } = useTranslation();
   const [records, setRecords] = useState<FeedbackRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,7 +152,7 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
       setLoading(false);
       batchRefreshRef.current();
     });
-  }, [serviceRunning, fetchRecords]);
+  }, [serviceRunning, fetchRecords, refreshTrigger]);
 
   const fetchDetail = useCallback(async (reportId: string) => {
     setDetailLoading(reportId);
@@ -304,7 +305,7 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div>
       <div className="flex items-center justify-between mb-5">
         <h2 className="text-lg font-semibold">{t("myFeedback.title")}</h2>
         <div className="flex items-center gap-2">

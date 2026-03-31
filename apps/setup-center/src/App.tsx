@@ -256,6 +256,7 @@ export function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
   const [feedbackPrefill, setFeedbackPrefill] = useState<FeedbackPrefill | null>(null);
+  const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0);
   const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const [multiAgentEnabled, setMultiAgentEnabled] = useState(false);
@@ -4668,6 +4669,7 @@ export function App() {
         <MyFeedbackView
           apiBaseUrl={httpApiBase()}
           serviceRunning={serviceStatus?.running ?? false}
+          refreshTrigger={feedbackRefreshKey}
           onOpenFeedbackModal={(prefill) => {
             setFeedbackPrefill(prefill ?? null);
             setBugReportOpen(true);
@@ -5197,7 +5199,7 @@ export function App() {
         onClose={() => { setBugReportOpen(false); setFeedbackPrefill(null); }}
         apiBase={httpApiBase()}
         prefill={feedbackPrefill}
-        onNavigateToMyFeedback={() => setView("my_feedback")}
+        onNavigateToMyFeedback={() => { setFeedbackRefreshKey((k) => k + 1); setView("my_feedback"); }}
       />
     </div>
     </EnvFieldContext.Provider>

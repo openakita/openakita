@@ -1349,7 +1349,11 @@
     "progressFinalizing": "正在创建反馈记录…",
     "progressSaving": "保存中…",
     "cancelUpload": "取消上传",
-    "uploadCancelled": "上传已取消"
+    "uploadCancelled": "上传已取消",
+    "submitSuccessTitle": "提交成功",
+    "submitSuccessMessage": "感谢您的反馈！您可以在「我的反馈」中查看处理进度。",
+    "clearForm": "清空重填",
+    "close": "关闭"
   },
   "bugReport": {
     "title": "错误报告",

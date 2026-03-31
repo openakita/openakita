@@ -78,14 +78,18 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
   const handleSubmitRef = useRef<() => void>(() => {});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [successOpen, setSuccessOpen] = useState(false);
+
   useEffect(() => {
     if (open) {
-      setMode(prefill?.mode ?? initialMode);
-      setTitle(prefill?.title ?? "");
-      setDescription(prefill?.description ?? "");
       setSubmitResult(null);
       setDownloading(false);
       setUploadProgress(null);
+      if (prefill) {
+        setMode(prefill.mode ?? initialMode);
+        setTitle(prefill.title ?? "");
+        setDescription(prefill.description ?? "");
+      }
     }
   }, [open, initialMode, prefill]);
 
@@ -229,6 +233,19 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
     }
   }, [addImages]);
 
+  const resetForm = useCallback(() => {
+    setMode(initialMode);
+    setTitle("");
+    setDescription("");
+    setSteps("");
+    setContactEmail("");
+    setImageFiles([]);
+    setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+    setUploadLogs(true);
+    setUploadDebug(true);
+    setSubmitResult(null);
+  }, [initialMode]);
+
   const handleSubmit = useCallback(async () => {
     if (!title.trim() || !description.trim()) return;
     if (captchaCfg && !captchaTokenRef.current) return;
@@ -306,14 +323,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
                   downloadUrl: dlUrl,
                 });
               } else {
-                const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-                setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-                setTitle("");
-                setDescription("");
-                setSteps("");
-                setContactEmail("");
-                setImageFiles([]);
-                setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+                resetForm();
+                onClose();
+                setSuccessOpen(true);
               }
             } else if (eventType === "error") {
               setUploadProgress(null);
@@ -332,14 +344,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             downloadUrl: dlUrl,
           });
         } else {
-          const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-          setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-          setTitle("");
-          setDescription("");
-          setSteps("");
-          setContactEmail("");
-          setImageFiles([]);
-          setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+          resetForm();
+          onClose();
+          setSuccessOpen(true);
         }
       }
     } catch (err: any) {
@@ -354,7 +361,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
       abortRef.current = null;
       setSubmitting(false);
     }
-  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, imageFiles, apiBase, t]);
+  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, imageFiles, apiBase, t, resetForm, onClose]);
 
   handleSubmitRef.current = handleSubmit;
 
@@ -368,6 +375,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
   const isBug = mode === "bug";
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent
         className="sm:max-w-[520px] p-0 gap-0 overflow-hidden"
@@ -554,13 +562,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             </div>
           )}
 
-          {/* Result */}
-          {submitResult && (
-            <div className={`rounded-md p-2.5 text-[13px] leading-relaxed ${
-              submitResult.ok
-                ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                : "bg-destructive/10 text-destructive"
-            }`}>
+          {/* Error result (success is handled by separate dialog) */}
+          {submitResult && !submitResult.ok && (
+            <div className="rounded-md p-2.5 text-[13px] leading-relaxed bg-destructive/10 text-destructive">
               <div className="whitespace-pre-wrap">{submitResult.msg}</div>
               {submitResult.downloadUrl && (
                 <Button
@@ -589,54 +593,72 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
                   {downloading ? t("feedback.downloading") : t("feedback.saveLocal")}
                 </Button>
               )}
-              {submitResult.ok && onNavigateToMyFeedback && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-1.5 h-7 text-xs"
-                  onClick={() => {
-                    onClose();
-                    onNavigateToMyFeedback();
-                  }}
-                >
-                  {t("myFeedback.viewFeedback")}
-                </Button>
-              )}
             </div>
           )}
         </div>
         </fieldset>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border shrink-0">
-          {uploadProgress ? (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => { abortRef.current?.abort(); }}
-            >
-              {t("feedback.cancelUpload")}
+        <div className="flex items-center px-5 py-3 border-t border-border shrink-0">
+          {!uploadProgress && !submitting && (
+            <Button variant="ghost" size="sm" onClick={resetForm} className="text-muted-foreground hover:text-foreground">
+              {t("feedback.clearForm")}
             </Button>
-          ) : (
-            <>
-              <Button variant="outline" size="sm" onClick={handleClose}>
-                {t("common.cancel")}
-              </Button>
+          )}
+          <div className="flex items-center gap-2 ml-auto">
+            {uploadProgress ? (
               <Button
-                id="feedback-submit-btn"
+                variant="destructive"
                 size="sm"
-                disabled={submitting || !title.trim() || !description.trim()}
-                onClick={handleSubmit}
-                className="min-w-[100px]"
+                onClick={() => { abortRef.current?.abort(); }}
               >
-                {submitting
-                  ? t("bugReport.submitting")
-                  : isBug ? t("bugReport.submit") : t("featureRequest.submit")}
+                {t("feedback.cancelUpload")}
               </Button>
-            </>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" onClick={handleClose}>
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  id="feedback-submit-btn"
+                  size="sm"
+                  disabled={submitting || !title.trim() || !description.trim()}
+                  onClick={handleSubmit}
+                  className="min-w-[100px]"
+                >
+                  {submitting
+                    ? t("bugReport.submitting")
+                    : isBug ? t("bugReport.submit") : t("featureRequest.submit")}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Success confirmation dialog */}
+    <Dialog open={successOpen} onOpenChange={(v) => { if (!v) setSuccessOpen(false); }}>
+      <DialogContent className="sm:max-w-[380px]">
+        <DialogHeader>
+          <DialogTitle>{t("feedback.submitSuccessTitle")}</DialogTitle>
+          <DialogDescription className="sr-only">{t("feedback.submitSuccessTitle")}</DialogDescription>
+        </DialogHeader>
+        <p className="text-[14px] text-muted-foreground leading-relaxed">
+          {t("feedback.submitSuccessMessage")}
+        </p>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" size="sm" onClick={() => setSuccessOpen(false)}>
+            {t("feedback.close")}
+          </Button>
+          {onNavigateToMyFeedback && (
+            <Button size="sm" onClick={() => { setSuccessOpen(false); onNavigateToMyFeedback(); }}>
+              {t("myFeedback.viewFeedback")}
+            </Button>
           )}
         </div>
       </DialogContent>
     </Dialog>
+    </>
   );
 }

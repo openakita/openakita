@@ -1349,7 +1349,11 @@
     "progressFinalizing": "Creating feedback record…",
     "progressSaving": "Saving…",
     "cancelUpload": "Cancel Upload",
-    "uploadCancelled": "Upload cancelled"
+    "uploadCancelled": "Upload cancelled",
+    "submitSuccessTitle": "Submitted Successfully",
+    "submitSuccessMessage": "Thank you for your feedback! You can check the progress in My Feedback.",
+    "clearForm": "Clear & Reset",
+    "close": "Close"
   },
   "bugReport": {
     "title": "Bug Report",
