@@ -476,7 +476,12 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                       </div>
                     ) : detail?.developer_replies && detail.developer_replies.length > 0 ? (
                       <div className="space-y-3 mt-2">
-                        <p className="text-[13px] font-medium">{t("myFeedback.repliesTitle")}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-[13px] font-medium">{t("myFeedback.repliesTitle")}</p>
+                          {detail?.labels && detail.labels.length > 0 && detail.labels.map((label) => (
+                            <Badge key={label} variant="outline" className="text-[10px] px-1.5 py-0">{label}</Badge>
+                          ))}
+                        </div>
                         {detail.developer_replies.map((reply, i) => {
                           const isUserReply = reply.source === "user_reply";
                           return isUserReply ? (
@@ -515,33 +520,19 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                         <div ref={(el) => { replyEndRef.current[rec.report_id] = el; }} />
                       </div>
                     ) : rec.has_token ? (
-                      <p className="text-[13px] text-muted-foreground py-2">{t("myFeedback.noReplies")}</p>
+                      <div className="py-2">
+                        {detail?.labels && detail.labels.length > 0 && (
+                          <div className="flex gap-1 flex-wrap mb-2">
+                            {detail.labels.map((label) => (
+                              <Badge key={label} variant="outline" className="text-[10px] px-1.5 py-0">{label}</Badge>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-[13px] text-muted-foreground">{t("myFeedback.noReplies")}</p>
+                      </div>
                     ) : null}
 
-                    {detail?.labels && detail.labels.length > 0 && (
-                      <div className="flex gap-1 flex-wrap mt-2">
-                        {detail.labels.map((label) => (
-                          <Badge key={label} variant="outline" className="text-[10px] px-1.5 py-0">
-                            {label}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
 
-                    {detail?.github_issue_url && (
-                      <div className="mt-2">
-                        <a
-                          href={detail.github_issue_url}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            openExternalUrl(detail.github_issue_url!);
-                          }}
-                          className="inline-flex items-center gap-1 text-[12px] text-blue-500 hover:text-blue-600 hover:underline"
-                        >
-                          {t("myFeedback.viewOnGithub")} ↗
-                        </a>
-                      </div>
-                    )}
 
                     {rec.has_token && !TERMINAL_STATUSES.includes(rec.cached_status) && (
                       <div className="mt-3 pt-3 border-t border-border">
