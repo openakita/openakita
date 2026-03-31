@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { invoke, IS_TAURI } from "../platform";
 import { useTranslation } from "react-i18next";
+import { useMdModules } from "../hooks/useMdModules";
 import type { SkillInfo, SkillConfigField, MarketplaceSkill, EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
 import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconConfig, IconFolderOpen, IconEdit, IconTrash, IconEye } from "../icons";
@@ -512,14 +513,22 @@ function MarketplaceSkillCard({
   skill,
   onInstall,
   installing,
+  onClick,
 }: {
   skill: MarketplaceSkill;
   onInstall: () => void;
   installing: boolean;
+  onClick: () => void;
 }) {
   const { t } = useTranslation();
   return (
-    <div className="card" style={{ marginTop: 0 }}>
+    <div
+      className="card"
+      style={{ marginTop: 0, cursor: "pointer", transition: "box-shadow 0.15s" }}
+      onClick={onClick}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.boxShadow = ""; }}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(124,58,237,0.08)", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
           <IconPackage size={18} />
@@ -554,7 +563,7 @@ function MarketplaceSkillCard({
         <Button
           variant={skill.installed ? "outline" : "default"}
           size="sm"
-          onClick={onInstall}
+          onClick={(e) => { e.stopPropagation(); onInstall(); }}
           disabled={skill.installed || installing}
         >
           {installing && <Loader2 className="animate-spin" />}
@@ -598,6 +607,10 @@ export function SkillManager({
   const [installingSet, setInstallingSet] = useState<Set<string>>(new Set());
   const [manualUrl, setManualUrl] = useState("");
   const [manualInstalling, setManualInstalling] = useState(false);
+  const [marketDetailSkill, setMarketDetailSkill] = useState<MarketplaceSkill | null>(null);
+  const [marketDetailContent, setMarketDetailContent] = useState<{ frontmatter: Record<string, string>; body: string } | null>(null);
+  const [marketDetailLoading, setMarketDetailLoading] = useState(false);
+  const marketDetailReqRef = useRef(0);
   const [enabledDraft, setEnabledDraft] = useState<Record<string, boolean>>({});
   const [enabledDirty, setEnabledDirty] = useState(false);
   const [savingEnabled, setSavingEnabled] = useState(false);
@@ -618,6 +631,7 @@ export function SkillManager({
   const marketRequestId = useRef(0);
   const detailRequestNameRef = useRef<string | null>(null);
   const { t } = useTranslation();
+  const mdModules = useMdModules();
 
   // ── 加载已安装技能（返回 true 表示成功，false 表示出错） ──
   const loadSkills = useCallback(async (): Promise<boolean> => {
@@ -1165,6 +1179,32 @@ export function SkillManager({
     return () => clearTimeout(timer);
   }, [marketSearch, tab]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  const openMarketDetail = useCallback(async (skill: MarketplaceSkill) => {
+    setMarketDetailSkill(skill);
+    setMarketDetailContent(null);
+    setMarketDetailLoading(true);
+    const reqId = ++marketDetailReqRef.current;
+
+    const source = skill.url?.split("@")[0] || "";
+    const sid = skill.skillId || skill.name;
+    if (!source || !source.includes("/")) {
+      setMarketDetailLoading(false);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({ source, skill_id: sid });
+      const resp = await safeFetch(`${apiBaseUrl}/api/skills/marketplace/detail?${params}`);
+      const data = await resp.json();
+      if (reqId !== marketDetailReqRef.current) return;
+      setMarketDetailContent({ frontmatter: data.frontmatter || {}, body: data.body || "" });
+    } catch {
+      // GitHub fetch failed — just show list-level info
+    } finally {
+      if (reqId === marketDetailReqRef.current) setMarketDetailLoading(false);
+    }
+  }, [apiBaseUrl]);
+
   // ── 安装技能 ──
   const handleInstall = useCallback(async (skill: MarketplaceSkill) => {
     if (dataMode !== "remote" && !serviceRunning && (!venvDir || !currentWorkspaceId)) {
@@ -1530,6 +1570,7 @@ export function SkillManager({
                   skill={skill}
                   onInstall={() => handleInstall(skill)}
                   installing={installingSet.has(uk)}
+                  onClick={() => openMarketDetail(skill)}
                 />
               );
             })}
@@ -1596,6 +1637,178 @@ export function SkillManager({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 市场技能详情弹窗 (skills.sh 风格) */}
+      {marketDetailSkill && (() => {
+        const fm = marketDetailContent?.frontmatter;
+        const desc = fm?.description || marketDetailSkill.description || "";
+        const installCmd = `npx skills add ${marketDetailSkill.url?.split("@")[0] || ""} --skill ${marketDetailSkill.skillId || marketDetailSkill.name}`;
+        const repoUrl = marketDetailSkill.url ? `https://github.com/${marketDetailSkill.url.split("@")[0]}` : "";
+        return (
+          <ModalOverlay onClose={() => setMarketDetailSkill(null)}>
+            <div
+              className="modalContent"
+              style={{ maxWidth: 720, width: "92vw", maxHeight: "85vh", display: "flex", flexDirection: "column", padding: 0 }}
+            >
+              {/* Header */}
+              <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, opacity: 0.4, fontFamily: "monospace", marginBottom: 4 }}>
+                      skills / {marketDetailSkill.url?.split("@")[0]?.replace("/", " / ")} / {marketDetailSkill.skillId || marketDetailSkill.name}
+                    </div>
+                    <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>{marketDetailSkill.name}</h2>
+                  </div>
+                  <Button variant="ghost" size="icon-xs" onClick={() => setMarketDetailSkill(null)}>
+                    <IconX size={18} />
+                  </Button>
+                </div>
+
+                {/* Install command */}
+                <div style={{
+                  marginTop: 12, padding: "8px 12px", borderRadius: 6,
+                  background: "var(--panel2, #1a1a2e)", border: "1px solid var(--line)",
+                  fontFamily: "monospace", fontSize: 12, opacity: 0.7,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  $ {installCmd}
+                </div>
+
+                {/* Meta row */}
+                <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12, opacity: 0.5, flexWrap: "wrap", alignItems: "center" }}>
+                  {marketDetailSkill.installs != null && marketDetailSkill.installs > 0 && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <IconDownload size={11} />{marketDetailSkill.installs.toLocaleString()} {t("skills.installCount")}
+                    </span>
+                  )}
+                  {repoUrl && (
+                    <a href={repoUrl} target="_blank" rel="noopener noreferrer"
+                      style={{ color: "var(--brand)", textDecoration: "none", fontFamily: "monospace", fontSize: 11 }}>
+                      {marketDetailSkill.url?.split("@")[0]}
+                    </a>
+                  )}
+                  {marketDetailSkill.installed && (
+                    <span className="pill" style={{ fontSize: 10, borderColor: "rgba(16,185,129,0.25)" }}>{t("skills.installed")}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Body */}
+              <div style={{ flex: 1, overflow: "auto", padding: "0 24px 16px" }}>
+                {marketDetailLoading ? (
+                  <div style={{ textAlign: "center", padding: 40, opacity: 0.5 }}>
+                    <Loader2 className="animate-spin" style={{ display: "inline-block", marginBottom: 8 }} />
+                    <div>{t("skills.loadingContent")}</div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Summary section */}
+                    {desc && (
+                      <div style={{ marginTop: 16 }}>
+                        <div style={{
+                          fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em",
+                          opacity: 0.4, marginBottom: 8,
+                        }}>
+                          Summary
+                        </div>
+                        <div style={{
+                          padding: "14px 16px", borderRadius: 8,
+                          background: "var(--panel2, #f8f9fa)", border: "1px solid var(--line)",
+                          fontSize: 13, lineHeight: 1.7,
+                        }}>
+                          <strong>{desc}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tags */}
+                    {marketDetailSkill.tags && marketDetailSkill.tags.length > 0 && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
+                        {marketDetailSkill.tags.map((tag) => (
+                          <span key={tag} style={{
+                            fontSize: 11, padding: "2px 8px", borderRadius: 10,
+                            background: "rgba(37,99,235,0.08)", color: "var(--brand)",
+                          }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* SKILL.md section */}
+                    {marketDetailContent?.body && (
+                      <div style={{ marginTop: 20 }}>
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em",
+                          opacity: 0.4, marginBottom: 10,
+                        }}>
+                          <IconEye size={12} /> SKILL.md
+                        </div>
+                        <div className="skillMdContent" style={{
+                          fontSize: 14,
+                        }}>
+                          {mdModules ? (
+                            <mdModules.ReactMarkdown
+                              remarkPlugins={[mdModules.remarkGfm]}
+                              rehypePlugins={[mdModules.rehypeHighlight]}
+                            >
+                              {marketDetailContent.body}
+                            </mdModules.ReactMarkdown>
+                          ) : (
+                            <pre style={{
+                              whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: 13,
+                              padding: 16, borderRadius: 8,
+                              background: "var(--panel2, #f8f9fa)", border: "1px solid var(--line)",
+                              overflow: "auto",
+                            }}>
+                              {marketDetailContent.body}
+                            </pre>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* No content fallback */}
+                    {!marketDetailContent?.body && !desc && (
+                      <div style={{ textAlign: "center", padding: 32, opacity: 0.4 }}>
+                        {t("skillStore.noDesc")}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                padding: "12px 24px", borderTop: "1px solid var(--line)", flexShrink: 0,
+                display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center",
+              }}>
+                {repoUrl && (
+                  <a href={repoUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 12, color: "var(--brand)", textDecoration: "none", marginRight: "auto" }}>
+                    GitHub →
+                  </a>
+                )}
+                <Button variant="outline" size="sm" onClick={() => setMarketDetailSkill(null)}>
+                  {t("common.close")}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const s = marketDetailSkill;
+                    setMarketDetailSkill(null);
+                    handleInstall(s);
+                  }}
+                  disabled={marketDetailSkill.installed || installingSet.has(marketDetailSkill.url || marketDetailSkill.id || marketDetailSkill.name)}
+                >
+                  {marketDetailSkill.installed ? t("skills.installed") : t("skills.install")}
+                </Button>
+              </div>
+            </div>
+          </ModalOverlay>
+        );
+      })()}
 
       {/* 未保存更改提示栏 */}
       {enabledDirty && (

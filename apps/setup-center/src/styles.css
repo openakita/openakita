@@ -1000,6 +1000,141 @@ button.btnApplyRestart:hover {
   margin: 8px 0;
 }
 
+/* ─── Skill detail markdown ─── */
+.skillMdContent {
+  color: var(--text);
+  word-break: break-word;
+}
+.skillMdContent h1,
+.skillMdContent h2,
+.skillMdContent h3,
+.skillMdContent h4,
+.skillMdContent h5,
+.skillMdContent h6 {
+  font-weight: 600;
+  margin-top: 1.2em;
+  margin-bottom: 0.5em;
+  line-height: 1.35;
+  color: var(--text);
+}
+.skillMdContent h1 { font-size: 1.5em; border-bottom: 1px solid var(--line, rgba(0,0,0,0.1)); padding-bottom: 0.3em; }
+.skillMdContent h2 { font-size: 1.3em; border-bottom: 1px solid var(--line, rgba(0,0,0,0.08)); padding-bottom: 0.25em; }
+.skillMdContent h3 { font-size: 1.15em; }
+.skillMdContent h4 { font-size: 1.05em; }
+.skillMdContent p {
+  margin: 0.6em 0;
+  line-height: 1.7;
+}
+.skillMdContent ul,
+.skillMdContent ol {
+  padding-left: 1.6em;
+  margin: 0.5em 0;
+}
+.skillMdContent li {
+  margin: 0.25em 0;
+  line-height: 1.65;
+}
+.skillMdContent li > p {
+  margin: 0.3em 0;
+}
+.skillMdContent code {
+  background: var(--panel2, rgba(0,0,0,0.06));
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+  color: var(--text);
+}
+.skillMdContent pre {
+  background: var(--bg-app, #f6f8fa);
+  border: 1px solid var(--line, rgba(0,0,0,0.1));
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 12px 0;
+  color: var(--text);
+}
+.skillMdContent pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+.skillMdContent blockquote {
+  border-left: 3px solid var(--brand, #3b82f6);
+  margin: 0.8em 0;
+  padding: 4px 14px;
+  color: var(--muted, #666);
+  background: var(--panel2, rgba(0,0,0,0.02));
+  border-radius: 0 6px 6px 0;
+}
+.skillMdContent blockquote p {
+  margin: 0.3em 0;
+}
+.skillMdContent a {
+  color: var(--brand, #3b82f6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.skillMdContent a:hover {
+  opacity: 0.8;
+}
+.skillMdContent hr {
+  border: none;
+  border-top: 1px solid var(--line, rgba(0,0,0,0.1));
+  margin: 16px 0;
+}
+.skillMdContent table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.skillMdContent th,
+.skillMdContent td {
+  border: 1px solid var(--line, rgba(0,0,0,0.12));
+  padding: 8px 12px;
+  text-align: left;
+}
+.skillMdContent th {
+  background: var(--panel2, rgba(0,0,0,0.04));
+  font-weight: 600;
+}
+.skillMdContent tr:nth-child(even) {
+  background: var(--panel2, rgba(0,0,0,0.02));
+}
+.skillMdContent img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.skillMdContent strong {
+  font-weight: 600;
+}
+.skillMdContent em {
+  font-style: italic;
+}
+
+/* Dark-mode refinements for skill markdown */
+:root[data-theme="dark"] .skillMdContent pre {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.1);
+}
+:root[data-theme="dark"] .skillMdContent code {
+  background: rgba(255,255,255,0.08);
+}
+:root[data-theme="dark"] .skillMdContent blockquote {
+  background: rgba(255,255,255,0.03);
+}
+:root[data-theme="dark"] .skillMdContent th {
+  background: rgba(255,255,255,0.06);
+}
+:root[data-theme="dark"] .skillMdContent tr:nth-child(even) {
+  background: rgba(255,255,255,0.03);
+}
+
 /* Bouncing dots animation */
 .dotBounce {
   display: inline-block;
