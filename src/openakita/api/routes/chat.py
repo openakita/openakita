@@ -26,6 +26,41 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/api/commands")
+async def list_commands():
+    """Return available slash commands for the Desktop UI."""
+    from ...commands.registry import CommandScope, get_commands
+
+    return [
+        {
+            "name": c.name,
+            "label": c.label,
+            "description": c.description,
+            "argsHint": c.args_hint,
+        }
+        for c in get_commands()
+        if CommandScope.DESKTOP in c.scope
+    ]
+
+
+@router.post("/api/chat/clear")
+async def clear_chat(request: Request):
+    """Clear session context for a conversation."""
+    body = await request.json()
+    conversation_id = body.get("conversation_id", "")
+    if not conversation_id:
+        return {"ok": False, "error": "missing conversation_id"}
+
+    from .conversation_lifecycle import get_lifecycle_manager
+    lm = get_lifecycle_manager()
+    if lm and hasattr(lm, "session_manager") and lm.session_manager:
+        session = lm.session_manager.get_session_by_conversation(conversation_id)
+        if session:
+            session.context.clear_messages()
+            return {"ok": True}
+    return {"ok": False, "error": "session not found"}
+
+
 async def _broadcast_chat_event(event: str, data: dict) -> None:
     """Broadcast a chat event via WebSocket to all connected clients."""
     try:
@@ -727,16 +762,19 @@ async def chat(request: Request, body: ChatRequest):
     Each conversation gets its own Agent instance via AgentInstancePool
     to support concurrent streaming without shared-state corruption.
 
-    Returns Server-Sent Events with the following event types:
-    - thinking_start / thinking_delta / thinking_end
+    Returns Server-Sent Events with the following event types
+    (canonical definitions in openakita.events.StreamEventType):
+    - heartbeat / iteration_start
+    - thinking_start / thinking_delta / thinking_end / chain_text
     - text_delta
     - tool_call_start / tool_call_end
-    - plan_created / plan_step_updated
-    - ask_user
-    - agent_switch
-    - agent_handoff
+    - context_compressed
+    - security_confirm / ask_user
+    - todo_created / todo_step_updated / todo_completed / todo_cancelled
+    - agent_handoff / user_insert
+    - artifact / ui_preference
     - error
-    - done
+    - done (with optional usage payload)
     """
     import uuid as _uuid
     conversation_id = body.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"

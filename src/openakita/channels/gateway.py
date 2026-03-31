@@ -40,31 +40,7 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
     except Exception:
         pass
 
-def format_user_friendly_error(error: str) -> str:
-    """Map technical error messages to user-friendly messages for IM channels.
-
-    Keeps the full error in logs; only the return value is shown to the user.
-    """
-    el = error.lower()
-
-    if "data_inspection" in el or "inappropriate content" in el:
-        return (
-            "⚠️ 抱歉，处理过程中获取到的部分内容触发了平台安全审核，"
-            "请换个方式重新提问。"
-        )
-
-    if "all endpoints failed" in el or "allendpointsfailederror" in el:
-        if any(k in el for k in ("api key", "auth", "unauthorized", "401")):
-            return "⚠️ AI 服务认证失败，请检查 API Key 配置是否正确。"
-        if any(k in el for k in ("quota", "rate limit", "429", "余额")):
-            return "⚠️ AI 服务配额已用尽或请求过于频繁，请稍后重试。"
-        return "⚠️ AI 服务暂时不可用，请稍后重试。"
-
-    if "timeout" in el or "timed out" in el:
-        return "⚠️ 处理超时，请稍后重试或简化您的问题。"
-
-    short = error[:120].split("\n")[0]
-    return f"⚠️ 处理出错: {short}"
+from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
 
 
 if TYPE_CHECKING:

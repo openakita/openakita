@@ -14,6 +14,7 @@ import { getAccessToken } from "../platform/auth";
 import { safeFetch } from "../providers";
 import type {
   ChatMessage,
+  ChatErrorInfo,
   ChatConversation,
   ConversationStatus,
   ChatToolCall,
@@ -261,6 +262,7 @@ function patchMessagesWithBackend(
 
 // ─── SSE 事件处理 ───
 
+// Event type strings are canonically defined in src/streamEvents.ts (synced with Python openakita.events)
 type StreamEvent =
   | { type: "heartbeat" }
   | { type: "iteration_start"; iteration: number }
@@ -270,7 +272,6 @@ type StreamEvent =
   | { type: "thinking_end"; duration_ms?: number; has_thinking?: boolean }
   | { type: "chain_text"; content: string }
   | { type: "text_delta"; content: string }
-  | { type: "text"; content?: string; text?: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
   | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean; skipped?: boolean }
   | { type: "todo_created"; plan: ChatTodo }
@@ -279,13 +280,31 @@ type StreamEvent =
   | { type: "todo_cancelled" }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "user_insert"; content: string }
-  | { type: "agent_switch"; agentName: string; reason: string }
+  | { type: "agent_switch"; agentName: string; reason: string } // reserved: backend does not send this yet
   | { type: "agent_handoff"; from_agent: string; to_agent: string; reason?: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
   | { type: "security_confirm"; tool: string; args: Record<string, unknown>; id?: string; reason: string; risk_level: string; needs_sandbox: boolean }
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "error"; message: string }
-  | { type: "done"; usage?: { input_tokens: number; output_tokens: number; total_tokens?: number; context_tokens?: number; context_limit?: number } };
+  | { type: "done"; reason?: string; usage?: { input_tokens: number; output_tokens: number; total_tokens?: number; context_tokens?: number; context_limit?: number } };
+
+// ─── 错误分类 (synced with utils/errors.py) ───
+
+function classifyError(msg: string): ChatErrorInfo["category"] {
+  const el = msg.toLowerCase();
+  if (el.includes("data_inspection") || el.includes("inappropriate content")) return "content_filter";
+  if (el.includes("all endpoints failed") || el.includes("allendpointsfailederror")) {
+    if (["api key", "auth", "unauthorized", "401", "forbidden", "403"].some((k) => el.includes(k))) return "auth";
+    if (["quota", "rate limit", "429", "余额", "insufficient"].some((k) => el.includes(k))) return "quota";
+    return "server";
+  }
+  if (["api key", "auth", "unauthorized", "401", "forbidden", "403"].some((k) => el.includes(k))) return "auth";
+  if (["quota", "rate limit", "429", "余额", "insufficient"].some((k) => el.includes(k))) return "quota";
+  if (["timeout", "timed out", "deadline"].some((k) => el.includes(k))) return "timeout";
+  if (["connect", "dns", "resolve", "network", "unreachable"].some((k) => el.includes(k))) return "network";
+  if (["500", "502", "503", "504", "internal server"].some((k) => el.includes(k))) return "server";
+  return "unknown";
+}
 
 // ─── 思维链工具函数 ───
 
@@ -459,6 +478,7 @@ function ToolCallsGroup({ toolCalls }: { toolCalls: ChatToolCall[] }) {
 
 /** 工具结果折叠显示 */
 function ToolResultBlock({ result }: { result: string }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   if (!result) return null;
   const safeResult = typeof result === "string" ? result : JSON.stringify(result, null, 2);
@@ -467,7 +487,7 @@ function ToolResultBlock({ result }: { result: string }) {
   return (
     <span className="chainToolResultCollapsible">
       <span className="chainToolResultToggle" onClick={() => setExpanded(v => !v)}>
-        {expanded ? "收起" : "查看详情"} <IconChevronRight size={9} />
+        {expanded ? t("common.collapse", "收起") : t("common.viewDetails", "查看详情")} <IconChevronRight size={9} />
       </span>
       {expanded && <pre className="chainToolResult">{safeResult}</pre>}
     </span>
@@ -476,6 +496,7 @@ function ToolResultBlock({ result }: { result: string }) {
 
 /** 叙事流单条目渲染 */
 function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?: () => void }) {
+  const { t } = useTranslation();
   switch (entry.kind) {
     case "thinking":
       return (
@@ -494,9 +515,12 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
           ? <IconCheck size={11} />
           : <IconLoader size={11} className="chainSpinner" />;
       return (
-        <div className="chainNarrToolStart">
+        <div className={`chainNarrToolStart ${isRunning ? "chainNarrToolRunning" : ""}`} data-tool-id={entry.toolId}>
           {tsIcon}
           <span className="chainNarrToolName">{entry.description || entry.tool}</span>
+          {isRunning && (
+            <span className="chainToolElapsed" />
+          )}
           {isRunning && onSkipStep && (
             <button
               data-slot="skip"
@@ -524,7 +548,7 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
     case "compressed":
       return (
         <div className="chainNarrCompressed">
-          上下文压缩: {Math.round(entry.beforeTokens / 1000)}k → {Math.round(entry.afterTokens / 1000)}k tokens
+          {t("chat.contextCompressed", "上下文压缩: {{before}}k → {{after}}k tokens", { before: Math.round(entry.beforeTokens / 1000), after: Math.round(entry.afterTokens / 1000) })}
         </div>
       );
     default:
@@ -657,6 +681,7 @@ function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
 
 /** 浮动 Plan 进度条 —— 贴在输入框上方，默认折叠只显示当前步骤 */
 function FloatingPlanBar({ plan }: { plan: ChatTodo }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const completed = plan.steps.filter((s) => s.status === "completed").length;
   const total = plan.steps.length;
@@ -704,7 +729,7 @@ function FloatingPlanBar({ plan }: { plan: ChatTodo }) {
       {!expanded && allDone && (
         <div className="floatingTodoActive floatingTodoDone">
           <span className="floatingTodoActiveIcon"><IconCheck size={12} /></span>
-          <span className="floatingTodoActiveText">全部完成</span>
+          <span className="floatingTodoActiveText">{t("chat.allDone", "全部完成")}</span>
         </div>
       )}
 
@@ -1064,12 +1089,12 @@ function SlashCommandPanel({
   onSelect: (cmd: SlashCommand) => void;
   selectedIdx: number;
 }) {
+  const { t } = useTranslation();
   const filtered = useMemo(() => {
     const q = filter.toLowerCase();
     return commands.filter((c) => c.id.includes(q) || c.label.includes(q) || c.description.includes(q));
   }, [commands, filter]);
 
-  if (filtered.length === 0) return null;
   return (
     <div
       style={{
@@ -1089,7 +1114,11 @@ function SlashCommandPanel({
         zIndex: 100,
       }}
     >
-      {filtered.map((cmd, idx) => (
+      {filtered.length === 0 ? (
+        <div style={{ padding: "10px 16px", fontSize: 13, opacity: 0.5, textAlign: "center" }}>
+          {t("chat.noMatchingCommand", "无匹配命令")}
+        </div>
+      ) : filtered.map((cmd, idx) => (
         <div
           key={cmd.id}
           onClick={() => onSelect(cmd)}
@@ -1296,9 +1325,85 @@ function ArtifactList({ artifacts, apiBaseUrl, onImagePreview }: {
   );
 }
 
+// ─── Error Card 组件 ───
+
+const ERROR_META: Record<string, { icon: string; color: string; hint: string }> = {
+  auth: { icon: "🔑", color: "#ef4444", hint: "请检查 API Key 配置" },
+  quota: { icon: "📊", color: "#f59e0b", hint: "请稍后重试或升级配额" },
+  timeout: { icon: "⏱️", color: "#f59e0b", hint: "可尝试简化问题后重试" },
+  content_filter: { icon: "🛡️", color: "#8b5cf6", hint: "请换个方式重新提问" },
+  network: { icon: "🌐", color: "#f59e0b", hint: "请检查网络连接" },
+  server: { icon: "⚠️", color: "#ef4444", hint: "服务暂时不可用，请稍后重试" },
+  unknown: { icon: "❌", color: "#ef4444", hint: "" },
+};
+
+function ErrorCard({ error, onRetry }: { error: ChatErrorInfo; onRetry?: () => void }) {
+  const { t } = useTranslation();
+  const meta = ERROR_META[error.category] || ERROR_META.unknown;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    const detail = error.raw || error.message;
+    navigator.clipboard.writeText(detail).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }, [error]);
+
+  return (
+    <div
+      className="errorCard"
+      style={{
+        border: `1px solid ${meta.color}`,
+        borderLeft: `4px solid ${meta.color}`,
+        borderRadius: 8,
+        padding: "10px 14px",
+        margin: "8px 0",
+        background: `${meta.color}08`,
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, marginBottom: 4 }}>
+        <span>{meta.icon}</span>
+        <span style={{ color: meta.color }}>{error.message}</span>
+      </div>
+      {meta.hint && (
+        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>{meta.hint}</div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            style={{
+              fontSize: 12, padding: "3px 10px", borderRadius: 4,
+              border: `1px solid ${meta.color}`, background: "transparent",
+              color: meta.color, cursor: "pointer",
+            }}
+          >
+            {t("chat.retry", "重试")}
+          </button>
+        )}
+        <button
+          onClick={handleCopy}
+          style={{
+            fontSize: 12, padding: "3px 10px", borderRadius: 4,
+            border: "1px solid var(--line)", background: "transparent",
+            color: "var(--text-secondary)", cursor: "pointer",
+          }}
+        >
+          {copied ? t("chat.copied", "已复制") : t("chat.copyError", "复制详情")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const MessageBubble = memo(function MessageBubble({
   msg,
   onAskAnswer,
+  onRetry,
+  onEdit,
+  onRegenerate,
   apiBaseUrl,
   showChain = true,
   onSkipStep,
@@ -1307,6 +1412,9 @@ const MessageBubble = memo(function MessageBubble({
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
+  onRetry?: (msgId: string) => void;
+  onEdit?: (msgId: string) => void;
+  onRegenerate?: (msgId: string) => void;
   apiBaseUrl?: string;
   showChain?: boolean;
   onSkipStep?: () => void;
@@ -1315,8 +1423,9 @@ const MessageBubble = memo(function MessageBubble({
 }) {
   const { t } = useTranslation();
   const isUser = msg.role === "user";
+  const isAssistant = msg.role === "assistant";
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: 16 }}>
+    <div className="msgBubbleWrap" style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: 16, position: "relative" }}>
       {/* Agent name label */}
       {!isUser && msg.agentName && (
         <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.5, marginBottom: 2, paddingLeft: 2 }}>
@@ -1397,9 +1506,20 @@ const MessageBubble = memo(function MessageBubble({
             onAnswer={(ans) => onAskAnswer?.(msg.id, ans)}
           />
         )}
+
+        {/* Error card */}
+        {msg.errorInfo && (
+          <ErrorCard error={msg.errorInfo} onRetry={onRetry ? () => onRetry(msg.id) : undefined} />
+        )}
       </div>
-      <div style={{ fontSize: 11, opacity: 0.35, marginTop: 2, paddingLeft: 2, paddingRight: 2 }}>
-        {formatTime(msg.timestamp)}
+      <div className="msgActions" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: 0.35, marginTop: 2, paddingLeft: 2, paddingRight: 2 }}>
+        <span>{formatTime(msg.timestamp)}</span>
+        {isUser && !msg.streaming && onEdit && (
+          <button className="msgActionBtn" onClick={() => onEdit(msg.id)} title={t("chat.edit", "编辑")}>✏️</button>
+        )}
+        {isAssistant && !msg.streaming && onRegenerate && (
+          <button className="msgActionBtn" onClick={() => onRegenerate(msg.id)} title={t("chat.regenerate", "重新生成")}>🔄</button>
+        )}
       </div>
     </div>
   );
@@ -1410,6 +1530,9 @@ const MessageBubble = memo(function MessageBubble({
 const FlatMessageItem = memo(function FlatMessageItem({
   msg,
   onAskAnswer,
+  onRetry,
+  onEdit,
+  onRegenerate,
   apiBaseUrl,
   showChain = true,
   onSkipStep,
@@ -1418,6 +1541,9 @@ const FlatMessageItem = memo(function FlatMessageItem({
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
+  onRetry?: (msgId: string) => void;
+  onEdit?: (msgId: string) => void;
+  onRegenerate?: (msgId: string) => void;
   apiBaseUrl?: string;
   showChain?: boolean;
   onSkipStep?: () => void;
@@ -1426,6 +1552,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
 }) {
   const { t } = useTranslation();
   const isUser = msg.role === "user";
+  const isAssistant = msg.role === "assistant";
   const isSystem = msg.role === "system";
 
   if (isSystem) {
@@ -1437,7 +1564,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
   }
 
   return (
-    <div className={`flatMessage ${isUser ? "flatMsgUser" : "flatMsgAssistant"}`}>
+    <div className={`flatMessage flatMsgItem ${isUser ? "flatMsgUser" : "flatMsgAssistant"}`}>
       {/* User message */}
       {isUser && (
         <div className="flatUserContent">
@@ -1448,7 +1575,15 @@ const FlatMessageItem = memo(function FlatMessageItem({
               ))}
             </div>
           )}
-          <span>{msg.content}</span>
+          <div className="chatMdContent">
+            {mdModules ? (
+              <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]} rehypePlugins={[mdModules.rehypeHighlight]}>
+                {msg.content}
+              </mdModules.ReactMarkdown>
+            ) : (
+              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{msg.content}</pre>
+            )}
+          </div>
         </div>
       )}
 
@@ -1513,12 +1648,23 @@ const FlatMessageItem = memo(function FlatMessageItem({
               onAnswer={(ans) => onAskAnswer?.(msg.id, ans)}
             />
           )}
+
+          {/* Error card */}
+          {msg.errorInfo && (
+            <ErrorCard error={msg.errorInfo} onRetry={onRetry ? () => onRetry(msg.id) : undefined} />
+          )}
         </>
       )}
 
-      {/* Timestamp */}
-      <div style={{ fontSize: 11, opacity: 0.25, marginTop: 2 }}>
-        {formatTime(msg.timestamp)}
+      {/* Timestamp + actions */}
+      <div className="msgActions" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: 0.25, marginTop: 2 }}>
+        <span>{formatTime(msg.timestamp)}</span>
+        {isUser && !msg.streaming && onEdit && (
+          <button className="msgActionBtn" onClick={() => onEdit(msg.id)} title={t("chat.edit", "编辑")}>✏️</button>
+        )}
+        {isAssistant && !msg.streaming && onRegenerate && (
+          <button className="msgActionBtn" onClick={() => onRegenerate(msg.id)} title={t("chat.regenerate", "重新生成")}>🔄</button>
+        )}
       </div>
     </div>
   );
@@ -1677,9 +1823,11 @@ function SecurityConfirmModal({
   setData: React.Dispatch<React.SetStateAction<typeof data | null>>;
 }) {
   const { t } = useTranslation();
+  const pausedRef = useRef(false);
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
+      if (pausedRef.current) return;
       setData((prev) => {
         if (!prev) return null;
         const next = prev.countdown - 1;
@@ -1698,6 +1846,13 @@ function SecurityConfirmModal({
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [apiBase, onClose, timerRef, setData]);
 
+  const handleInteraction = useCallback(() => { pausedRef.current = true; }, []);
+  const handleInteractionEnd = useCallback(() => { pausedRef.current = false; }, []);
+
+  const handleExtendTime = useCallback(() => {
+    setData((prev) => prev ? { ...prev, countdown: prev.countdown + 60 } : null);
+  }, [setData]);
+
   const respond = (decision: "allow" | "deny" | "sandbox") => {
     safeFetch(`${apiBase}/api/chat/security-confirm`, {
       method: "POST",
@@ -1714,10 +1869,16 @@ function SecurityConfirmModal({
     LOW: "text-green-600 bg-green-100 dark:bg-green-900/30",
   };
   const riskCls = riskColors[data.riskLevel] || "text-muted-foreground bg-muted";
+  const isUrgent = data.countdown <= 10;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="w-[440px] rounded-xl bg-background shadow-2xl border p-6">
+      <div
+        className="w-[440px] rounded-xl bg-background shadow-2xl border p-6"
+        style={isUrgent ? { borderColor: "var(--destructive)", boxShadow: "0 0 20px rgba(239,68,68,0.25)" } : undefined}
+        onMouseEnter={handleInteraction}
+        onMouseLeave={handleInteractionEnd}
+      >
         <div className="flex items-center gap-3 mb-4">
           <div className="size-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
             <IconAlertCircle size={20} className="text-orange-500" />
@@ -1726,7 +1887,10 @@ function SecurityConfirmModal({
             <h3 className="text-lg font-semibold">{t("security.confirmTitle")}</h3>
             <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${riskCls}`}>{data.riskLevel}</span>
           </div>
-          <span className="ml-auto tabular-nums text-sm text-muted-foreground">{data.countdown}s</span>
+          <div className="ml-auto flex items-center gap-2">
+            <span className={`tabular-nums text-sm font-medium ${isUrgent ? "text-red-500 animate-pulse" : "text-muted-foreground"}`}>{data.countdown}s</span>
+            <button onClick={handleExtendTime} className="text-xs px-2 py-0.5 rounded border hover:bg-muted transition-colors" title={t("security.extend", "+60s")}>+60s</button>
+          </div>
         </div>
         <div className="mb-4 space-y-2 text-sm">
           <div><span className="font-medium">{t("security.tool")}:</span> <code className="px-1.5 py-0.5 bg-muted rounded text-xs">{data.tool}</code></div>
@@ -1737,6 +1901,11 @@ function SecurityConfirmModal({
             </div>
           ) : null}
         </div>
+        {isUrgent && (
+          <div className="mb-3 text-xs text-red-500 text-center animate-pulse">
+            {t("security.urgentWarning", "即将自动拒绝，请尽快做出决定")}
+          </div>
+        )}
         <div className="flex gap-2">
           <Button onClick={() => respond("allow")} className="flex-1 bg-green-600 hover:bg-green-700 text-white">
             <IconCheck size={14} /> {t("security.allow")}
@@ -1814,6 +1983,7 @@ export function ChatView({
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [lightbox, setLightbox] = useState<{ url: string; downloadUrl: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -1823,6 +1993,10 @@ export function ChatView({
     countdown: number;
   } | null>(null);
   const securityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const handleSecurityClose = useCallback(() => {
+    if (securityTimerRef.current) clearInterval(securityTimerRef.current);
+    setSecurityConfirm(null);
+  }, []);
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
     if (!lightbox) return;
@@ -2635,8 +2809,26 @@ export function ChatView({
     return () => document.removeEventListener("mousedown", handler);
   }, [modeMenuOpen]);
 
+  // ── Ctrl+/ 快捷键面板 ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+      }
+      if (e.key === "Escape" && shortcutsOpen) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShortcutsOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [shortcutsOpen]);
+
   // ── 斜杠命令定义 ──
-  const slashCommands: SlashCommand[] = useMemo(() => [
+  const slashCommands: SlashCommand[] = useMemo(() => {
+    const cmds: SlashCommand[] = [
     { id: "model", label: "切换模型", description: "选择使用的 LLM 端点", action: (args) => {
       if (args && endpoints.find((e) => e.name === args)) {
         setSelectedEndpoint(args);
@@ -2651,7 +2843,16 @@ export function ChatView({
       setChatMode(next);
       setMessages((prev) => [...prev, { id: genId(), role: "system", content: next === "plan" ? "已开启 Plan 模式" : "已关闭 Plan 模式", timestamp: Date.now() }]);
     }},
-    { id: "clear", label: "清空对话", description: "清除当前对话的所有消息", action: () => { setMessages([]); } },
+    { id: "clear", label: "清空对话", description: "清除当前对话的所有消息", action: () => {
+      setMessages([]);
+      if (activeConvId) {
+        safeFetch(`${apiBase}/api/chat/clear`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: activeConvId }),
+        }).catch(() => {});
+      }
+    }},
     { id: "skill", label: "使用技能", description: "调用已安装的技能（发送 /skill:<技能名> 触发）", action: (args) => {
       if (args) {
         setInputValue(`请使用技能「${args}」来帮我：`);
@@ -2717,15 +2918,19 @@ export function ChatView({
         setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考程度: ${currentLabel}\n用法: /thinking_depth low|medium|high`, timestamp: Date.now() }]);
       }
     }},
-    { id: "help", label: "帮助", description: "显示可用命令列表", action: () => {
-      setMessages((prev) => [...prev, {
-        id: genId(),
-        role: "system",
-        content: "**可用命令：**\n- `/model [端点名]` — 切换 LLM 端点\n- `/plan` — 开启/关闭计划模式\n- `/thinking [on|off|auto]` — 深度思考模式\n- `/thinking_depth [low|medium|high]` — 思考程度\n- `/clear` — 清空对话\n- `/skill [技能名]` — 使用技能\n- `/persona [角色ID]` — 查看/切换角色\n- `/agent [Agent名]` — 切换 Agent\n- `/agents` — 查看 Agent 列表\n- `/help` — 显示此帮助",
-        timestamp: Date.now(),
-      }]);
-    }},
-  ], [endpoints, thinkingMode, thinkingDepth]);
+    { id: "help", label: "帮助", description: "显示可用命令列表", action: () => {} },
+  ];
+    const helpCmd = cmds.find((c) => c.id === "help");
+    if (helpCmd) {
+      helpCmd.action = () => {
+        const lines = cmds.map((c) => `- \`/${c.id}\` — ${c.description}`).join("\n");
+        setMessages((prev) => [...prev, {
+          id: genId(), role: "system", content: `**可用命令：**\n${lines}`, timestamp: Date.now(),
+        }]);
+      };
+    }
+    return cmds;
+  }, [endpoints, chatMode, orgList, orgMode, thinkingMode, thinkingDepth, activeConvId, apiBase]);
 
   // ── 新建对话 ──
   const newConversation = useCallback(() => {
@@ -3307,6 +3512,7 @@ export function ChatView({
       let currentAsk: ChatAskUser | null = null;
       let currentAgent: string | null = null;
       let currentArtifacts: ChatArtifact[] = [];
+      let currentError: ChatErrorInfo | null = null;
       let gracefulDone = false; // SSE 正常发送了 "done" 事件
 
       // 思维链: 分组数据
@@ -3458,9 +3664,6 @@ export function ChatView({
                 break;
               case "text_delta":
                 currentContent += event.content;
-                break;
-              case "text":
-                currentContent += event.content ?? event.text ?? "";
                 break;
               case "tool_call_start": {
                 if (event.tool === "delegate_to_agent" && event.args?.agent_id) {
@@ -3677,7 +3880,7 @@ export function ChatView({
                   riskLevel: event.risk_level,
                   needsSandbox: event.needs_sandbox,
                   toolId: event.id,
-                  countdown: 60,
+                  countdown: 120,
                 });
                 break;
               }
@@ -3744,6 +3947,7 @@ export function ChatView({
                     toolCalls: currentToolCalls.length > 0 ? currentToolCalls : null,
                     todo: currentPlan,
                     askUser: currentAsk,
+                    errorInfo: currentError,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
                     streaming: true,
@@ -3751,7 +3955,11 @@ export function ChatView({
                 });
                 continue; // skip normal update below
               case "error":
-                currentContent += `\n\n**错误**：${event.message}`;
+                currentError = {
+                  message: event.message,
+                  category: classifyError(event.message),
+                  raw: event.message,
+                };
                 break;
               case "done":
                 gracefulDone = true;
@@ -3774,6 +3982,8 @@ export function ChatView({
                   );
                 });
                 break;
+              default:
+                break;
             }
 
             // 更新助手消息
@@ -3787,6 +3997,7 @@ export function ChatView({
                     toolCalls: currentToolCalls.length > 0 ? [...currentToolCalls] : null,
                     todo: currentPlan ? { ...currentPlan } : null,
                     askUser: currentAsk,
+                    errorInfo: currentError,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
                     streaming: event.type !== "done",
@@ -4015,6 +4226,31 @@ export function ChatView({
   // ── 消息排队系统 ──
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
   const [queueExpanded, setQueueExpanded] = useState(true);
+
+  // ── 消息编辑：回填到输入框，删除该条及后续消息 ──
+  const handleEditMessage = useCallback((msgId: string) => {
+    const msgs = latestMessagesRef.current;
+    const idx = msgs.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    const target = msgs[idx];
+    if (target.role !== "user") return;
+    setInputValue(target.content);
+    setMessages((prev) => prev.slice(0, idx));
+  }, []);
+
+  // ── 重新生成：删除助手回复，重发上一条用户消息 ──
+  const handleRegenerate = useCallback((msgId: string) => {
+    const msgs = latestMessagesRef.current;
+    const idx = msgs.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    const target = msgs[idx];
+    if (target.role !== "assistant") return;
+    const prevUserMsg = msgs.slice(0, idx).reverse().find((m) => m.role === "user");
+    if (!prevUserMsg) return;
+    const textToResend = prevUserMsg.content;
+    setMessages((prev) => prev.slice(0, idx));
+    setTimeout(() => sendMessage(textToResend), 50);
+  }, [sendMessage]);
 
   const handleSkipStep = useCallback(() => {
     safeFetch(`${apiBase}/api/chat/skip`, {
@@ -4348,9 +4584,15 @@ export function ChatView({
 
     if (isCurrentConvStreaming) {
       // 当前会话正在流式传输:
+      //   Escape             = 停止生成（快捷键面板打开时让面板处理）
       //   有文本 + Ctrl+Enter = 立即插入（仅当前会话流式时可用）
       //   有文本 + Enter     = 排队
       //   空文本 + Enter     = 取队列第一条立即插入
+      if (e.key === "Escape" && !shortcutsOpen) {
+        e.preventDefault();
+        handleCancelTask();
+        return;
+      }
       const domText = (e.target as HTMLTextAreaElement).value.trim();
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -4380,7 +4622,7 @@ export function ChatView({
         sendMessage();
       }
     }
-  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, handleInsertMessage, handleQueueMessage, messageQueue, activeConvId, setInputValue]);
+  }, [slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, handleInsertMessage, handleQueueMessage, messageQueue, activeConvId, setInputValue, shortcutsOpen, handleCancelTask]);
 
   // ── 输入变化处理（非受控模式：仅更新 ref，不触发全局重渲染） ──
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -4677,17 +4919,43 @@ export function ChatView({
         {/* 消息列表 */}
         <div ref={scrollContainerRef} style={{ flex: 1, overflow: "auto", padding: "16px 20px", minHeight: 0 }}>
           {messages.length === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.4 }}>
-              <div style={{ marginBottom: 12 }}><IconMessageCircle size={48} /></div>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{t("chat.emptyTitle")}</div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>{t("chat.emptyDesc")}</div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 24 }}>
+              <div style={{ opacity: 0.4, textAlign: "center" }}>
+                <div style={{ marginBottom: 12 }}><IconMessageCircle size={48} /></div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{t("chat.emptyTitle")}</div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>{t("chat.emptyDesc")}</div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, maxWidth: 480, width: "100%" }}>
+                {[
+                  { id: "research", icon: "📊", text: t("chat.quickStart.research", "做一份 XX 领域的市场调研报告") },
+                  { id: "ppt", icon: "📝", text: t("chat.quickStart.ppt", "帮我做一个项目汇报 PPT 大纲") },
+                  { id: "search", icon: "🌐", text: t("chat.quickStart.search", "打开百度搜索 XX") },
+                  { id: "email", icon: "✉️", text: t("chat.quickStart.email", "帮我写一封商务邮件") },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setInputValue(item.text)}
+                    className="quickStartCard"
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "12px 16px", borderRadius: 12,
+                      border: "1px solid var(--line)", background: "var(--panel2)",
+                      cursor: "pointer", textAlign: "left", fontSize: 13,
+                      transition: "border-color 0.15s, background 0.15s",
+                    }}
+                  >
+                    <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
+                    <span style={{ color: "var(--text)", lineHeight: 1.4 }}>{item.text}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {messages.map((msg) =>
             displayMode === "flat" ? (
-              <FlatMessageItem key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} showChain={showChain} onSkipStep={handleSkipStep} onImagePreview={handleImagePreview} mdModules={mdModules} />
+              <FlatMessageItem key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} onRetry={handleRegenerate} onEdit={handleEditMessage} onRegenerate={handleRegenerate} apiBaseUrl={apiBaseUrl} showChain={showChain} onSkipStep={handleSkipStep} onImagePreview={handleImagePreview} mdModules={mdModules} />
             ) : (
-              <MessageBubble key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} apiBaseUrl={apiBaseUrl} showChain={showChain} onSkipStep={handleSkipStep} onImagePreview={handleImagePreview} mdModules={mdModules} />
+              <MessageBubble key={msg.id} msg={msg} onAskAnswer={handleAskAnswer} onRetry={handleRegenerate} onEdit={handleEditMessage} onRegenerate={handleRegenerate} apiBaseUrl={apiBaseUrl} showChain={showChain} onSkipStep={handleSkipStep} onImagePreview={handleImagePreview} mdModules={mdModules} />
             )
           )}
 
@@ -4975,7 +5243,7 @@ export function ChatView({
                 display: "flex", alignItems: "center", gap: 6,
               }}>
                 <IconBuilding size={12} />
-                正在与「{orgList.find(o => o.id === selectedOrgId)?.name}」{selectedOrgNodeId ? ` / ${selectedOrgNodeId}` : ""}对话
+                {t("chat.orgTalkingWith", "正在与「{{org}}」{{node}}对话", { org: orgList.find(o => o.id === selectedOrgId)?.name ?? "", node: selectedOrgNodeId ? ` / ${selectedOrgNodeId}` : "" })}
                 {selectedOrgNodeId && (
                   <button
                     onClick={() => setSelectedOrgNodeId(null)}
@@ -4984,12 +5252,12 @@ export function ChatView({
                       color: "var(--muted)", fontSize: 10, padding: "0 2px",
                       display: "flex", alignItems: "center",
                     }}
-                    title="取消节点指定，改为与整个组织对话"
+                    title={t("chat.cancelNodeTarget", "取消节点指定，改为与整个组织对话")}
                   >
                     <IconX size={10} />
                   </button>
                 )}
-                {orgCommandPending && <span style={{ opacity: 0.6 }}> — 组织协调中，进度实时显示 ↓</span>}
+                {orgCommandPending && <span style={{ opacity: 0.6 }}> — {t("chat.orgCoordinating", "组织协调中，进度实时显示 ↓")}</span>}
               </div>
             )}
 
@@ -4999,7 +5267,7 @@ export function ChatView({
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               onPaste={handlePaste}
-              placeholder={orgCommandPending ? "组织正在处理中..." : orgMode ? (selectedOrgNodeId ? `输入指令发送给 ${selectedOrgNodeId}...` : "输入指令发送给组织...") : isCurrentConvStreaming ? t("chat.queueHint") : chatMode === "plan" ? `Plan ${t("chat.planMode")}` : chatMode === "ask" ? "Ask Mode - read only" : t("chat.placeholder")}
+              placeholder={orgCommandPending ? t("chat.orgProcessing", "组织正在处理中...") : orgMode ? (selectedOrgNodeId ? t("chat.orgSendToNode", "输入指令发送给 {{node}}...", { node: selectedOrgNodeId }) : t("chat.orgSendToOrg", "输入指令发送给组织...")) : isCurrentConvStreaming ? `Enter ${t("chat.queueHint")}${t("chat.commaEscStop", "，Esc 停止")}` : chatMode === "plan" ? `Plan ${t("chat.planMode")}  · ${t("chat.enterSend", "Enter 发送，Shift+Enter 换行")}` : chatMode === "ask" ? t("chat.askModeReadOnly", "Ask Mode - read only") : `${t("chat.placeholder")}  · ${t("chat.enterSendSlash", "Enter 发送，Shift+Enter 换行，/ 命令")}`}
               rows={1}
               className="chatInputTextarea"
               onInput={(e) => {
@@ -5345,14 +5613,40 @@ export function ChatView({
         </div>
       )}
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+
+      {/* Keyboard shortcuts panel */}
+      {shortcutsOpen && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)" }} onClick={() => setShortcutsOpen(false)}>
+          <div style={{ background: "var(--panel)", borderRadius: 16, padding: "24px 28px", minWidth: 340, maxWidth: 420, boxShadow: "0 24px 64px rgba(0,0,0,0.3)", border: "1px solid var(--line)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{t("chat.shortcuts", "键盘快捷键")}</div>
+            {[
+              ["Enter", t("chat.shortcutSend", "发送消息")],
+              ["Shift + Enter", t("chat.shortcutNewline", "换行")],
+              ["Esc", t("chat.shortcutStop", "停止生成 / 取消")],
+              ["Ctrl + /", t("chat.shortcutPanel", "打开此面板")],
+              ["/", t("chat.shortcutSlash", "打开斜杠命令菜单")],
+              ["↑ / ↓", t("chat.shortcutNav", "命令菜单导航")],
+            ].map(([key, desc]) => (
+              <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
+                <span style={{ fontSize: 13, opacity: 0.7 }}>{desc}</span>
+                <kbd style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, background: "var(--panel2)", border: "1px solid var(--line)", fontFamily: "monospace" }}>{key}</kbd>
+              </div>
+            ))}
+            <div style={{ marginTop: 14, textAlign: "right" }}>
+              <button onClick={() => setShortcutsOpen(false)} style={{ fontSize: 13, padding: "5px 14px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--brand)", color: "#fff", cursor: "pointer" }}>
+                {t("common.close", "关闭")}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
       {securityConfirm && createPortal(
         <SecurityConfirmModal
           data={securityConfirm}
           apiBase={apiBaseUrl}
-          onClose={() => {
-            if (securityTimerRef.current) clearInterval(securityTimerRef.current);
-            setSecurityConfirm(null);
-          }}
+          onClose={handleSecurityClose}
           timerRef={securityTimerRef}
           setData={setSecurityConfirm}
         />,

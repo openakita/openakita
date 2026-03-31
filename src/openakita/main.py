@@ -9,7 +9,9 @@ OpenAkita CLI 入口
 import openakita._ensure_utf8  # noqa: F401  # isort: skip
 
 import asyncio
+import contextlib
 import importlib
+import json
 import logging
 import os
 import subprocess
@@ -20,7 +22,6 @@ import typer
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Prompt
 from rich.table import Table
 
 from .config import settings
@@ -941,7 +942,7 @@ async def start_im_channels(agent_or_master):
 
     async def agent_handler(session, message: str) -> str:
         """通过 Agent 处理消息（运行时检查多Agent模式开关）"""
-        from .channels.gateway import format_user_friendly_error
+        from .utils.errors import format_user_friendly_error
 
         if settings.multi_agent_enabled and _orchestrator is not None:
             try:
@@ -1158,17 +1159,50 @@ async def run_interactive():
     with console.status("[bold green]正在初始化核心服务...", spinner="dots"):
         await init_core_services(agent_or_master)
 
-    # 启动 IM 通道（可选）
-    im_channels = []
-    with console.status("[bold green]正在启动 IM 通道...", spinner="dots"):
-        im_channels = await start_im_channels(agent_or_master)
+    # 启动 IM 通道 — 后台运行，不阻塞 CLI
+    async def _start_im_bg():
+        try:
+            channels = await start_im_channels(agent_or_master)
+            if channels:
+                console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(channels)}")
+        except Exception as e:
+            logger.warning(f"IM channel start failed: {e}")
 
-    if im_channels:
-        console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
-    else:
-        console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（Desktop Chat 仍可使用）")
+    _im_task = asyncio.create_task(_start_im_bg())
 
     console.print()
+
+    # ── CLI 会话恢复/创建 ──
+    import uuid as _uuid
+
+    _cli_session_file = settings.project_root / "data" / ".cli_last_session"
+    _cli_chat_id: str | None = None
+
+    if not _cli_force_new_session and _cli_session_file.exists():
+        try:
+            _saved = json.loads(_cli_session_file.read_text(encoding="utf-8"))
+            _cli_chat_id = _saved.get("chat_id")
+        except Exception:
+            _cli_chat_id = None
+
+    if not _cli_chat_id:
+        _cli_chat_id = f"cli_{_uuid.uuid4().hex[:12]}"
+
+    cli_session = None
+    if _session_manager:
+        cli_session = _session_manager.get_session(
+            channel="cli", chat_id=_cli_chat_id, user_id="cli_user",
+            create_if_missing=True,
+        )
+    if cli_session:
+        agent_or_master._cli_session = cli_session
+        msg_count = len(cli_session.context.get_messages())
+        if msg_count > 0 and not _cli_force_new_session:
+            console.print(f"[green]✓[/green] 已恢复上次会话 ({msg_count} 条消息)")
+        _cli_session_file.parent.mkdir(parents=True, exist_ok=True)
+        _cli_session_file.write_text(
+            json.dumps({"chat_id": _cli_chat_id}), encoding="utf-8"
+        )
 
     # 注册信号处理器用于优雅关闭
     _shutdown_triggered = False
@@ -1187,14 +1221,22 @@ async def run_interactive():
     _signal.signal(_signal.SIGINT, _interactive_signal_handler)
     _signal.signal(_signal.SIGTERM, _interactive_signal_handler)
 
-    try:
-        loop = asyncio.get_running_loop()
+    from .cli.input import create_cli_session, prompt_input
+    from .cli.stream_renderer import render_stream
+    from .commands.registry import CommandScope, find_command, get_commands
 
+    _cli_handled = {"help", "status", "selfcheck", "memory", "skills", "channels", "clear", "sessions", "session", "exit", "quit"}
+    cli_commands = [
+        (f"/{c.name}", c.description)
+        for c in get_commands()
+        if CommandScope.CLI in c.scope and c.name in _cli_handled
+    ]
+    pt_session, _completer = create_cli_session(commands=cli_commands)
+
+    try:
         while not shutdown_event.is_set():
             try:
-                user_input = await loop.run_in_executor(
-                    None, Prompt.ask, "[bold blue]You[/bold blue]"
-                )
+                user_input = await prompt_input(pt_session, "You> ")
 
                 if not user_input.strip():
                     continue
@@ -1232,39 +1274,131 @@ async def run_interactive():
                         continue
 
                     elif cmd == "/clear":
-                        if hasattr(agent_or_master, '_cli_session') and agent_or_master._cli_session:
-                            agent_or_master._cli_session.context.clear_messages()
+                        _new_id = f"cli_{_uuid.uuid4().hex[:12]}"
+                        if _session_manager:
+                            cli_session = _session_manager.get_session(
+                                channel="cli", chat_id=_new_id, user_id="cli_user",
+                                create_if_missing=True,
+                            )
+                            if cli_session:
+                                agent_or_master._cli_session = cli_session
+                        else:
+                            if hasattr(agent_or_master, '_cli_session') and agent_or_master._cli_session:
+                                agent_or_master._cli_session.context.clear_messages()
                         agent_or_master._conversation_history.clear()
                         agent_or_master._context.messages.clear()
-                        console.print("[green]对话历史已清空[/green]")
+                        _cli_chat_id = _new_id
+                        _cli_session_file.parent.mkdir(parents=True, exist_ok=True)
+                        _cli_session_file.write_text(
+                            json.dumps({"chat_id": _cli_chat_id}), encoding="utf-8"
+                        )
+                        console.print("[green]对话历史已清空，已开启新会话[/green]")
+                        continue
+
+                    elif cmd == "/sessions":
+                        if _session_manager:
+                            cli_sessions = sorted(
+                                _session_manager.list_sessions(channel="cli"),
+                                key=lambda s: getattr(s, "created_at", None) or "",
+                                reverse=True,
+                            )
+                            if not cli_sessions:
+                                console.print("[yellow]没有历史 CLI 会话[/yellow]")
+                            else:
+                                from rich.table import Table as _Tbl
+                                tbl = _Tbl(title="CLI 会话列表")
+                                tbl.add_column("#", style="cyan", width=4)
+                                tbl.add_column("会话 ID", style="green")
+                                tbl.add_column("消息数", justify="right")
+                                tbl.add_column("创建时间")
+                                tbl.add_column("当前", justify="center")
+                                for i, s in enumerate(cli_sessions, 1):
+                                    is_cur = "✓" if (cli_session and s.id == cli_session.id) else ""
+                                    tbl.add_row(
+                                        str(i),
+                                        s.session_key.split(":")[1][:16],
+                                        str(len(s.context.get_messages())),
+                                        s.created_at.strftime("%m-%d %H:%M") if hasattr(s, "created_at") and s.created_at else "?",
+                                        is_cur,
+                                    )
+                                console.print(tbl)
+                                console.print("[dim]输入 /session <#> 切换到对应会话[/dim]")
+                        else:
+                            console.print("[yellow]SessionManager 未启动[/yellow]")
+                        continue
+
+                    elif cmd == "/session":
+                        console.print("[yellow]用法: /session <序号>  (先用 /sessions 查看列表)[/yellow]")
+                        continue
+
+                    elif cmd.startswith("/session "):
+                        parts = cmd.split(maxsplit=1)
+                        if not _session_manager:
+                            console.print("[yellow]SessionManager 未启动[/yellow]")
+                        elif len(parts) == 2:
+                            try:
+                                idx = int(parts[1]) - 1
+                                cli_sessions = sorted(
+                                    _session_manager.list_sessions(channel="cli"),
+                                    key=lambda s: getattr(s, "created_at", None) or "",
+                                    reverse=True,
+                                )
+                                if 0 <= idx < len(cli_sessions):
+                                    target = cli_sessions[idx]
+                                    cli_session = target
+                                    agent_or_master._cli_session = target
+                                    _cli_chat_id = target.session_key.split(":")[1]
+                                    _cli_session_file.parent.mkdir(parents=True, exist_ok=True)
+                                    _cli_session_file.write_text(
+                                        json.dumps({"chat_id": _cli_chat_id}), encoding="utf-8"
+                                    )
+                                    msg_count = len(target.context.get_messages())
+                                    console.print(f"[green]已切换到会话 ({msg_count} 条消息)[/green]")
+                                else:
+                                    console.print("[red]序号超出范围[/red]")
+                            except ValueError:
+                                console.print("[red]请输入有效的会话序号[/red]")
                         continue
 
                     else:
-                        console.print(f"[red]未知命令: {cmd}[/red]")
-                        print_help()
+                        known = find_command(cmd)
+                        if known:
+                            console.print(f"[yellow]命令 /{known.name} 暂不支持 CLI，请在 Desktop 中使用[/yellow]")
+                        else:
+                            console.print(f"[red]未知命令: {cmd}[/red]")
+                            print_help()
                         continue
 
-                # 正常对话
-                with console.status("[bold green]思考中...", spinner="dots"):
-                    response = await agent_or_master.chat(user_input)
+                # 正常对话 — 流式输出
+                session_messages: list[dict] = []
+                _active_session = getattr(agent_or_master, '_cli_session', None)
+                if _active_session:
+                    session_messages = _active_session.context.get_messages()
+                elif hasattr(agent_or_master, '_context'):
+                    session_messages = agent_or_master._context.messages
 
-                # 显示响应
-                console.print()
-                console.print(
-                    Panel(
-                        Markdown(response),
-                        title=f"[bold green]{agent_name}[/bold green]",
-                        border_style="green",
-                    )
+                _sid = _active_session.id if _active_session else _cli_chat_id
+                event_stream = agent_or_master.chat_with_session_stream(
+                    message=user_input,
+                    session_messages=session_messages,
+                    session_id=_sid,
                 )
-                console.print()
 
+                await render_stream(event_stream, console, agent_name=agent_name)
+
+            except EOFError:
+                console.print("\n[yellow]再见！[/yellow]")
+                break
             except KeyboardInterrupt:
                 console.print("\n[yellow]使用 /exit 退出[/yellow]")
             except Exception as e:
                 logger.error(f"Error: {e}", exc_info=True)
                 console.print(f"[red]错误: {e}[/red]")
     finally:
+        if not _im_task.done():
+            _im_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _im_task
         with console.status("[bold yellow]正在停止服务...", spinner="dots"):
             await stop_im_channels(graceful=True, drain_timeout=30.0)
         console.print("[green]✓[/green] 服务已停止")
@@ -1359,16 +1493,23 @@ def show_skills():
         console.print(f"[red]无法加载技能列表: {e}[/red]")
 
 
+_cli_force_new_session = False
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="显示版本信息"),
+    new_session: bool = typer.Option(False, "--new", help="强制开启新 CLI 会话，不恢复上次对话"),
 ):
     """
     OpenAkita - 全能自进化AI助手
 
     直接运行进入交互模式
     """
+    global _cli_force_new_session
+    _cli_force_new_session = new_session
+
     if version:
         from . import __version__
 

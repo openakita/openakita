@@ -152,6 +152,12 @@ export type ChatArtifact = {
   size?: number;
 };
 
+export type ChatErrorInfo = {
+  message: string;
+  category: "auth" | "quota" | "timeout" | "content_filter" | "network" | "server" | "unknown";
+  raw?: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -164,6 +170,7 @@ export type ChatMessage = {
   attachments?: ChatAttachment[] | null;
   artifacts?: ChatArtifact[] | null;
   thinkingChain?: ChainGroup[] | null;
+  errorInfo?: ChatErrorInfo | null;
   timestamp: number;
   streaming?: boolean;
 };
