@@ -2,12 +2,10 @@
 媒体处理器
 
 处理各种媒体内容:
-- 语音转文字 (Speech-to-Text)
 - 图片理解 (Vision)
 - 文件内容提取 (PDF, Office, etc.)
 """
 
-import asyncio
 import logging
 import mimetypes
 from pathlib import Path
@@ -23,82 +21,23 @@ class MediaHandler:
     媒体处理器
 
     提供统一的媒体处理接口，支持:
-    - 语音转文字
     - 图片描述/理解
     - 文档内容提取
     """
 
-    # 支持 .en 专用模型的 Whisper 尺寸（large 无 .en 变体）
-    _EN_MODEL_SIZES = {"tiny", "base", "small", "medium"}
-
     def __init__(
         self,
         brain: Any | None = None,
-        whisper_model: str = "medium",
-        whisper_language: str = "zh",
         enable_ocr: bool = True,
     ):
         """
         Args:
             brain: Brain 实例（用于图片理解）
-            whisper_model: Whisper 模型大小 (tiny, base, small, medium, large)
-            whisper_language: 语音识别语言 (zh/en/auto/其他语言代码)
             enable_ocr: 是否启用 OCR
         """
         self.brain = brain
-        self.whisper_language = whisper_language.lower().strip()
-        # 英语且模型尺寸有 .en 变体时，自动切换到更小更快的 .en 模型
-        if self.whisper_language == "en" and whisper_model in self._EN_MODEL_SIZES:
-            self.whisper_model = f"{whisper_model}.en"
-        else:
-            self.whisper_model = whisper_model
         self.enable_ocr = enable_ocr
-
-        # 延迟加载的模型
-        self._whisper = None
-        self._whisper_loaded = False
-        self._whisper_unavailable = False  # ImportError → 本进程内不再重试
         self._ocr = None
-
-    async def preload_whisper(self) -> bool:
-        """
-        预加载 Whisper 模型
-
-        在系统启动时调用，避免第一次使用时的延迟
-
-        Returns:
-            是否成功加载
-        """
-        if self._whisper_loaded or self._whisper_unavailable:
-            return self._whisper_loaded
-
-        try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._load_whisper_sync)
-            return self._whisper is not None
-        except Exception as e:
-            logger.error(f"Failed to preload Whisper: {e}")
-            return False
-
-    def _load_whisper_sync(self) -> None:
-        """同步加载 Whisper 模型"""
-        if self._whisper_loaded or self._whisper_unavailable:
-            return
-
-        try:
-            import whisper
-
-            logger.info(f"Loading Whisper model '{self.whisper_model}'...")
-            self._whisper = whisper.load_model(self.whisper_model)
-            self._whisper_loaded = True
-            logger.info(f"Whisper model '{self.whisper_model}' loaded successfully")
-        except ImportError:
-            from openakita.tools._import_helper import import_or_hint
-            hint = import_or_hint("whisper")
-            logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
-            self._whisper_unavailable = True
-        except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}")
 
     async def process(self, media: MediaFile) -> MediaFile:
         """
@@ -117,9 +56,7 @@ class MediaHandler:
             return media
 
         try:
-            if media.is_audio:
-                await self.transcribe_audio(media)
-            elif media.is_image:
+            if media.is_image:
                 await self.describe_image(media)
             elif media.is_document:
                 await self.extract_text(media)
@@ -130,70 +67,6 @@ class MediaHandler:
             logger.error(f"Failed to process media {media.id}: {e}")
 
         return media
-
-    async def transcribe_audio(self, media: MediaFile) -> str:
-        """
-        语音转文字
-
-        使用 OpenAI Whisper 或云服务
-
-        Args:
-            media: 音频文件
-
-        Returns:
-            转写文本
-        """
-        if not media.local_path:
-            raise ValueError("Media has no local path")
-
-        logger.info(f"Transcribing audio: {media.filename}")
-
-        try:
-            # 尝试使用本地 Whisper
-            transcription = await self._transcribe_with_whisper(media.local_path)
-        except Exception as e:
-            logger.warning(f"Local Whisper failed: {e}, trying fallback")
-            # 回退：使用简单的描述
-            transcription = f"[语音消息，时长 {media.duration or '未知'} 秒]"
-
-        media.transcription = transcription
-        return transcription
-
-    async def _transcribe_with_whisper(self, audio_path: str) -> str:
-        """使用本地 Whisper 转写"""
-        if not self._whisper_loaded and not self._whisper_unavailable:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._load_whisper_sync)
-
-        if self._whisper is None:
-            raise RuntimeError(
-                "Whisper model not available. "
-                "Make sure openai-whisper is installed: pip install openai-whisper"
-            )
-
-        from openakita.channels.media.audio_utils import (
-            ensure_whisper_compatible,
-            load_wav_as_numpy,
-        )
-
-        compatible_path = ensure_whisper_compatible(audio_path)
-
-        kwargs: dict = {}
-        if self.whisper_language and self.whisper_language != "auto":
-            kwargs["language"] = self.whisper_language
-
-        def _run_whisper():
-            # 对已转换的 WAV 尝试直接 numpy 加载，绕过 ffmpeg 依赖
-            if compatible_path.endswith(".wav"):
-                audio_array = load_wav_as_numpy(compatible_path)
-                if audio_array is not None:
-                    return self._whisper.transcribe(audio_array, **kwargs)
-            return self._whisper.transcribe(compatible_path, **kwargs)
-
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _run_whisper)
-
-        return result["text"]
 
     async def describe_image(self, media: MediaFile) -> str:
         """

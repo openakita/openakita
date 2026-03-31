@@ -69,7 +69,6 @@ _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
     (("im_chain_push",), "IM/思维链推送"),
     (("progress_timeout", "hard_timeout"), "Agent/超时"),
     (("log_",), "日志"),
-    (("whisper_",), "语音识别"),
     (("http_proxy", "https_proxy", "all_proxy", "force_ipv4"), "代理"),
     (("model_download_",), "模型下载"),
     (("embedding_", "search_backend"), "Embedding/记忆搜索"),
