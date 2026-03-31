@@ -98,7 +98,6 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [replyText, setReplyText] = useState<Record<string, string>>({});
-  const [replyOpen, setReplyOpen] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState<string | null>(null);
   const [replyError, setReplyError] = useState<string | null>(null);
   const replyEndRef = useRef<Record<string, HTMLDivElement | null>>({});
@@ -120,30 +119,33 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
     setRefreshing(true);
     try {
       await safeFetch(`${apiBaseUrl}/api/feedback-status/batch`, { method: "POST" });
+    } catch {
+      // batch update failed, still refresh local records below
+    }
+    try {
       await fetchRecords();
-      if (expandedIds.size > 0) {
-        for (const eid of expandedIds) {
-          try {
-            const res = await safeFetch(`${apiBaseUrl}/api/feedback-status/${eid}`);
-            const data = await res.json();
-            setDetails((prev) => ({ ...prev, [eid]: data }));
-            if (data.status) {
-              setRecords((prev) => prev.map((r) =>
-                r.report_id === eid
-                  ? { ...r, cached_status: data.status, has_unread: false }
-                  : r
-              ));
-            }
-          } catch {
-            // detail refresh failed, keep stale data
-          }
-        }
-      }
     } catch {
       // silently fail
-    } finally {
-      setRefreshing(false);
     }
+    if (expandedIds.size > 0) {
+      for (const eid of expandedIds) {
+        try {
+          const res = await safeFetch(`${apiBaseUrl}/api/feedback-status/${eid}`);
+          const data = await res.json();
+          setDetails((prev) => ({ ...prev, [eid]: data }));
+          if (data.status) {
+            setRecords((prev) => prev.map((r) =>
+              r.report_id === eid
+                ? { ...r, cached_status: data.status }
+                : r
+            ));
+          }
+        } catch {
+          // detail refresh failed, keep stale data
+        }
+      }
+    }
+    setRefreshing(false);
   }, [apiBaseUrl, fetchRecords, expandedIds]);
 
   const batchRefreshRef = useRef(batchRefresh);
@@ -263,7 +265,6 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
         signal: AbortSignal.timeout(30_000),
       });
       setReplyText((prev) => ({ ...prev, [reportId]: "" }));
-      setReplyOpen((prev) => { const n = new Set(prev); n.delete(reportId); return n; });
       const newReply: DeveloperReply = {
         author: "user",
         body: text,

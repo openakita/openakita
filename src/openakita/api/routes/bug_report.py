@@ -1280,8 +1280,14 @@ async def get_feedback_status(report_id: str):
                 data = resp.json()
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 replies = data.get("developer_replies", [])
+                external = [
+                    r for r in replies
+                    if r.get("source") != "user_reply"
+                ]
                 last_reply = (
-                    replies[-1].get("created_at") if replies else None
+                    external[-1].get("created_at")
+                    if external
+                    else None
                 )
                 await feedback_store.update_status(
                     report_id,
