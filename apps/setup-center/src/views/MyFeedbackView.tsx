@@ -541,6 +541,13 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                           <p className="text-[13px] text-muted-foreground">{t("myFeedback.noReplies")}</p>
                         ) : null}
 
+                        {!TERMINAL_STATUSES.includes(rec.cached_status) &&
+                          (!detail.developer_replies || !detail.developer_replies.some((r) => r.source !== "user_reply")) && (
+                          <p className="text-[11px] text-muted-foreground/70 text-center mt-1">
+                            {t("myFeedback.pendingHint")}
+                          </p>
+                        )}
+
                         <div ref={(el) => { replyEndRef.current[rec.report_id] = el; }} />
                       </div>
                     ) : rec.has_token ? (

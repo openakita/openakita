@@ -1405,6 +1405,7 @@
     "repliesTitle": "回复动态",
     "originalDescription": "我",
     "noReplies": "暂无回复，我们会尽快处理",
+    "pendingHint": "我们正在处理中，请耐心等候。您也可以留言催促处理进度",
     "refreshing": "正在刷新状态...",
     "viewFeedback": "查看我的反馈",
     "bug": "问题报告",

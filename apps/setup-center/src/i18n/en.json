@@ -1405,6 +1405,7 @@
     "repliesTitle": "Replies",
     "originalDescription": "Me",
     "noReplies": "No replies yet. We'll get back to you soon.",
+    "pendingHint": "We're working on it. Feel free to leave a message to follow up.",
     "refreshing": "Refreshing status...",
     "viewFeedback": "View My Feedback",
     "bug": "Bug Report",
