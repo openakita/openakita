@@ -704,7 +704,6 @@ fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'stat
     // browser (playwright + browser-use + langchain-openai) 已内置到 core 包，不再作为外置模块
     vec![
         ("vector-memory", "向量记忆增强", "让 Akita 拥有长期记忆，能根据语义搜索历史对话。体积较大（约 2.5GB，含 PyTorch），安装耗时较长", &["sentence-transformers", "chromadb", "regex>=2023.6.3"], 2500, "core"),
-        ("whisper", "语音识别", "支持语音消息自动转文字，无需联网即可识别。体积较大（约 2.5GB，含 PyTorch），安装耗时较长", &["openai-whisper", "static-ffmpeg"], 2500, "core"),
     ]
 }
 
@@ -1097,7 +1096,7 @@ fn check_environment() -> EnvironmentCheck {
     let disk_usage_mb = dir_size_bytes(&root) / (1024 * 1024);
 
     // venv 是打包后应用运行时的关键组件：
-    // - venv: 用于 pip install 模块（vector-memory/whisper 等）和工具执行
+    // - venv: 用于 pip install 模块（vector-memory 等）和工具执行
     // Python 基座改为安装包内置 _internal，不再依赖 runtime 下载链路。
     let _bundled_exists = bundled_backend_dir().exists();
 

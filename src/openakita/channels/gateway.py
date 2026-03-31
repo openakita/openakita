@@ -17,7 +17,6 @@ import contextlib
 import logging
 import os
 import random
-import sys
 import time as _time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -843,24 +842,17 @@ class MessageGateway:
     - 将回复发送回通道
     """
 
-    # 支持 .en 专用模型的 Whisper 尺寸（large 无 .en 变体）
-    _EN_MODEL_SIZES = {"tiny", "base", "small", "medium"}
-
     def __init__(
         self,
         session_manager: SessionManager,
         agent_handler: AgentHandler | None = None,
-        whisper_model: str = "base",
-        whisper_language: str = "zh",
         stt_client: "STTClient | None" = None,
     ):
         """
         Args:
             session_manager: 会话管理器
             agent_handler: Agent 处理函数 (session, message) -> response
-            whisper_model: Whisper 模型大小 (tiny, base, small, medium, large)，默认 base
-            whisper_language: 语音识别语言 (zh/en/auto/其他语言代码)
-            stt_client: 在线 STT 客户端（可选，用于替代本地 Whisper）
+            stt_client: 在线 STT 客户端（可选）
         """
         self.session_manager = session_manager
         self.agent_handler = agent_handler
@@ -896,21 +888,6 @@ class MessageGateway:
 
         # 插件 hook 注册表（由 main.py 在构造 gateway 之后注入）
         self._plugin_hooks = None
-
-        # Whisper 语音识别模型（延迟加载或启动时预加载）
-        self._whisper_language = whisper_language.lower().strip()
-        # 英语且模型尺寸有 .en 变体时，自动切换到更小更快的 .en 模型
-        if self._whisper_language == "en" and whisper_model in self._EN_MODEL_SIZES:
-            self._whisper_model_name = f"{whisper_model}.en"
-            logger.info(
-                f"Whisper language=en → auto-selected English-only model: "
-                f"{self._whisper_model_name}"
-            )
-        else:
-            self._whisper_model_name = whisper_model
-        self._whisper = None
-        self._whisper_loaded = False
-        self._whisper_unavailable = False  # ImportError → 本进程内不再重试
 
         # ==================== 消息中断机制 ====================
         # 会话级中断队列 {session_key: asyncio.PriorityQueue[InterruptMessage]}
@@ -1538,9 +1515,6 @@ class MessageGateway:
         self._running = True
         self._accepting = True
 
-        # 预加载 Whisper 语音识别模型（在后台线程中执行，不阻塞启动）
-        asyncio.create_task(self._preload_whisper_async())
-
         # 启动所有适配器
         started = []
         failed = []
@@ -1686,14 +1660,6 @@ class MessageGateway:
                     )
                     break
 
-    async def _preload_whisper_async(self) -> None:
-        """异步预加载 Whisper 模型"""
-        try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._load_whisper_model)
-        except Exception as e:
-            logger.warning(f"Failed to preload Whisper model: {e}")
-
     def _ensure_ffmpeg(self) -> None:
         """确保 ffmpeg 可用（优先使用系统已有的，否则自动下载静态版本）"""
         import shutil
@@ -1782,73 +1748,6 @@ class MessageGateway:
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _do_extract)
-
-    def _load_whisper_model(self) -> None:
-        """加载 Whisper 模型（在线程池中执行）"""
-        if self._whisper_loaded or self._whisper_unavailable:
-            return
-
-        # 模块可能在服务运行期间安装，路径尚未注入 sys.path。
-        # 在导入前尝试刷新一次（idempotent，不会重复添加已有路径）。
-        # 必须在 _ensure_ffmpeg 之前执行，因为 static_ffmpeg 也在 whisper 模块中。
-        if "whisper" not in sys.modules:
-            try:
-                from openakita.runtime_env import inject_module_paths_runtime
-
-                inject_module_paths_runtime()
-            except Exception:
-                pass
-
-        # 确保 ffmpeg 可用（Whisper 依赖 ffmpeg 解码音频）
-        self._ensure_ffmpeg()
-
-        try:
-            import hashlib
-            import os
-
-            import whisper
-            from whisper import _MODELS
-
-            model_name = self._whisper_model_name
-
-            # 获取模型缓存路径
-            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "whisper")
-            model_file = os.path.join(cache_dir, f"{model_name}.pt")
-
-            # 检查本地模型 hash（仅提醒，不阻塞）
-            if os.path.exists(model_file) and os.path.getsize(model_file) > 1000000:
-                model_url = _MODELS.get(model_name, "")
-                if model_url:
-                    url_parts = model_url.split("/")
-                    expected_hash = url_parts[-2] if len(url_parts) >= 2 else ""
-
-                    if expected_hash and len(expected_hash) > 5:
-                        sha256 = hashlib.sha256()
-                        with open(model_file, "rb") as f:
-                            for chunk in iter(lambda: f.read(65536), b""):
-                                sha256.update(chunk)
-                        local_hash = sha256.hexdigest()
-
-                        if not local_hash.startswith(expected_hash):
-                            logger.info(
-                                f"Whisper model '{model_name}' may have updates available. "
-                                f"Delete {model_file} to re-download if needed."
-                            )
-
-            # 正常加载
-            logger.info(f"Loading Whisper model '{model_name}'...")
-            self._whisper = whisper.load_model(model_name)
-            self._whisper_loaded = True
-            logger.info(f"Whisper model '{model_name}' loaded successfully")
-
-        except ImportError:
-            from openakita.tools._import_helper import import_or_hint
-
-            hint = import_or_hint("whisper")
-            logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
-            self._whisper_unavailable = True
-        except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
 
     async def drain(self, timeout: float = 30.0) -> None:
         """
@@ -3231,15 +3130,17 @@ class MessageGateway:
                         logger.info(f"Voice downloaded: {voice.local_path}")
 
                 if voice.local_path and not voice.transcription:
-                    transcription = await asyncio.wait_for(
-                        self._transcribe_voice_local(voice.local_path), timeout=120
-                    )
+                    transcription = None
+                    if self.stt_client and self.stt_client.is_available:
+                        transcription = await asyncio.wait_for(
+                            self.stt_client.transcribe(voice.local_path), timeout=120
+                        )
                     if transcription:
                         voice.transcription = transcription
                         logger.info(f"Voice transcribed: {transcription}")
                     else:
-                        voice.transcription = "[语音识别失败]"
-            except (asyncio.TimeoutError, TimeoutError):
+                        voice.transcription = "[语音识别失败，请配置在线 STT 端点]"
+            except TimeoutError:
                 logger.error(f"Voice processing timed out: {voice.filename}")
                 voice.transcription = "[语音处理超时]"
             except Exception as e:
@@ -3338,65 +3239,6 @@ class MessageGateway:
                 logger.warning(f"[Interrupt] _build_pending_files failed for {fil.local_path}: {e}")
         return files_data
 
-    async def _transcribe_voice_local(self, audio_path: str) -> str | None:
-        """
-        使用本地 Whisper 进行语音转文字
-
-        使用预加载的模型，避免每次都重新加载
-        """
-        import asyncio
-
-        try:
-            # 检查文件是否存在
-            if not Path(audio_path).exists():
-                logger.error(f"Audio file not found: {audio_path}")
-                return None
-
-            # 确保模型已加载
-            if not self._whisper_loaded and not self._whisper_unavailable:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._load_whisper_model)
-
-            if self._whisper is None:
-                if not self._whisper_unavailable:
-                    logger.error("Whisper model not available")
-                return None
-
-            # 在线程池中运行转写（避免阻塞事件循环）
-            whisper_lang = self._whisper_language
-
-            def transcribe():
-                from openakita.channels.media.audio_utils import (
-                    ensure_whisper_compatible,
-                    load_wav_as_numpy,
-                )
-
-                compatible_path = ensure_whisper_compatible(audio_path)
-
-                kwargs = {}
-                if whisper_lang and whisper_lang != "auto":
-                    kwargs["language"] = whisper_lang
-
-                # 对已转换的 WAV 尝试直接 numpy 加载，绕过 ffmpeg 依赖
-                if compatible_path.endswith(".wav"):
-                    audio_array = load_wav_as_numpy(compatible_path)
-                    if audio_array is not None:
-                        result = self._whisper.transcribe(audio_array, **kwargs)
-                        return result["text"].strip()
-
-                result = self._whisper.transcribe(compatible_path, **kwargs)
-                return result["text"].strip()
-
-            # 异步执行
-            loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, transcribe)
-
-            return text if text else None
-
-        except Exception as e:
-            logger.error(f"Voice transcription failed: {e}", exc_info=True)
-            return None
-
     async def _send_typing(self, message: UnifiedMessage) -> None:
         """发送正在输入状态"""
         adapter = self._adapters.get(message.channel)
@@ -3471,7 +3313,7 @@ class MessageGateway:
             input_text = message.plain_text
             _has_voice = bool(message.content.voices)
 
-            # 处理语音文件 - 双路策略：保留原始音频 + Whisper 转写
+            # 处理语音文件 - 双路策略：保留原始音频 + STT 转写
             audio_data_list = []
             for voice in message.content.voices:
                 # 双路保留：始终存储原始音频路径到 pending_audio

@@ -1918,7 +1918,7 @@ function MainApp() {
           "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
           "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
           "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
-          "WHISPER_MODEL", "WHISPER_LANGUAGE", "GITHUB_TOKEN",
+          "GITHUB_TOKEN",
         ];
       case "agent":
         return [
@@ -2897,7 +2897,7 @@ function MainApp() {
       "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
       "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
       "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
-      "WHISPER_MODEL", "WHISPER_LANGUAGE", "GITHUB_TOKEN",
+      "GITHUB_TOKEN",
     ];
 
     const list = skillsDetail || [];
@@ -3188,10 +3188,7 @@ function MainApp() {
       "LOG_FORMAT",
       "LOG_TO_CONSOLE",
       "LOG_TO_FILE",
-      // github/whisper
       "GITHUB_TOKEN",
-      "WHISPER_MODEL",
-      "WHISPER_LANGUAGE",
       // memory / embedding
       "MEMORY_MODE",
       "EMBEDDING_MODEL",
@@ -3609,18 +3606,6 @@ function MainApp() {
 
             <div className="divider" />
             <div className="grid3">
-              {FC({ k: "WHISPER_MODEL", label: "WHISPER_MODEL", help: "tiny/base/small/medium/large", options: [
-                { value: "tiny", label: "tiny (~39MB)" },
-                { value: "base", label: "base (~74MB)" },
-                { value: "small", label: "small (~244MB)" },
-                { value: "medium", label: "medium (~769MB)" },
-                { value: "large", label: "large (~1.5GB)" },
-              ], placeholder: "base" })}
-              {FS({ k: "WHISPER_LANGUAGE", label: "WHISPER_LANGUAGE", options: [
-                { value: "zh", label: "中文 (zh)" },
-                { value: "en", label: "English (en)" },
-                { value: "auto", label: "Auto (自动检测)" },
-              ] })}
               {FT({ k: "GITHUB_TOKEN", label: "GITHUB_TOKEN", placeholder: "", type: "password", help: "用于搜索/下载技能" })}
               {FT({ k: "DATABASE_PATH", label: "DATABASE_PATH", placeholder: "data/agent.db" })}
             </div>
