@@ -4302,3 +4302,52 @@ body > div[id*="sm-" i] {
 }
 .plugin-readme-content strong { color: var(--fg); }
 
+/* Message action buttons (edit / regenerate) — hover to show */
+.msgActionBtn {
+  opacity: 0;
+  transition: opacity 0.15s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.msgBubbleWrap:hover .msgActionBtn,
+.flatMsgItem:hover .msgActionBtn {
+  opacity: 0.6;
+}
+.msgActionBtn:hover {
+  opacity: 1 !important;
+}
+
+/* Quick start cards — hover effect */
+.quickStartCard:hover {
+  border-color: var(--brand) !important;
+  background: rgba(37, 99, 235, 0.06) !important;
+}
+
+/* Tool running animation — subtle left-border pulse */
+.chainNarrToolRunning {
+  border-left: 2px solid var(--brand);
+  padding-left: 6px;
+  animation: toolRunPulse 2s ease-in-out infinite;
+}
+@keyframes toolRunPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
+.chainToolElapsed {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  margin-left: 4px;
+  animation: toolDot 1.2s ease-in-out infinite;
+}
+@keyframes toolDot {
+  0%, 100% { transform: scale(0.8); opacity: 0.4; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+
