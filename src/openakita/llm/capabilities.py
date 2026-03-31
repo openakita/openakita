@@ -412,6 +412,7 @@ MODEL_CAPABILITIES = {
             "thinking_only": True,
         },
         # DashScope 第三方模型 — MiniMax（thinking-only，不接受 enable_thinking=False）
+        "MiniMax-M2.7": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
         "MiniMax-M2.5": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
         "MiniMax-M2.1": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
         "MiniMax-M2": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True, "thinking_only": True},
@@ -422,6 +423,24 @@ MODEL_CAPABILITIES = {
     "minimax": {
         # MiniMax 官方（不支持 /v1/models 端点）
         # M2+ 系列均为 thinking-only 模型，不接受 enable_thinking=False
+        # ⚠ 其他提供商（如 SiliconFlow）托管的 MiniMax 模型可能支持 enable_thinking 切换，
+        # 应在对应提供商的 section 中单独声明，不要在此处做跨提供商假设。
+        "minimax-m2.7": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+            "thinking_only": True,
+        },
+        "minimax-m2.7-highspeed": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+            "thinking_only": True,
+        },
         "minimax-m2.5": {
             "text": True,
             "vision": False,
@@ -726,6 +745,8 @@ URL_TO_PROVIDER = {
     "api.deepseek.com": "deepseek",
     "api.moonshot.cn": "moonshot",
     "api.minimax.chat": "minimax",
+    "api.minimaxi.com": "minimax",   # MiniMax 中国区（registry: minimax-cn）
+    "api.minimax.io": "minimax",     # MiniMax 国际区（registry: minimax-int）
     "open.bigmodel.cn": "zhipu",
     "bigmodel.cn": "zhipu",
     "api.z.ai": "zhipu",
@@ -737,6 +758,17 @@ URL_TO_PROVIDER = {
     "api.longcat.chat": "longcat",
     "apis.iflow.cn": "iflow",
     "ark.cn-beijing.volces.com": "volcengine",
+}
+
+
+# Registry slug → MODEL_CAPABILITIES key 的别名映射。
+# 同一家提供商可能有多个 registry（如中国区/国际区），但模型能力相同，
+# 通过别名映射避免在 MODEL_CAPABILITIES 中重复声明。
+_PROVIDER_SLUG_ALIASES: dict[str, str] = {
+    "minimax-cn": "minimax",
+    "minimax-int": "minimax",
+    "dashscope-intl": "dashscope",
+    "siliconflow-intl": "siliconflow",
 }
 
 
@@ -773,9 +805,12 @@ def infer_capabilities(
 
     model_lower = model_name.lower()
 
+    # 将 registry slug 别名解析为 MODEL_CAPABILITIES 的 key
+    _caps_key = _PROVIDER_SLUG_ALIASES.get(provider_slug, provider_slug) if provider_slug else None
+
     # 2. 按服务商+模型名精确匹配
-    if provider_slug and provider_slug in MODEL_CAPABILITIES:
-        provider_models = MODEL_CAPABILITIES[provider_slug]
+    if _caps_key and _caps_key in MODEL_CAPABILITIES:
+        provider_models = MODEL_CAPABILITIES[_caps_key]
 
         # 精确匹配
         if model_name in provider_models:
@@ -877,7 +912,8 @@ def get_all_providers() -> list[str]:
 
 def get_models_by_provider(provider_slug: str) -> list[str]:
     """获取指定服务商的所有已知模型"""
-    return list(MODEL_CAPABILITIES.get(provider_slug, {}).keys())
+    key = _PROVIDER_SLUG_ALIASES.get(provider_slug, provider_slug)
+    return list(MODEL_CAPABILITIES.get(key, {}).keys())
 
 
 def supports_capability(model_name: str, capability: str, provider_slug: str | None = None) -> bool:

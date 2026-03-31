@@ -867,23 +867,26 @@ class BrowserManager:
         except Exception:
             return False
 
+    _STOP_TIMEOUT: int = 10  # 每个 close/stop 调用的超时秒数
+
     async def _stop_internal(self) -> None:
         """实际停止流程（不加锁，由调用方保证锁）。"""
         prev = self.state
         self.state = BrowserState.STOPPING
-        try:
-            if self.using_user_chrome:
-                if self._context:
-                    await self._context.close()
-            else:
-                if self._page:
-                    await self._page.close()
-                if self._context:
-                    await self._context.close()
-                if self._browser:
-                    await self._browser.close()
-        except Exception as e:
-            logger.warning(f"Error stopping browser: {e}")
+        resources = (
+            [("context", self._context)]
+            if self.using_user_chrome
+            else [("page", self._page), ("context", self._context), ("browser", self._browser)]
+        )
+        for name, resource in resources:
+            if resource is None:
+                continue
+            try:
+                await asyncio.wait_for(resource.close(), timeout=self._STOP_TIMEOUT)
+            except TimeoutError:
+                logger.warning(f"Browser {name}.close() timed out after {self._STOP_TIMEOUT}s")
+            except Exception as e:
+                logger.warning(f"Error closing browser {name}: {e}")
 
         await self._cleanup_playwright()
         self._page = None
@@ -908,7 +911,7 @@ class BrowserManager:
     async def _cleanup_playwright(self) -> None:
         if self._playwright:
             try:
-                await self._playwright.stop()
-            except Exception:
-                pass
+                await asyncio.wait_for(self._playwright.stop(), timeout=self._STOP_TIMEOUT)
+            except (TimeoutError, Exception):
+                logger.warning("Playwright driver stop timed out or failed, releasing reference")
             self._playwright = None

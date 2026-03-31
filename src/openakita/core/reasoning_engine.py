@@ -635,6 +635,19 @@ class ReasoningEngine:
             self._last_working_messages = working_messages
             state.iteration = iteration
 
+            # 终态防护：并发路径（如 Orchestrator 取消子 agent）可能已将 state 推到终态
+            if state.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                logger.info(
+                    f"[ReAct] Task already in terminal state {state.status.value} "
+                    f"at iteration {iteration}, exiting loop"
+                )
+                _reason = f"terminal_{state.status.value}"
+                self._save_react_trace(
+                    react_trace, conversation_id, session_type, _reason, _trace_started_at,
+                )
+                tracer.end_trace(metadata={"result": _reason, "iterations": iteration})
+                return ""
+
             # 检查取消
             if state.cancelled:
                 logger.info(f"[ReAct] Task cancelled at iteration start: {state.cancel_reason}")
@@ -1612,6 +1625,19 @@ class ReasoningEngine:
             for _iteration in range(max_iterations):
                 self._last_working_messages = working_messages
                 state.iteration = _iteration
+
+                # --- 终态防护 ---
+                if state.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                    logger.info(
+                        f"[ReAct-Stream] Task already in terminal state {state.status.value} "
+                        f"at iteration {_iteration}, exiting loop"
+                    )
+                    self._save_react_trace(
+                        react_trace, conversation_id, session_type,
+                        f"terminal_{state.status.value}", _trace_started_at,
+                    )
+                    yield {"type": "done"}
+                    return
 
                 # --- 取消检查 ---
                 if state.cancelled:
