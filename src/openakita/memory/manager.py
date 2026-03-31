@@ -421,6 +421,8 @@ class MemoryManager:
     async def extract_on_topic_change(self) -> int:
         """主题切换时，从已积累的对话中提取记忆，然后重置 turns 缓冲。
 
+        带 30s 超时保护，防止后台提取任务挂起。
+
         Returns:
             提取并保存的记忆条数
         """
@@ -430,7 +432,10 @@ class MemoryManager:
 
         try:
             cited = self._consume_cited_memories()
-            items, scores = await self.extractor.extract_from_conversation(turns, cited_memories=cited or None)
+            items, scores = await asyncio.wait_for(
+                self.extractor.extract_from_conversation(turns, cited_memories=cited or None),
+                timeout=30.0,
+            )
 
             if scores:
                 self._apply_citation_scores(scores)
@@ -444,6 +449,10 @@ class MemoryManager:
             # Reset turn buffer — new topic starts fresh
             self._session_turns.clear()
             return saved
+        except TimeoutError:
+            logger.warning("[Memory] Topic-change extraction timed out (30s), skipping")
+            self._session_turns.clear()
+            return 0
         except Exception as e:
             logger.warning(f"[Memory] Topic-change extraction failed: {e}")
             return 0
@@ -663,8 +672,11 @@ class MemoryManager:
 
                 # Track 1: User profile extraction (+ citation scoring in same LLM call)
                 try:
-                    items, scores = await self.extractor.extract_from_conversation(
-                        turns, cited_memories=cited or None,
+                    items, scores = await asyncio.wait_for(
+                        self.extractor.extract_from_conversation(
+                            turns, cited_memories=cited or None,
+                        ),
+                        timeout=30.0,
                     )
                     if scores:
                         useful = self._apply_citation_scores(scores)
@@ -682,7 +694,10 @@ class MemoryManager:
 
                 # Track 2: Task experience extraction
                 try:
-                    exp_items = await self.extractor.extract_experience_from_conversation(turns)
+                    exp_items = await asyncio.wait_for(
+                        self.extractor.extract_experience_from_conversation(turns),
+                        timeout=30.0,
+                    )
                     exp_saved = 0
                     for item in exp_items:
                         mid = await self._save_extracted_item(item, episode_id=ep_id)

@@ -137,6 +137,8 @@ class PromptAssembler:
         memory_keywords: list[str] | None = None,
         model_display_name: str = "",
         session_context: dict | None = None,
+        mode: str = "agent",
+        skip_catalogs: bool = False,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -152,6 +154,8 @@ class PromptAssembler:
             tools_enabled: 是否启用工具（CHAT 轻量路径传 False 跳过 Catalogs 层）
             model_display_name: 当前 LLM 模型显示名称（动态注入）
             session_context: 会话元数据（session_id、通道、类型等）
+            mode: 当前模式 (ask/plan/agent)
+            skip_catalogs: 是否跳过 Catalogs 层（CHAT 意图使用）
 
         Returns:
             编译后的系统提示词
@@ -189,6 +193,8 @@ class PromptAssembler:
             memory_keywords=memory_keywords,
             model_display_name=model_display_name,
             session_context=session_context,
+            mode=mode,
+            skip_catalogs=skip_catalogs,
         )
 
     def _build_compiled_sync(

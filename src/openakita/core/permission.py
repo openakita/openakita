@@ -185,6 +185,67 @@ def merge(*rulesets: Ruleset) -> Ruleset:
     return [rule for rs in rulesets for rule in rs]
 
 
+# ==================== Content-Level Permission Check ====================
+
+def check_tool_permission(
+    tool_name: str,
+    tool_input: dict,
+    *rulesets: Ruleset,
+) -> str:
+    """检查工具调用权限（支持内容级匹配）。
+
+    参考 Claude Code 的 hasPermissionsToUseToolInner 设计:
+    1. deny 规则 → 拒绝
+    2. ask 规则 → 需要确认
+    3. tool.checkPermissions() → 工具自检
+    4. allow 规则 → 放行
+    5. 默认 → ask
+
+    Args:
+        tool_name: 工具名称
+        tool_input: 工具输入参数
+        rulesets: 权限规则集
+
+    Returns:
+        "allow" | "deny" | "ask"
+    """
+    permission = _tool_to_permission(tool_name)
+
+    # Extract path from tool input for path-level matching
+    path = tool_input.get("path", "") or tool_input.get("file_path", "")
+    command = tool_input.get("command", "")
+
+    # Check with path if available
+    pattern = path or command or "*"
+    rule = evaluate(permission, pattern, *rulesets)
+
+    # Content-level checks for dangerous patterns
+    if tool_name == "run_shell" and command:
+        if _is_dangerous_command(command):
+            deny_rules = [r for r in merge(*rulesets) if r.action == "deny" and r.permission in ("*", "run_shell")]
+            if not deny_rules:
+                return "ask"
+            return "deny"
+
+    return rule.action
+
+
+def _is_dangerous_command(command: str) -> bool:
+    """检查命令是否包含危险模式。"""
+    dangerous_patterns = [
+        "rm -rf /",
+        "chmod 777",
+        "curl | bash",
+        "wget | bash",
+        "eval $(curl",
+        "> /dev/sd",
+        "mkfs.",
+        "dd if=",
+    ]
+    cmd_lower = command.lower()
+    return any(p in cmd_lower for p in dangerous_patterns)
+
+
 # ==================== Preset Rulesets ====================
 
 DEFAULT_RULESET: Ruleset = from_config({

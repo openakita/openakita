@@ -139,6 +139,12 @@ class ToolExecutor:
         # Current mode for permission checks (set by ReasoningEngine before tool loop)
         self._current_mode: str = "agent"
 
+    # 并发安全工具: 这些工具的只读操作可以并行执行
+    _CONCURRENCY_SAFE_TOOLS: set[str] = {
+        "read_file", "list_files", "search_files", "web_fetch",
+        "get_time", "read_resource", "list_resources",
+    }
+
     # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
     # 值为 0 表示不设硬超时（由工具自身的进度监控负责，如 Orchestrator 的 idle-timeout）
     _TOOL_HARD_TIMEOUT: int = 120
@@ -160,6 +166,46 @@ class ToolExecutor:
             return self._handler_registry.get_handler_name_for_tool(tool_name)
         except Exception:
             return None
+
+    def _is_concurrency_safe(self, tool_name: str, tool_input: dict) -> bool:
+        """判断工具在给定输入下是否并发安全。
+
+        参考 Claude Code 的 isConcurrencySafe(input) 设计:
+        按工具名 + 输入内容判断，而非全局开关。
+        """
+        if tool_name in self._CONCURRENCY_SAFE_TOOLS:
+            return True
+        handler_name = self.get_handler_name(tool_name)
+        if handler_name in self._handler_locks:
+            return False
+        return False
+
+    def _partition_tool_calls(self, tool_calls: list[dict]) -> list[dict]:
+        """将工具调用分区为并发安全批次和串行批次。
+
+        连续的并发安全工具合批并行，非安全工具独立串行。
+        每个 tool_call 标记 _idx 用于排序恢复。
+        """
+        batches: list[dict] = []
+        current_safe: list[dict] = []
+
+        for i, tc in enumerate(tool_calls):
+            tc_with_idx = {**tc, "_idx": i}
+            name = tc.get("name", "")
+            inp = tc.get("input", {})
+
+            if self._is_concurrency_safe(name, inp):
+                current_safe.append(tc_with_idx)
+            else:
+                if current_safe:
+                    batches.append({"calls": current_safe, "concurrent": True})
+                    current_safe = []
+                batches.append({"calls": [tc_with_idx], "concurrent": False})
+
+        if current_safe:
+            batches.append({"calls": current_safe, "concurrent": True})
+
+        return batches
 
     async def _execute_with_cancel(
         self,
@@ -636,12 +682,23 @@ class ToolExecutor:
 
             return idx, tool_result, tool_name if success else None, receipts
 
-        # 执行
+        # 执行: 使用分区策略（并发安全工具可并行，其他串行）
         if parallel_enabled and len(tool_calls) > 1:
-            # 并行执行
-            tasks = [_run_one(tc, i) for i, tc in enumerate(tool_calls)]
-            results = await asyncio.gather(*tasks)
-            # 按原始顺序排序
+            batches = self._partition_tool_calls(tool_calls)
+            results = []
+            for batch in batches:
+                if state and state.cancelled:
+                    break
+                if batch["concurrent"] and len(batch["calls"]) > 1:
+                    tasks = [_run_one(tc, tc["_idx"]) for tc in batch["calls"]]
+                    batch_results = await asyncio.gather(*tasks)
+                    results.extend(batch_results)
+                else:
+                    for tc in batch["calls"]:
+                        if state and state.cancelled:
+                            break
+                        result = await _run_one(tc, tc["_idx"])
+                        results.append(result)
             results = sorted(results, key=lambda x: x[0])
         else:
             # 串行执行

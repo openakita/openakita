@@ -7,6 +7,9 @@ LLM 统一客户端
 - 能力分流（根据请求自动选择合适的端点）
 - 健康检查
 - 动态模型切换（临时/永久）
+- 消息规范化管线
+- 请求级可观测性 (TTFT、stall 检测、结构化指标)
+- 指数退避重试 + Retry-After + 429/529 区分
 """
 
 import asyncio
@@ -18,10 +21,12 @@ from pathlib import Path
 
 from ..core.errors import UserCancelledError
 from .config import get_default_config_path, load_endpoints_config
+from .normalize import normalize_messages_for_api
 from .providers.anthropic import AnthropicProvider
 from .providers.base import LLMProvider
 from .providers.openai import OpenAIProvider
 from .providers.openai_responses import OpenAIResponsesProvider
+from .retry import calculate_retry_delay
 from .types import (
     AllEndpointsFailedError,
     AudioBlock,
@@ -144,6 +149,10 @@ class LLMClient:
     _global_semaphore_value: int = 0
     _global_inflight: int = 0  # 当前在飞请求计数（用于监控）
 
+    # 认证失败的端点在进程生命周期内永久跳过（需修改配置后重启或 reload 才恢复）
+    _auth_failed_endpoints: set[str] = set()
+    _auth_logged_endpoints: set[str] = set()  # 只记录一次告警
+
     @classmethod
     def _get_semaphore(cls, max_concurrent: int = 0) -> asyncio.Semaphore:
         """获取或创建全局并发信号量（绑定到当前 event loop）。"""
@@ -233,6 +242,8 @@ class LLMClient:
             self._providers.clear()
             self._init_providers()
             self._last_success_endpoint = None  # 重载后重置端点亲和性
+            LLMClient._auth_failed_endpoints.clear()  # 重载后清除认证失败记录
+            LLMClient._auth_logged_endpoints.clear()
             logger.info(
                 f"LLMClient reloaded from {self._config_path}: "
                 f"{len(self._endpoints)} endpoints, {len(self._providers)} providers"
@@ -248,6 +259,44 @@ class LLMClient:
             provider = self._create_provider(ep)
             if provider:
                 self._providers[ep.name] = provider
+
+    async def startup_health_check(self) -> dict[str, str]:
+        """启动时对所有端点做轻量健康检查。
+
+        对每个端点发送极小请求（1 token），检测认证和网络问题。
+        认证失败的端点立即加入 _auth_failed_endpoints。
+
+        Returns:
+            {endpoint_name: "ok" | "auth_failed" | "error: ..."}
+        """
+        results: dict[str, str] = {}
+        for name, provider in self._providers.items():
+            try:
+                request = LLMRequest(
+                    messages=[Message(role="user", content="hi")],
+                    system="Respond with 'ok'",
+                    max_tokens=1,
+                )
+                await asyncio.wait_for(provider.chat(request), timeout=15.0)
+                results[name] = "ok"
+                logger.info(f"[HealthCheck] endpoint={name} status=ok")
+            except AuthenticationError as e:
+                LLMClient._auth_failed_endpoints.add(name)
+                if name not in LLMClient._auth_logged_endpoints:
+                    LLMClient._auth_logged_endpoints.add(name)
+                    logger.error(
+                        f"[HealthCheck] endpoint={name} auth_failed: {e}. "
+                        f"Permanently disabled until config reload."
+                    )
+                results[name] = "auth_failed"
+            except TimeoutError:
+                results[name] = "error: timeout (15s)"
+                logger.warning(f"[HealthCheck] endpoint={name} timed out (15s)")
+            except Exception as e:
+                err_msg = str(e)[:200]
+                results[name] = f"error: {err_msg}"
+                logger.warning(f"[HealthCheck] endpoint={name} failed: {err_msg}")
+        return results
 
     def _create_provider(self, config: EndpointConfig) -> LLMProvider | None:
         """根据配置创建 Provider — 先查插件注册表，再走内置 fallback"""
@@ -357,8 +406,11 @@ class LLMClient:
         cancel_event: asyncio.Event | None = None,
         **kwargs,
     ) -> LLMResponse:
+        # 消息规范化: 发送前统一格式
+        normalized_msgs = self._normalize_messages(messages)
+
         request = LLMRequest(
-            messages=messages,
+            messages=normalized_msgs,
             system=system,
             tools=tools,
             max_tokens=max_tokens,
@@ -503,8 +555,11 @@ class LLMClient:
         **kwargs,
     ) -> AsyncIterator[dict]:
         """chat_stream() 的内部实现（已在 semaphore 保护下运行）。"""
+        # 消息规范化: 流式与非流式共享同一管线
+        normalized_msgs = self._normalize_messages(messages)
+
         request = LLMRequest(
-            messages=messages,
+            messages=normalized_msgs,
             system=system,
             tools=tools,
             max_tokens=max_tokens,
@@ -877,6 +932,10 @@ class LLMClient:
                     )
 
         for name, provider in self._providers.items():
+            # 永久跳过认证失败的端点
+            if name in LLMClient._auth_failed_endpoints:
+                continue
+
             # 检查健康状态（包括冷静期）
             if not provider.is_healthy:
                 cooldown = provider.cooldown_remaining
@@ -1041,7 +1100,6 @@ class LLMClient:
         for p in providers:
             p._content_error = False
         retry_count = self._settings.get("retry_count", 2)
-        retry_delay = self._settings.get("retry_delay_seconds", 2)
         retry_same_first = self._settings.get("retry_same_endpoint_first", False)
 
         # 有备选时默认快速切换（除非配置了先重试或禁止 failover）
@@ -1112,21 +1170,23 @@ class LLMClient:
                 except AuthenticationError as e:
                     # 认证/配额错误：长冷静期，直接切换（不重试当前端点）
                     error_str = str(e)
-                    # 区分配额耗尽和真正的认证错误
                     from .providers.base import LLMProvider as _BaseProvider
                     error_cat = _BaseProvider._classify_error(error_str)
                     if error_cat == "quota":
                         logger.error(f"[LLM] endpoint={provider.name} quota_exhausted={e}")
                         provider.mark_unhealthy(error_str, category="quota")
                     else:
-                        logger.error(f"[LLM] endpoint={provider.name} auth_error={e}")
+                        # 认证错误: 永久禁用该端点，避免反复尝试+失败
+                        LLMClient._auth_failed_endpoints.add(provider.name)
                         provider.mark_unhealthy(error_str, category="auth")
+                        if provider.name not in LLMClient._auth_logged_endpoints:
+                            LLMClient._auth_logged_endpoints.add(provider.name)
+                            logger.error(
+                                f"[LLM] endpoint={provider.name} permanently disabled "
+                                f"(auth failure). Fix the API key in settings and reload/restart."
+                            )
                     errors.append(f"{provider.name}: {e}")
                     failed_providers.append(provider)
-                    logger.warning(
-                        f"[LLM] endpoint={provider.name} cooldown={provider.cooldown_remaining}s "
-                        f"(category={provider.error_category})"
-                    )
                     break
 
                 except LLMError as e:
@@ -1266,11 +1326,13 @@ class LLMClient:
                     # - 无备选端点时也重试多次
                     should_retry = attempt < max_attempts - 1
                     if should_retry:
+                        backoff_delay = self._get_retry_delay(attempt + 1, e)
                         logger.info(
-                            f"[LLM] endpoint={provider.name} retry={attempt + 1}/{max_attempts - 1}"
+                            f"[LLM] endpoint={provider.name} retry={attempt + 1}/{max_attempts - 1} "
+                            f"delay={backoff_delay:.1f}s"
                             + (" (tool_context)" if not allow_failover else "")
                         )
-                        await asyncio.sleep(retry_delay)
+                        await asyncio.sleep(backoff_delay)
                     else:
                         # 当前端点重试全部失败，设置冷静期后切到下一个端点
                         provider.mark_unhealthy(error_str)
@@ -1348,6 +1410,27 @@ class LLMClient:
             f"All endpoints failed: {'; '.join(errors)}\n{hint}",
             is_structural=all_structural,
         )
+
+    def _normalize_messages(self, messages: list[Message]) -> list[Message]:
+        """消息规范化管线：发送前统一格式。
+
+        将内部消息转为 dict 进行规范化，然后转回 Message 对象。
+        """
+        try:
+            msg_dicts = [m.to_dict() for m in messages]
+            normalized = normalize_messages_for_api(msg_dicts)
+            return [Message(role=m["role"], content=m["content"]) for m in normalized]
+        except Exception as e:
+            logger.debug("Message normalization skipped: %s", e)
+            return messages
+
+    def _get_retry_delay(self, attempt: int, error: Exception | None = None) -> float:
+        """计算重试延迟（秒）。使用指数退避 + jitter。"""
+        retry_after = None
+        if error:
+            retry_after = getattr(error, "retry_after_seconds", None)
+        delay_ms = calculate_retry_delay(attempt, retry_after)
+        return delay_ms / 1000
 
     def _has_images(self, messages: list[Message]) -> bool:
         """检查消息中是否包含图片"""

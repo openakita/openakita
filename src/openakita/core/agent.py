@@ -1784,6 +1784,14 @@ class Agent:
             except Exception:
                 pass
 
+        _mode = "agent"
+        _skip_catalogs = False
+        if intent:
+            from .intent_analyzer import IntentType
+            if intent.intent == IntentType.CHAT:
+                _mode = "ask"
+                _skip_catalogs = True
+
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description, session_type=session_type, context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
@@ -1791,6 +1799,8 @@ class Agent:
             memory_keywords=_mem_keywords,
             model_display_name=model_display,
             session_context=session_context,
+            mode=_mode,
+            skip_catalogs=_skip_catalogs,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -3069,13 +3079,27 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     f"[Session:{session_id}] Topic change detected, "
                     f"inserted context boundary"
                 )
-                # Extract memories from the previous topic before starting new one
+                # Fire-and-forget: schedule extraction in background, never block the response path
                 try:
-                    saved = await self.memory_manager.extract_on_topic_change()
-                    if saved:
-                        logger.info(f"[Session:{session_id}] Topic-change extraction: {saved} memories")
+                    import asyncio as _aio
+                    _loop = _aio.get_running_loop()
+                    _extraction_task = _loop.create_task(
+                        self.memory_manager.extract_on_topic_change()
+                    )
+                    _extraction_task.add_done_callback(
+                        lambda t: (
+                            logger.info(f"[Session:{session_id}] Topic-change extraction: {t.result()} memories")
+                            if not t.cancelled() and t.exception() is None and t.result()
+                            else (
+                                logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {t.exception()}")
+                                if not t.cancelled() and t.exception()
+                                else None
+                            )
+                        )
+                    )
+                    logger.info(f"[Session:{session_id}] Topic-change extraction scheduled (background)")
                 except Exception as _tc_err:
-                    logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {_tc_err}")
+                    logger.debug(f"[Session:{session_id}] Topic-change extraction scheduling failed: {_tc_err}")
 
         # 9.7 同步更新 Scratchpad 当前任务 (skip for CHAT intent to avoid overwriting task focus)
         _new_task = compiler_summary or message[:200]
@@ -4063,16 +4087,26 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     )
                     content = getattr(response, "content", None)
                     _raw_parts: list[str] = []
+                    _has_tool_use = False
                     if isinstance(content, list):
                         for block in content:
                             text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
                             if text:
                                 _raw_parts.append(text)
+                            block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                            if block_type == "tool_use":
+                                _has_tool_use = True
                     elif content:
                         _raw_parts.append(str(content))
                     _raw_text = "".join(_raw_parts)
                     _reply_text = clean_llm_response(_raw_text)
                     if _reply_text:
+                        yield {"type": "text_delta", "content": _reply_text}
+                    elif _has_tool_use:
+                        _reply_text = "好的，已收到你的信息。"
+                        yield {"type": "text_delta", "content": _reply_text}
+                    else:
+                        _reply_text = "抱歉，模型暂时无法生成回复，请稍后再试。"
                         yield {"type": "text_delta", "content": _reply_text}
                 except Exception as e:
                     logger.error(f"[ChatLightweight/Stream] LLM call failed: {e}")
@@ -5036,6 +5070,7 @@ NEXT: 建议的下一步（如有）"""
                 )
 
                 content = getattr(response, "content", None)
+                _has_tool_use = False
                 if isinstance(content, list):
                     text_parts = []
                     for block in content:
@@ -5043,6 +5078,9 @@ NEXT: 建议的下一步（如有）"""
                             text_parts.append(block.text)
                         elif isinstance(block, dict) and "text" in block:
                             text_parts.append(block["text"])
+                        block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                        if block_type == "tool_use":
+                            _has_tool_use = True
                     raw = "\n".join(text_parts) or ""
                 else:
                     raw = str(content or "")
@@ -5050,6 +5088,9 @@ NEXT: 建议的下一步（如有）"""
                 cleaned = clean_llm_response(raw)
                 if cleaned:
                     return cleaned
+
+                if _has_tool_use:
+                    return "好的，已收到你的信息。"
 
                 if attempt < self._LIGHTWEIGHT_EMPTY_MAX_RETRIES:
                     logger.warning(
@@ -5655,6 +5696,23 @@ NEXT: 建议的下一步（如有）"""
                                 tool_calls.append({"id": tc.id, "name": tc.name, "input": tc.input})
                             logger.warning(
                                 f"[Agent] Recovered {len(_embedded)} tool calls from thinking content"
+                            )
+                except Exception:
+                    pass
+
+            # 防御层：从 text_content 中解析文本格式的工具调用
+            # 部分模型（如 qwen3.5-plus）不支持原生 tool_use，而是以文本形式输出
+            if not tool_calls and text_content:
+                try:
+                    from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
+                    if has_text_tool_calls(text_content):
+                        clean_text, _embedded = parse_text_tool_calls(text_content)
+                        if _embedded:
+                            for tc in _embedded:
+                                tool_calls.append({"id": tc.id, "name": tc.name, "input": tc.input})
+                            text_content = clean_text
+                            logger.info(
+                                f"[Agent] Parsed {len(_embedded)} text-format tool calls from response text"
                             )
                 except Exception:
                     pass

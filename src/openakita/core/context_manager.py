@@ -223,6 +223,56 @@ class ContextManager:
 
         return groups
 
+    def pre_request_cleanup(self, messages: list[dict]) -> list[dict]:
+        """请求前轻量清理 (microcompact)。
+
+        零 LLM 调用成本: 过期工具结果清空、大结果预览、旧 thinking 移除。
+        在 compress_if_needed 之前调用。
+        """
+        from .microcompact import microcompact
+        return microcompact(messages)
+
+    def snip_old_segments(self, messages: list[dict]) -> tuple[list[dict], int]:
+        """直接丢弃最早的对话段 (History Snip)。
+
+        零 LLM 调用成本，适用于超长对话。
+        """
+        from .microcompact import snip_old_segments
+        return snip_old_segments(messages)
+
+    async def reactive_compact(
+        self,
+        messages: list[dict],
+        *,
+        system_prompt: str = "",
+        tools: list | None = None,
+        conversation_id: str | None = None,
+    ) -> list[dict]:
+        """API 返回 413/prompt-too-long 后的紧急压缩。
+
+        比 compress_if_needed 更激进: 先 snip 再压缩，确保能放进上下文窗口。
+        """
+        logger.warning("[ReactiveCompact] 413/overflow triggered, performing emergency compaction")
+
+        # Step 1: History snip (zero cost)
+        messages, snipped = self.snip_old_segments(messages)
+        if snipped > 0:
+            logger.info(f"[ReactiveCompact] Snipped {snipped} messages")
+
+        # Step 2: Microcompact
+        messages = self.pre_request_cleanup(messages)
+
+        # Step 3: If still too large, run full compress with tighter budget
+        max_tokens = self.get_max_context_tokens(conversation_id=conversation_id)
+        tighter_budget = int(max_tokens * 0.7)  # 30% more aggressive
+        return await self.compress_if_needed(
+            messages,
+            system_prompt=system_prompt,
+            tools=tools,
+            max_tokens=tighter_budget,
+            conversation_id=conversation_id,
+        )
+
     async def compress_if_needed(
         self,
         messages: list[dict],
@@ -234,7 +284,12 @@ class ContextManager:
         conversation_id: str | None = None,
     ) -> list[dict]:
         """
-        如果上下文接近限制，执行压缩。
+        如果上下文接近限制，执行压缩 (autocompact)。
+
+        三层压缩策略:
+        - Layer 0 (microcompact): 调用方在请求前手动调用 pre_request_cleanup()
+        - Layer 1 (autocompact): 本方法 — 阈值触发的 LLM 摘要压缩
+        - Layer 2 (reactive): API 返回 413 时调用 reactive_compact()
 
         策略:
         0. 压缩前: 快速规则提取 + 通知 MemoryManager
