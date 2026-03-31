@@ -29,6 +29,7 @@ const PetView = lazy(() => import("./views/PetView").then(m => ({ default: m.Pet
 import { FeedbackModal } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
+import { MyFeedbackView } from "./views/MyFeedbackView";
 import { LLMView } from "./views/LLMView";
 import { StatusView } from "./views/StatusView";
 import type {
@@ -319,6 +320,7 @@ function MainApp() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const multiAgentEnabled = true;
   const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
@@ -1708,6 +1710,20 @@ function MainApp() {
 
   useEffect(() => { fetchDisabledViews(); }, [fetchDisabledViews]);
 
+  // ── Unread feedback count polling ──
+  useEffect(() => {
+    if (!serviceStatus?.running) return;
+    const poll = async () => {
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/feedback-unread-count`, { signal: AbortSignal.timeout(5000) });
+        const data = await res.json();
+        setUnreadFeedbackCount(data.unread_count ?? 0);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const timer = setInterval(poll, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [serviceStatus?.running, dataMode, apiBaseUrl]);
 
   const toggleViewDisabled = useCallback(async (viewName: string) => {
     const next = disabledViews.includes(viewName)
@@ -4976,6 +4992,15 @@ function MainApp() {
         </div>
       );
     }
+    if (view === "my_feedback") {
+      return (
+        <MyFeedbackView
+          apiBaseUrl={httpApiBase()}
+          serviceRunning={serviceStatus?.running ?? false}
+          onOpenFeedbackModal={() => setBugReportOpen(true)}
+        />
+      );
+    }
     switch (stepId) {
       case "llm":
         return renderLLM();
@@ -5147,10 +5172,10 @@ function MainApp() {
         desktopVersion={desktopVersion}
         backendVersion={backendVersion}
         serviceRunning={serviceStatus?.running ?? false}
-        onBugReport={() => setBugReportOpen(true)}
         onRefreshStatus={async () => { await refreshStatus(undefined, undefined, true); }}
         isWeb={IS_WEB}
         httpApiBase={httpApiBase()}
+        unreadFeedbackCount={unreadFeedbackCount}
       />
 
       <main className="main">
@@ -5562,6 +5587,7 @@ function MainApp() {
         open={bugReportOpen}
         onClose={() => setBugReportOpen(false)}
         apiBase={httpApiBase()}
+        onNavigateToMyFeedback={() => setView("my_feedback")}
       />
     </div>
     </EnvFieldContext.Provider>

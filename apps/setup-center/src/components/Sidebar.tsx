@@ -27,11 +27,11 @@ export type SidebarProps = {
   desktopVersion: string;
   backendVersion: string | null;
   serviceRunning: boolean;
-  onBugReport: () => void;
   onRefreshStatus: () => Promise<void>;
   isWeb?: boolean;
   mobileOpen?: boolean;
   httpApiBase?: string;
+  unreadFeedbackCount?: number;
 };
 
 const stepIcons: Partial<Record<StepId, React.ReactNode>> = {
@@ -93,6 +93,7 @@ export function Sidebar({
   storeVisible,
   desktopVersion, backendVersion, serviceRunning,
   onBugReport, onRefreshStatus, isWeb, mobileOpen, httpApiBase,
+  unreadFeedbackCount,
 }: SidebarProps) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
@@ -394,6 +395,25 @@ export function Sidebar({
               <IconBug size={12} />
               <span className="feedbackText" style={{ fontSize: 11 }}>{t("feedback.trigger")}</span>
             </span>
+            {serviceRunning && (
+              <span
+                onClick={() => onViewChange("my_feedback")}
+                title={t("sidebar.myFeedback")}
+                style={{ cursor: "pointer", opacity: 1, color: view === "my_feedback" ? "var(--fg)" : "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 2, position: "relative" }}
+                onMouseEnter={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".myFeedbackText"); if (s) s.style.textDecoration = "underline"; }}
+                onMouseLeave={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".myFeedbackText"); if (s) s.style.textDecoration = "none"; }}
+              >
+                <IconBug size={12} />
+                <span className="myFeedbackText" style={{ fontSize: 11 }}>{t("sidebar.myFeedback")}</span>
+                {(unreadFeedbackCount ?? 0) > 0 && (
+                  <span style={{
+                    position: "absolute", top: -4, right: -6,
+                    width: 7, height: 7, borderRadius: "50%",
+                    background: "#ef4444",
+                  }} />
+                )}
+              </span>
+            )}
             <span
               onClick={() => onViewChange("docs")}
               style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer" }}
@@ -446,6 +466,22 @@ export function Sidebar({
             >
               <IconBug size={14} />
             </span>
+            {serviceRunning && (
+              <span
+                onClick={() => onViewChange("my_feedback")}
+                title={t("sidebar.myFeedback")}
+                style={{ color: view === "my_feedback" ? "var(--fg)" : "var(--accent, #5B8DEF)", opacity: view === "my_feedback" ? 1 : 0.5, display: "flex", cursor: "pointer", position: "relative" }}
+              >
+                <IconBug size={14} />
+                {(unreadFeedbackCount ?? 0) > 0 && (
+                  <span style={{
+                    position: "absolute", top: -2, right: -2,
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: "#ef4444",
+                  }} />
+                )}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
             <span

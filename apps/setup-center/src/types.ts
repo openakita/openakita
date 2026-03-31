@@ -94,7 +94,7 @@ export type Step = {
   desc: string;
 };
 
-export type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "token_stats" | "mcp" | "scheduler" | "memory" | "dashboard" | "agent_manager" | "agent_store" | "skill_store" | "org_editor" | "pixel_office" | "identity" | "docs" | "security" | "plugins" | `plugin_app:${string}`;
+export type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "token_stats" | "mcp" | "scheduler" | "memory" | "dashboard" | "agent_manager" | "agent_store" | "skill_store" | "org_editor" | "pixel_office" | "identity" | "docs" | "security" | "plugins" | "my_feedback" | `plugin_app:${string}`;
 
 export type PluginUIApp = {
   id: string;

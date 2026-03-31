@@ -9,9 +9,14 @@ requests for authentication, rate-limiting, and pre-signed URL generation.
 The actual ZIP upload goes directly from the client to OSS via pre-signed URL.
 
 Endpoints:
-  POST /prepare         — Validate captcha, rate-limit, return pre-signed upload URL
-  POST /complete/{id}   — Verify upload succeeded, create GitHub Issue
-  GET  /health          — Health check
+  POST /prepare           — Validate captcha, rate-limit, return pre-signed upload URL
+  POST /complete/{id}     — Verify upload succeeded, create GitHub Issue, return feedback_token
+  GET  /status/{id}       — Query single feedback status by report_id + token
+  POST /status/batch      — Batch query feedback status (up to 50 items)
+  POST /reply/{id}        — User reply via bot proxy (token + rate limit + GitHub comment)
+  POST /webhook/github    — Receive GitHub Issue events (comment/close/label)
+  GET  /unsubscribe/{id}  — Email unsubscribe
+  GET  /health            — Health check
 
 Environment variables (set in FC console, never in source code):
   OSS_ENDPOINT           — Internal endpoint, e.g. https://oss-cn-hangzhou-internal.aliyuncs.com
@@ -23,17 +28,24 @@ Environment variables (set in FC console, never in source code):
   OSS_ACCESS_KEY_SECRET  — RAM user AccessKey Secret
   GITHUB_TOKEN           — Fine-grained PAT (Issues:Write on target repo)
   GITHUB_REPO            — e.g. openakita/openakita
+  GITHUB_WEBHOOK_SECRET  — Webhook secret for HMAC-SHA256 signature verification
   CAPTCHA_SCENE_ID       — 人机验证 2.0「场景ID」(optional, skips verification if empty)
-  NOTIFY_EMAIL           — (optional) email for notifications
+  NOTIFY_EMAIL           — (optional) dev email for internal notifications
   RESEND_API_KEY         — (optional) Resend API key for email
+  GITHUB_PAT_LOGIN       — (optional) GitHub username of the PAT, for webhook dedup
+  PUBLIC_URL             — (optional) public URL of this FC function, used in unsubscribe links
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import html
 import json
 import logging
 import os
 import re
+import secrets
 from datetime import datetime, timezone
 
 import oss2
@@ -159,8 +171,6 @@ def _verify_captcha(verify_param: str) -> bool:
         return True
 
     import base64
-    import hashlib
-    import hmac
     import urllib.parse
     import uuid as _uuid
 
@@ -298,13 +308,16 @@ def _send_notification(
     report_id: str, title: str, summary: str,
     report_type: str, issue_url: str | None,
 ) -> None:
+    """Send internal dev notification when a new feedback is submitted."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     email = os.environ.get("NOTIFY_EMAIL", "")
     if not api_key or not email:
         return
     type_label = "Bug Report" if report_type == "bug" else "Feature Request"
     truncated = (summary[:800] + "...") if len(summary) > 800 else summary
-    issue_line = f'<p><a href="{issue_url}">View GitHub Issue</a></p>' if issue_url else ""
+    safe_title = html.escape(title)
+    safe_truncated = html.escape(truncated)
+    issue_line = f'<p><a href="{html.escape(issue_url)}">View GitHub Issue</a></p>' if issue_url else ""
     try:
         requests.post(
             "https://api.resend.com/emails",
@@ -314,17 +327,146 @@ def _send_notification(
                 "to": [email],
                 "subject": f"[{type_label}] {title}",
                 "html": (
-                    f"<h2>{type_label}: {title}</h2>"
-                    f"<p><b>Report ID:</b> {report_id}</p>"
+                    f"<h2>{type_label}: {safe_title}</h2>"
+                    f"<p><b>Report ID:</b> {html.escape(report_id)}</p>"
                     f"<p><b>Time:</b> {datetime.now(timezone.utc).isoformat()}</p>"
                     f"{issue_line}"
-                    f"<hr/><pre style='white-space:pre-wrap;font-size:13px;'>{truncated}</pre>"
+                    f"<hr/><pre style='white-space:pre-wrap;font-size:13px;'>{safe_truncated}</pre>"
                 ),
             },
             timeout=10,
         )
     except Exception:
         pass
+
+
+def _send_user_reply_notification(
+    report_id: str, feedback_token: str, user_email: str,
+    title: str, comment_author: str, comment_body: str,
+) -> None:
+    """Send user-facing email when a developer replies to their feedback."""
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    if not api_key or not user_email:
+        return
+
+    fc_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+    unsubscribe_url = f"{fc_url}/unsubscribe/{report_id}?token={feedback_token}" if fc_url else ""
+    unsub_html = (
+        f'<p style="color:#999;font-size:12px;margin-top:30px;">'
+        f'不想再收到此反馈的通知？<a href="{unsubscribe_url}">点此退订</a> / '
+        f'<a href="{unsubscribe_url}">Unsubscribe</a></p>'
+    ) if unsubscribe_url else ""
+
+    truncated_body = (comment_body[:1200] + "...") if len(comment_body) > 1200 else comment_body
+    safe_title = html.escape(title)
+    safe_author = html.escape(comment_author)
+    safe_body = html.escape(truncated_body)
+
+    try:
+        requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "from": "OpenAkita Feedback <onboarding@resend.dev>",
+                "to": [user_email],
+                "subject": f"[OpenAkita] 您的反馈有新回复: {title}",
+                "html": (
+                    f"<h2>您的反馈有新回复 / New Reply on Your Feedback</h2>"
+                    f"<p><b>反馈标题:</b> {safe_title}</p>"
+                    f"<p><b>回复者:</b> {safe_author}</p>"
+                    f"<hr/>"
+                    f"<pre style='white-space:pre-wrap;font-size:13px;'>{safe_body}</pre>"
+                    f"<hr/>"
+                    f"<p style='color:#666;font-size:13px;'>"
+                    f"您可以在 OpenAkita 设置中心的「我的反馈」页面查看完整进度。<br/>"
+                    f"You can view the full progress in the 'My Feedback' page of OpenAkita Setup Center.</p>"
+                    f"{unsub_html}"
+                ),
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logger.warning("Failed to send user reply notification to %s: %s", user_email, e)
+
+
+# ---------------------------------------------------------------------------
+# OSS index for fast report_id → date lookups
+# ---------------------------------------------------------------------------
+
+
+def _write_index_entry(
+    bucket: oss2.Bucket, report_id: str, report_date: str, feedback_token: str,
+) -> None:
+    """Write a small index object: _index/{report_id}.json → {date, token}."""
+    index_key = f"_index/{report_id}.json"
+    data = {"date": report_date, "feedback_token": feedback_token}
+    try:
+        bucket.put_object(index_key, json.dumps(data).encode())
+    except Exception as e:
+        logger.error("Failed to write index entry %s: %s", index_key, e)
+
+
+def _read_index_entry(bucket: oss2.Bucket, report_id: str) -> dict | None:
+    """Read the index entry for a report_id. Returns {date, feedback_token} or None."""
+    index_key = f"_index/{report_id}.json"
+    try:
+        obj = bucket.get_object(index_key)
+        return json.loads(obj.read().decode("utf-8"))
+    except oss2.exceptions.NoSuchKey:
+        return None
+    except Exception as e:
+        logger.error("Failed to read index entry %s: %s", index_key, e)
+        return None
+
+
+def _read_metadata(bucket: oss2.Bucket, report_id: str, report_date: str) -> dict | None:
+    """Read metadata.json for a given report."""
+    meta_key = f"feedback/{report_date}/{report_id}/metadata.json"
+    try:
+        obj = bucket.get_object(meta_key)
+        return json.loads(obj.read().decode("utf-8"))
+    except oss2.exceptions.NoSuchKey:
+        return None
+    except Exception as e:
+        logger.error("Failed to read metadata %s: %s", meta_key, e)
+        return None
+
+
+def _write_metadata(bucket: oss2.Bucket, report_id: str, report_date: str, metadata: dict) -> bool:
+    meta_key = f"feedback/{report_date}/{report_id}/metadata.json"
+    try:
+        bucket.put_object(meta_key, json.dumps(metadata, ensure_ascii=False, indent=2).encode())
+        return True
+    except Exception as e:
+        logger.error("Failed to write metadata %s: %s", meta_key, e)
+        return False
+
+
+def _sanitize_status(metadata: dict) -> dict:
+    """Extract only the fields safe to return to the user (no IP, no system_info, no token)."""
+    replies = metadata.get("developer_replies", [])
+    latest_reply_at = replies[-1].get("created_at") if replies else None
+    return {
+        "report_id": metadata.get("id", ""),
+        "title": metadata.get("title", ""),
+        "type": metadata.get("type", "bug"),
+        "status": metadata.get("status", "open"),
+        "labels": metadata.get("labels", []),
+        "created_at": metadata.get("created_at", ""),
+        "completed_at": metadata.get("completed_at"),
+        "resolved_at": metadata.get("resolved_at"),
+        "github_issue_url": metadata.get("github_issue_url"),
+        "developer_replies": [
+            {
+                "author": r.get("author", ""),
+                "body": r.get("body", ""),
+                "created_at": r.get("created_at", ""),
+                "source": r.get("source", "developer"),
+            }
+            for r in replies
+        ],
+        "latest_reply_at": latest_reply_at,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +523,24 @@ def handler(event, context):
     if complete_match and method == "POST":
         return _handle_complete(evt, complete_match.group(1))
 
+    if path == "/status/batch" and method == "POST":
+        return _handle_status_batch(evt)
+
+    status_match = re.match(r"^/status/([a-zA-Z0-9_-]+)$", path)
+    if status_match and method == "GET":
+        return _handle_status_single(evt, status_match.group(1))
+
+    if path == "/webhook/github" and method == "POST":
+        return _handle_github_webhook(evt)
+
+    reply_match = re.match(r"^/reply/([a-zA-Z0-9_-]+)$", path)
+    if reply_match and method == "POST":
+        return _handle_reply(evt, reply_match.group(1))
+
+    unsubscribe_match = re.match(r"^/unsubscribe/([a-zA-Z0-9_-]+)$", path)
+    if unsubscribe_match and method == "GET":
+        return _handle_unsubscribe(evt, unsubscribe_match.group(1))
+
     return _error("Not found", 404)
 
 
@@ -426,6 +586,8 @@ def _handle_prepare(evt: dict) -> dict:
     summary = body.get("summary", "")
     system_info = body.get("system_info", "")
     captcha_param = body.get("captcha_verify_param", "")
+    contact_email = body.get("contact_email", "")
+    contact_wechat = body.get("contact_wechat", "")
     client_ip = _get_client_ip(evt)
 
     if not report_id or not re.match(r"^[a-zA-Z0-9_-]+$", report_id):
@@ -456,7 +618,13 @@ def _handle_prepare(evt: dict) -> dict:
         "status": "open",
         "ip": client_ip,
         "date": date,
+        "contact_email": contact_email[:200] if contact_email else "",
+        "contact_wechat": contact_wechat[:100] if contact_wechat else "",
+        "email_unsubscribed": False,
+        "developer_replies": [],
+        "labels": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "resolved_at": None,
     }
 
     bucket = _get_bucket()
@@ -499,7 +667,6 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
 
     bucket = _get_bucket()
     zip_key = f"feedback/{report_date}/{report_id}/report.zip"
-    meta_key = f"feedback/{report_date}/{report_id}/metadata.json"
 
     # 1. Verify the ZIP was actually uploaded
     try:
@@ -511,10 +678,8 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
         return _error("Report ZIP not found in storage. Upload may have failed.", 404)
 
     # 2. Read existing metadata
-    try:
-        meta_obj = bucket.get_object(meta_key)
-        metadata = json.loads(meta_obj.read().decode("utf-8"))
-    except Exception:
+    metadata = _read_metadata(bucket, report_id, report_date)
+    if not metadata:
         metadata = {"id": report_id, "date": report_date}
 
     # 3. Get ZIP size
@@ -524,7 +689,11 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
     except Exception:
         pass
 
-    # 4. Create GitHub Issue
+    # 4. Generate feedback_token for user-side status queries
+    feedback_token = secrets.token_urlsafe(24)
+    metadata["feedback_token"] = feedback_token
+
+    # 5. Create GitHub Issue (embed report_id for webhook cross-referencing)
     issue_url = _create_github_issue(
         report_id=report_id,
         report_type=metadata.get("type", "bug"),
@@ -539,13 +708,13 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
 
     metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-    # 5. Update metadata
-    try:
-        bucket.put_object(meta_key, json.dumps(metadata, ensure_ascii=False, indent=2).encode())
-    except Exception:
-        pass
+    # 6. Update metadata
+    _write_metadata(bucket, report_id, report_date, metadata)
 
-    # 6. Send notification
+    # 7. Write to OSS index for fast lookups (avoids scanning all date folders)
+    _write_index_entry(bucket, report_id, report_date, feedback_token)
+
+    # 8. Send dev notification
     _send_notification(
         report_id, metadata.get("title", ""),
         metadata.get("summary", ""), metadata.get("type", "bug"), issue_url,
@@ -554,5 +723,385 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
     return _json_response({
         "status": "ok",
         "report_id": report_id,
+        "feedback_token": feedback_token,
         "issue_url": issue_url,
     })
+
+
+# ---------------------------------------------------------------------------
+# GET /status/{id}?token=xxx — single feedback status query
+# ---------------------------------------------------------------------------
+
+
+def _handle_status_single(evt: dict, report_id: str) -> dict:
+    qs = evt.get("queryParameters", {}) or {}
+    token = qs.get("token", "")
+    if not token:
+        return _error("Missing token parameter", 401)
+
+    bucket = _get_bucket()
+    index_entry = _read_index_entry(bucket, report_id)
+    if not index_entry:
+        return _error("Report not found", 404)
+
+    if not secrets.compare_digest(index_entry.get("feedback_token", ""), token):
+        return _error("Invalid token", 403)
+
+    metadata = _read_metadata(bucket, report_id, index_entry["date"])
+    if not metadata:
+        return _error("Report metadata not found", 404)
+
+    return _json_response(_sanitize_status(metadata))
+
+
+# ---------------------------------------------------------------------------
+# POST /status/batch — batch feedback status query (up to 50)
+# ---------------------------------------------------------------------------
+
+
+_BATCH_MAX = 50
+
+
+def _handle_status_batch(evt: dict) -> dict:
+    body = _parse_json_body(evt)
+    items = body.get("items", [])
+    if not isinstance(items, list) or len(items) == 0:
+        return _error("items must be a non-empty array", 400)
+    if len(items) > _BATCH_MAX:
+        return _error(f"Maximum {_BATCH_MAX} items per batch", 400)
+
+    bucket = _get_bucket()
+    results = {}
+    for item in items:
+        rid = item.get("report_id", "")
+        tok = item.get("token", "")
+        if not rid or not tok:
+            continue
+
+        index_entry = _read_index_entry(bucket, rid)
+        if not index_entry:
+            results[rid] = {"error": "not_found"}
+            continue
+
+        if not secrets.compare_digest(index_entry.get("feedback_token", ""), tok):
+            results[rid] = {"error": "invalid_token"}
+            continue
+
+        metadata = _read_metadata(bucket, rid, index_entry["date"])
+        if not metadata:
+            results[rid] = {"error": "metadata_missing"}
+            continue
+
+        results[rid] = _sanitize_status(metadata)
+
+    return _json_response({"results": results})
+
+
+# ---------------------------------------------------------------------------
+# POST /webhook/github — GitHub Issue event receiver
+# ---------------------------------------------------------------------------
+
+
+def _verify_github_signature(evt: dict, raw_body: bytes) -> bool:
+    """Verify GitHub webhook HMAC-SHA256 signature."""
+    webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+    if not webhook_secret:
+        logger.warning("GITHUB_WEBHOOK_SECRET not set, skipping signature verification")
+        return True
+
+    headers = evt.get("headers", {})
+    sig_header = ""
+    for k, v in headers.items():
+        if k.lower() == "x-hub-signature-256":
+            sig_header = v
+            break
+
+    if not sig_header or not sig_header.startswith("sha256="):
+        logger.warning("Missing or malformed X-Hub-Signature-256 header")
+        return False
+
+    expected = hmac.new(
+        webhook_secret.encode("utf-8"), raw_body, hashlib.sha256,
+    ).hexdigest()
+    received = sig_header[7:]  # strip "sha256="
+    return hmac.compare_digest(expected, received)
+
+
+def _get_raw_body(evt: dict) -> bytes:
+    """Get raw body bytes from FC event (handles base64)."""
+    raw = evt.get("body", "")
+    if evt.get("isBase64Encoded", False):
+        import base64
+        return base64.b64decode(raw)
+    if isinstance(raw, str):
+        return raw.encode("utf-8")
+    return raw
+
+
+def _extract_report_id_from_issue(issue_body: str) -> str | None:
+    """Extract report_id from the GitHub Issue body created by _create_github_issue."""
+    match = re.search(r"\*\*Report ID:\*\*\s*`([a-zA-Z0-9_-]+)`", issue_body)
+    return match.group(1) if match else None
+
+
+def _handle_github_webhook(evt: dict) -> dict:
+    raw_body = _get_raw_body(evt)
+
+    if not _verify_github_signature(evt, raw_body):
+        return _error("Signature verification failed", 403)
+
+    try:
+        payload = json.loads(raw_body)
+    except (json.JSONDecodeError, TypeError):
+        return _error("Invalid JSON", 400)
+
+    headers = evt.get("headers", {})
+    event_type = ""
+    for k, v in headers.items():
+        if k.lower() == "x-github-event":
+            event_type = v
+            break
+
+    if event_type not in ("issues", "issue_comment"):
+        return _json_response({"status": "ignored", "reason": f"unhandled event: {event_type}"})
+
+    action = payload.get("action", "")
+    issue = payload.get("issue", {})
+    issue_body = issue.get("body", "") or ""
+    report_id = _extract_report_id_from_issue(issue_body)
+
+    if not report_id:
+        return _json_response({"status": "ignored", "reason": "no report_id in issue body"})
+
+    bucket = _get_bucket()
+    index_entry = _read_index_entry(bucket, report_id)
+    if not index_entry:
+        return _json_response({"status": "ignored", "reason": "report not in index"})
+
+    metadata = _read_metadata(bucket, report_id, index_entry["date"])
+    if not metadata:
+        return _json_response({"status": "ignored", "reason": "metadata not found"})
+
+    changed = False
+
+    if event_type == "issue_comment" and action == "created":
+        comment = payload.get("comment", {})
+        comment_user = comment.get("user", {})
+        comment_author = comment_user.get("login", "unknown")
+        comment_body = comment.get("body", "")
+        comment_time = comment.get("created_at", datetime.now(timezone.utc).isoformat())
+
+        if comment_user.get("type") == "Bot" or comment_author.endswith("[bot]"):
+            return _json_response({
+                "status": "ignored", "reason": "bot comment skipped",
+            })
+
+        if comment_body.startswith("**[User Reply]**"):
+            return _json_response({
+                "status": "ignored", "reason": "user reply echo skipped",
+            })
+
+        pat_login = os.environ.get("GITHUB_PAT_LOGIN", "")
+        if pat_login and comment_author == pat_login:
+            return _json_response({
+                "status": "ignored", "reason": "PAT account echo skipped",
+            })
+
+        if not metadata.get("developer_replies"):
+            metadata["developer_replies"] = []
+        metadata["developer_replies"].append({
+            "author": comment_author,
+            "body": comment_body[:2000],
+            "created_at": comment_time,
+            "source": "developer",
+        })
+        changed = True
+
+        if not metadata.get("email_unsubscribed") and metadata.get("contact_email"):
+            _send_user_reply_notification(
+                report_id=report_id,
+                feedback_token=index_entry.get("feedback_token", ""),
+                user_email=metadata["contact_email"],
+                title=metadata.get("title", ""),
+                comment_author=comment_author,
+                comment_body=comment_body,
+            )
+
+    if event_type == "issues":
+        issue_labels = [lb.get("name", "") for lb in issue.get("labels", [])]
+        metadata["labels"] = issue_labels
+
+        if action == "closed":
+            metadata["status"] = "resolved"
+            metadata["resolved_at"] = datetime.now(timezone.utc).isoformat()
+            changed = True
+        elif action == "reopened":
+            metadata["status"] = "open"
+            metadata["resolved_at"] = None
+            changed = True
+        elif action == "labeled" or action == "unlabeled":
+            for lb in issue_labels:
+                if lb.startswith("status:"):
+                    new_status = lb.split(":", 1)[1]
+                    if new_status in ("open", "in_progress", "resolved", "closed", "wontfix"):
+                        metadata["status"] = new_status
+            changed = True
+
+    if changed:
+        _write_metadata(bucket, report_id, index_entry["date"], metadata)
+
+    return _json_response({"status": "ok", "report_id": report_id, "updated": changed})
+
+
+# ---------------------------------------------------------------------------
+# POST /reply/{id} — user reply via bot proxy
+# ---------------------------------------------------------------------------
+
+_REPLY_DAILY_LIMIT = 20
+
+
+def _check_reply_rate_limit(report_id: str) -> bool:
+    """Return True if within daily limit, False if exceeded."""
+    bucket = _get_bucket()
+    date = _today()
+    key = f"_ratelimit/reply/{report_id}/{date}.txt"
+    try:
+        result = bucket.get_object(key)
+        count = int(result.read().decode().strip())
+    except oss2.exceptions.NoSuchKey:
+        count = 0
+    except Exception:
+        count = 0
+
+    if count >= _REPLY_DAILY_LIMIT:
+        return False
+
+    bucket.put_object(key, str(count + 1).encode())
+    return True
+
+
+def _handle_reply(evt: dict, report_id: str) -> dict:
+    body = _parse_json_body(evt)
+    token = body.get("token", "")
+    reply_body = body.get("body", "").strip()
+
+    if not token:
+        return _error("Missing token", 401)
+    if not reply_body:
+        return _error("Reply body is required", 400)
+    if len(reply_body) > 2000:
+        return _error("Reply too long (max 2000 characters)", 400)
+
+    bucket = _get_bucket()
+    index_entry = _read_index_entry(bucket, report_id)
+    if not index_entry:
+        return _error("Report not found", 404)
+
+    if not secrets.compare_digest(index_entry.get("feedback_token", ""), token):
+        return _error("Invalid token", 403)
+
+    if not _check_reply_rate_limit(report_id):
+        return _error("Too many replies today (max 20)", 429)
+
+    metadata = _read_metadata(bucket, report_id, index_entry["date"])
+    if not metadata:
+        return _error("Report metadata not found", 404)
+
+    github_issue_url = metadata.get("github_issue_url", "")
+    if not github_issue_url:
+        return _error("No GitHub Issue linked", 400)
+
+    issue_match = re.search(r"/issues/(\d+)", github_issue_url)
+    if not issue_match:
+        return _error("Cannot parse issue number from URL", 400)
+
+    issue_number = issue_match.group(1)
+    gh_token = os.environ.get("GITHUB_TOKEN", "")
+    gh_repo = os.environ.get("GITHUB_REPO", "")
+    if not gh_token or not gh_repo:
+        return _error("GitHub integration not configured", 503)
+
+    comment_text = f"**[User Reply]**\n\n{reply_body}"
+    comment_url = None
+    try:
+        resp = requests.post(
+            f"https://api.github.com/repos/{gh_repo}/issues/{issue_number}/comments",
+            headers={
+                "Authorization": f"Bearer {gh_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"body": comment_text},
+            timeout=15,
+        )
+        if resp.status_code == 201:
+            comment_url = resp.json().get("html_url")
+        else:
+            logger.error(
+                "GitHub comment failed: %s %s", resp.status_code, resp.text[:300],
+            )
+            return _error(f"GitHub API error ({resp.status_code})", 502)
+    except Exception as e:
+        logger.error("GitHub comment error: %s", e)
+        return _error(f"GitHub API error: {e}", 502)
+
+    now = datetime.now(timezone.utc).isoformat()
+    if not metadata.get("developer_replies"):
+        metadata["developer_replies"] = []
+    metadata["developer_replies"].append({
+        "author": "user",
+        "body": reply_body[:2000],
+        "created_at": now,
+        "source": "user_reply",
+    })
+
+    if not _write_metadata(bucket, report_id, index_entry["date"], metadata):
+        logger.warning("Reply posted to GitHub but metadata write failed for %s", report_id)
+
+    return _json_response({"status": "ok", "comment_url": comment_url})
+
+
+# ---------------------------------------------------------------------------
+# GET /unsubscribe/{id}?token=xxx — email unsubscribe
+# ---------------------------------------------------------------------------
+
+
+def _handle_unsubscribe(evt: dict, report_id: str) -> dict:
+    qs = evt.get("queryParameters", {}) or {}
+    token = qs.get("token", "")
+    if not token:
+        return _error("Missing token", 401)
+
+    bucket = _get_bucket()
+    index_entry = _read_index_entry(bucket, report_id)
+    if not index_entry:
+        return _error("Report not found", 404)
+
+    if not secrets.compare_digest(index_entry.get("feedback_token", ""), token):
+        return _error("Invalid token", 403)
+
+    metadata = _read_metadata(bucket, report_id, index_entry["date"])
+    if not metadata:
+        return _error("Report metadata not found", 404)
+
+    metadata["email_unsubscribed"] = True
+    _write_metadata(bucket, report_id, index_entry["date"], metadata)
+
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+        },
+        "isBase64Encoded": False,
+        "body": (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<title>Unsubscribed</title>"
+            "<style>body{font-family:sans-serif;text-align:center;padding:60px 20px;}"
+            "h1{color:#333;}p{color:#666;}</style></head>"
+            "<body><h1>✅ 已退订</h1>"
+            f"<p>反馈 <code>{html.escape(report_id)}</code> 的邮件通知已关闭。</p>"
+            "<p>You have been unsubscribed from email notifications for this feedback report.</p>"
+            "</body></html>"
+        ),
+    }

@@ -34,9 +34,10 @@ type FeedbackModalProps = {
   onClose: () => void;
   apiBase: string;
   initialMode?: FeedbackMode;
+  onNavigateToMyFeedback?: () => void;
 };
 
-export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: FeedbackModalProps) {
+export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onNavigateToMyFeedback }: FeedbackModalProps) {
   const { t } = useTranslation();
 
   const [mode, setMode] = useState<FeedbackMode>(initialMode);
@@ -60,6 +61,12 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{ ok: boolean; msg: string; downloadUrl?: string } | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{
+    percent: number;
+    phase: string;
+    detail: string;
+  } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const captchaTokenRef = useRef("");
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const captchaInstanceRef = useRef<any>(null);
@@ -73,6 +80,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       setMode(initialMode);
       setSubmitResult(null);
       setDownloading(false);
+      setUploadProgress(null);
     }
   }, [open, initialMode]);
 
@@ -213,6 +221,10 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
     submittingRef.current = true;
     setSubmitting(true);
     setSubmitResult(null);
+    setUploadProgress({ percent: 0, phase: "starting", detail: t("feedback.progressPacking") });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const form = new FormData();
@@ -235,45 +247,111 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       form.append("contact_email", contactEmail.trim());
       form.append("contact_wechat", contactWechat.trim());
 
-      const res = await safeFetch(url, {
+      const res = await fetch(url, {
         method: "POST",
         body: form,
-        signal: AbortSignal.timeout(60_000),
+        signal: controller.signal,
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get("content-type") || "";
 
-      if (data.status === "upload_failed") {
-        const dlUrl = data.download_url ? `${apiBase}${data.download_url}` : undefined;
-        setSubmitResult({
-          ok: false,
-          msg: t("feedback.uploadFailedSaved", { error: data.error || "unknown" }),
-          downloadUrl: dlUrl,
-        });
-        return;
+      if (contentType.includes("text/event-stream") && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() || "";
+
+          for (const block of blocks) {
+            const eventMatch = block.match(/^event:\s*(.+)$/m);
+            const dataMatch = block.match(/^data:\s*(.+)$/m);
+            if (!eventMatch || !dataMatch) continue;
+            const eventType = eventMatch[1].trim();
+            let data: any;
+            try { data = JSON.parse(dataMatch[1]); } catch { continue; }
+
+            if (eventType === "progress") {
+              setUploadProgress({
+                percent: data.percent ?? 0,
+                phase: data.phase ?? "",
+                detail: data.detail ?? "",
+              });
+            } else if (eventType === "complete") {
+              setUploadProgress(null);
+              if (data.status === "upload_failed") {
+                const dlUrl = data.download_url ? `${apiBase}${data.download_url}` : undefined;
+                setSubmitResult({
+                  ok: false,
+                  msg: t("feedback.uploadFailedSaved", { error: data.error || "unknown" }),
+                  downloadUrl: dlUrl,
+                });
+              } else {
+                const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
+                setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
+                setTitle("");
+                setDescription("");
+                setSteps("");
+                setContactEmail("");
+                setContactWechat("");
+                setImageFiles([]);
+                setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+              }
+            } else if (eventType === "error") {
+              setUploadProgress(null);
+              setSubmitResult({ ok: false, msg: data.detail || t("feedback.uploadFailedNetwork") });
+            }
+          }
+        }
+      } else {
+        setUploadProgress(null);
+        const data = await res.json();
+        if (data.status === "upload_failed") {
+          const dlUrl = data.download_url ? `${apiBase}${data.download_url}` : undefined;
+          setSubmitResult({
+            ok: false,
+            msg: t("feedback.uploadFailedSaved", { error: data.error || "unknown" }),
+            downloadUrl: dlUrl,
+          });
+        } else {
+          const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
+          setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
+          setTitle("");
+          setDescription("");
+          setSteps("");
+          setContactEmail("");
+          setContactWechat("");
+          setImageFiles([]);
+          setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+        }
       }
-
-      const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-      setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-
-      setTitle("");
-      setDescription("");
-      setSteps("");
-      setContactEmail("");
-      setContactWechat("");
-      setImageFiles([]);
-      setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
     } catch (err: any) {
-      setSubmitResult({ ok: false, msg: err?.message || t("feedback.uploadFailedNetwork") });
+      setUploadProgress(null);
+      if (err?.name === "AbortError") {
+        setSubmitResult({ ok: false, msg: t("feedback.uploadCancelled") });
+      } else {
+        setSubmitResult({ ok: false, msg: err?.message || t("feedback.uploadFailedNetwork") });
+      }
     } finally {
-      submittingRef.current = false;
+      captchaTokenRef.current = "";
+      abortRef.current = null;
       setSubmitting(false);
     }
   }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, contactWechat, imageFiles, apiBase, t]);
 
   handleSubmitRef.current = handleSubmit;
 
-  const handleClose = useCallback(() => { setSubmitResult(null); onClose(); }, [onClose]);
+  const handleClose = useCallback(() => {
+    abortRef.current?.abort();
+    setSubmitResult(null);
+    setUploadProgress(null);
+    onClose();
+  }, [onClose]);
 
   const isBug = mode === "bug";
 
@@ -321,6 +399,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
         </div>
 
         {/* Scrollable body */}
+        <fieldset disabled={submitting} className="contents">
         <div className="overflow-y-auto overflow-x-hidden px-5 py-4 space-y-3.5" style={{ maxHeight: "calc(85vh - 180px)" }}>
           {/* Title */}
           <div className="space-y-1">
@@ -472,6 +551,22 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
 
           <div ref={captchaContainerRef} id="aliyun-captcha-element" />
 
+          {/* Upload Progress */}
+          {uploadProgress && (
+            <div className="space-y-1.5 px-1">
+              <div className="flex items-center justify-between text-[12px] text-muted-foreground">
+                <span>{uploadProgress.detail}</span>
+                <span>{uploadProgress.percent}%</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${uploadProgress.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Result */}
           {submitResult && (
             <div className={`rounded-md p-2.5 text-[13px] leading-relaxed ${
@@ -507,26 +602,52 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
                   {downloading ? t("feedback.downloading") : t("feedback.saveLocal")}
                 </Button>
               )}
+              {submitResult.ok && onNavigateToMyFeedback && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-1.5 h-7 text-xs"
+                  onClick={() => {
+                    onClose();
+                    onNavigateToMyFeedback();
+                  }}
+                >
+                  {t("myFeedback.viewFeedback")}
+                </Button>
+              )}
             </div>
           )}
         </div>
+        </fieldset>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border shrink-0">
-          <Button variant="outline" size="sm" onClick={handleClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            id="feedback-submit-btn"
-            size="sm"
-            disabled={submitting || !title.trim() || !description.trim()}
-            onClick={handleSubmit}
-            className="min-w-[100px]"
-          >
-            {submitting
-              ? t("bugReport.submitting")
-              : isBug ? t("bugReport.submit") : t("featureRequest.submit")}
-          </Button>
+          {uploadProgress ? (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => { abortRef.current?.abort(); }}
+            >
+              {t("feedback.cancelUpload")}
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" onClick={handleClose}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                id="feedback-submit-btn"
+                size="sm"
+                disabled={submitting || !title.trim() || !description.trim()}
+                onClick={handleSubmit}
+                className="min-w-[100px]"
+              >
+                {submitting
+                  ? t("bugReport.submitting")
+                  : isBug ? t("bugReport.submit") : t("featureRequest.submit")}
+              </Button>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>
