@@ -47,9 +47,7 @@ def save_overflow(tool_name: str, content: str) -> str:
         filepath = _OVERFLOW_DIR / filename
         filepath.write_text(content, encoding="utf-8")
         _cleanup_overflow_files(_OVERFLOW_DIR, _OVERFLOW_MAX_FILES)
-        logger.info(
-            f"[Overflow] Saved {len(content)} chars to {filepath}"
-        )
+        logger.info(f"[Overflow] Saved {len(content)} chars to {filepath}")
         return str(filepath)
     except Exception as exc:
         logger.warning(f"[Overflow] Failed to save overflow file: {exc}")
@@ -118,13 +116,16 @@ class ToolExecutor:
     def __init__(
         self,
         handler_registry: SystemHandlerRegistry,
-        max_parallel: int = 1,
+        max_parallel: int | None = None,
     ) -> None:
+        from ..config import settings
+
         self._handler_registry = handler_registry
 
-        # 并行控制
-        self._semaphore = asyncio.Semaphore(max(1, max_parallel))
-        self._max_parallel = max_parallel
+        # 并行控制 - 支持配置开关，默认使用 settings 值
+        actual_max = max_parallel if max_parallel is not None else settings.tool_max_parallel
+        self._semaphore = asyncio.Semaphore(max(1, actual_max))
+        self._max_parallel = actual_max
 
         # 状态型工具互斥锁（browser/desktop/mcp 等不能并发执行）
         self._handler_locks: dict[str, asyncio.Lock] = {}
@@ -141,13 +142,19 @@ class ToolExecutor:
 
     # 并发安全工具: 这些工具的只读操作可以并行执行
     _CONCURRENCY_SAFE_TOOLS: set[str] = {
-        "read_file", "list_files", "search_files", "web_fetch",
-        "get_time", "read_resource", "list_resources",
+        "read_file",
+        "list_files",
+        "search_files",
+        "web_fetch",
+        "get_time",
+        "read_resource",
+        "list_resources",
     }
 
     # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
     # 值为 0 表示不设硬超时（由工具自身的进度监控负责，如 Orchestrator 的 idle-timeout）
-    _TOOL_HARD_TIMEOUT: int = 120
+    # 默认使用 settings.tool_execution_timeout
+    _TOOL_HARD_TIMEOUT: int = 0  # 0 表示使用动态值
 
     _LONG_RUNNING_TOOLS: dict[str, int] = {
         "org_request_meeting": 600,
@@ -159,6 +166,16 @@ class ToolExecutor:
         "browser_use": 300,
         "run_shell": 300,
     }
+
+    def _get_hard_timeout(self, tool_name: str) -> int:
+        """获取工具的硬超时时间"""
+        from ..config import settings
+
+        if tool_name in self._LONG_RUNNING_TOOLS:
+            return self._LONG_RUNNING_TOOLS[tool_name]
+        if self._TOOL_HARD_TIMEOUT > 0:
+            return self._TOOL_HARD_TIMEOUT
+        return settings.tool_execution_timeout
 
     def get_handler_name(self, tool_name: str) -> str | None:
         """获取工具对应的 handler 名称"""
@@ -226,12 +243,11 @@ class ToolExecutor:
         if state and hasattr(state, "cancel_event") and state.cancel_event:
             cancel_future = asyncio.ensure_future(state.cancel_event.wait())
 
-        hard_timeout = self._LONG_RUNNING_TOOLS.get(tool_name, self._TOOL_HARD_TIMEOUT)
+        hard_timeout = self._get_hard_timeout(tool_name)
 
         timeout_task: asyncio.Future | None = None
         if hard_timeout > 0:
             timeout_task = asyncio.ensure_future(asyncio.sleep(hard_timeout))
-
 
         wait_set: set[asyncio.Future] = {tool_task}
         if timeout_task is not None:
@@ -310,8 +326,7 @@ class ToolExecutor:
         if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
             err_msg = tool_input[PARSE_ERROR_KEY]
             logger.warning(
-                f"[ToolExecutor] Skipping tool '{tool_name}' due to parse error: "
-                f"{err_msg[:200]}"
+                f"[ToolExecutor] Skipping tool '{tool_name}' due to parse error: {err_msg[:200]}"
             )
             return err_msg
 
@@ -440,12 +455,14 @@ class ToolExecutor:
 
             # Policy Engine check
             from .policy import PolicyDecision, get_policy_engine
+
             policy_engine = get_policy_engine()
             policy_result = policy_engine.assert_tool_allowed(tool_name, tool_input)
 
             # Persist audit for ALL policy decisions
             try:
                 from .audit_logger import get_audit_logger
+
                 get_audit_logger().log(
                     tool_name=tool_name,
                     decision=policy_result.decision.value,
@@ -478,9 +495,7 @@ class ToolExecutor:
                     # Treat as user-approved retry → mark confirmed & proceed
                     policy_engine.mark_confirmed(tool_name, tool_input)
                     del self._pending_confirms[confirm_key]
-                    logger.info(
-                        f"[Security] Auto-allowed retry of confirmed tool: {tool_name}"
-                    )
+                    logger.info(f"[Security] Auto-allowed retry of confirmed tool: {tool_name}")
                 else:
                     # First CONFIRM hit — store pending and block
                     self._pending_confirms[confirm_key] = {
@@ -509,9 +524,7 @@ class ToolExecutor:
                                 "tool_name": tool_name,
                                 "params": tool_input,
                                 "risk_level": risk,
-                                "needs_sandbox": policy_result.metadata.get(
-                                    "needs_sandbox", False
-                                ),
+                                "needs_sandbox": policy_result.metadata.get("needs_sandbox", False),
                             },
                         },
                         None,
@@ -522,6 +535,7 @@ class ToolExecutor:
             if policy_result.metadata.get("needs_checkpoint"):
                 try:
                     from .checkpoint import get_checkpoint_manager
+
                     path = tool_input.get("path", "") or tool_input.get("file_path", "")
                     if path:
                         cp_id = get_checkpoint_manager().create_checkpoint(
@@ -535,19 +549,15 @@ class ToolExecutor:
                     logger.debug(f"[Checkpoint] Failed: {e}")
 
             # L6: Sandbox execution for HIGH-risk shell commands
-            if (
-                tool_name == "run_shell"
-                and policy_result.metadata.get("needs_sandbox")
-            ):
+            if tool_name == "run_shell" and policy_result.metadata.get("needs_sandbox"):
                 try:
                     from .sandbox import get_sandbox_executor
+
                     sandbox = get_sandbox_executor()
                     command = tool_input.get("command", "")
                     cwd = tool_input.get("cwd")
                     timeout = tool_input.get("timeout", 60)
-                    sb_result = await sandbox.execute(
-                        command, cwd=cwd, timeout=float(timeout)
-                    )
+                    sb_result = await sandbox.execute(command, cwd=cwd, timeout=float(timeout))
                     sandbox_output = (
                         f"[沙箱执行 backend={sb_result.backend}]\n"
                         f"Exit code: {sb_result.returncode}\n"
@@ -620,6 +630,7 @@ class ToolExecutor:
                 # 对于 PARSE_ERROR_KEY（参数截断）路径，需要在此修正 success
                 # 标志，使 tool_result 的 is_error 正确传播到 reasoning_engine。
                 from ..llm.converters.tools import PARSE_ERROR_KEY
+
                 if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
                     success = False
 
@@ -632,7 +643,9 @@ class ToolExecutor:
                         pass
 
                 # 终端输出工具返回结果（便于调试与观察）
-                _preview = result_str if len(result_str) <= 800 else result_str[:800] + "\n... (已截断)"
+                _preview = (
+                    result_str if len(result_str) <= 800 else result_str[:800] + "\n... (已截断)"
+                )
                 try:
                     logger.info(f"[Tool] {tool_name} → {_preview}")
                 except (UnicodeEncodeError, OSError):
@@ -712,17 +725,19 @@ class ToolExecutor:
                     # 为剩余工具生成取消结果
                     for j in range(i + 1, len(tool_calls)):
                         remaining_tc = tool_calls[j]
-                        results.append((
-                            j,
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": remaining_tc.get("id", ""),
-                                "content": "[任务已被用户停止]",
-                                "is_error": True,
-                            },
-                            None,
-                            None,
-                        ))
+                        results.append(
+                            (
+                                j,
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": remaining_tc.get("id", ""),
+                                    "content": "[任务已被用户停止]",
+                                    "is_error": True,
+                                },
+                                None,
+                                None,
+                            )
+                        )
                     break
 
         # 整理结果
@@ -778,8 +793,13 @@ class ToolExecutor:
         if self._current_mode in ("plan", "ask"):
             return None
 
-        if tool_name in ("create_todo", "create_plan_file", "exit_plan_mode",
-                         "get_todo_status", "ask_user"):
+        if tool_name in (
+            "create_todo",
+            "create_plan_file",
+            "exit_plan_mode",
+            "get_todo_status",
+            "ask_user",
+        ):
             return None
 
         try:
@@ -843,8 +863,7 @@ class ToolExecutor:
         rule = evaluate("edit", str(file_path), ruleset)
         if rule.action == "deny":
             logger.warning(
-                f"[Permission] DENIED {tool_name} on {file_path!r} "
-                f"in {self._current_mode} mode"
+                f"[Permission] DENIED {tool_name} on {file_path!r} in {self._current_mode} mode"
             )
             return (
                 f"Permission denied: cannot use {tool_name} on '{file_path}' "

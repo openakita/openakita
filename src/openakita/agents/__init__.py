@@ -2,6 +2,7 @@ from .factory import AgentFactory, AgentInstancePool
 from .fallback import FallbackResolver
 from .lock_manager import LockManager
 from .orchestrator import AgentOrchestrator
+from .parallel_orchestrator import ParallelAgentOrchestrator
 from .profile import AgentProfile, AgentType, ProfileStore, SkillsMode
 from .task_queue import Priority, QueuedTask, TaskQueue
 
@@ -13,6 +14,7 @@ __all__ = [
     "AgentType",
     "FallbackResolver",
     "LockManager",
+    "ParallelAgentOrchestrator",
     "Priority",
     "ProfileStore",
     "QueuedTask",
