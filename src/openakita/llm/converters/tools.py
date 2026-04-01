@@ -509,30 +509,67 @@ _GLM_KV_RE = re.compile(
     re.DOTALL,
 )
 
+# Llama / Meta 风格: <function=name> <parameter=key> val </parameter> </function>
+# 部分模型（如 nvidia/nemotron）会把这种格式嵌套在 <tool_call> 里
+_LLAMA_FUNC_RE = re.compile(
+    r"<function=(\w[\w.-]*)>\s*(.*?)\s*</function>",
+    re.DOTALL | re.IGNORECASE,
+)
+_LLAMA_PARAM_RE = re.compile(
+    r"<parameter=(\w[\w.-]*)>\s*(.*?)\s*</parameter>",
+    re.DOTALL | re.IGNORECASE,
+)
+
 
 def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 GLM 模型的 <tool_call> 格式。
+    """解析 <tool_call> 包裹的工具调用。
 
-    格式:
-    <tool_call>run_shell<arg_key>command</arg_key><arg_value>...</arg_value></tool_call>
+    支持两种内部格式:
+    1. GLM 原生:  <tool_call>run_shell<arg_key>cmd</arg_key><arg_value>ls</arg_value></tool_call>
+    2. Llama 风格: <tool_call><function=run_shell><parameter=cmd>ls</parameter></function></tool_call>
+
+    当 GLM 格式解析失败（内容以 '<' 开头而非工具名）时自动尝试 Llama 格式。
     """
     matches = _GLM_COMPLETE_RE.findall(text) or _GLM_INCOMPLETE_RE.findall(text)
 
     tool_calls: list[ToolUseBlock] = []
     for content in matches:
-        name_match = re.match(r"(\w[\w-]*)", content.strip())
-        if not name_match:
-            continue
-        tool_name = name_match.group(1)
+        stripped = content.strip()
+        name_match = re.match(r"(\w[\w-]*)", stripped)
 
-        params: dict = {}
-        for kv in _GLM_KV_RE.finditer(content):
-            key, val = kv.group(1).strip(), kv.group(2).strip()
+        if name_match:
+            tool_name = name_match.group(1)
+            params: dict = {}
+            for kv in _GLM_KV_RE.finditer(content):
+                key, val = kv.group(1).strip(), kv.group(2).strip()
+                try:
+                    params[key] = json.loads(val)
+                except json.JSONDecodeError:
+                    params[key] = val
+            tool_calls.append(ToolUseBlock(
+                id=f"glm_call_{uuid.uuid4().hex[:8]}",
+                name=tool_name,
+                input=params,
+            ))
+            logger.info(
+                "[GLM_TOOL_PARSE] Extracted tool call: %s with params: %s",
+                tool_name, list(params.keys()),
+            )
+            continue
+
+        # Fallback: Llama / Meta 风格 <function=name>...<parameter=key>val</parameter>...</function>
+        func_match = _LLAMA_FUNC_RE.search(stripped)
+        if not func_match:
+            continue
+        tool_name = func_match.group(1)
+        func_body = func_match.group(2)
+        params = {}
+        for pm in _LLAMA_PARAM_RE.finditer(func_body):
+            key, val = pm.group(1).strip(), pm.group(2).strip()
             try:
                 params[key] = json.loads(val)
             except json.JSONDecodeError:
                 params[key] = val
-
         tool_calls.append(
             ToolUseBlock(
                 id=f"glm_call_{uuid.uuid4().hex[:8]}",
@@ -541,7 +578,8 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
             )
         )
         logger.info(
-            f"[GLM_TOOL_PARSE] Extracted tool call: {tool_name} with params: {list(params.keys())}"
+            f"[GLM_TOOL_PARSE] Extracted Llama-style tool call: {tool_name} "
+            f"with params: {list(params.keys())}"
         )
 
     # 即使未提取到工具也清理标签，防止原始标签泄漏到用户界面
