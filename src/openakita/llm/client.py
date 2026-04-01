@@ -40,6 +40,7 @@ from .types import (
     LLMRequest,
     LLMResponse,
     Message,
+    RateLimitError,
     TextBlock,
     ThinkingBlock,
     Tool,
@@ -89,7 +90,16 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
     if FailoverReason.AUTH in categories:
         hints.append("🔑 检测到 API 认证失败，请检查 API Key 是否正确、是否过期。")
     if FailoverReason.TRANSIENT in categories:
-        hints.append("🌐 检测到网络超时/连接失败，请检查网络连接和代理设置。")
+        _has_rate_limit = failed_providers and any(
+            any(kw in (getattr(p, "_last_error", "") or "").lower()
+                for kw in ["rate limit", "rate_limit", "too many requests"])
+            for p in failed_providers
+            if getattr(p, "error_category", "") == FailoverReason.TRANSIENT
+        )
+        if _has_rate_limit:
+            hints.append("⏱️ 检测到 API 请求频率超限（限速），请稍后重试或降低请求频率。")
+        else:
+            hints.append("🌐 检测到网络超时/连接失败，请检查网络连接和代理设置。")
     if FailoverReason.STRUCTURAL in categories:
         hints.append("⚙️ 检测到请求格式错误，这通常是模型兼容性问题，请尝试切换其他模型。")
 
@@ -1481,6 +1491,19 @@ class LLMClient:
 
             except (UserCancelledError, asyncio.CancelledError):
                 raise
+
+            except RateLimitError as e:
+                # 429 限速：短冷静期，立即切换到下一端点（重试同一端点无意义）#324
+                # 所有端点都限速时 _resolve 的 transient 等待路径会处理
+                error_str = str(e)
+                logger.warning(
+                    f"[LLM] endpoint={provider.name} rate_limited, "
+                    f"switching to next endpoint. Error: {error_str[:200]}"
+                )
+                errors.append(f"{provider.name}: {e}")
+                provider.mark_unhealthy(error_str, category="transient")
+                failed_providers.append(provider)
+                continue
 
             except AuthenticationError as e:
                 error_str = str(e)
