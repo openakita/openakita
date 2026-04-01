@@ -5506,13 +5506,14 @@ NEXT: 建议的下一步（如有）"""
                 if block.type == "text":
                     text_content += block.text
                 elif block.type == "tool_use":
-                    tool_calls.append(
-                        {
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
+                    d = {
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                    if getattr(block, "provider_extra", None):
+                        d["provider_extra"] = block.provider_extra
+                    tool_calls.append(d)
                 elif getattr(block, "type", None) == "thinking":
                     _thinking_content += getattr(block, "thinking", "") or ""
 
@@ -5730,14 +5731,15 @@ NEXT: 建议的下一步（如有）"""
                 elif block.type == "text":
                     assistant_content.append({"type": "text", "text": block.text})
                 elif block.type == "tool_use":
-                    assistant_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
+                    d = {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                    if getattr(block, "provider_extra", None):
+                        d["provider_extra"] = block.provider_extra
+                    assistant_content.append(d)
 
             working_messages.append(
                 {
@@ -6236,13 +6238,14 @@ NEXT: 建议的下一步（如有）"""
                 if block.type == "text":
                     text_content += block.text
                 elif block.type == "tool_use":
-                    tool_calls.append(
-                        {
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
+                    d = {
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                    if getattr(block, "provider_extra", None):
+                        d["provider_extra"] = block.provider_extra
+                    tool_calls.append(d)
 
             # 如果没有工具调用，直接返回文本
             if not tool_calls:
@@ -6285,14 +6288,15 @@ NEXT: 建议的下一步（如有）"""
                 elif block.type == "text":
                     assistant_content.append({"type": "text", "text": block.text})
                 elif block.type == "tool_use":
-                    assistant_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
+                    d = {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                    if getattr(block, "provider_extra", None):
+                        d["provider_extra"] = block.provider_extra
+                    assistant_content.append(d)
 
             messages.append({"role": "assistant", "content": assistant_content})
 
@@ -6772,13 +6776,14 @@ NEXT: 建议的下一步（如有）"""
                     if block.type == "text":
                         text_content += block.text
                     elif block.type == "tool_use":
-                        tool_calls.append(
-                            {
-                                "id": block.id,
-                                "name": block.name,
-                                "input": block.input,
-                            }
-                        )
+                        d = {
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                        if getattr(block, "provider_extra", None):
+                            d["provider_extra"] = block.provider_extra
+                        tool_calls.append(d)
 
                 # 任务监控：结束迭代
                 task_monitor.end_iteration(text_content if text_content else "")
@@ -6861,14 +6866,15 @@ NEXT: 建议的下一步（如有）"""
                     elif block.type == "text":
                         assistant_content.append({"type": "text", "text": block.text})
                     elif block.type == "tool_use":
-                        assistant_content.append(
-                            {
-                                "type": "tool_use",
-                                "id": block.id,
-                                "name": block.name,
-                                "input": block.input,
-                            }
-                        )
+                        d = {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                        if getattr(block, "provider_extra", None):
+                            d["provider_extra"] = block.provider_extra
+                        assistant_content.append(d)
 
                 messages.append({"role": "assistant", "content": assistant_content})
 

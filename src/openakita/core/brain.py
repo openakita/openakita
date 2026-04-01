@@ -335,11 +335,14 @@ class Brain:
             if isinstance(block, TextBlock):
                 text_parts.append(block.text)
             elif isinstance(block, ToolUseBlock):
-                tool_calls.append({
+                d = {
                     "id": block.id,
                     "name": block.name,
                     "input": block.input,
-                })
+                }
+                if block.provider_extra:
+                    d["provider_extra"] = block.provider_extra
+                tool_calls.append(d)
         return Response(
             content="\n".join(text_parts),
             tool_calls=tool_calls,
@@ -606,6 +609,7 @@ class Brain:
                                     id=part.get("id", ""),
                                     name=part.get("name", ""),
                                     input=part.get("input", {}),
+                                    provider_extra=part.get("provider_extra"),
                                 )
                             )
 
@@ -1150,12 +1154,15 @@ class Brain:
             blocks.append({"type": "text", "text": response.text or ""})
             for tc in getattr(response, "tool_calls", []):
                 input_str = json.dumps(tc.input, ensure_ascii=False, default=str) if isinstance(tc.input, dict) else str(tc.input)
-                blocks.append({
+                d = {
                     "type": "tool_use",
                     "id": tc.id,
                     "name": tc.name,
                     "input": input_str,
-                })
+                }
+                if getattr(tc, "provider_extra", None):
+                    d["provider_extra"] = tc.provider_extra
+                blocks.append(d)
             return blocks
 
         # Anthropic Message 格式
@@ -1177,12 +1184,19 @@ class Brain:
                     bid = getattr(block, "id", "")
                     inp = getattr(block, "input", {})
                 input_str = json.dumps(inp, ensure_ascii=False, default=str) if isinstance(inp, dict) else str(inp)
-                blocks.append({
+                d = {
                     "type": "tool_use",
                     "id": bid,
                     "name": name,
                     "input": input_str,
-                })
+                }
+                extra = (
+                    block.get("provider_extra") if isinstance(block, dict)
+                    else getattr(block, "provider_extra", None)
+                )
+                if extra:
+                    d["provider_extra"] = extra
+                blocks.append(d)
             else:
                 blocks.append({"type": str(block_type), "raw": str(block)})
 

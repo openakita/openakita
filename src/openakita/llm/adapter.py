@@ -155,6 +155,7 @@ class LLMAdapter:
                                     id=part.get("id", ""),
                                     name=part.get("name", ""),
                                     input=part.get("input", {}),
+                                    provider_extra=part.get("provider_extra"),
                                 )
                             )
                         elif part_type == "tool_result":
@@ -194,14 +195,15 @@ class LLMAdapter:
         # 提取工具调用
         tool_calls = []
         for tc in response.tool_calls:
-            tool_calls.append(
-                {
-                    "type": "tool_use",
-                    "id": tc.id,
-                    "name": tc.name,
-                    "input": tc.input,
-                }
-            )
+            d = {
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "input": tc.input,
+            }
+            if getattr(tc, "provider_extra", None):
+                d["provider_extra"] = tc.provider_extra
+            tool_calls.append(d)
 
         return LegacyResponse(
             content=content,

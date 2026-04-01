@@ -1283,8 +1283,8 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
             shutil.rmtree(str(tmp_extract), ignore_errors=True)
 
 
-def _git_clone(args: list[str]) -> None:
-    """执行 git clone，git 不可用时抛出友好错误。"""
+def _git_clone(args: list[str], timeout: int = 120) -> None:
+    """执行 git clone，带超时控制和友好错误提示。"""
     import subprocess
 
     try:
@@ -1298,12 +1298,21 @@ def _git_clone(args: list[str]) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
             **extra,
         )
     except FileNotFoundError:
         raise FileNotFoundError(
             "未找到 git 命令。请安装 Git (https://git-scm.com) 或使用 GitHub 简写格式安装技能"
         )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"Git 克隆超时（{timeout}秒），可能是网络不通或仓库过大。"
+            "建议检查网络连接，或使用 GitHub 简写格式（自动使用镜像下载）安装。"
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        raise RuntimeError(f"Git 克隆失败: {stderr or '未知错误'}")
 
 
 def _parse_github_url(url: str) -> tuple[str, str, str | None] | None:
@@ -1408,15 +1417,38 @@ def _ensure_target_available(target: Path, url: str) -> None:
     raise ValueError(f"技能目录名称冲突: {target}")
 
 
-_CMD_PREFIXES = re.compile(
-    r"^(?:npx\s+skills?\s+(?:add|install)|openakita\s+(?:install[- ]skill|skill\s+install))\s+",
-    re.IGNORECASE,
-)
+_EMBEDDED_URL_RE = re.compile(r"(https?://\S+)")
+_EMBEDDED_REPO_RE = re.compile(r"([\w-]+/[\w.-]+(?:@[\w./-]+)?)\s*$")
+
+
+def _normalize_skill_input(raw: str) -> str:
+    """从用户输入中提取有效的技能地址。
+
+    直接的 URL / GitHub shorthand / 本地路径原样返回。
+    含空格的 CLI 命令（如 ``npx clawhub@latest install owner/repo``）
+    自动提取末尾的 URL 或 owner/repo。
+    """
+    s = raw.strip()
+    if not s:
+        return s
+    if s.startswith(("http://", "https://", "github:")):
+        return s
+    if _looks_like_github_shorthand(s):
+        return s
+    if " " not in s:
+        return s
+    m = _EMBEDDED_URL_RE.search(s)
+    if m:
+        return m.group(1)
+    m = _EMBEDDED_REPO_RE.search(s)
+    if m:
+        return m.group(1)
+    return s
 
 
 def install_skill(workspace_dir: str, url: str) -> None:
     """安装技能（从 Git URL、GitHub 简写或本地目录）"""
-    url = _CMD_PREFIXES.sub("", url.strip()).strip()
+    url = _normalize_skill_input(url)
     if not url:
         raise ValueError("请输入有效的技能地址，如 owner/repo 或 Git URL")
 

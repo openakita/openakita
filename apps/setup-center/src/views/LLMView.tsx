@@ -33,6 +33,15 @@ import { SearchSelect } from "../components/SearchSelect";
 import { ProviderSearchSelect } from "../components/ProviderSearchSelect";
 import type { EnvMap, ProviderInfo, ListedModel, EndpointDraft } from "../types";
 
+function friendlyConfigError(e: unknown): string {
+  const msg = String((e as any)?.message || e);
+  if (msg.includes("Failed to fetch") || msg.includes("NetworkError")
+    || msg.includes("AbortError") || msg.includes("signal timed out")) {
+    return "后端服务不可达，无法保存配置。请检查服务是否正在运行，或尝试重启应用后再试。";
+  }
+  return msg;
+}
+
 export interface LLMViewProps {
   savedEndpoints: EndpointDraft[];
   savedCompilerEndpoints: EndpointDraft[];
@@ -550,7 +559,7 @@ export function LLMView(props: LLMViewProps) {
       await loadSavedEndpoints();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
       return false;
     } finally {
       dismissLoading(_busyId);
@@ -569,7 +578,7 @@ export function LLMView(props: LLMViewProps) {
       notifySuccess(`编译端点 ${epName} 已删除`);
       loadSavedEndpoints().catch(() => {});
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
     } finally {
       dismissLoading(_busyId);
     }
@@ -642,7 +651,7 @@ export function LLMView(props: LLMViewProps) {
       await loadSavedEndpoints();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
       return false;
     } finally {
       dismissLoading(_busyId);
@@ -661,7 +670,7 @@ export function LLMView(props: LLMViewProps) {
       notifySuccess(`STT 端点 ${epName} 已删除`);
       loadSavedEndpoints().catch(() => {});
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
     } finally {
       dismissLoading(_busyId);
     }
@@ -928,7 +937,7 @@ export function LLMView(props: LLMViewProps) {
       setEditModalOpen(false);
       await loadSavedEndpoints();
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
     } finally {
       dismissLoading(_busyId);
     }
@@ -1011,7 +1020,7 @@ export function LLMView(props: LLMViewProps) {
       await loadSavedEndpoints();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
       return false;
     } finally {
       dismissLoading(_busyId);

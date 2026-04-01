@@ -444,7 +444,7 @@ export function AdvancedView(props: AdvancedViewProps) {
           </p>
         </Section>
 
-        {IS_TAURI && !!serviceStatus?.running && dataMode !== "remote" && (
+        {!!serviceStatus?.running && (
           <Section title={t("adv.webPasswordTitle")} className="mt-2">
             <div className="cardHint" style={{ marginBottom: 4 }}>{t("adv.webPasswordHint")}</div>
             <WebPasswordManager apiBase={httpApiBase()} />

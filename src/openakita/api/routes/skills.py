@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _notify_skills_changed(action: str = "reload") -> None:
     """Fire-and-forget WS broadcast for skill state changes."""
@@ -347,8 +349,10 @@ async def install_skill(request: Request):
                 loader.load_all(base_path)
             _apply_allowlist_and_rebuild_catalog(request)
 
-            # 自动翻译：为新安装的技能生成 i18n (agents/openai.yaml)
-            await _auto_translate_new_skills(request, url)
+            # 自动翻译放到后台，避免 LLM 调用阻塞安装响应
+            task = asyncio.create_task(_auto_translate_new_skills(request, url))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
     except Exception as e:
         logger.warning(f"Post-install reload failed (skill was installed): {e}")
 

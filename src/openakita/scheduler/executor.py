@@ -346,7 +346,13 @@ class TaskExecutor:
         success: bool,
         message: str,
     ) -> None:
-        """发送任务结束通知（IM 通道 + 桌面通知）"""
+        """发送任务结束通知（桌面通知 + IM 结果投递）
+
+        IM 投递规则:
+        - 有 channel/chat_id 且结果非空时，始终投递到 IM 通道
+        - notify_on_complete=True  → 带 "✅ 任务完成" 状态包装
+        - notify_on_complete=False → 纯结果文本（失败时仍标记 ❌）
+        """
         # 桌面通知（独立于 IM 通道，始终尝试）
         try:
             from ..config import settings
@@ -362,22 +368,28 @@ class TaskExecutor:
         except Exception as e:
             logger.debug(f"Desktop notification failed for task {task.id}: {e}")
 
-        # IM 通道通知
+        # IM 通道结果投递
         if not task.channel_id or not task.chat_id or not self.gateway:
             logger.debug(f"Task {task.id} has no notification channel configured")
             return
 
-        if not task.metadata.get("notify_on_complete", True):
-            logger.debug(f"Task {task.id} has completion notification disabled")
+        if not message or not message.strip():
+            logger.debug(f"Task {task.id} produced empty result, skipping IM delivery")
             return
 
         try:
-            status = "✅ 任务完成" if success else "❌ 任务失败"
-            notification = f"""{status}: {task.name}
+            if task.metadata.get("notify_on_complete", True):
+                status = "✅ 任务完成" if success else "❌ 任务失败"
+                notification = f"""{status}: {task.name}
 
 结果:
 {message}
 """
+            else:
+                if not success:
+                    notification = f"❌ {task.name} 执行失败:\n{message}"
+                else:
+                    notification = message
 
             await self.gateway.send(
                 channel=task.channel_id,

@@ -888,7 +888,6 @@ export function SkillManager({
 
   // ── 导入本地技能 ──
   const handleImportLocal = useCallback(async () => {
-    if (dataMode === "remote") return;
     setLocalImporting(true);
     setError(null);
     try {
@@ -904,7 +903,7 @@ export function SkillManager({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ url: folderPath }),
-            signal: AbortSignal.timeout(60_000),
+            signal: AbortSignal.timeout(180_000),
           });
           const data = await res.json();
           if (data.error) throw new Error(data.error);
@@ -1240,7 +1239,7 @@ export function SkillManager({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: skill.url }),
-          signal: AbortSignal.timeout(60_000),
+          signal: AbortSignal.timeout(180_000),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -1311,7 +1310,7 @@ export function SkillManager({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(180_000),
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -1449,17 +1448,15 @@ export function SkillManager({
                     className="pl-8"
                   />
                 </div>
-                {dataMode !== "remote" && (
-                  <Button
-                    variant="outline"
-                    onClick={handleImportLocal}
-                    disabled={localImporting}
-                    title={t("skills.importLocalTitle")}
-                  >
-                    {localImporting ? <Loader2 className="animate-spin" size={14} /> : <IconFolderOpen size={14} />}
-                    {t("skills.importLocal")}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  onClick={handleImportLocal}
+                  disabled={localImporting}
+                  title={t("skills.importLocalTitle")}
+                >
+                  {localImporting ? <Loader2 className="animate-spin" size={14} /> : <IconFolderOpen size={14} />}
+                  {t("skills.importLocal")}
+                </Button>
                 {serviceRunning && (
                   <Button
                     variant="outline"
@@ -1480,18 +1477,16 @@ export function SkillManager({
                 <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><IconZap size={36} /></div>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("skills.noSkills")}</div>
                 <div className="help">{t("skills.noSkillsHint")}</div>
-                {dataMode !== "remote" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleImportLocal}
-                    disabled={localImporting}
-                    className="mt-3"
-                  >
-                    {localImporting ? <Loader2 className="animate-spin" size={13} /> : <IconFolderOpen size={13} />}
-                    {t("skills.importLocal")}
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleImportLocal}
+                  disabled={localImporting}
+                  className="mt-3"
+                >
+                  {localImporting ? <Loader2 className="animate-spin" size={13} /> : <IconFolderOpen size={13} />}
+                  {t("skills.importLocal")}
+                </Button>
               </div>
             )}
             {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (

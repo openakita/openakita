@@ -12,6 +12,7 @@ import {
   IM_LOGO_MAP,
 } from "../icons";
 import { safeFetch } from "../providers";
+import { AgentIcon } from "../components/AgentIcon";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { logger } from "../platform";
 import { IS_WEB, onWsEvent } from "../platform";
@@ -1480,7 +1481,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                 </Badge>
               </div>
               <div className="flex items-center gap-2.5 mb-1.5">
-                <span className="text-2xl leading-none shrink-0">{agentProfile?.icon || "🤖"}</span>
+                <span className="text-2xl leading-none shrink-0 inline-flex items-center"><AgentIcon icon={agentProfile?.icon || "🤖"} size={24} /></span>
                 <div className="min-w-0">
                   <div className="font-bold text-sm truncate" title={bot.name || bot.id}>{bot.name || bot.id}</div>
                   <div className="text-[11px] text-muted-foreground/45 font-mono truncate" title={bot.id}>{bot.id}</div>
@@ -1571,7 +1572,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                 <SelectContent position="popper" side="bottom" sideOffset={4}>
                   <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
                   {profiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
+                    <SelectItem key={p.id} value={p.id}><AgentIcon icon={p.icon} size={14} /> {p.name} ({p.id})</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -2258,7 +2259,7 @@ function BotCreationWizard({
                   <SelectContent position="popper" side="bottom" sideOffset={4}>
                     <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
                     {profiles.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
+                      <SelectItem key={p.id} value={p.id}><AgentIcon icon={p.icon} size={14} /> {p.name} ({p.id})</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
