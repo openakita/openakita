@@ -3823,7 +3823,7 @@ function MainApp() {
     }
     taskDefs.push({ id: "service-start", label: "启动后端服务", status: "pending" });
     taskDefs.push({ id: "http-wait", label: "等待 HTTP 服务就绪", status: "pending" });
-    taskDefs.push({ id: "llm-config", label: "保存 LLM 配置", status: savedEndpoints.length > 0 ? "pending" : "skipped" });
+    taskDefs.push({ id: "llm-config", label: "保存 LLM 配置", status: (savedEndpoints.length > 0 || savedCompilerEndpoints.length > 0 || savedSttEndpoints.length > 0) ? "pending" : "skipped" });
     taskDefs.push({ id: "env-save", label: "保存环境变量", status: "pending" });
     setObTasks(taskDefs);
 
@@ -3872,21 +3872,6 @@ function MainApp() {
       }
       updateTask("workspace", { status: "done" });
       logTask("准备工作区", "done");
-
-      // ── STEP: llm-config ──
-      if (savedEndpoints.length > 0) {
-        updateTask("llm-config", { status: "running" });
-        logTask("保存 LLM 配置", "running");
-        const llmData = { endpoints: savedEndpoints, settings: {} };
-        await invoke("workspace_write_file", {
-          workspaceId: activeWsId,
-          relativePath: "data/llm_endpoints.json",
-          content: JSON.stringify(llmData, null, 2),
-        });
-        log(t("onboarding.progress.llmConfigSaved"));
-        updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length} 个端点` });
-        logTask("保存 LLM 配置", "done", `${savedEndpoints.length} 个端点`);
-      }
 
       // ── STEP: backend-check ──
       updateTask("backend-check", { status: "running" });
