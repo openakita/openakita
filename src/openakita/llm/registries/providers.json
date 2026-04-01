@@ -195,6 +195,8 @@
     "api_type": "openai",
     "default_base_url": "https://api.hunyuan.cloud.tencent.com/v1",
     "api_key_env_suggestion": "HUNYUAN_API_KEY",
+    "coding_plan_base_url": "https://api.lkeap.cloud.tencent.com/coding/v3",
+    "coding_plan_api_type": "openai",
     "supports_model_list": true,
     "supports_capability_api": false,
     "registry_class": "OpenAIRegistry"
