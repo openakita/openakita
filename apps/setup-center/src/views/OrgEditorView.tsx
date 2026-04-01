@@ -21,6 +21,7 @@ import {
   type Connection,
   type NodeTypes,
   type EdgeTypes,
+  type ReactFlowInstance,
   type NodeChange,
   type EdgeChange,
   Handle,
@@ -55,7 +56,7 @@ import {
   IconUpload,
 } from "../icons";
 import { safeFetch } from "../providers";
-import { openPopupWindow, canOpenPopupWindow, IS_CAPACITOR, saveFileDialog, IS_TAURI } from "../platform";
+import { openPopupWindow, canOpenPopupWindow, IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile } from "../platform";
 import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { OrgAvatar, AVATAR_PRESETS, AVATAR_MAP } from "../components/OrgAvatars";
@@ -604,14 +605,47 @@ function computeTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
   });
 }
 
+const NODE_COLLISION_W = 200;
+const NODE_COLLISION_H = 80;
+const NEW_NODE_ANCHOR = { x: 250, y: 200 };
+const NEW_NODE_STEP_X = 240;
+const NEW_NODE_STEP_Y = 140;
+
+function isPositionOccupied(nodes: Node[], candidate: { x: number; y: number }): boolean {
+  return nodes.some((n) => {
+    const p = n.position || { x: 0, y: 0 };
+    return Math.abs(p.x - candidate.x) < NODE_COLLISION_W && Math.abs(p.y - candidate.y) < NODE_COLLISION_H;
+  });
+}
+
+function getNextNodePosition(nodes: Node[]): { x: number; y: number } {
+  if (nodes.length === 0) return { ...NEW_NODE_ANCHOR };
+  if (!isPositionOccupied(nodes, NEW_NODE_ANCHOR)) return { ...NEW_NODE_ANCHOR };
+
+  const columns = Math.max(3, Math.ceil(Math.sqrt(nodes.length + 1)));
+  const maxAttempts = (nodes.length + 16) * 2;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const row = Math.floor(i / columns);
+    const col = i % columns;
+    const candidate = {
+      x: NEW_NODE_ANCHOR.x + col * NEW_NODE_STEP_X,
+      y: NEW_NODE_ANCHOR.y + row * NEW_NODE_STEP_Y,
+    };
+    if (!isPositionOccupied(nodes, candidate)) return candidate;
+  }
+
+  const maxX = nodes.reduce((m, n) => Math.max(m, n.position?.x ?? 0), 0);
+  const maxY = nodes.reduce((m, n) => Math.max(m, n.position?.y ?? 0), 0);
+  return { x: maxX + NEW_NODE_STEP_X, y: maxY + NEW_NODE_STEP_Y };
+}
+
 function detectOverlap(nodes: Node[]): boolean {
-  const NODE_W = 200;
-  const NODE_H = 80;
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
-      const a = nodes[i].position;
-      const b = nodes[j].position;
-      if (Math.abs(a.x - b.x) < NODE_W && Math.abs(a.y - b.y) < NODE_H) return true;
+      const a = nodes[i].position || { x: 0, y: 0 };
+      const b = nodes[j].position || { x: 0, y: 0 };
+      if (Math.abs(a.x - b.x) < NODE_COLLISION_W && Math.abs(a.y - b.y) < NODE_COLLISION_H) return true;
     }
   }
   return false;
@@ -913,6 +947,7 @@ export function OrgEditorView({
   const [fullPromptPreview, setFullPromptPreview] = useState<string | null>(null);
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
   const [liveMode, setLiveMode] = useState(true);
+  const [layoutLocked, setLayoutLocked] = useState(false);
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({});
   const [inboxOpen, setInboxOpen] = useState(false);
   const [nodeEvents, setNodeEvents] = useState<any[]>([]);
@@ -938,7 +973,15 @@ export function OrgEditorView({
   const [viewMode, setViewMode] = useState<"canvas" | "projects" | "dashboard">("canvas");
   const [chatPanelOpen, setChatPanelOpen] = useState(false);
   const [chatPanelNode, setChatPanelNode] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: "node" | "edge" | "pane"; id: string | null } | null>(null);
+  const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    type: "node" | "edge" | "pane";
+    id: string | null;
+    flowX?: number;
+    flowY?: number;
+  } | null>(null);
   const [clipboardNode, setClipboardNode] = useState<any>(null);
   useEffect(() => {
     if (!contextMenu) return;
@@ -983,6 +1026,7 @@ export function OrgEditorView({
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768 || IS_CAPACITOR);
   const [showLeftPanel, setShowLeftPanel] = useState(() => !(window.innerWidth < 768 || IS_CAPACITOR));
   const [showRightPanel, setShowRightPanel] = useState(false);
+  const wasRunningRef = useRef(false);
 
   useLayoutEffect(() => {
     let prev = window.innerWidth < 768 || IS_CAPACITOR;
@@ -996,6 +1040,18 @@ export function OrgEditorView({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  useEffect(() => {
+    if (!currentOrg) {
+      wasRunningRef.current = false;
+      return;
+    }
+    const running = currentOrg.status === "active" || currentOrg.status === "running";
+    if (running !== wasRunningRef.current) {
+      setLayoutLocked(running);
+      wasRunningRef.current = running;
+    }
+  }, [currentOrg?.id, currentOrg?.status]);
 
   // ── Data fetching ──
 
@@ -1032,9 +1088,9 @@ export function OrgEditorView({
       setNodes(hasOverlap ? computeTreeLayout(flowNodes, flowEdges) : flowNodes);
       setEdges(flowEdges);
       setSelectedNodeId(null);
-      if (data.status === "active" || data.status === "running") {
-        setLiveMode(true);
-      }
+      const running = data.status === "active" || data.status === "running";
+      setLiveMode(running);
+      setLayoutLocked(running);
     } catch (e) {
       console.error("Failed to fetch org:", e);
     } finally {
@@ -1252,6 +1308,7 @@ export function OrgEditorView({
       await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/start`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "active" });
       setLiveMode(true);
+      setLayoutLocked(true);
       const mode = (currentOrg as any).operation_mode || "command";
       showToast(
         mode === "autonomous"
@@ -1268,6 +1325,7 @@ export function OrgEditorView({
       await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/stop`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "dormant" });
       setLiveMode(false);
+      setLayoutLocked(false);
     } catch (e) { console.error("Failed to stop org:", e); }
   }, [currentOrg, apiBaseUrl]);
 
@@ -1289,7 +1347,6 @@ export function OrgEditorView({
         if (!savePath) return;
         const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
-        const { writeTextFile } = await import("@tauri-apps/plugin-fs");
         await writeTextFile(savePath, JSON.stringify(data, null, 2));
         showToast(`组织已导出到: ${savePath}`);
       } else {
@@ -1335,6 +1392,7 @@ export function OrgEditorView({
       const data = await res.json();
       setCurrentOrg(data);
       setLiveMode(false);
+      setLayoutLocked(false);
       setActivityFeed([]);
       setBbEntries([]);
       setNodeEvents([]);
@@ -1477,38 +1535,42 @@ export function OrgEditorView({
 
   const handleAddNode = useCallback(() => {
     if (!currentOrg || !newNodeTitle.trim()) return;
-    const newNode: OrgNodeData = {
-      id: `node_${Date.now().toString(36)}`,
-      role_title: newNodeTitle.trim(),
-      role_goal: "",
-      role_backstory: "",
-      agent_source: "local",
-      agent_profile_id: null,
-      position: { x: 250, y: 200 },
-      level: 0,
-      department: newNodeDept.trim(),
-      custom_prompt: "",
-      identity_dir: null,
-      mcp_servers: [],
-      skills: [],
-      skills_mode: "all",
-      preferred_endpoint: null,
-      max_concurrent_tasks: 1,
-      timeout_s: 300,
-      can_delegate: true,
-      can_escalate: true,
-      can_request_scaling: true,
-      is_clone: false,
-      clone_source: null,
-      external_tools: [],
-      ephemeral: false,
-      frozen_by: null,
-      frozen_reason: null,
-      frozen_at: null,
-      avatar: null,
-      status: "idle",
-    };
-    setNodes((prev) => [...prev, orgNodeToFlowNode(newNode)]);
+    const newId = `node_${Date.now().toString(36)}`;
+    setNodes((prev) => {
+      const newNode: OrgNodeData = {
+        id: newId,
+        role_title: newNodeTitle.trim(),
+        role_goal: "",
+        role_backstory: "",
+        agent_source: "local",
+        agent_profile_id: null,
+        position: getNextNodePosition(prev),
+        level: 0,
+        department: newNodeDept.trim(),
+        custom_prompt: "",
+        identity_dir: null,
+        mcp_servers: [],
+        skills: [],
+        skills_mode: "all",
+        preferred_endpoint: null,
+        max_concurrent_tasks: 1,
+        timeout_s: 300,
+        can_delegate: true,
+        can_escalate: true,
+        can_request_scaling: true,
+        is_clone: false,
+        clone_source: null,
+        external_tools: [],
+        ephemeral: false,
+        frozen_by: null,
+        frozen_reason: null,
+        frozen_at: null,
+        avatar: null,
+        status: "idle",
+      };
+      return [...prev, orgNodeToFlowNode(newNode)];
+    });
+    setSelectedNodeId(newId);
     setNewNodeTitle("");
     setNewNodeDept("");
     setShowNewNodeForm(false);
@@ -1571,6 +1633,10 @@ export function OrgEditorView({
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setContextMenu(null);
+    autoSave();
+  }, [autoSave]);
+
+  const onNodeDragStop = useCallback(() => {
     autoSave();
   }, [autoSave]);
 
@@ -1787,9 +1853,12 @@ export function OrgEditorView({
 
   const ctxAddNodeAt = useCallback(() => {
     const newId = `node_${Date.now().toString(36)}`;
-    const maxX = nodes.reduce((m, n) => Math.max(m, n.position?.x ?? 0), 0);
-    const maxY = nodes.reduce((m, n) => Math.max(m, n.position?.y ?? 0), 0);
-    const pos = { x: maxX + 40 + Math.random() * 60, y: maxY + 40 + Math.random() * 60 };
+    const hasPanePosition = contextMenu?.type === "pane"
+      && typeof contextMenu.flowX === "number"
+      && typeof contextMenu.flowY === "number";
+    const pos = hasPanePosition
+      ? { x: contextMenu.flowX!, y: contextMenu.flowY! }
+      : getNextNodePosition(nodes);
     const newNode: OrgNodeData = {
       id: newId, role_title: "新节点", role_goal: "", role_backstory: "",
       agent_source: "local", agent_profile_id: null, position: pos, level: 0,
@@ -1802,7 +1871,7 @@ export function OrgEditorView({
     setNodes((prev) => [...prev, orgNodeToFlowNode(newNode)]);
     setSelectedNodeId(newId);
     setContextMenu(null);
-  }, [nodes, setNodes]);
+  }, [nodes, contextMenu, setNodes]);
 
   // ── Render ──
 
@@ -1884,10 +1953,21 @@ export function OrgEditorView({
             )}
             <button
               className={`org-tb-btn${liveMode ? " org-tb-btn--active" : ""}`}
-              onClick={() => setLiveMode(!liveMode)}
+              onClick={() => {
+                const next = !liveMode;
+                setLiveMode(next);
+                if (!next) setLayoutLocked(false);
+              }}
               title="实时模式"
             >
               <IconRadar size={13} /> {!isMobile && "实况"}
+            </button>
+            <button
+              className={`org-tb-btn${!layoutLocked ? " org-tb-btn--active" : ""}`}
+              onClick={() => setLayoutLocked((v) => !v)}
+              title={layoutLocked ? "解锁布局（可拖拽/连线）" : "锁定布局（防止误操作）"}
+            >
+              <IconSitemap size={13} /> {!isMobile && (layoutLocked ? "拖拽关" : "拖拽开")}
             </button>
             <button className="org-tb-btn" onClick={handleSave} disabled={saving} title="保存">
               <IconSave size={13} /> {saving ? "..." : (!isMobile && "保存")}
@@ -2162,6 +2242,9 @@ export function OrgEditorView({
           ) : (
           <div style={{ flex: 1, position: "relative" }} onContextMenu={(e) => e.preventDefault()}>
             <ReactFlow
+              onInit={(instance) => {
+                reactFlowRef.current = instance;
+              }}
               nodes={nodes}
               edges={edges.map((e) => {
                 const anim = edgeAnimations[e.id];
@@ -2183,17 +2266,30 @@ export function OrgEditorView({
               onNodeClick={onNodeClick}
               onEdgeClick={onEdgeClick}
               onPaneClick={onPaneClick}
+              onNodeDragStop={onNodeDragStop}
               onNodeContextMenu={(e, node) => { e.preventDefault(); e.stopPropagation(); setSelectedNodeId(node.id); setSelectedEdgeId(null); setContextMenu({ x: e.clientX, y: e.clientY, type: "node", id: node.id }); }}
               onEdgeContextMenu={(e, edge) => { e.preventDefault(); e.stopPropagation(); setSelectedEdgeId(edge.id); setSelectedNodeId(null); setContextMenu({ x: e.clientX, y: e.clientY, type: "edge", id: edge.id }); }}
-              onPaneContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, type: "pane", id: null }); }}
+              onPaneContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const flow = reactFlowRef.current?.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+                setContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  type: "pane",
+                  id: null,
+                  flowX: flow?.x,
+                  flowY: flow?.y,
+                });
+              }}
               nodeTypes={nodeTypes}
               connectOnClick
               connectionLineStyle={{ stroke: "var(--primary)", strokeWidth: 2, strokeDasharray: "6 3" }}
               fitView
               snapToGrid
               snapGrid={[20, 20]}
-              nodesDraggable={!liveMode}
-              nodesConnectable={!liveMode}
+              nodesDraggable={!layoutLocked}
+              nodesConnectable={!layoutLocked}
               defaultEdgeOptions={{
                 type: "default",
                 style: { strokeWidth: 2 },
@@ -2267,7 +2363,7 @@ export function OrgEditorView({
               document.body
             )}
             {/* ── Canvas bottom: live activity feed ── */}
-            {liveMode && orgStats && (() => {
+            {liveMode && layoutLocked && orgStats && (() => {
               const perNode: any[] = orgStats.per_node || [];
               const recentTasks: any[] = orgStats.recent_tasks || [];
               const anomalies: any[] = orgStats.anomalies || [];

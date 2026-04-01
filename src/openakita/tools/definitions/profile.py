@@ -26,6 +26,8 @@ PROFILE_TOOLS = [
 - ide: 开发工具
 - detail_level: 详细程度偏好
 - code_comment_lang: 代码注释语言
+- indent_style: 缩进风格（2空格/4空格/tab）
+- code_style: 代码风格规范（PEP8/Google Style/Prettier 等）
 - work_hours: 工作时间
 - timezone: 时区
 - confirm_preference: 确认偏好

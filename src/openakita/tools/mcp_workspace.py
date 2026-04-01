@@ -18,6 +18,57 @@ from .mcp_catalog import MCPCatalog
 
 logger = logging.getLogger(__name__)
 
+_BROWSER_URL_ARG_KEYS = frozenset(
+    ("--browser-url", "--browserUrl", "-u", "--wsEndpoint", "--ws-endpoint")
+)
+
+_injected_browser_urls: dict[str, str] = {}
+
+
+async def prepare_chrome_devtools_args(client: MCPClient, server_name: str) -> None:
+    """连接前为 chrome-devtools MCP 注入 ``--browser-url``（幂等）。
+
+    chrome-devtools-mcp 默认通过 ``DevToolsActivePort`` 文件发现 Chrome，
+    但当 Chrome 以固定端口启动时不会创建该文件，导致连接失败。
+    此函数在连接前探测 CDP 端口，若发现可用则自动注入参数。
+
+    仅当以下条件同时满足时才生效：
+    - 服务器 args 中包含 ``chrome-devtools-mcp``（npm 包名）
+    - 未手动配置过 ``--browser-url`` / ``--wsEndpoint`` 等参数
+    - 本机有可用的 Chrome CDP 端口
+
+    多次调用安全：通过 ``_injected_browser_urls`` 精确追踪自动注入的参数，
+    重连时先撤除上次注入的再重新探测，不会误删用户手动配置的参数。
+    """
+    config = client.get_server_config(server_name)
+    if config is None:
+        return
+
+    if not any("chrome-devtools-mcp" in a for a in config.args):
+        return
+
+    prev_injected = _injected_browser_urls.pop(server_name, None)
+    if prev_injected and prev_injected in config.args:
+        config.args.remove(prev_injected)
+
+    has_user_set = any(
+        a.split("=")[0] in _BROWSER_URL_ARG_KEYS for a in config.args
+    )
+    if has_user_set:
+        return
+
+    from .browser.chrome_finder import detect_chrome_cdp_port
+
+    port = await detect_chrome_cdp_port()
+    if port is not None:
+        arg = f"--browser-url=http://127.0.0.1:{port}"
+        config.args.append(arg)
+        _injected_browser_urls[server_name] = arg
+        logger.info(
+            "Chrome CDP detected at port %d, injected --browser-url for %s",
+            port, server_name,
+        )
+
 
 def sync_tools_after_connect(
     server_name: str,

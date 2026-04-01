@@ -1,7 +1,7 @@
 """
 子进程代理 — 通过系统 Python 调用需要可选依赖的操作
 
-当 PyInstaller 打包环境中无法直接 import 某些重量级包（如 playwright、browser_use）时，
+当 PyInstaller 打包环境中无法直接 import 某些重量级包（如 playwright）时，
 通过系统 Python 子进程执行，返回 JSON 结果。
 
 典型流程：

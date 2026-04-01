@@ -101,8 +101,8 @@ class TestApplyBudgetToSections:
 
     def test_budget_config_defaults(self):
         config = BudgetConfig()
-        assert config.identity_budget == 6000
-        assert config.catalogs_budget == 12000
+        assert config.identity_budget == 3000
+        assert config.catalogs_budget == 8000
         assert config.user_budget == 300
         assert config.memory_budget == 2500
-        assert config.total_budget == 21000
+        assert config.total_budget == 14000

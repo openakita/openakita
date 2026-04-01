@@ -349,7 +349,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     }
 
 
-@router.delete("/api/config/endpoint/{name}")
+@router.delete("/api/config/endpoint/{name:path}")
 async def delete_endpoint_by_name(
     name: str, request: Request, endpoint_type: str = "endpoints", clean_env: bool = True
 ):
@@ -560,14 +560,8 @@ def _hot_patch_agent_tools(request: Request, *, enable: bool) -> None:
                 if t["name"] not in existing:
                     agent._tools.append(t)
                 agent.tool_catalog.add_tool(t)
-            agent.handler_registry.register(
-                "agent", create_agent_handler(agent),
-                [t["name"] for t in AGENT_TOOLS],
-            )
-            agent.handler_registry.register(
-                "org_setup", create_org_setup_handler(agent),
-                [t["name"] for t in ORG_SETUP_TOOLS],
-            )
+            agent.handler_registry.register("agent", create_agent_handler(agent))
+            agent.handler_registry.register("org_setup", create_org_setup_handler(agent))
             logger.info("[Config API] Agent + org_setup tools hot-patched onto global agent")
         else:
             agent._tools = [t for t in agent._tools if t["name"] not in set(tool_names)]

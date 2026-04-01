@@ -54,6 +54,7 @@ from .code_quality import CODE_QUALITY_TOOLS
 from .config import CONFIG_TOOLS
 from .filesystem import FILESYSTEM_TOOLS
 from .im_channel import IM_CHANNEL_TOOLS
+from .lsp import LSP_TOOLS
 from .mcp import MCP_TOOLS
 from .memory import MEMORY_TOOLS
 from .mode import MODE_TOOLS
@@ -62,15 +63,21 @@ from .opencli import OPENCLI_TOOLS
 from .org_setup import ORG_SETUP_TOOLS
 from .persona import PERSONA_TOOLS
 from .plan import PLAN_TOOLS
+from .plugins import PLUGIN_TOOLS
+from .powershell import POWERSHELL_TOOLS
 from .profile import PROFILE_TOOLS
 from .scheduled import SCHEDULED_TOOLS
 from .search import SEARCH_TOOLS
 from .skill_store import SKILL_STORE_TOOLS
 from .skills import SKILLS_TOOLS
+from .sleep import SLEEP_TOOLS
 from .sticker import STICKER_TOOLS
+from .structured_output import STRUCTURED_OUTPUT_TOOLS
 from .system import SYSTEM_TOOLS
+from .tool_search import TOOL_SEARCH_TOOLS
 from .web_fetch import WEB_FETCH_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
+from .worktree import WORKTREE_TOOLS
 
 # 合并所有工具定义（不含平台连接类工具，后者由 agent 根据 hub_enabled 动态加载）
 BASE_TOOLS = (
@@ -94,10 +101,32 @@ BASE_TOOLS = (
     + STICKER_TOOLS
     + CONFIG_TOOLS
     + AGENT_PACKAGE_TOOLS
+    + PLUGIN_TOOLS
+    + POWERSHELL_TOOLS
+    + TOOL_SEARCH_TOOLS
+    + LSP_TOOLS
+    + SLEEP_TOOLS
+    + STRUCTURED_OUTPUT_TOOLS
+    + WORKTREE_TOOLS
 )
 
 # 平台连接工具（Agent Hub + Skill Store），仅在 hub_enabled=True 时注册
 HUB_TOOLS = AGENT_HUB_TOOLS + SKILL_STORE_TOOLS
+
+_ALL_TOOLS = list(BASE_TOOLS) + list(HUB_TOOLS)
+_TOOL_DEFINITIONS_BY_NAME = {tool["name"]: tool for tool in _ALL_TOOLS}
+
+
+def get_tool_definition(tool_name: str) -> dict | None:
+    """Return the static tool definition for a tool name, if known."""
+    return _TOOL_DEFINITIONS_BY_NAME.get(tool_name)
+
+
+def get_tool_input_schema(tool_name: str) -> dict:
+    """Return a tool's input schema or an empty dict when unavailable."""
+    tool = get_tool_definition(tool_name)
+    schema = tool.get("input_schema") if tool else None
+    return schema if isinstance(schema, dict) else {}
 
 __all__ = [
     # 基础类型和工具
@@ -143,4 +172,13 @@ __all__ = [
     "CONFIG_TOOLS",
     "OPENCLI_TOOLS",
     "CLI_ANYTHING_TOOLS",
+    "PLUGIN_TOOLS",
+    "POWERSHELL_TOOLS",
+    "TOOL_SEARCH_TOOLS",
+    "LSP_TOOLS",
+    "SLEEP_TOOLS",
+    "STRUCTURED_OUTPUT_TOOLS",
+    "WORKTREE_TOOLS",
+    "get_tool_definition",
+    "get_tool_input_schema",
 ]

@@ -694,12 +694,15 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._consecutive_auth_failures += 1
                 if self._consecutive_auth_failures >= _MAX_AUTH_FAILURES:
                     self._auth_disabled = True
-                    logger.error(
-                        f"[WeWork WS] Fatal auth error persisted after "
-                        f"{self._consecutive_auth_failures} attempts "
-                        f"(last: {getattr(self, '_auth_error', '?')}). "
-                        "Stopping reconnect — check bot_id/secret configuration."
+                    last_err = getattr(self, '_auth_error', '?')
+                    reason = (
+                        f"连续 {self._consecutive_auth_failures} 次认证失败 "
+                        f"(错误: {last_err})。"
+                        "请检查企业微信 Bot ID / Secret 配置"
                     )
+                    logger.error(f"[WeWork WS] {reason}")
+                    self._running = False
+                    self._report_failure(reason)
                     return
 
             # check max reconnect

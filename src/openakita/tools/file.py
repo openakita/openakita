@@ -264,6 +264,10 @@ class FileTool:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
         dir_path = self._resolve_path(path)
+        if dir_path.is_file():
+            if not include:
+                include = dir_path.name
+            dir_path = dir_path.parent
         if not dir_path.is_dir():
             raise FileNotFoundError(f"Directory not found: {dir_path}")
 

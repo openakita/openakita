@@ -105,6 +105,8 @@ _EXCLUDE_ROOT_EXTENSIONS = {
     ".docx", ".xlsx", ".pptx", ".js", ".py", ".exe",
 }
 
+_SQLITE_TEMP_EXTENSIONS = {".db-shm", ".db-wal", ".db-journal"}
+
 
 # ── Settings helpers ─────────────────────────────────────────────────
 
@@ -152,6 +154,11 @@ def _should_include(
     # Always-exclude files
     if rel_posix in _ALWAYS_EXCLUDE_FILES:
         return False
+
+    # SQLite temporary/WAL files — transient, recreated on open
+    for ext in _SQLITE_TEMP_EXTENSIONS:
+        if rel_posix.endswith(ext):
+            return False
 
     # Exclude root-level generated files by extension
     if "/" not in rel_posix:
@@ -318,6 +325,7 @@ def restore_backup(zip_path: str, workspace_path: Path) -> dict[str, Any]:
                 raise ValueError(f"Unsafe path in backup: {name}")
 
         restored_count = 0
+        skipped: list[str] = []
         for member in zf.infolist():
             if member.filename == MANIFEST_FILE:
                 continue
@@ -325,16 +333,35 @@ def restore_backup(zip_path: str, workspace_path: Path) -> dict[str, Any]:
                 (workspace_path / member.filename).mkdir(parents=True, exist_ok=True)
                 continue
 
+            # Skip SQLite temporary files — they are transient and will be
+            # recreated automatically; on Windows they may be memory-mapped
+            # and cannot be overwritten (Errno 22 / EINVAL).
+            if any(member.filename.endswith(ext) for ext in _SQLITE_TEMP_EXTENSIONS):
+                logger.debug(f"Skipping SQLite temp file: {member.filename}")
+                continue
+
             target = workspace_path / member.filename
             target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(member) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-            restored_count += 1
+            try:
+                with zf.open(member) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                restored_count += 1
+            except OSError as exc:
+                skipped.append(member.filename)
+                logger.warning(f"Skipping {member.filename} during restore: {exc}")
 
-    logger.info(f"Restored {restored_count} files from {zip_path_obj.name}")
+    if skipped:
+        logger.warning(
+            f"Restored {restored_count} files, skipped {len(skipped)} "
+            f"(locked/inaccessible): {skipped[:10]}"
+        )
+    else:
+        logger.info(f"Restored {restored_count} files from {zip_path_obj.name}")
 
     return {
         "restored_count": restored_count,
+        "skipped_count": len(skipped),
+        "skipped_files": skipped[:20],
         "manifest": manifest,
     }
 

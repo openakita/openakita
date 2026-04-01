@@ -1,23 +1,24 @@
 """L4 E2E Tests: Plan system end-to-end — create, step management, complete, cancel."""
 
-import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "fixtures"))
-from mock_llm import MockLLMClient, MockBrain
+from mock_llm import MockBrain, MockLLMClient
 
 from openakita.tools.handlers.plan import (
+    cancel_todo,
+    clear_session_todo_state,
+    get_active_todo_prompt,
+    get_todo_handler_for_session,
     has_active_todo,
     register_active_todo,
-    unregister_active_todo,
-    clear_session_todo_state,
-    cancel_todo,
     register_plan_handler,
-    get_todo_handler_for_session,
-    get_active_todo_prompt,
     should_require_todo,
+    unregister_active_todo,
 )
 
 
@@ -74,6 +75,49 @@ class TestPlanWithHandler:
         clear_session_todo_state(sid)
         prompt = get_active_todo_prompt(sid)
         assert isinstance(prompt, str)
+
+    @pytest.mark.asyncio
+    async def test_create_todo_accepts_stringified_steps(self):
+        from openakita.tools.handlers.plan import PlanHandler
+
+        agent = _make_mock_agent()
+        handler = PlanHandler(agent)
+        result = await handler.handle(
+            "create_todo",
+            {
+                "task_summary": "demo",
+                "steps": '[{"id":"step_1","description":"first"},{"id":"step_2","description":"second"}]',
+            },
+        )
+
+        assert "Created todo" in result
+        plan = handler.get_plan_for("plan-test-conv")
+        assert plan is not None
+        assert len(plan["steps"]) == 2
+        assert plan["steps"][0]["description"] == "first"
+        assert plan["steps"][1]["description"] == "second"
+        clear_session_todo_state("plan-test-conv")
+
+    @pytest.mark.asyncio
+    async def test_create_todo_rejects_invalid_steps_shape(self):
+        from openakita.tools.handlers.plan import PlanHandler
+
+        agent = _make_mock_agent()
+        handler = PlanHandler(agent)
+
+        # object instead of array
+        result = await handler.handle(
+            "create_todo",
+            {"task_summary": "demo", "steps": '{"id":"only_step"}'},
+        )
+        assert "steps 参数格式错误" in result
+
+        # array item must be object
+        result = await handler.handle(
+            "create_todo",
+            {"task_summary": "demo", "steps": '["bad_item"]'},
+        )
+        assert "steps[0] 格式错误" in result
 
 
 class TestPlanDetection:

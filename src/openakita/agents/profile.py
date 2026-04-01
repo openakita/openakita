@@ -45,6 +45,32 @@ class SkillsMode(str, Enum):
     ALL = "all"  # 全部技能
 
 
+_SKILLS_MODE_ALIASES: dict[str, str] = {
+    "only": "inclusive",
+}
+
+
+def safe_agent_type(value: Any) -> AgentType:
+    """将任意值安全转换为 AgentType，无法识别时回退到 CUSTOM。"""
+    if isinstance(value, AgentType):
+        return value
+    try:
+        return AgentType(value)
+    except (ValueError, KeyError, TypeError):
+        return AgentType.CUSTOM
+
+
+def safe_skills_mode(value: Any) -> SkillsMode:
+    """将任意值安全转换为 SkillsMode，支持别名映射，无法识别时回退到 ALL。"""
+    if isinstance(value, SkillsMode):
+        return value
+    try:
+        raw = _SKILLS_MODE_ALIASES.get(value, value)
+        return SkillsMode(raw)
+    except (ValueError, KeyError, TypeError):
+        return SkillsMode.ALL
+
+
 # SYSTEM Profile 中不可被用户修改的身份字段（其余均可自定义）
 _SYSTEM_IMMUTABLE_FIELDS = frozenset({
     "id", "type", "created_by",
@@ -103,6 +129,9 @@ class AgentProfile:
     category: str = ""
     hidden: bool = False
 
+    # 像素形象（前端像素办公室/聊天头像渲染用）
+    pixel_appearance: dict | None = None
+
     # 用户自定义标记：系统预设被用户编辑后置 True，升级时不再覆盖
     user_customized: bool = False
 
@@ -113,11 +142,15 @@ class AgentProfile:
     ephemeral: bool = False
     inherit_from: str | None = None
 
+    # 隔离配置
+    identity_mode: str = "shared"  # "shared" | "custom"
+    memory_mode: str = "shared"  # "shared" | "isolated"
+    memory_inherit_global: bool = True
+    user_profile_content: str = ""
+
     def __post_init__(self):
-        if isinstance(self.type, str):
-            self.type = AgentType(self.type)
-        if isinstance(self.skills_mode, str):
-            self.skills_mode = SkillsMode(self.skills_mode)
+        self.type = safe_agent_type(self.type)
+        self.skills_mode = safe_skills_mode(self.skills_mode)
         if not self.created_at:
             self.created_at = datetime.now(timezone.utc).isoformat()
 
@@ -138,10 +171,6 @@ class AgentProfile:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentProfile:
         data = dict(data)
-        if "type" in data:
-            data["type"] = AgentType(data["type"])
-        if "skills_mode" in data:
-            data["skills_mode"] = SkillsMode(data["skills_mode"])
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
@@ -248,6 +277,7 @@ class ProfileStore:
         "name", "description", "icon", "color", "skills", "skills_mode",
         "tools", "tools_mode", "mcp_servers", "mcp_mode", "plugins", "plugins_mode",
         "custom_prompt", "category", "fallback_profile_id", "preferred_endpoint",
+        "identity_mode", "memory_mode", "memory_inherit_global",
     })
 
     def update(self, profile_id: str, updates: dict[str, Any]) -> AgentProfile:
@@ -286,8 +316,28 @@ class ProfileStore:
         logger.info(f"ProfileStore updated: {profile_id}")
         return profile
 
+    _RESERVED_DIR_NAMES = frozenset({"profiles"})
+
+    def get_profile_dir(self, profile_id: str) -> Path:
+        """返回 Profile 专属数据目录 data/agents/{profile_id}/
+
+        Raises ValueError if profile_id collides with reserved directory names.
+        """
+        if profile_id in self._RESERVED_DIR_NAMES:
+            raise ValueError(
+                f"Profile ID '{profile_id}' conflicts with a reserved directory name"
+            )
+        return self._base_dir / profile_id
+
+    def ensure_profile_dir(self, profile_id: str) -> Path:
+        """确保 Profile 专属目录存在并初始化必要子目录。"""
+        d = self.get_profile_dir(profile_id)
+        (d / "identity").mkdir(parents=True, exist_ok=True)
+        (d / "memory").mkdir(parents=True, exist_ok=True)
+        return d
+
     def delete(self, profile_id: str) -> bool:
-        """删除 Profile。SYSTEM 类型禁止删除。"""
+        """删除 Profile。SYSTEM 类型禁止删除。同时清理 Profile 专属目录。"""
         with self._lock:
             existing = self._cache.get(profile_id)
             if existing is None:
@@ -300,6 +350,13 @@ class ProfileStore:
             fp = self._profiles_dir / f"{profile_id}.json"
             if fp.exists():
                 fp.unlink()
+
+        import shutil
+        profile_dir = self.get_profile_dir(profile_id)
+        if profile_dir.is_dir():
+            shutil.rmtree(profile_dir, ignore_errors=True)
+            logger.info(f"ProfileStore cleaned profile dir: {profile_dir}")
+
         logger.info(f"ProfileStore deleted: {profile_id}")
         return True
 

@@ -27,9 +27,12 @@ DYNAMIC_AGENT_POLICIES = {
 
 
 class AgentToolHandler:
-    """Handles delegate_to_agent, delegate_parallel, spawn_agent and create_agent tool calls."""
+    """Handles agent management tool calls including delegation, lifecycle, and messaging."""
 
-    TOOLS = ["delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent"]
+    TOOLS = [
+        "delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent",
+        "task_stop", "send_agent_message",
+    ]
 
     def __init__(self, agent: Agent):
         self.agent = agent
@@ -43,7 +46,11 @@ class AgentToolHandler:
                 f"❌ 你是子 Agent，不允许使用 {tool_name}。"
                 "请直接用你自己的工具完成任务。"
             )
-        if tool_name == "delegate_to_agent":
+        if tool_name == "task_stop":
+            return await self._task_stop(params)
+        elif tool_name == "send_agent_message":
+            return await self._send_message(params)
+        elif tool_name == "delegate_to_agent":
             return await self._delegate(params)
         elif tool_name == "delegate_parallel":
             return await self._delegate_parallel(params)
@@ -61,6 +68,7 @@ class AgentToolHandler:
         agent_id = (params.get("agent_id") or "").strip()
         message = (params.get("message") or "").strip()
         reason = (params.get("reason") or "").strip()
+        context = (params.get("context") or "").strip()
 
         if not agent_id:
             return "❌ agent_id is required"
@@ -83,11 +91,12 @@ class AgentToolHandler:
             f"[AgentToolHandler] Delegation: {current_agent} -> {agent_id} | reason={reason}"
         )
 
-        # Agent Harness: context isolation — build task-focused message
-        # instead of relying on the sub-agent seeing full session history
-        isolated_message = message
+        isolated_message = ""
+        if context:
+            isolated_message += f"[任务背景]\n{context}\n\n"
+        isolated_message += f"[任务指令]\n{message}"
         if reason:
-            isolated_message = f"[委派任务] {message}\n[委派原因] {reason}"
+            isolated_message += f"\n[委派原因] {reason}"
 
         try:
             result = await orchestrator.delegate(
@@ -146,6 +155,7 @@ class AgentToolHandler:
             agent_id = (task.get("agent_id") or "").strip()
             message = (task.get("message") or "").strip()
             reason = (task.get("reason") or "").strip()
+            task_context = (task.get("context") or "").strip()
 
             if agent_id in duplicated_ids:
                 seen_counter[agent_id] = seen_counter.get(agent_id, 0) + 1
@@ -184,6 +194,7 @@ class AgentToolHandler:
                             "display_id": agent_id,
                             "message": message,
                             "reason": reason,
+                            "context": task_context,
                         })
                         continue
 
@@ -192,30 +203,57 @@ class AgentToolHandler:
                 "display_id": agent_id,
                 "message": message,
                 "reason": reason,
+                "context": task_context,
             })
+
+        parent_browser = getattr(self.agent, "browser_manager", None)
 
         async def _run_one(task: dict) -> tuple[str, str]:
             aid = task["agent_id"]
             display = task["display_id"]
             msg = task["message"]
             rsn = task["reason"]
+            ctx = task.get("context", "")
             if not aid or not msg:
                 return display or "?", "❌ agent_id and message are required"
+
+            isolated_msg = ""
+            if ctx:
+                isolated_msg += f"[任务背景]\n{ctx}\n\n"
+            isolated_msg += f"[任务指令]\n{msg}"
+            if rsn:
+                isolated_msg += f"\n[委派原因] {rsn}"
+
             logger.info(
                 f"[AgentToolHandler] Parallel delegation: {current_agent} -> {aid} | reason={rsn}"
             )
+
+            isolated_ctx = None
             try:
+                if parent_browser and parent_browser.is_ready:
+                    try:
+                        isolated_ctx = await parent_browser.create_isolated_context()
+                    except Exception as iso_err:
+                        logger.debug(f"[AgentToolHandler] Browser isolation failed: {iso_err}")
+
                 result = await orchestrator.delegate(
                     session=session,
                     from_agent=current_agent,
                     to_agent=aid,
-                    message=msg,
+                    message=isolated_msg,
                     reason=rsn,
+                    isolated_browser=isolated_ctx,
                 )
                 return display, str(result)
             except BaseException as e:
                 logger.error(f"[AgentToolHandler] Parallel delegation to {aid} failed: {e}")
                 return display, f"❌ Failed: {e}"
+            finally:
+                if isolated_ctx and isolated_ctx is not parent_browser:
+                    try:
+                        await isolated_ctx.stop()
+                    except Exception:
+                        pass
 
         coros = [_run_one(t) for t in resolved_tasks]
         try:
@@ -565,6 +603,70 @@ class AgentToolHandler:
         if best_score >= 0.5:
             return best_profile
         return None
+
+    # ─── task_stop ───
+    async def _task_stop(self, params: dict[str, Any]) -> str:
+        """Stop a running background agent or shell process."""
+        target_id = params.get("target_id", "").strip()
+        reason = params.get("reason", "user requested stop")
+        if not target_id:
+            return "task_stop requires a 'target_id' parameter."
+
+        # Try to cancel via agent pool
+        pool = getattr(self.agent, "_agent_pool", None)
+        if pool:
+            for inst in pool.values():
+                if getattr(inst, "name", "") == target_id or getattr(inst, "id", "") == target_id:
+                    state = getattr(inst, "agent_state", None)
+                    if state and hasattr(state, "cancel"):
+                        state.cancel(reason)
+                        logger.info(f"[TaskStop] Cancelled agent: {target_id}")
+                        return f"Agent '{target_id}' has been cancelled. Reason: {reason}"
+
+        # Try to cancel via background tasks
+        bg_tasks = getattr(self.agent, "_background_tasks", {})
+        task = bg_tasks.get(target_id)
+        if task and not task.done():
+            task.cancel()
+            logger.info(f"[TaskStop] Cancelled background task: {target_id}")
+            return f"Background task '{target_id}' has been cancelled. Reason: {reason}"
+
+        return f"No running agent or task found with ID '{target_id}'."
+
+    # ─── send_agent_message ───
+    async def _send_message(self, params: dict[str, Any]) -> str:
+        """Send a message to another active agent via mailbox."""
+        target = params.get("target", "").strip()
+        message = params.get("message", "").strip()
+        msg_type = params.get("message_type", "text")
+        if not target or not message:
+            return "send_agent_message requires 'target' and 'message' parameters."
+
+        pool = getattr(self.agent, "_agent_pool", None)
+        if not pool:
+            return "No active agents to send messages to."
+
+        delivered = []
+        for inst_id, inst in pool.items():
+            name = getattr(inst, "name", inst_id)
+            if target == "*" or name == target or inst_id == target:
+                mailbox = getattr(inst, "_mailbox", None)
+                if mailbox is None:
+                    inst._mailbox = []
+                    mailbox = inst._mailbox
+                mailbox.append({
+                    "from": getattr(self.agent, "name", "orchestrator"),
+                    "type": msg_type,
+                    "message": message,
+                    "timestamp": time.time(),
+                })
+                delivered.append(name)
+
+        if not delivered:
+            return f"No active agent found with name '{target}'."
+
+        logger.info(f"[SendMessage] Delivered to: {delivered}")
+        return f"Message delivered to: {', '.join(delivered)}"
 
 
 def create_handler(agent: Agent):

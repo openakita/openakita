@@ -57,6 +57,7 @@ from ..tools.handlers.config import create_handler as create_config_handler
 from ..tools.handlers.desktop import create_handler as create_desktop_handler
 from ..tools.handlers.filesystem import create_handler as create_filesystem_handler
 from ..tools.handlers.im_channel import create_handler as create_im_channel_handler
+from ..tools.handlers.lsp import create_handler as create_lsp_handler
 from ..tools.handlers.mcp import create_handler as create_mcp_handler
 from ..tools.handlers.memory import create_handler as create_memory_handler
 from ..tools.handlers.mode import create_handler as create_mode_handler
@@ -65,15 +66,21 @@ from ..tools.handlers.opencli import create_handler as create_opencli_handler
 from ..tools.handlers.opencli import is_available as opencli_available
 from ..tools.handlers.persona import create_handler as create_persona_handler
 from ..tools.handlers.plan import create_todo_handler
+from ..tools.handlers.plugins import create_handler as create_plugins_handler
+from ..tools.handlers.powershell import create_handler as create_powershell_handler
 from ..tools.handlers.profile import create_handler as create_profile_handler
 from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
 from ..tools.handlers.search import create_handler as create_search_handler
 from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
+from ..tools.handlers.sleep import create_handler as create_sleep_handler
+from ..tools.handlers.structured_output import create_handler as create_structured_output_handler
 from ..tools.handlers.sticker import create_handler as create_sticker_handler
 from ..tools.handlers.system import create_handler as create_system_handler
+from ..tools.handlers.tool_search import create_handler as create_tool_search_handler
 from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
+from ..tools.handlers.worktree import create_handler as create_worktree_handler
 
 # MCP 系统
 from ..tools.mcp import mcp_client
@@ -133,7 +140,11 @@ def _ensure_desktop():
 
 logger = logging.getLogger(__name__)
 
-# 上下文管理常量（已迁移至 context_manager.py / config.py，保留 DEFAULT_MAX_CONTEXT_TOKENS 导入）
+# 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
+from .context_manager import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
+COMPRESSION_RATIO = 0.15
+LARGE_TOOL_RESULT_THRESHOLD = 5000
+MIN_RECENT_TURNS = 4
 
 # 小上下文窗口模型的核心工具白名单（仅保留最基本的执行能力）
 SMALL_CTX_CORE_TOOLS = {
@@ -256,6 +267,8 @@ class Agent:
         "中止",
         "终止",
         "不要了",
+        "/stop", "/停止", "/取消", "/cancel", "/abort",
+        "kill", "kill all",
     }
 
     SKIP_COMMANDS = {
@@ -268,6 +281,7 @@ class Agent:
         "skip this",
         "换个方法",
         "太慢了",
+        "/skip", "/跳过",
     }
 
     # ---- Task-local properties ----
@@ -335,12 +349,13 @@ class Agent:
         self,
         name: str | None = None,
         api_key: str | None = None,
+        brain: Brain | None = None,
     ):
         self.name = name or settings.agent_name
 
         # 初始化核心组件
         self.identity = Identity()
-        self.brain = Brain(api_key=api_key)
+        self.brain = brain or Brain(api_key=api_key)
         self.ralph = RalphLoop(
             max_iterations=settings.max_iterations,
             on_iteration=self._on_iteration,
@@ -372,7 +387,6 @@ class Agent:
         self.mcp_catalog = _shared_mcp_catalog
         self.browser_manager = None  # 在 _start_builtin_mcp_servers 中启动
         self.pw_tools = None
-        self.bu_runner = None
         self._builtin_mcp_count = 0
 
         # 恢复运行时状态（必须在工具目录构建之前，否则 multi_agent_enabled 等可能还是旧值）
@@ -571,6 +585,9 @@ class Agent:
             on_skill_loaded=self._on_skill_manager_loaded,
         )
 
+        # 插件目录（在 _load_plugins 中设置）
+        self.plugin_catalog = None
+
         # 提示词组装器（委托自 _build_system_prompt 等）
         self.prompt_assembler = PromptAssembler(
             tool_catalog=self.tool_catalog,
@@ -595,7 +612,7 @@ class Agent:
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
     # Categories that must always remain available regardless of intent filtering.
-    # These are infrastructure tools that any task may need.
+    # Infrastructure tools always included regardless of intent filtering.
     _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
         "System",       # ask_user, enable_thinking, get_tool_info, etc.
         "Memory",       # search_memory, add_memory — context recall
@@ -603,8 +620,28 @@ class Agent:
         "Plan",         # create_plan_file, exit_plan_mode — plan mode tools
         "File System",  # read_file, write_file, list_directory — fundamental I/O
         "Skills",       # list_skills, run_skill_script — capability discovery
-        "Skill Store",  # search/install skills from store
-        "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
+    })
+    # Individual tool names to always keep even when their category is deferred
+    _ALWAYS_KEEP_TOOLS: frozenset[str] = frozenset({
+        "tool_search",  # meta-tool to discover deferred tools
+        "ask_user",     # always need to be able to ask the user
+    })
+
+    # Categories deferred by default to reduce token overhead (~40 tools saved).
+    # The model can discover deferred tools via `tool_search` when needed.
+    _DEFERRED_CATEGORIES: frozenset[str] = frozenset({
+        "Browser",         # 15 tools — loaded when user needs web interaction
+        "Desktop",         # 10 tools — loaded when user needs desktop automation
+        "MCP",             # 8 tools — loaded when user needs MCP server interaction
+        "IM Channel",      # IM platform tools — only needed for channel operations
+        "Scheduled",       # scheduler tools — only needed when setting up schedules
+        "Agent Package",   # agent packaging — rarely needed in normal conversation
+        "Profile",         # persona traits — deferred until personality discussion
+        "Config",          # config management — rarely needed
+        "Plugin",          # plugin management — rarely needed
+        "Advanced",        # powershell, lsp, notebook, worktree, etc.
+        "OpenCLI",         # CLI management tools
+        "Platform",        # platform-specific tools
     })
 
     @property
@@ -612,33 +649,68 @@ class Agent:
         """Tools available for the current call context.
 
         Filtering layers (applied in order):
+        0. Sanity: drop entries without a valid name
         1. Sub-agent restriction: remove delegation tools
-        2. Intent-driven: filter by IntentResult.tool_hints (category-based),
-           but always keep infrastructure categories (System, Memory, Plan,
-           Skills, Skill Store, MCP) so the LLM can recall context, orchestrate
-           plans, invoke skills/MCP, and use meta tools regardless of intent.
+        2. Tiered loading: exclude _DEFERRED_CATEGORIES (saves ~50 tools)
+           - Intent hints can un-defer specific categories
+           - IM sessions auto-include IM Channel category
+           - _ALWAYS_KEEP_TOOLS are never deferred
         3. Context window: reduce set for small models
         """
-        tools = self._tools
+        tools = [t for t in self._tools if t.get("name")]
+        dropped = len(self._tools) - len(tools)
+        if dropped:
+            logger.warning(
+                "[Agent] _effective_tools: dropped %d tool(s) without a valid name "
+                "(total=%d, valid=%d)",
+                dropped, len(self._tools), len(tools),
+            )
         if self._is_sub_agent_call:
             tools = [t for t in tools if t.get("name") not in self._agent_tool_names]
 
         intent = getattr(self, "_current_intent", None)
-        if intent and intent.tool_hints and hasattr(self, "tool_catalog"):
+        intent_hints = set(intent.tool_hints) if intent and intent.tool_hints else set()
+
+        # IM sessions always need IM Channel tools
+        session_type = getattr(self, "_current_session_type", "cli")
+        if session_type == "im":
+            intent_hints.add("IM Channel")
+
+        if intent_hints and hasattr(self, "tool_catalog"):
             tool_groups = self.tool_catalog.get_tool_groups()
-            allowed: set[str] = set()
+            allowed: set[str] = set(self._ALWAYS_KEEP_TOOLS)
             for cat in self._ALWAYS_KEEP_CATEGORIES:
                 allowed |= tool_groups.get(cat, set())
-            for hint in intent.tool_hints:
+            for hint in intent_hints:
                 allowed |= tool_groups.get(hint, set())
             tools = [t for t in tools if t.get("name") in allowed]
+        elif hasattr(self, "tool_catalog"):
+            deferred_cats = self._DEFERRED_CATEGORIES - intent_hints
+            if deferred_cats:
+                tool_groups = self.tool_catalog.get_tool_groups()
+                deferred_names: set[str] = set()
+                for cat in deferred_cats:
+                    deferred_names |= tool_groups.get(cat, set())
+                deferred_names -= self._ALWAYS_KEEP_TOOLS
+                if deferred_names:
+                    before = len(tools)
+                    tools = [
+                        t for t in tools if t.get("name") not in deferred_names
+                    ]
+                    if len(tools) < before:
+                        logger.info(
+                            "[Agent] tiered loading: deferred %d tools from %s (remaining=%d)",
+                            before - len(tools),
+                            sorted(deferred_cats),
+                            len(tools),
+                        )
 
         ctx = self._get_raw_context_window()
         if 0 < ctx < 8000:
             tools = [t for t in tools if t.get("name") in SMALL_CTX_CORE_TOOLS]
         elif 0 < ctx < 32000:
-            allowed = SMALL_CTX_CORE_TOOLS | MEDIUM_CTX_EXTRA_TOOLS
-            tools = [t for t in tools if t.get("name") in allowed]
+            allowed_ctx = SMALL_CTX_CORE_TOOLS | MEDIUM_CTX_EXTRA_TOOLS
+            tools = [t for t in tools if t.get("name") in allowed_ctx]
 
         return tools
 
@@ -962,7 +1034,6 @@ class Agent:
         self._context.system = self._build_system_prompt(base_prompt, use_compiled=True)
 
         if lightweight:
-            self._inject_browser_use_llm_config()
             self._initialized = True
             return
 
@@ -1004,9 +1075,6 @@ class Agent:
                 logger.info(f"Loaded {len(persona_memories)} persona traits from memory")
         except Exception as e:
             logger.debug(f"[Persona] trait loading skipped: {e}")
-
-        # === browser_task 依赖的 LLM 配置注入 ===
-        self._inject_browser_use_llm_config()
 
         self._initialized = True
         total_mcp = self.mcp_catalog.server_count + self._builtin_mcp_count
@@ -1075,6 +1143,10 @@ class Agent:
         if hasattr(self, "reasoning_engine") and self.reasoning_engine:
             self.reasoning_engine._plugin_hooks = self._plugin_manager.hook_registry
 
+        from ..plugins.catalog import PluginCatalog
+        self.plugin_catalog = PluginCatalog(self._plugin_manager)
+        self.prompt_assembler._plugin_catalog = self.plugin_catalog
+
         loaded = self._plugin_manager.loaded_count
         failed = self._plugin_manager.failed_count
         if failed > 0:
@@ -1089,259 +1161,112 @@ class Agent:
         将各个模块的处理器注册到 handler_registry
         """
         # 文件系统
-        self.handler_registry.register(
-            "filesystem",
-            create_filesystem_handler(self),
-            ["run_shell", "write_file", "read_file", "edit_file",
-             "list_directory", "grep", "glob", "delete_file"],
-        )
+        self.handler_registry.register("filesystem", create_filesystem_handler(self))
 
         # 记忆系统
-        self.handler_registry.register(
-            "memory",
-            create_memory_handler(self),
-            ["consolidate_memories", "add_memory", "search_memory", "get_memory_stats",
-             "list_recent_tasks", "trace_memory", "search_conversation_traces"],
-        )
+        self.handler_registry.register("memory", create_memory_handler(self))
 
         # 浏览器
-        self.handler_registry.register(
-            "browser",
-            create_browser_handler(self),
-            [
-                "browser_task",
-                "browser_open",
-                "browser_navigate",
-                "browser_get_content",
-                "browser_screenshot",
-                "browser_close",
-                "view_image",
-                "browser_click",
-                "browser_type",
-                "browser_scroll",
-                "browser_wait",
-                "browser_execute_js",
-                "browser_list_tabs",
-                "browser_switch_tab",
-                "browser_new_tab",
-            ],
-        )
+        self.handler_registry.register("browser", create_browser_handler(self))
 
         # 定时任务
-        self.handler_registry.register(
-            "scheduled",
-            create_scheduled_handler(self),
-            [
-                "schedule_task",
-                "list_scheduled_tasks",
-                "cancel_scheduled_task",
-                "update_scheduled_task",
-                "trigger_scheduled_task",
-            ],
-        )
+        self.handler_registry.register("scheduled", create_scheduled_handler(self))
 
         # MCP
-        self.handler_registry.register(
-            "mcp",
-            create_mcp_handler(self),
-            [
-                "list_mcp_servers",
-                "get_mcp_instructions",
-                "call_mcp_tool",
-                "add_mcp_server",
-                "remove_mcp_server",
-                "connect_mcp_server",
-                "disconnect_mcp_server",
-                "reload_mcp_servers",
-            ],
-        )
+        self.handler_registry.register("mcp", create_mcp_handler(self))
 
         # 用户档案
-        self.handler_registry.register(
-            "profile",
-            create_profile_handler(self),
-            ["get_user_profile", "update_user_profile", "skip_profile_question"],
-        )
+        self.handler_registry.register("profile", create_profile_handler(self))
 
         # Plan 模式
-        self.handler_registry.register(
-            "plan",
-            create_todo_handler(self),
-            ["create_todo", "update_todo_step", "get_todo_status", "complete_todo",
-             "create_plan_file", "exit_plan_mode"],
-        )
+        self.handler_registry.register("plan", create_todo_handler(self))
 
         # 系统工具
-        self.handler_registry.register(
-            "system",
-            create_system_handler(self),
-            [
-                "ask_user",
-                "get_tool_info",
-                "get_session_logs",
-                "enable_thinking",
-                "set_task_timeout",
-                "generate_image",
-                "get_workspace_map",
-            ],
-        )
+        self.handler_registry.register("system", create_system_handler(self))
 
         # IM 渠道
-        self.handler_registry.register(
-            "im_channel",
-            create_im_channel_handler(self),
-            ["deliver_artifacts", "get_voice_file", "get_image_file", "get_chat_history",
-             "get_chat_info", "get_user_info", "get_chat_members", "get_recent_messages"],
-        )
+        self.handler_registry.register("im_channel", create_im_channel_handler(self))
 
         # 技能管理
-        self.handler_registry.register(
-            "skills",
-            create_skills_handler(self),
-            [
-                "list_skills",
-                "get_skill_info",
-                "run_skill_script",
-                "get_skill_reference",
-                "install_skill",
-                "load_skill",
-                "reload_skill",
-                "manage_skill_enabled",
-            ],
-        )
+        self.handler_registry.register("skills", create_skills_handler(self))
 
         # Web 搜索
-        self.handler_registry.register(
-            "web_search",
-            create_web_search_handler(self),
-            ["web_search", "news_search"],
-        )
+        self.handler_registry.register("web_search", create_web_search_handler(self))
 
         # Web Fetch（轻量 URL 内容获取）
-        self.handler_registry.register(
-            "web_fetch",
-            create_web_fetch_handler(self),
-            ["web_fetch"],
-        )
+        self.handler_registry.register("web_fetch", create_web_fetch_handler(self))
 
         # Code Quality（linter 诊断）
-        self.handler_registry.register(
-            "code_quality",
-            create_code_quality_handler(self),
-            ["read_lints"],
-        )
+        self.handler_registry.register("code_quality", create_code_quality_handler(self))
 
         # Semantic Search
-        self.handler_registry.register(
-            "search",
-            create_search_handler(self),
-            ["semantic_search"],
-        )
+        self.handler_registry.register("search", create_search_handler(self))
 
         # Mode Switch
-        self.handler_registry.register(
-            "mode",
-            create_mode_handler(self),
-            ["switch_mode"],
-        )
+        self.handler_registry.register("mode", create_mode_handler(self))
 
         # Notebook
-        self.handler_registry.register(
-            "notebook",
-            create_notebook_handler(self),
-            ["edit_notebook"],
-        )
+        self.handler_registry.register("notebook", create_notebook_handler(self))
 
         # 人格系统
-        self.handler_registry.register(
-            "persona",
-            create_persona_handler(self),
-            ["switch_persona", "update_persona_trait", "toggle_proactive", "get_persona_profile"],
-        )
+        self.handler_registry.register("persona", create_persona_handler(self))
 
         # 表情包
-        self.handler_registry.register(
-            "sticker",
-            create_sticker_handler(self),
-            ["send_sticker"],
-        )
+        self.handler_registry.register("sticker", create_sticker_handler(self))
 
         # 系统配置
-        self.handler_registry.register(
-            "config",
-            create_config_handler(self),
-            ["system_config"],
-        )
+        self.handler_registry.register("config", create_config_handler(self))
+
+        # 插件查询
+        self.handler_registry.register("plugins", create_plugins_handler(self))
 
         # Agent 包（导入/导出）
-        self.handler_registry.register(
-            "agent_package",
-            create_agent_package_handler(self),
-            ["export_agent", "import_agent", "list_exportable_agents", "inspect_agent_package"],
-        )
+        self.handler_registry.register("agent_package", create_agent_package_handler(self))
+
+        # LSP（代码智能）
+        self.handler_registry.register("lsp", create_lsp_handler(self))
+
+        # Sleep（可中断等待）
+        self.handler_registry.register("sleep", create_sleep_handler(self))
+
+        # Structured Output（结构化输出）
+        self.handler_registry.register("structured_output", create_structured_output_handler(self))
+
+        # Tool Search（工具搜索）
+        self.handler_registry.register("tool_search", create_tool_search_handler(self))
+
+        # Worktree（Git 工作树）
+        self.handler_registry.register("worktree", create_worktree_handler(self))
 
         # Agent Hub + Skill Store（平台交互，仅在 hub_enabled 时注册）
         if settings.hub_enabled:
-            self.handler_registry.register(
-                "agent_hub",
-                create_agent_hub_handler(self),
-                ["search_hub_agents", "install_hub_agent", "publish_agent", "get_hub_agent_detail"],
-            )
-            self.handler_registry.register(
-                "skill_store",
-                create_skill_store_handler(self),
-                ["search_store_skills", "install_store_skill", "get_store_skill_detail", "submit_skill_repo"],
-            )
+            self.handler_registry.register("agent_hub", create_agent_hub_handler(self))
+            self.handler_registry.register("skill_store", create_skill_store_handler(self))
+
+        # PowerShell（仅 Windows 平台注册）
+        import platform
+        if platform.system() == "Windows":
+            self.handler_registry.register("powershell", create_powershell_handler(self))
 
         # 桌面工具（仅 Windows 且依赖可用时注册，与 _tools/ToolCatalog 保持一致）
         if _ensure_desktop():
-            self.handler_registry.register(
-                "desktop",
-                create_desktop_handler(self),
-                [
-                    "desktop_screenshot",
-                    "desktop_find_element",
-                    "desktop_click",
-                    "desktop_type",
-                    "desktop_hotkey",
-                    "desktop_scroll",
-                    "desktop_window",
-                    "desktop_wait",
-                    "desktop_inspect",
-                ],
-            )
+            self.handler_registry.register("desktop", create_desktop_handler(self))
 
         # OpenCLI（网站操作，仅在 opencli 已安装时注册）
         if opencli_available():
-            self.handler_registry.register(
-                "opencli",
-                create_opencli_handler(self),
-                ["opencli_list", "opencli_run", "opencli_doctor"],
-            )
+            self.handler_registry.register("opencli", create_opencli_handler(self))
             logger.info("OpenCLI handler registered (opencli detected on PATH)")
 
         # CLI-Anything（桌面软件控制，仅在有 cli-anything-* 工具时注册）
         if cli_anything_available():
-            self.handler_registry.register(
-                "cli_anything",
-                create_cli_anything_handler(self),
-                ["cli_anything_discover", "cli_anything_run", "cli_anything_help"],
-            )
+            self.handler_registry.register("cli_anything", create_cli_anything_handler(self))
             logger.info("CLI-Anything handler registered (cli-anything-* tools detected)")
 
         # Multi-agent tools (only when multi_agent_enabled)
         if settings.multi_agent_enabled:
-            self.handler_registry.register(
-                "agent",
-                create_agent_tool_handler(self),
-                ["delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent"],
-            )
+            self.handler_registry.register("agent", create_agent_tool_handler(self))
             from ..tools.handlers.org_setup import create_handler as create_org_setup_handler
-            self.handler_registry.register(
-                "org_setup",
-                create_org_setup_handler(self),
-                ["setup_organization"],
-            )
+            self.handler_registry.register("org_setup", create_org_setup_handler(self))
 
         logger.info(
             f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools"
@@ -1555,9 +1480,12 @@ class Agent:
             } & all_server_names
 
         if auto_connect_ids:
+            from ..tools.mcp_workspace import prepare_chrome_devtools_args
+
             synced_any = False
             for server_name in auto_connect_ids:
                 try:
+                    await prepare_chrome_devtools_args(self.mcp_client, server_name)
                     result = await self.mcp_client.connect(server_name)
                     if result.success:
                         logger.info(f"Auto-connected MCP server: {server_name} ({result.tool_count} tools)")
@@ -1591,45 +1519,13 @@ class Agent:
             if pw_hint:
                 logger.warning(f"浏览器自动化不可用: {pw_hint}")
             else:
-                from ..tools.browser import BrowserManager, BrowserUseRunner, PlaywrightTools
+                from ..tools.browser import BrowserManager, PlaywrightTools
 
                 self.browser_manager = BrowserManager()
                 self.pw_tools = PlaywrightTools(self.browser_manager)
-                self.bu_runner = BrowserUseRunner(self.browser_manager)
                 logger.info("Initialized browser service (Playwright)")
         except Exception as e:
             logger.warning(f"Failed to start browser service: {e}")
-
-    def _inject_browser_use_llm_config(self) -> None:
-        """将当前 LLM 端点配置注入 BrowserUseRunner（browser_task 依赖 OpenAI-compatible LLM）。"""
-        try:
-            bu_runner = getattr(self, "bu_runner", None)
-            if not bu_runner:
-                return
-            llm_client = getattr(self.brain, "_llm_client", None)
-            if not llm_client:
-                return
-            provider = None
-            current = llm_client.get_current_model()
-            if current and current.name in llm_client.providers:
-                p = llm_client.providers[current.name]
-                if getattr(p.config, "api_type", "") == "openai" and p.is_healthy:
-                    provider = p
-            if provider is None:
-                for p in llm_client.providers.values():
-                    if getattr(p.config, "api_type", "") == "openai" and p.is_healthy:
-                        provider = p
-                        break
-            if provider:
-                api_key = provider.config.get_api_key()
-                if api_key:
-                    bu_runner.set_llm_config({
-                        "model": provider.config.model,
-                        "api_key": api_key,
-                        "base_url": provider.config.base_url.rstrip("/"),
-                    })
-        except Exception as e:
-            logger.debug(f"[BrowserUseRunner] LLM config injection skipped/failed: {e}")
 
     async def _start_scheduler(self) -> None:
         """启动定时任务调度器"""
@@ -1878,6 +1774,7 @@ class Agent:
         task_description: str = "",
         session_type: str = "cli",
         tools_enabled: bool = True,
+        session: "Session | None" = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2)
@@ -1889,6 +1786,7 @@ class Agent:
             task_description: 任务描述 (用于检索相关记忆)
             session_type: 会话类型 "cli" 或 "im"
             tools_enabled: 是否启用工具（CHAT 轻量路径传 False）
+            session: 当前 Session 实例（用于提取元数据）
 
         Returns:
             编译后的系统提示词
@@ -1901,11 +1799,48 @@ class Agent:
         ctx_window = self._get_raw_context_window()
         intent = getattr(self, "_current_intent", None)
         _mem_keywords = intent.memory_keywords if intent else None
+
+        model_display = ""
+        try:
+            conv_id = session.id if session else None
+            model_info = self.brain.get_current_model_info(conversation_id=conv_id)
+            if isinstance(model_info, dict) and "model" in model_info:
+                model_display = model_info["model"]
+        except Exception:
+            pass
+
+        session_context = None
+        if session:
+            try:
+                sub_records = getattr(session.context, "sub_agent_records", None) or []
+                session_context = {
+                    "session_id": session.id,
+                    "channel": getattr(session, "channel", "unknown"),
+                    "chat_type": getattr(session, "chat_type", "private"),
+                    "message_count": len(session.context.messages) if session.context else 0,
+                    "has_sub_agents": bool(sub_records),
+                    "sub_agent_count": len(sub_records),
+                }
+            except Exception:
+                pass
+
+        _mode = "agent"
+        _skip_catalogs = False
+        if intent:
+            from .intent_analyzer import IntentType
+            if intent.intent == IntentType.CHAT:
+                _mode = "ask"
+                _skip_catalogs = True
+
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description, session_type=session_type, context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
             tools_enabled=tools_enabled,
             memory_keywords=_mem_keywords,
+            model_display_name=model_display,
+            session_context=session_context,
+            mode=_mode,
+            skip_catalogs=_skip_catalogs,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -1951,14 +1886,13 @@ class Agent:
             identity_section = "你是默认通用助手。"
             my_id = "default"
 
-        # Roster — only persistent agents (system + custom)
+        # Roster — compact format (no skill lists to save tokens)
         agents_lines = []
         for p in SYSTEM_PRESETS:
             if p.id == my_id:
                 continue
-            skills_desc = f"技能: {', '.join(p.skills)}" if p.skills else "技能: 全部"
             agents_lines.append(
-                f"  - {p.icon} **{p.name}** (`{p.id}`) — {p.description} ({skills_desc})"
+                f"  - {p.icon} **{p.name}** (`{p.id}`) — {p.description}"
             )
 
         try:
@@ -1978,124 +1912,34 @@ class Agent:
 
         roster = "\n".join(agents_lines) if agents_lines else "  （暂无其他可用 Agent）"
 
-        # Available skills list
-        skills_lines = []
-        try:
-            catalog = getattr(self, "skill_catalog", None)
-            if catalog:
-                reg = getattr(catalog, "registry", None)
-                if reg:
-                    for entry in reg.list_all():
-                        skills_lines.append(f"`{entry.name}`")
-        except Exception:
-            pass
-        skills_list = ", ".join(skills_lines) if skills_lines else "（系统会自动分配默认技能）"
+        # Skills list omitted from prompt to save tokens; use list_skills tool to discover
 
         return f"""
 
-## 多Agent协作系统（重要 — 你必须严格遵循）
+## 多Agent协作
 
 {identity_section}
+你有一支 Agent 团队，优先委派给专业 Agent，自己只处理简单通用问答。
 
-你拥有一支专业 Agent 团队。你的工具优先级如下（**必须严格按此顺序选择**）：
-
-### 🔴 绝对禁止
-
-- **严禁**为每个新任务都创建全新 Agent — 系统已有丰富的专业 Agent 可直接使用
-- **严禁**在能用 `delegate_to_agent` 直接委派时使用 `spawn_agent` 或 `create_agent`
-- **严禁**在能用 `spawn_agent` 继承时使用 `create_agent` 从零创建
-
-### 可用的 Agent 团队
+### Agent 团队
 
 {roster}
 
-### ⚡ 工具选择优先级（必须严格遵循，从上到下判断）
+### 委派优先级（从高到低）
 
-**Level 1 — 直接委派 `delegate_to_agent`（首选，单个任务用这个）**
+1. `delegate_to_agent(agent_id, message, reason)` — 首选，直接委派
+2. `spawn_agent(inherit_from, message, ...)` — 需要定制或并行副本时
+3. `delegate_parallel(tasks=[...])` — 多个独立任务同时执行
+4. `create_agent(...)` — 最后手段，系统中完全没有相关 Agent 时才用
 
-已有 Agent 能处理该任务 → 直接委派，不需要任何修改。
+### 规则
 
-```
-delegate_to_agent(agent_id="browser-agent", message="详细任务描述", reason="原因")
-```
-
-**Level 2 — 继承定制 `spawn_agent`（需要定制或多个并行副本时使用）**
-
-- 已有 Agent 基本匹配但需要微调 → 继承并追加技能/提示词
-- **需要同类 Agent 的多个独立副本并行工作** → 用 spawn_agent 为每个任务创建独立实例
-- 每次 spawn 生成唯一 ID，天然支持并行，**任务完成后自动销毁**
-
-```
-spawn_agent(inherit_from="browser-agent", message="任务描述", extra_skills=["额外技能"], custom_prompt_overlay="补充提示", reason="原因")
-```
-
-**Level 3 — 并行委派 `delegate_parallel`（多个独立任务同时执行）**
-
-多个独立任务可同时执行时 → 并行委派。
-⚠️ 同类任务（如多个调研）→ 所有任务用**同一个 agent_id**，系统自动创建独立副本：
-
-```
-delegate_parallel(tasks=[
-  {{"agent_id": "browser-agent", "message": "调研项目A..."}},
-  {{"agent_id": "browser-agent", "message": "调研项目B..."}}
-])
-```
-
-**Level 4 — 全新创建 `create_agent`（最后手段，极少使用）**
-
-**仅当以上 3 种方式都不适用**（系统中完全没有相关 Agent 可用或继承）时才使用。
-
-```
-create_agent(name="名称", description="描述", skills=["技能"], custom_prompt="提示词")
-```
-
-### 🔴 任务分配原则（严格遵守）
-
-1. **专业对口**：只把任务分配给**专业对口**的 Agent。调研任务→网探/浏览器Agent，代码任务→码哥，文档任务→文助。**严禁**把调研任务分给代码助手，或把编码任务分给文档助手。
-2. **同类任务并行**：当需要多个 Agent **同时做同类事情**（如"用多个 Agent 同时调研"），应使用 `spawn_agent` 创建**同一个最合适 Agent 的多个副本**，而不是把任务分配给不相关的 Agent 凑数。例如：3 个调研任务 → spawn 3 个网探副本，而不是分给网探+码哥+数析。
-3. **异类任务并行**：当多个任务**性质不同**时（如同时需要调研+写代码+分析数据），才分配给不同专业的 Agent。
-
-- 默认创建临时 Agent（ephemeral），任务结束自动清理
-- 仅当用户明确要求"记住这个Agent"时才设 `persistent=true`
-- 如果系统检测到已有类似 Agent，会建议使用 spawn_agent 代替
-- 可用技能列表: {skills_list}
-- 每会话最多 5 个动态 Agent
-
-### 委派判断规则
-
-在执行任何工具之前，先判断当前任务是否应该委派：
-
-1. **涉及文档处理**（PPT/Word/Excel/PDF） → `delegate_to_agent(agent_id="office-doc", ...)`
-2. **涉及编写代码或调试** → `delegate_to_agent(agent_id="code-assistant", ...)`
-3. **涉及网络搜索、浏览网页、项目调研、信息采集** → `delegate_to_agent(agent_id="browser-agent", ...)`
-4. **涉及数据分析或可视化** → `delegate_to_agent(agent_id="data-analyst", ...)`
-5. **已有 Agent 接近但需微调** → `spawn_agent(inherit_from="最接近的agent", ...)`
-6. **多个独立同类任务并行**（如同时调研3个项目） → `delegate_parallel` 且所有任务用**同一个 agent_id**
-7. **多个独立异类任务并行**（如调研+编码+分析） → `delegate_parallel` 用不同 agent_id
-8. **完全没有相关 Agent** → `create_agent(...)`（极少使用）
-
-只有当任务是**简单通用问答**、**不涉及上述任何专业领域**、或**用户明确要你亲自做**时，才自己处理。
-
-### 关键规则
-
-1. `message` 必须包含充分上下文（用户原始需求、相关数据、前序结论），让目标 Agent 能独立完成
-2. 结果返回后，你**整合**并**用你自己的语气**回复用户
-3. 委派深度上限 5 层
-4. 如果委派失败或超时，告知用户并尝试自己处理
-5. **有依赖的任务串行委派**（B 需要 A 的结果 → 先 A 再 B）
-6. **独立任务必须用 `delegate_parallel` 并行**，不要逐个串行浪费时间
-7. 对话历史中可能包含以下标记，它们记录了你之前**实际执行**过的操作：
-   - **[子Agent工作总结]**：子Agent的任务、完成状态、交付的文件路径和结果摘要
-   - **[执行摘要]**：你自己调用的工具及其结果
-   你必须仔细阅读这些内容，把它们当作已发生的事实。不要否认已完成的操作，不要说"我没有做过"，不要重复执行已经成功完成的工作。当用户提到相关产出（文件、报告、分析结果）时，直接引用历史记录中的信息。
-
-### 协作行为准则
-
-- 你是协调者，主动告知用户你在调度团队（如"我让数据分析师来处理..."）
-- 永远优先复用已有 Agent，避免创建不必要的新 Agent
-- spawn_agent 创建的临时 Agent 任务完成即消失，放心使用
-- 不要对同一任务反复试不同 Agent
-- 如果所有 Agent 都处理不了，诚实告知用户"""
+- 专业对口：文档→office-doc，代码→code-assistant，浏览→browser-agent，数据→data-analyst
+- 独立任务用 `delegate_parallel` 并行，有依赖的串行
+- message 必须包含充分上下文，让目标 Agent 独立完成
+- 结果返回后整合并用你自己的语气回复用户
+- 委派深度上限 5 层，每会话最多 5 个动态 Agent
+- 对话历史中的 [子Agent工作总结] 和 [执行摘要] 是已完成的事实，不要重复执行"""
 
     def _generate_tools_text(self) -> str:
         """
@@ -2367,6 +2211,75 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             )
         return result
 
+    async def _compress_large_tool_results(
+        self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
+    ) -> list[dict]:
+        """压缩超大 tool_result / tool_use.input，使用 LLM 摘要。
+
+        逐条扫描，tokens > threshold 的 tool_result 调 LLM 压缩为精简摘要，
+        保留结构（role/type 等不变）。
+        """
+        from .tool_executor import OVERFLOW_MARKER
+
+        result = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                new_content = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        raw_content = item.get("content", "")
+                        if isinstance(raw_content, list):
+                            text_parts = [
+                                p.get("text", "")
+                                for p in raw_content
+                                if isinstance(p, dict) and p.get("type") == "text"
+                            ]
+                            result_text = "\n".join(text_parts)
+                        else:
+                            result_text = str(raw_content)
+                        if OVERFLOW_MARKER in result_text:
+                            new_content.append(item)
+                            continue
+                        result_tokens = self._estimate_tokens(result_text)
+                        if result_tokens > threshold:
+                            target_tokens = max(int(result_tokens * COMPRESSION_RATIO), 100)
+                            compressed_text = await self._llm_compress_text(
+                                result_text, target_tokens, context_type="tool_result"
+                            )
+                            new_item = dict(item)
+                            new_item["content"] = compressed_text
+                            new_content.append(new_item)
+                            logger.info(
+                                f"Compressed tool_result from {result_tokens} to "
+                                f"~{self._estimate_tokens(compressed_text)} tokens"
+                            )
+                        else:
+                            new_content.append(item)
+                    elif isinstance(item, dict) and item.get("type") == "tool_use":
+                        input_text = json.dumps(item.get("input", {}), ensure_ascii=False)
+                        input_tokens = self._estimate_tokens(input_text)
+                        if input_tokens > threshold:
+                            target_tokens = max(int(input_tokens * COMPRESSION_RATIO), 100)
+                            compressed_input = await self._llm_compress_text(
+                                input_text, target_tokens, context_type="tool_input"
+                            )
+                            new_item = dict(item)
+                            new_item["input"] = {"compressed_summary": compressed_input}
+                            new_content.append(new_item)
+                            logger.info(
+                                f"Compressed tool_use input from {input_tokens} to "
+                                f"~{self._estimate_tokens(compressed_input)} tokens"
+                            )
+                        else:
+                            new_content.append(item)
+                    else:
+                        new_content.append(item)
+                result.append({**msg, "content": new_content})
+            else:
+                result.append(msg)
+        return result
+
     async def _cancellable_await(self, coro, cancel_event: asyncio.Event | None = None):
         """将任意协程包装为可被 cancel_event 立即中断的操作。
 
@@ -2399,6 +2312,416 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             reason=self._cancel_reason or "用户请求停止",
             source="cancellable_await",
         )
+
+    async def _llm_compress_text(
+        self, text: str, target_tokens: int, context_type: str = "general"
+    ) -> str:
+        """
+        使用 LLM 压缩一段文本到目标 token 数
+
+        Args:
+            text: 要压缩的文本
+            target_tokens: 目标 token 数
+            context_type: 上下文类型（tool_result/tool_input/conversation）
+
+        Returns:
+            压缩后的文本
+        """
+        # 如果文本本身超出 LLM 上下文能处理的范围，先做硬截断
+        max_input = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN
+        if len(text) > max_input:
+            # 保留头尾，中间截断
+            head_size = int(max_input * 0.6)
+            tail_size = int(max_input * 0.3)
+            text = text[:head_size] + "\n...(中间内容过长已省略)...\n" + text[-tail_size:]
+
+        target_chars = target_tokens * CHARS_PER_TOKEN
+
+        if context_type == "tool_result":
+            system_prompt = (
+                "你是一个信息压缩助手。请将以下工具执行结果压缩为简洁摘要，"
+                "保留关键数据、状态码、错误信息和重要输出，去掉冗余细节。"
+            )
+        elif context_type == "tool_input":
+            system_prompt = (
+                "你是一个信息压缩助手。请将以下工具调用参数压缩为简洁摘要，"
+                "保留关键参数名和值，去掉冗余内容。"
+            )
+        else:
+            system_prompt = (
+                "你是一个对话压缩助手。请将以下对话内容压缩为简洁摘要，"
+                "保留用户意图、关键决策、执行结果和当前状态。"
+            )
+
+        _tt = set_tracking_context(TokenTrackingContext(
+            operation_type="context_compress",
+            operation_detail=context_type,
+        ))
+        try:
+            response = await self._cancellable_await(
+                self.brain.messages_create_async(
+                    model=self.brain.model,
+                    max_tokens=target_tokens,
+                    system=system_prompt,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
+                        }
+                    ],
+                    use_thinking=False,
+                )
+            )
+
+            summary = ""
+            for block in response.content:
+                if block.type == "text":
+                    summary += block.text
+                elif block.type == "thinking" and hasattr(block, "thinking"):
+                    # thinking 块 fallback：当模型把摘要放在 thinking 中时
+                    if not summary:
+                        summary = block.thinking if isinstance(block.thinking, str) else str(block.thinking)
+
+            # 如果仍然为空，记录警告并回退到硬截断
+            if not summary.strip():
+                logger.warning(
+                    f"[Compress] LLM returned empty summary (tokens_out={response.usage.output_tokens}), "
+                    f"falling back to hard truncation"
+                )
+                if len(text) > target_chars:
+                    head = int(target_chars * 0.7)
+                    tail = int(target_chars * 0.2)
+                    return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+                return text
+
+            return summary.strip()
+
+        except UserCancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"LLM compression failed: {e}")
+            if len(text) > target_chars:
+                head = int(target_chars * 0.7)
+                tail = int(target_chars * 0.2)
+                return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+            return text
+        finally:
+            reset_tracking_context(_tt)
+
+    def _extract_message_text(self, msg: dict) -> str:
+        """
+        从消息中提取文本内容（包括 tool_use/tool_result 结构化信息）
+
+        Args:
+            msg: 消息字典
+
+        Returns:
+            提取的文本内容
+        """
+        role = "用户" if msg["role"] == "user" else "助手"
+        content = msg.get("content", "")
+
+        if isinstance(content, str):
+            return f"{role}: {content}\n"
+
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        texts.append(item.get("text", ""))
+                    elif item.get("type") == "tool_use":
+                        from .tool_executor import smart_truncate as _st
+                        name = item.get("name", "unknown")
+                        input_data = item.get("input", {})
+                        input_summary = json.dumps(input_data, ensure_ascii=False)
+                        input_summary, _ = _st(input_summary, 3000, save_full=False, label="compress_input")
+                        texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
+                    elif item.get("type") == "tool_result":
+                        from .tool_executor import smart_truncate as _st
+                        raw_content = item.get("content", "")
+                        if isinstance(raw_content, list):
+                            text_parts = [
+                                p.get("text", "")
+                                for p in raw_content
+                                if isinstance(p, dict) and p.get("type") == "text"
+                            ]
+                            result_text = "\n".join(text_parts)
+                        else:
+                            result_text = str(raw_content)
+                        result_text, _ = _st(result_text, 10000, save_full=False, label="compress_result")
+                        is_error = item.get("is_error", False)
+                        status = "错误" if is_error else "成功"
+                        texts.append(f"[工具结果({status}): {result_text}]")
+            if texts:
+                return f"{role}: {' '.join(texts)}\n"
+
+        return ""
+
+    async def _summarize_messages_chunked(
+        self, messages: list[dict], target_tokens: int
+    ) -> str:
+        """
+        分块 LLM 摘要消息列表
+
+        将消息按 CHUNK_MAX_TOKENS 分块，每块独立调 LLM 压缩，
+        最后将所有块的摘要拼接。如果摘要拼接后还很长，再做一次汇总压缩。
+
+        Args:
+            messages: 要摘要的消息列表
+            target_tokens: 最终目标 token 数
+
+        Returns:
+            摘要文本
+        """
+        if not messages:
+            return ""
+
+        # 将消息转换为文本并分块
+        chunks: list[str] = []
+        current_chunk = ""
+        current_chunk_tokens = 0
+
+        for msg in messages:
+            msg_text = self._extract_message_text(msg)
+            msg_tokens = self._estimate_tokens(msg_text)
+
+            if current_chunk_tokens + msg_tokens > CHUNK_MAX_TOKENS and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = msg_text
+                current_chunk_tokens = msg_tokens
+            else:
+                current_chunk += msg_text
+                current_chunk_tokens += msg_tokens
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        if not chunks:
+            return ""
+
+        logger.info(f"Splitting {len(messages)} messages into {len(chunks)} chunks for compression")
+
+        # 每块独立压缩
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            chunk_tokens = self._estimate_tokens(chunk)
+            # 每块的目标 = 总目标 / 块数（均分）
+            chunk_target = max(int(target_tokens / len(chunks)), 100)
+
+            _tt2 = set_tracking_context(TokenTrackingContext(
+                operation_type="context_compress",
+                operation_detail=f"chunk_{i}",
+            ))
+            try:
+                response = await self._cancellable_await(
+                    self.brain.messages_create_async(
+                        model=self.brain.model,
+                        max_tokens=chunk_target,
+                        system=(
+                            "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
+                            "要求：\n"
+                            "1. 保留用户的原始意图和关键指令\n"
+                            "2. 保留工具调用的名称、关键参数和执行结果（成功/失败/关键输出）\n"
+                            "3. 保留重要的状态变化和决策\n"
+                            "4. 去掉重复信息、冗余输出和中间过程细节\n"
+                            "5. 使用简练的描述，不需要保留原文格式"
+                        ),
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
+                                    f"约 {chunk_tokens} tokens）压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内:\n\n"
+                                    f"{chunk}"
+                                ),
+                            }
+                        ],
+                        use_thinking=False,
+                    )
+                )
+
+                summary = ""
+                for block in response.content:
+                    if block.type == "text":
+                        summary += block.text
+                    elif block.type == "thinking" and hasattr(block, "thinking"):
+                        # thinking 块 fallback：当模型把摘要放在 thinking 中时
+                        if not summary:
+                            summary = block.thinking if isinstance(block.thinking, str) else str(block.thinking)
+
+                if not summary.strip():
+                    # 摘要为空，回退到硬截断
+                    logger.warning(f"[Compress] Chunk {i + 1} returned empty summary, using hard truncation")
+                    max_chars = chunk_target * CHARS_PER_TOKEN
+                    if len(chunk) > max_chars:
+                        chunk_summaries.append(
+                            chunk[:max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                        )
+                    else:
+                        chunk_summaries.append(chunk)
+                else:
+                    chunk_summaries.append(summary.strip())
+                    logger.info(
+                        f"Chunk {i + 1}/{len(chunks)}: {chunk_tokens} -> "
+                        f"~{self._estimate_tokens(summary)} tokens"
+                    )
+
+            except UserCancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
+                max_chars = chunk_target * CHARS_PER_TOKEN
+                if len(chunk) > max_chars:
+                    chunk_summaries.append(
+                        chunk[:max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                    )
+                else:
+                    chunk_summaries.append(chunk)
+            finally:
+                reset_tracking_context(_tt2)
+
+        # 拼接所有块摘要
+        combined = "\n---\n".join(chunk_summaries)
+        combined_tokens = self._estimate_tokens(combined)
+
+        # 如果拼接后还超过目标的 2 倍，再做一次汇总压缩
+        if combined_tokens > target_tokens * 2 and len(chunks) > 1:
+            logger.info(
+                f"Combined summary still large ({combined_tokens} tokens), "
+                f"doing final consolidation..."
+            )
+            combined = await self._llm_compress_text(
+                combined, target_tokens, context_type="conversation"
+            )
+
+        return combined
+
+    async def _compress_further(self, messages: list[dict], max_tokens: int) -> list[dict]:
+        """
+        递归压缩：减少保留的最近组数量，继续压缩（保证 tool 配对完整性）
+
+        Args:
+            messages: 当前消息列表
+            max_tokens: 目标 token 上限
+
+        Returns:
+            压缩后的消息列表
+        """
+        current_tokens = self._estimate_messages_tokens(messages)
+
+        if current_tokens <= max_tokens:
+            return messages
+
+        # 按组边界切割，保留最近 2 组（比 _compress_context 的 MIN_RECENT_TURNS 更少）
+        groups = self._group_messages(messages)
+        recent_group_count = min(2, len(groups))
+
+        if len(groups) <= recent_group_count:
+            # 只有最近的几个组了，做最后一次 tool_result 压缩
+            logger.warning("Cannot compress further, attempting final tool_result compression")
+            return await self._compress_large_tool_results(messages, threshold=1000)
+
+        early_groups = groups[:-recent_group_count]
+        recent_groups = groups[-recent_group_count:]
+
+        early_messages = [msg for group in early_groups for msg in group]
+        recent_messages = [msg for group in recent_groups for msg in group]
+
+        # 用 LLM 压缩早期消息
+        early_tokens = self._estimate_messages_tokens(early_messages)
+        target = max(int(early_tokens * COMPRESSION_RATIO), 100)
+        summary = await self._summarize_messages_chunked(early_messages, target)
+
+        compressed = ContextManager._inject_summary_into_recent(summary, recent_messages)
+
+        compressed_tokens = self._estimate_messages_tokens(compressed)
+        logger.info(
+            f"Further compressed context from {current_tokens} to {compressed_tokens} tokens"
+        )
+        return compressed
+
+    def _hard_truncate_if_needed(self, messages: list[dict], hard_limit: int) -> list[dict]:
+        """
+        硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断保证能提交到 API
+
+        策略：
+        1. 从最早的消息开始丢弃，保留最近的消息
+        2. 将丢弃的消息入队到提取队列避免永久丢失
+        3. 对剩余消息中仍然过大的单条内容做字符级截断
+        4. 添加截断提示让模型知道上下文不完整
+        """
+        current_tokens = self._estimate_messages_tokens(messages)
+        if current_tokens <= hard_limit:
+            return messages
+
+        logger.error(
+            f"[HardTruncate] LLM compression insufficient! "
+            f"Still {current_tokens} tokens > hard_limit {hard_limit}. "
+            f"Applying hard truncation to guarantee API submission."
+        )
+
+        truncated = list(messages)
+        dropped_messages: list[dict] = []
+        while len(truncated) > 2 and self._estimate_messages_tokens(truncated) > hard_limit:
+            removed = truncated.pop(0)
+            dropped_messages.append(removed)
+            removed_role = removed.get("role", "?")
+            logger.warning(f"[HardTruncate] Dropped earliest message (role={removed_role})")
+
+        if dropped_messages:
+            from .context_manager import ContextManager
+            ContextManager._enqueue_dropped_for_extraction(dropped_messages, self.memory_manager)
+
+        # 策略二：如果只剩 2 条还是超限，对单条消息内容做字符级截断
+        if self._estimate_messages_tokens(truncated) > hard_limit:
+            max_chars_per_msg = (hard_limit * CHARS_PER_TOKEN) // max(len(truncated), 1)
+            for i, msg in enumerate(truncated):
+                content = msg.get("content", "")
+                if isinstance(content, str) and len(content) > max_chars_per_msg:
+                    keep_head = int(max_chars_per_msg * 0.7)
+                    keep_tail = int(max_chars_per_msg * 0.2)
+                    truncated[i] = {
+                        **msg,
+                        "content": (
+                            content[:keep_head]
+                            + "\n\n...[内容过长已硬截断]...\n\n"
+                            + content[-keep_tail:]
+                        ),
+                    }
+                elif isinstance(content, list):
+                    # 对 list 类型内容，截断其中过大的文本块
+                    new_content = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            for key in ("text", "content"):
+                                val = item.get(key, "")
+                                if isinstance(val, str) and len(val) > max_chars_per_msg:
+                                    keep_h = int(max_chars_per_msg * 0.7)
+                                    keep_t = int(max_chars_per_msg * 0.2)
+                                    item = dict(item)
+                                    item[key] = (
+                                        val[:keep_h]
+                                        + "\n...[硬截断]...\n"
+                                        + val[-keep_t:]
+                                    )
+                        new_content.append(item)
+                    truncated[i] = {**msg, "content": new_content}
+
+        truncated.insert(0, {
+            "role": "user",
+            "content": (
+                "[context_note: 早期对话已自动整理] "
+                "请正常回复，保持详细程度和输出质量不变。"
+            ),
+        })
+
+        final_tokens = self._estimate_messages_tokens(truncated)
+        logger.warning(
+            f"[HardTruncate] Final: {final_tokens} tokens "
+            f"(hard_limit={hard_limit}, messages={len(truncated)})"
+        )
+        return truncated
 
     async def chat(self, message: str, session_id: str | None = None) -> str:
         """
@@ -2509,8 +2832,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             (messages, session_type, task_monitor, conversation_id, im_tokens)
         """
         # 1. 对齐 MemoryManager 会话
+        # memory safe_id 统一用 session.session_key 派生，与 im_channel fallback
+        # 和 sessions/manager backfill 的查询逻辑保持一致。
         try:
-            conversation_safe_id = conversation_id.replace(":", "__")
+            _memory_key = (
+                session.session_key
+                if session and hasattr(session, "session_key")
+                else conversation_id
+            )
+            conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
             if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
                 self.memory_manager.start_session(conversation_safe_id)
@@ -2698,13 +3028,27 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     f"[Session:{session_id}] Topic change detected, "
                     f"inserted context boundary"
                 )
-                # Extract memories from the previous topic before starting new one
+                # Fire-and-forget: schedule extraction in background, never block the response path
                 try:
-                    saved = await self.memory_manager.extract_on_topic_change()
-                    if saved:
-                        logger.info(f"[Session:{session_id}] Topic-change extraction: {saved} memories")
+                    import asyncio as _aio
+                    _loop = _aio.get_running_loop()
+                    _extraction_task = _loop.create_task(
+                        self.memory_manager.extract_on_topic_change()
+                    )
+                    _extraction_task.add_done_callback(
+                        lambda t: (
+                            logger.info(f"[Session:{session_id}] Topic-change extraction: {t.result()} memories")
+                            if not t.cancelled() and t.exception() is None and t.result()
+                            else (
+                                logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {t.exception()}")
+                                if not t.cancelled() and t.exception()
+                                else None
+                            )
+                        )
+                    )
+                    logger.info(f"[Session:{session_id}] Topic-change extraction scheduled (background)")
                 except Exception as _tc_err:
-                    logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {_tc_err}")
+                    logger.debug(f"[Session:{session_id}] Topic-change extraction scheduling failed: {_tc_err}")
 
         # 9.7 同步更新 Scratchpad 当前任务 (skip for CHAT intent to avoid overwriting task focus)
         _new_task = compiler_summary or message[:200]
@@ -2735,22 +3079,62 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             history_messages = history_messages[:-1]
 
         _STRIP_MARKERS = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"]
+        _RE_TIME_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}\]\s")
 
         messages: list[dict] = []
         for msg in history_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
+            ts = msg.get("timestamp", "")
             if role == "assistant":
                 for _marker in _STRIP_MARKERS:
-                    if _marker in content:
-                        content = content[:content.index(_marker)]
+                    while _marker in content:
+                        idx = content.index(_marker)
+                        before = content[:idx]
+                        after = content[idx + len(_marker):]
+                        next_section = -1
+                        for sep in ("\n\n[", "\n\n##", "\n\n---"):
+                            pos = after.find(sep)
+                            if pos != -1 and (next_section == -1 or pos < next_section):
+                                next_section = pos
+                        if next_section != -1:
+                            content = before + after[next_section:]
+                        else:
+                            content = before
                 if content.startswith("[执行摘要]") or content.startswith("[子Agent工作总结]"):
                     content = ""
             if role in ("user", "assistant") and content:
+                if ts and isinstance(content, str):
+                    try:
+                        t = datetime.fromisoformat(ts)
+                        time_prefix = f"[{t.strftime('%H:%M')}] "
+                        if not _RE_TIME_PREFIX.match(content):
+                            content = time_prefix + content
+                    except Exception:
+                        pass
                 if messages and messages[-1]["role"] == role:
                     messages[-1]["content"] += "\n" + content
                 else:
                     messages.append({"role": role, "content": content})
+
+        # 10.5 注入子 Agent 委派结果摘要到最后一条 assistant 消息
+        if session and hasattr(session, "context"):
+            sub_records = getattr(session.context, "sub_agent_records", None)
+            if sub_records and messages:
+                summary_parts = []
+                for r in sub_records:
+                    name = r.get("agent_name", "unknown")
+                    preview = r.get("result_preview", "")
+                    if preview:
+                        summary_parts.append(f"- {name}: {preview[:500]}")
+                if summary_parts:
+                    delegation_summary = (
+                        "\n\n[委派任务执行记录]\n" + "\n".join(summary_parts)
+                    )
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i]["role"] == "assistant":
+                            messages[i]["content"] += delegation_summary
+                            break
 
         # 上下文连续标记（合并到当前用户消息前缀，避免插入假 assistant 回复破坏对话连贯性）
         _has_history = bool(messages)
@@ -2854,13 +3238,8 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 # Tier 3: 本地 Whisper（已由 Gateway 处理，transcription 已在 input_text 中）
                 # 不需要额外操作
 
-        # 如果有历史消息，给当前用户消息加上连续提示前缀
-        if _has_history and compiled_message:
-            compiled_message = (
-                "[以上是之前的对话历史，仅供参考。"
-                "请直接回应我的最新消息，不要重复或重新执行历史中已完成的操作：]\n"
-                + compiled_message
-            )
+        if _has_history and compiled_message and isinstance(compiled_message, str):
+            compiled_message = f"[最新消息]\n{compiled_message}"
 
         # === 角色交替保护 ===
         # 如果历史末尾是 user 消息（通常由上下文边界标记产生），
@@ -2884,12 +3263,23 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 att_url = getattr(att, "url", None) or ""
                 att_name = getattr(att, "name", None) or "file"
                 att_mime = getattr(att, "mime_type", None) or att_type
-                if att_type == "image" and att_url:
+
+                is_image = (
+                    att_type == "image"
+                    or (att_mime or "").startswith("image/")
+                    or (att_url or "").startswith("data:image/")
+                )
+                is_video = (
+                    att_type == "video"
+                    or (att_mime or "").startswith("video/")
+                    or (att_url or "").startswith("data:video/")
+                )
+
+                if is_image and att_url:
                     content_blocks.append({"type": "image_url", "image_url": {"url": att_url}})
-                elif att_type == "video" and att_url:
+                elif is_video and att_url:
                     content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
                 elif att_type == "document" and att_url:
-                    # PDF 等文档 — 通过 URL 下载后交给后端处理
                     content_blocks.append({
                         "type": "text",
                         "text": f"[文档: {att_name} ({att_mime})] URL: {att_url}",
@@ -2905,45 +3295,130 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 messages.append({"role": "user", "content": compiled_message})
         elif pending_images or pending_videos or audio_blocks or document_blocks:
             # IM 路径: 多模态（图片 + 视频 + 音频 + 文档）
+            # 对齐 audio/PDF 的模式：先检查能力，无能力时降级为文本
             content_parts: list[dict] = []
             _text_for_llm = compiled_message.strip()
-            # 图片占位符替换
-            if pending_images and _text_for_llm and re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", _text_for_llm):
-                _text_for_llm = (
-                    f"用户发送了 {len(pending_images)} 张图片（已附在消息中，请直接查看）。"
-                    "请描述或回应你所看到的图片内容。"
-                )
+
+            llm_client = getattr(self.brain, "_llm_client", None)
+            has_vision = (
+                llm_client and llm_client.has_any_endpoint_with_capability("vision")
+            )
+            has_video = (
+                llm_client and llm_client.has_any_endpoint_with_capability("video")
+            )
+
+            embed_images = pending_images if has_vision else None
+            embed_videos = pending_videos if has_video else None
+
+            # 图片占位符替换（仅在实际嵌入时才改为「请直接查看」）
+            _is_img_placeholder = (
+                _text_for_llm
+                and re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", _text_for_llm)
+            )
+            if pending_images and _is_img_placeholder:
+                if embed_images:
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_images)} 张图片"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的图片内容。"
+                    )
+                else:
+                    _text_for_llm = ""
+
             # 视频占位符替换
-            if pending_videos and _text_for_llm and re.fullmatch(r"(\[视频: [^\]]+\]\s*)+", _text_for_llm):
-                _text_for_llm = (
-                    f"用户发送了 {len(pending_videos)} 个视频（已附在消息中，请直接查看）。"
-                    "请描述或回应你所看到的视频内容。"
+            _is_vid_placeholder = (
+                _text_for_llm
+                and re.fullmatch(r"(\[视频: [^\]]+\]\s*)+", _text_for_llm)
+            )
+            if pending_videos and _is_vid_placeholder:
+                if embed_videos:
+                    _text_for_llm = (
+                        f"用户发送了 {len(pending_videos)} 个视频"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的视频内容。"
+                    )
+                else:
+                    _text_for_llm = ""
+
+            # 图片降级提示
+            if pending_images and not has_vision:
+                img_paths = [
+                    img.get("local_path", "")
+                    for img in pending_images if img.get("local_path")
+                ]
+                notice = (
+                    f"[用户发送了 {len(pending_images)} 张图片，"
+                    f"当前模型不支持图片输入"
                 )
+                if img_paths:
+                    notice += (
+                        f"。文件路径: {'; '.join(img_paths)}"
+                        f"。如需查看图片内容，请使用 view_image 工具"
+                    )
+                notice += "]"
+                _text_for_llm = (
+                    f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
+                )
+                logger.info(
+                    f"[Session:{session_id}] No vision endpoint, "
+                    f"degrading {len(pending_images)} images to text notice"
+                )
+
+            # 视频降级提示
+            if pending_videos and not has_video:
+                vid_paths = [
+                    v.get("local_path", "")
+                    for v in pending_videos if v.get("local_path")
+                ]
+                notice = (
+                    f"[用户发送了 {len(pending_videos)} 个视频，"
+                    f"当前模型不支持视频输入"
+                )
+                if vid_paths:
+                    notice += f"。文件路径: {'; '.join(vid_paths)}"
+                notice += "]"
+                _text_for_llm = (
+                    f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
+                )
+                logger.info(
+                    f"[Session:{session_id}] No video endpoint, "
+                    f"degrading {len(pending_videos)} videos to text notice"
+                )
+
+            # 组装 content_parts
             if _text_for_llm:
                 content_parts.append({"type": "text", "text": _text_for_llm})
-            if pending_images:
-                for img_data in pending_images:
-                    content_parts.append(img_data)
-            if pending_videos:
-                for vid_data in pending_videos:
-                    content_parts.append(vid_data)
+            if embed_images:
+                content_parts.extend(embed_images)
+            if embed_videos:
+                content_parts.extend(embed_videos)
             if audio_blocks:
-                for aud_data in audio_blocks:
-                    content_parts.append(aud_data)
+                content_parts.extend(audio_blocks)
             if document_blocks:
-                for doc_data in document_blocks:
-                    content_parts.append(doc_data)
-            messages.append({"role": "user", "content": content_parts})
+                content_parts.extend(document_blocks)
+
+            # 如果所有媒体均已降级为文本，发纯文本消息而非多模态 list
+            has_media = embed_images or embed_videos or audio_blocks or document_blocks
+            if has_media:
+                messages.append({"role": "user", "content": content_parts})
+            else:
+                plain = _text_for_llm or compiled_message
+                messages.append({"role": "user", "content": plain})
+
             media_info = []
-            if pending_images:
-                media_info.append(f"{len(pending_images)} images")
-            if pending_videos:
-                media_info.append(f"{len(pending_videos)} videos")
+            if embed_images:
+                media_info.append(f"{len(embed_images)} images")
+            if embed_videos:
+                media_info.append(f"{len(embed_videos)} videos")
             if audio_blocks:
                 media_info.append(f"{len(audio_blocks)} audio")
             if document_blocks:
                 media_info.append(f"{len(document_blocks)} documents")
-            logger.info(f"[Session:{session_id}] Multimodal message with {', '.join(media_info)}")
+            if media_info:
+                logger.info(
+                    f"[Session:{session_id}] Multimodal message "
+                    f"with {', '.join(media_info)}"
+                )
         else:
             # 普通文本消息
             messages.append({"role": "user", "content": compiled_message})
@@ -3088,7 +3563,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self.agent_state.current_session = None
         self._current_task_monitor = None
         # 重置任务状态，避免已取消/已完成的任务泄漏到下一次会话
-        # 注意：task 的 key 可能是 conversation_id 而非 session_id，两者都要尝试
         _sid = self._current_session_id
         _conv_id = self._current_conversation_id
         _cleaned = set()
@@ -3169,15 +3643,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._current_conversation_id = conversation_id
 
         # 清理上一轮残留的任务状态（按 session 隔离）
-        # 注意：task key 可能是 conversation_id 而非 session_id，两者都要尝试
         _prev_task = None
         _reset_key = session_id
-        for _try_key in (session_id, conversation_id):
-            if _try_key and self.agent_state:
-                _prev_task = self.agent_state.get_task_for_session(_try_key)
-                if _prev_task:
-                    _reset_key = _try_key
-                    break
+        if self.agent_state:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
         if not _prev_task and self.agent_state:
             _prev_task = self.agent_state.current_task
             if _prev_task:
@@ -3196,7 +3665,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
-        self._pending_cancels.pop(conversation_id, None) if conversation_id else None
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期，不让上一轮的错误阻塞本轮
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -3262,46 +3730,35 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             from .intent_analyzer import IntentType as _IT
             _intent = getattr(self, "_current_intent", None)
 
-            if _intent and _intent.intent == _IT.CHAT:
-                if getattr(_intent, "fast_reply", False):
-                    # Ultra-fast path: compiler model for obvious greetings
-                    try:
-                        _identity_snippet = ""
-                        if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                            _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+            if (
+                _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
+                # Ultra-fast path: rule-based greeting only, use lightweight model
+                try:
+                    _identity_snippet = ""
+                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                        _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
 
-                        _fast_system = (
-                            f"{_identity_snippet}\n\n"
-                            "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
-                            "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
-                        ).strip()
+                    _fast_system = (
+                        f"{_identity_snippet}\n\n"
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                    ).strip()
 
-                        _fast_resp = await self.brain.think_lightweight(
-                            prompt=message,
-                            system=_fast_system,
-                        )
-                        response_text = clean_llm_response(
-                            _fast_resp.content if _fast_resp.content else ""
-                        ) or "你好！有什么我可以帮你的吗？"
-                    except Exception as e:
-                        logger.error(f"[FastReply] Failed: {e}")
-                        response_text = "你好！有什么我可以帮你的吗？"
-                else:
-                    # Normal CHAT path: no tools, slim system prompt
-                    response_text = await self._chat_lightweight(
-                        messages, session_type=session_type,
-                        endpoint_override=endpoint_override,
+                    _fast_resp = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_fast_system,
                     )
-            elif _intent and _intent.intent == _IT.COMMAND:
-                response_text = await self._chat_with_tools_and_context(
-                    messages, task_monitor=task_monitor, session_type=session_type,
-                    thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
-                    progress_callback=_progress_cb,
-                    session=session,
-                    endpoint_override=endpoint_override,
-                )
+                    response_text = clean_llm_response(
+                        _fast_resp.content if _fast_resp.content else ""
+                    ) or "你好！有什么我可以帮你的吗？"
+                except Exception as e:
+                    logger.error(f"[FastReply] Failed: {e}")
+                    response_text = "你好！有什么我可以帮你的吗？"
             else:
-                # TASK / QUERY / FOLLOW_UP → full ReasoningEngine
+                # All non-fast paths (CHAT/TASK/QUERY/COMMAND/FOLLOW_UP) → ReasoningEngine
                 response_text = await self._chat_with_tools_and_context(
                     messages, task_monitor=task_monitor, session_type=session_type,
                     thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
@@ -3390,15 +3847,10 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         self._current_conversation_id = conversation_id
 
         # 清理上一轮残留的任务状态（按 session 隔离）
-        # 注意：task key 可能是 conversation_id 而非 session_id，两者都要尝试
         _prev_task = None
         _reset_key = session_id
-        for _try_key in (session_id, conversation_id):
-            if _try_key and self.agent_state:
-                _prev_task = self.agent_state.get_task_for_session(_try_key)
-                if _prev_task:
-                    _reset_key = _try_key
-                    break
+        if self.agent_state:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
         if not _prev_task and self.agent_state:
             _prev_task = self.agent_state.current_task
             if _prev_task:
@@ -3417,7 +3869,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
-        self._pending_cancels.pop(conversation_id, None) if conversation_id else None
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -3472,6 +3923,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
+                session=session,
             )
 
             # 注入 TaskDefinition
@@ -3518,75 +3970,39 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             if session and hasattr(session, "context"):
                 _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
 
-            if _intent and _intent.intent == _IT.CHAT:
-                if getattr(_intent, "fast_reply", False):
-                    # Ultra-fast path: use compiler/lightweight model for obvious greetings
-                    try:
-                        _identity_snippet = ""
-                        if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                            _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
-
-                        _fast_system = (
-                            f"{_identity_snippet}\n\n"
-                            "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
-                            "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
-                        ).strip()
-
-                        _fast_response = await self.brain.think_lightweight(
-                            prompt=message,
-                            system=_fast_system,
-                        )
-                        _reply_text = clean_llm_response(
-                            _fast_response.content if _fast_response.content else ""
-                        )
-                        if _reply_text:
-                            yield {"type": "text_delta", "content": _reply_text}
-                        else:
-                            yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                            _reply_text = "你好！有什么我可以帮你的吗？"
-                    except Exception as e:
-                        logger.error(f"[FastReply] Failed: {e}")
-                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                        _reply_text = "你好！有什么我可以帮你的吗？"
-                    yield {"type": "done"}
-
-                    await self._finalize_session(
-                        response_text=_reply_text,
-                        session=session,
-                        session_id=session_id,
-                        task_monitor=task_monitor,
-                    )
-                    return
-
-                # Normal CHAT path (non-fast): uses main model, no tools
-                _chat_prompt = await self._build_system_prompt_compiled(
-                    task_description="", session_type=session_type, tools_enabled=False,
-                )
+            if (
+                _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
+                # Ultra-fast path: rule-based greeting only, use lightweight model
                 try:
-                    response = await self.brain.messages_create_async(
-                        system=_chat_prompt,
-                        messages=messages,
-                        tools=[],
-                        max_tokens=self.brain.max_tokens,
-                        endpoint_override=endpoint_override,
+                    _identity_snippet = ""
+                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                        _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+
+                    _fast_system = (
+                        f"{_identity_snippet}\n\n"
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                    ).strip()
+
+                    _fast_response = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_fast_system,
                     )
-                    content = getattr(response, "content", None)
-                    _raw_parts: list[str] = []
-                    if isinstance(content, list):
-                        for block in content:
-                            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
-                            if text:
-                                _raw_parts.append(text)
-                    elif content:
-                        _raw_parts.append(str(content))
-                    _raw_text = "".join(_raw_parts)
-                    _reply_text = clean_llm_response(_raw_text)
+                    _reply_text = clean_llm_response(
+                        _fast_response.content if _fast_response.content else ""
+                    )
                     if _reply_text:
                         yield {"type": "text_delta", "content": _reply_text}
+                    else:
+                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                        _reply_text = "你好！有什么我可以帮你的吗？"
                 except Exception as e:
-                    logger.error(f"[ChatLightweight/Stream] LLM call failed: {e}")
-                    yield {"type": "text_delta", "content": "抱歉，暂时无法回复，请稍后再试。"}
-                    _reply_text = "抱歉，暂时无法回复，请稍后再试。"
+                    logger.error(f"[FastReply] Failed: {e}")
+                    yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                    _reply_text = "你好！有什么我可以帮你的吗？"
                 yield {"type": "done"}
 
                 await self._finalize_session(
@@ -3596,6 +4012,9 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     task_monitor=task_monitor,
                 )
                 return
+
+            # LLM-classified CHAT (non-fast_reply) falls through to reason_stream
+            # with force_tool_retries=0, so tools are available but not forced.
 
             # Complexity detection: force ask_user for complex tasks
             if (
@@ -3747,16 +4166,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         return system_prompt, mode
 
     def _resolve_conversation_id(self, session: Any, session_id: str) -> str:
-        """从 session 中解析稳定的 conversation_id。"""
-        conversation_id = ""
-        try:
-            if session and hasattr(session, "session_key"):
-                conversation_id = session.session_key
-            elif session and hasattr(session, "get_metadata"):
-                conversation_id = session.get_metadata("_session_key") or ""
-        except Exception:
-            conversation_id = ""
-        return conversation_id or session_id
+        """将调用方传入的 session_id 作为规范 conversation_id 直接返回。
+
+        Desktop 路径: session_id = raw chat_id (由前端 conversation_id 传入)
+        IM 路径:      session_id = session.id (由 orchestrator._call_agent 传入)
+        CLI 路径:     session_id = "cli_<uuid>"
+
+        不再取 session.session_key，避免 task key 与 pool key 不一致。
+        """
+        return session_id
 
     def _extract_usage_summary(self, trace: list[dict]) -> dict:
         """从 react_trace 提取轻量 token 用量摘要。
@@ -4341,7 +4759,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
 ### 任务类消息
 - 如果已执行 write_file 工具，说明文件已保存，保存任务完成
-- 如果已执行 browser_task/browser_navigate 等浏览器工具，说明浏览器操作已执行
+- 如果已执行 browser_navigate/browser_click 等浏览器工具，说明浏览器操作已执行
 - 工具执行成功即表示该操作完成，不要求响应文本中包含文件内容
 - 如果响应只是说"现在开始..."、"让我..."且没有工具执行，说明任务还在进行中
 - 如果响应包含明确的操作确认（如"已完成"、"已发送"、"已保存"），任务完成
@@ -4387,7 +4805,7 @@ NEXT: 建议的下一步（如有）"""
         ))
         try:
             llm_task = asyncio.create_task(
-                self.brain.messages_create_async(**kwargs)
+                self.brain.messages_create_async(cancel_event=cancel_event, **kwargs)
             )
             cancel_waiter = asyncio.create_task(cancel_event.wait())
 
@@ -4532,6 +4950,7 @@ NEXT: 建议的下一步（如有）"""
             task_description="",
             session_type=session_type,
             tools_enabled=False,
+            session=self._current_session,
         )
 
         for attempt in range(1 + self._LIGHTWEIGHT_EMPTY_MAX_RETRIES):
@@ -4545,6 +4964,7 @@ NEXT: 建议的下一步（如有）"""
                 )
 
                 content = getattr(response, "content", None)
+                _has_tool_use = False
                 if isinstance(content, list):
                     text_parts = []
                     for block in content:
@@ -4552,6 +4972,9 @@ NEXT: 建议的下一步（如有）"""
                             text_parts.append(block.text)
                         elif isinstance(block, dict) and "text" in block:
                             text_parts.append(block["text"])
+                        block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                        if block_type == "tool_use":
+                            _has_tool_use = True
                     raw = "\n".join(text_parts) or ""
                 else:
                     raw = str(content or "")
@@ -4559,6 +4982,9 @@ NEXT: 建议的下一步（如有）"""
                 cleaned = clean_llm_response(raw)
                 if cleaned:
                     return cleaned
+
+                if _has_tool_use:
+                    return "好的，已收到你的信息。"
 
                 if attempt < self._LIGHTWEIGHT_EMPTY_MAX_RETRIES:
                     logger.warning(
@@ -4614,6 +5040,7 @@ NEXT: 建议的下一步（如有）"""
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
+                session=session or self._current_session,
             )
         else:
             system_prompt = self._context.system
@@ -4695,12 +5122,10 @@ NEXT: 建议的下一步（如有）"""
 
         # 选择 System Prompt
         if use_session_prompt:
-            # 使用 Session 专用的 System Prompt，但仍需包含完整的工具信息
-            # 否则 LLM 不知道有哪些工具可用（MCP、Skill、Tools）
-            # 使用异步版本构建系统提示词，避免向量搜索阻塞事件循环
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
+                session=session or self._current_session,
             )
         else:
             system_prompt = self._context.system
@@ -5169,6 +5594,23 @@ NEXT: 建议的下一步（如有）"""
                 except Exception:
                     pass
 
+            # 防御层：从 text_content 中解析文本格式的工具调用
+            # 部分模型（如 qwen3.5-plus）不支持原生 tool_use，而是以文本形式输出
+            if not tool_calls and text_content:
+                try:
+                    from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
+                    if has_text_tool_calls(text_content):
+                        clean_text, _embedded = parse_text_tool_calls(text_content)
+                        if _embedded:
+                            for tc in _embedded:
+                                tool_calls.append({"id": tc.id, "name": tc.name, "input": tc.input})
+                            text_content = clean_text
+                            logger.info(
+                                f"[Agent] Parsed {len(_embedded)} text-format tool calls from response text"
+                            )
+                except Exception:
+                    pass
+
             # 任务监控：结束迭代
             if task_monitor:
                 task_monitor.end_iteration(text_content if text_content else "")
@@ -5590,8 +6032,8 @@ NEXT: 建议的下一步（如有）"""
         if session_id and has_state:
             task = self.agent_state.get_task_for_session(session_id)
             _effective_sid = session_id
-            # session_id 可能是前端 UUID，但 task key 是 conversation_id（如 "desktop:uuid:user"）
-            # 找不到时再尝试 _current_conversation_id / _current_session_id
+            # task key = session_id (raw chat_id)，一般精确匹配即可命中。
+            # 若仍未找到，兜底用 _current_conversation_id / _current_session_id。
             if not task:
                 for _alt_key in (self._current_conversation_id, self._current_session_id):
                     if _alt_key and _alt_key != session_id:
@@ -5984,7 +6426,7 @@ NEXT: 建议的下一步（如有）"""
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ============================================
-        # Plan 强制检查（仅 Agent 模式下的 todo 跟踪）
+        # Todo 强制检查（仅 Agent 模式；plan/ask 模式跳过）
         # ============================================
         _effective_mode = getattr(self.tool_executor, "_current_mode", "agent")
         if _effective_mode not in ("plan", "ask"):
@@ -6544,8 +6986,7 @@ NEXT: 建议的下一步（如有）"""
                     ))
                     try:
                         summary_response = await self._cancellable_await(
-                            asyncio.to_thread(
-                                self.brain.messages_create,
+                            self.brain.messages_create_async(
                                 max_tokens=1000,
                                 system=_build_effective_system_prompt_task(),
                                 messages=messages,

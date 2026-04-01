@@ -351,7 +351,9 @@ class LLMProvider(ABC):
         if any(kw in err_lower for kw in [
             "invalid_request", "invalid_parameter", "messages with role",
             "must be a response", "does not support", "not supported",
-            "(400)",
+            "(400)", "(413)",
+            "payload too large", "request entity too large",
+            "larger than allowed",
         ]):
             return "structural"
 

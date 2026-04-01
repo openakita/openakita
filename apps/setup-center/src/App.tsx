@@ -17,6 +17,7 @@ import { IdentityView } from "./views/IdentityView";
 import { AgentDashboardView } from "./views/AgentDashboardView";
 import { AgentManagerView } from "./views/AgentManagerView";
 import { OrgEditorView } from "./views/OrgEditorView";
+import { PixelOfficeView } from "./views/PixelOfficeView";
 import { FeedbackModal } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
@@ -104,6 +105,7 @@ const _HASH_TO_VIEW: Record<string, ViewId> = {
   "scheduler": "scheduler", "memory": "memory", "status": "status",
   "token-stats": "token_stats", "identity": "identity",
   "dashboard": "dashboard", "org-editor": "org_editor",
+  "pixel-office": "pixel_office",
   "agent-manager": "agent_manager", "agent-store": "agent_store",
   "skill-store": "skill_store", "wizard": "wizard", "docs": "docs",
   "security": "security",
@@ -778,12 +780,12 @@ export function App() {
     const now = Date.now();
     if (now - lastResumeRef.current < 3000) return;
     lastResumeRef.current = now;
-    visibilityGraceRef.current = true;
-    heartbeatFailCount.current = 0;
-    setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
-    reconnectWsNow();
-    window.dispatchEvent(new Event("openakita_app_resumed"));
-    logger.info("App", "Resumed from background");
+        visibilityGraceRef.current = true;
+        heartbeatFailCount.current = 0;
+        setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
+        reconnectWsNow();
+        window.dispatchEvent(new Event("openakita_app_resumed"));
+        logger.info("App", "Resumed from background");
   }, []);
 
   useEffect(() => {
@@ -3854,10 +3856,10 @@ export function App() {
           logTask("等待 HTTP 服务就绪", "done", "已就绪");
         } else {
           log(t("onboarding.progress.startingService"));
-          await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
-          log(t("onboarding.progress.serviceStarted"));
-          updateTask("service-start", { status: "done" });
-          logTask("启动后端服务", "done");
+        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+        log(t("onboarding.progress.serviceStarted"));
+        updateTask("service-start", { status: "done" });
+        logTask("启动后端服务", "done");
 
         // ── STEP: http-wait ──
         let httpReady = false;
@@ -3881,14 +3883,14 @@ export function App() {
               updateTask("http-wait", { status: "done", detail: `${(i + 1) * 2}s` });
               logTask("等待 HTTP 服务就绪", "done", `${(i + 1) * 2}s`);
               break;
-              }
-            } catch { /* not ready yet */ }
-            if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
-          }
-          if (!httpReady) {
-            log("⚠ HTTP 服务尚未就绪，可进入主页面后手动刷新");
-            updateTask("http-wait", { status: "error", detail: "超时" });
-            logTask("等待 HTTP 服务就绪", "error", "超时");
+            }
+          } catch { /* not ready yet */ }
+          if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
+        }
+        if (!httpReady) {
+          log("⚠ HTTP 服务尚未就绪，可进入主页面后手动刷新");
+          updateTask("http-wait", { status: "error", detail: "超时" });
+          logTask("等待 HTTP 服务就绪", "error", "超时");
           }
         }
       } catch (e) {
@@ -4733,6 +4735,14 @@ export function App() {
         <OrgEditorView
           apiBaseUrl={apiBaseUrl}
           visible={view === "org_editor"}
+        />
+      );
+    }
+    if (view === "pixel_office") {
+      return (
+        <PixelOfficeView
+          apiBaseUrl={apiBaseUrl}
+          visible={view === "pixel_office"}
         />
       );
     }

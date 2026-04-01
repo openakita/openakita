@@ -337,7 +337,11 @@ class EndpointManager:
                 try:
                     content = _read_text_robust(bak)
                     data = json.loads(content)
-                    self._atomic_write(self._json_path, content)
+                    # Restore without going through _atomic_write to avoid
+                    # overwriting the good .bak with the corrupt primary.
+                    tmp = self._json_path.with_suffix(".json.tmp")
+                    tmp.write_text(content, encoding="utf-8")
+                    tmp.replace(self._json_path)
                     return data
                 except Exception:
                     pass

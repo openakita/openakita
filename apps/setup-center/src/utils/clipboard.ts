@@ -1,10 +1,22 @@
+import { IS_TAURI } from "../platform/detect";
+
 /**
  * 跨平台复制到剪贴板（兼容 Win / Mac / Web / Desktop / 移动端）。
- * 优先使用 navigator.clipboard，不可用时回退到 document.execCommand('copy')。
+ * Tauri 桌面端使用原生剪贴板插件，Web/Capacitor 回退到浏览器 API。
  */
 export async function copyToClipboard(text: string | null | undefined): Promise<boolean> {
   const s = text == null ? "" : String(text);
   if (s.length === 0) return false;
+
+  if (IS_TAURI) {
+    try {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(s);
+      return true;
+    } catch {
+      // plugin not available — fall through to web API
+    }
+  }
 
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -12,10 +24,9 @@ export async function copyToClipboard(text: string | null | undefined): Promise<
       return true;
     }
   } catch {
-    // 非安全上下文（非 HTTPS、部分 WebView）或权限被拒时可能失败，使用回退
+    // 非安全上下文或权限被拒 — 使用 execCommand 回退
   }
 
-  // 回退：execCommand('copy')，适用于旧版浏览器、部分移动端、非 HTTPS 页面
   try {
     const textarea = document.createElement("textarea");
     textarea.value = s;
@@ -38,4 +49,29 @@ export async function copyToClipboard(text: string | null | undefined): Promise<
   } catch {
     return false;
   }
+}
+
+/**
+ * 跨平台从剪贴板读取文本。
+ * Tauri 桌面端使用原生插件，Web/Capacitor 回退到 navigator.clipboard。
+ */
+export async function readFromClipboard(): Promise<string> {
+  if (IS_TAURI) {
+    try {
+      const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+      return await readText();
+    } catch {
+      // plugin not available — fall through to web API
+    }
+  }
+
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
+      return await navigator.clipboard.readText();
+    }
+  } catch {
+    // 非安全上下文或权限被拒
+  }
+
+  return "";
 }

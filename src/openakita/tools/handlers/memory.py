@@ -38,6 +38,7 @@ class MemoryHandler:
         "search_conversation_traces",
         "trace_memory",
         "search_relational_memory",
+        "get_session_context",
     ]
 
     _SEARCH_TOOLS = frozenset({
@@ -99,6 +100,8 @@ class MemoryHandler:
             result = self._trace_memory(params)
         elif tool_name == "search_relational_memory":
             result = await self._search_relational_memory(params)
+        elif tool_name == "get_session_context":
+            return self._get_session_context(params)
         else:
             return f"❌ Unknown memory tool: {tool_name}"
 
@@ -707,6 +710,80 @@ class MemoryHandler:
                 output += f"时间: {time_str}\n"
             output += f"内容: {node.content[:300]}\n\n"
         return output
+
+
+    def _get_session_context(self, params: dict) -> str:
+        """获取当前会话的详细上下文信息。"""
+        session = getattr(self.agent, "_current_session", None)
+        if not session:
+            return "❌ 当前无活跃会话"
+
+        sections = params.get("sections", ["summary", "sub_agents"])
+        parts: list[str] = []
+
+        ctx = getattr(session, "context", None)
+
+        if "summary" in sections:
+            parts.append("## 会话概况")
+            parts.append(f"- ID: {getattr(session, 'id', 'unknown')}")
+            parts.append(f"- 通道: {getattr(session, 'channel', 'unknown')}")
+            msg_count = len(ctx.messages) if ctx and hasattr(ctx, "messages") else 0
+            parts.append(f"- 消息数: {msg_count}")
+            sub_records = getattr(ctx, "sub_agent_records", None) or []
+            parts.append(f"- 子Agent记录: {len(sub_records)} 条")
+
+        if "sub_agents" in sections:
+            sub_records = getattr(ctx, "sub_agent_records", None) or []
+            if sub_records:
+                parts.append("\n## 子Agent执行记录")
+                for r in sub_records:
+                    name = r.get("agent_name", "unknown")
+                    parts.append(f"\n### {name}")
+                    task_msg = r.get("task_message", "")
+                    if task_msg:
+                        parts.append(f"- 任务: {task_msg[:200]}")
+                    elapsed = r.get("elapsed_s", "")
+                    if elapsed:
+                        parts.append(f"- 耗时: {elapsed}s")
+                    tools = r.get("tools_used", [])
+                    if tools:
+                        parts.append(f"- 工具: {', '.join(tools[:10])}")
+                    preview = r.get("result_preview", "")
+                    if preview:
+                        parts.append(f"- 结果预览:\n{preview[:1000]}")
+            else:
+                parts.append("\n## 子Agent执行记录\n无子Agent记录")
+
+        if "tools" in sections:
+            parts.append("\n## 工具使用记录")
+            react_traces = getattr(ctx, "react_traces", None)
+            if react_traces:
+                for i, trace in enumerate(react_traces[-20:], 1):
+                    tool = trace.get("tool_name", "")
+                    status = trace.get("status", "")
+                    if tool:
+                        parts.append(f"{i}. {tool} ({status})")
+            else:
+                parts.append("无详细工具记录（react_traces 不可用）")
+
+        if "messages" in sections:
+            parts.append("\n## 完整消息列表")
+            msgs = ctx.messages if ctx and hasattr(ctx, "messages") else []
+            display_msgs = msgs[-20:] if len(msgs) > 20 else msgs
+            if len(msgs) > 20:
+                parts.append(f"（显示最近 20 条，共 {len(msgs)} 条）\n")
+            for msg in display_msgs:
+                role = msg.get("role", "?")
+                ts = msg.get("timestamp", "")
+                ts_display = ts[:16] if ts else ""
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    content = content[:500]
+                else:
+                    content = str(content)[:500]
+                parts.append(f"[{ts_display}] {role}: {content}")
+
+        return "\n".join(parts) if parts else "无可用会话信息"
 
 
 def create_handler(agent: "Agent"):

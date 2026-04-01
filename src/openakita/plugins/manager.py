@@ -320,6 +320,9 @@ class PluginManager:
                 f"skill_loader ({type(skill_loader).__name__}) has no load_skill method",
                 "warning",
             )
+            return
+
+        self._tag_skill_source(skill_path.parent.name, manifest.id)
 
     def _try_load_plugin_skill(
         self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI
@@ -349,8 +352,21 @@ class PluginManager:
                 return
             api.log(f"Plugin skill loaded from {skill_path.parent}")
             self._skills_loaded = True
+            self._tag_skill_source(skill_path.parent.name, manifest.id)
         except Exception as e:
             api.log(f"Failed to load plugin skill: {e}", "warning")
+
+    def _tag_skill_source(self, skill_id: str, plugin_id: str) -> None:
+        """Mark a skill entry in the registry as coming from a plugin."""
+        skill_loader = self._host_refs.get("skill_loader")
+        if skill_loader is None:
+            return
+        registry = getattr(skill_loader, "registry", None)
+        if registry is None:
+            return
+        entry = registry.get(skill_id)
+        if entry is not None and hasattr(entry, "plugin_source"):
+            entry.plugin_source = f"plugin:{plugin_id}"
 
     def _refresh_skill_catalog(self) -> None:
         """Invalidate skill catalog cache if any plugin loaded a skill."""

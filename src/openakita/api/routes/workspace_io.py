@@ -130,11 +130,19 @@ async def import_backup(body: ImportRequest):
 
     try:
         result = restore_backup(zip_path=body.zip_path, workspace_path=root)
-        return {
-            "status": "ok",
+        skipped = result.get("skipped_count", 0)
+        resp: dict = {
+            "status": "ok" if skipped == 0 else "partial",
             "restored_count": result["restored_count"],
+            "skipped_count": skipped,
             "manifest": result.get("manifest"),
         }
+        if skipped:
+            resp["skipped_files"] = result.get("skipped_files", [])
+            resp["message"] = (
+                f"{skipped} 个文件因被占用而跳过，建议重启后重新还原"
+            )
+        return resp
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

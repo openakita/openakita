@@ -190,11 +190,42 @@ def _build_plugin_list(pm, plugins_dir: Path) -> tuple[list[dict[str, Any]], dic
     return plugins, failed
 
 
+async def _sync_new_plugins(pm, plugins_dir: Path) -> None:
+    """Detect plugins on disk that are not yet loaded and hot-load them.
+
+    Called by list_plugins so that clicking "Refresh" in the UI picks up
+    manually placed plugins without requiring a backend restart.
+    """
+    if pm is None or not plugins_dir.is_dir():
+        return
+    loaded_ids = {e["id"] for e in pm.list_loaded()}
+    failed_ids = {pid for pid, _ in pm.list_failed()}
+    state = pm.state
+    for child in plugins_dir.iterdir():
+        if not child.is_dir() or not (child / "plugin.json").is_file():
+            continue
+        try:
+            manifest = parse_manifest(child)
+        except ManifestError:
+            continue
+        pid = manifest.id
+        if pid in loaded_ids or pid in failed_ids:
+            continue
+        if not state.is_enabled(pid):
+            continue
+        try:
+            await pm.reload_plugin(pid)
+            logger.info("Hot-loaded new plugin '%s' on refresh", pid)
+        except Exception as e:
+            logger.warning("Failed to hot-load plugin '%s': %s", pid, e)
+
+
 @router.get("/list")
 async def list_plugins(request: Request) -> dict[str, Any]:
     try:
         pm = _get_plugin_manager(request)
         plugins_dir = _plugins_dir()
+        await _sync_new_plugins(pm, plugins_dir)
         plugins, failed = _build_plugin_list(pm, plugins_dir)
         return {"plugins": plugins, "failed": failed}
     except Exception as e:
@@ -203,7 +234,7 @@ async def list_plugins(request: Request) -> dict[str, Any]:
 
 
 @router.post("/install")
-async def install_plugin(body: InstallBody) -> dict[str, str]:
+async def install_plugin(body: InstallBody, request: Request) -> dict[str, str]:
     plugins_dir = _plugins_dir()
     src = body.source.strip()
     try:
@@ -218,6 +249,14 @@ async def install_plugin(body: InstallBody) -> dict[str, str]:
     except Exception as e:
         logger.exception("Unexpected error installing plugin from %s", src)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+    pm = _get_plugin_manager(request)
+    if pm is not None:
+        try:
+            await pm.reload_plugin(plugin_id)
+        except Exception as e:
+            logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+
     return {"plugin_id": plugin_id}
 
 

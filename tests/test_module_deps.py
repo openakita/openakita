@@ -174,7 +174,7 @@ class TestImportHelper:
                 )
 
         # browser 相关包已内置到 core (module_id=None)
-        core_packages = ["playwright", "browser_use", "langchain_openai"]
+        core_packages = ["playwright"]
         for name in core_packages:
             assert name in _PACKAGE_MODULE_MAP, (
                 f"缺少映射: {name} 不在 _PACKAGE_MODULE_MAP 中"

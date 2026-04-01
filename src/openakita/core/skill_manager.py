@@ -14,8 +14,10 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from ..config import settings
 from ..skills.source_url import (
@@ -25,8 +27,13 @@ from ..skills.source_url import (
     parse_github_source,
     parse_playbooks_source,
 )
+from ..tools.errors import ErrorType, ToolError
 
 logger = logging.getLogger(__name__)
+
+SKILL_GIT_CLONE_TIMEOUT_SECONDS = 120
+SKILL_INSTALL_CIRCUIT_THRESHOLD = 2
+SKILL_INSTALL_CIRCUIT_COOLDOWN_SECONDS = 300
 
 
 class SkillManager:
@@ -60,6 +67,8 @@ class SkillManager:
 
         # 缓存
         self._catalog_text: str = ""
+        self._failure_class_streaks: dict[str, int] = {}
+        self._failure_class_last_seen: dict[str, float] = {}
 
     @property
     def catalog_text(self) -> str:
@@ -194,6 +203,78 @@ class SkillManager:
         ]
         return any(re.search(p, url) for p in patterns)
 
+    @staticmethod
+    def _is_shell_timeout_result(result: Any) -> bool:
+        """Best-effort detection for shell timeout failures."""
+        if getattr(result, "returncode", None) != -1:
+            return False
+        output = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}".lower()
+        return "timed out" in output or "timeout" in output
+
+    @staticmethod
+    def _build_install_skill_error(
+        *,
+        error_type: ErrorType,
+        message: str,
+        source: str,
+        failure_class: str,
+        retry_suggestion: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> str:
+        """Return a structured ToolError payload for install_skill."""
+        payload = {
+            "source": source,
+            "failure_class": failure_class,
+        }
+        if details:
+            payload.update(details)
+        return ToolError(
+            error_type=error_type,
+            tool_name="install_skill",
+            message=message,
+            retry_suggestion=retry_suggestion,
+            details=payload,
+        ).to_tool_result()
+
+    @staticmethod
+    def _classify_git_clone_failure(output: str) -> tuple[ErrorType, str]:
+        lower = output.lower()
+        if any(k in lower for k in ("timed out", "timeout", "could not resolve", "connection", "network")):
+            return ErrorType.TRANSIENT, "git_network_failure"
+        if any(k in lower for k in ("repository not found", "not found", "404")):
+            return ErrorType.RESOURCE_NOT_FOUND, "git_repo_not_found"
+        if any(k in lower for k in ("permission denied", "authentication failed", "access denied")):
+            return ErrorType.PERMISSION, "git_permission_denied"
+        if any(k in lower for k in ("not recognized", "command not found", "no such file or directory")):
+            return ErrorType.DEPENDENCY, "git_dependency_missing"
+        return ErrorType.PERMANENT, "git_clone_failed"
+
+    def _is_failure_class_circuit_open(self, failure_class: str) -> bool:
+        count = self._failure_class_streaks.get(failure_class, 0)
+        if count < SKILL_INSTALL_CIRCUIT_THRESHOLD:
+            return False
+        last_seen = self._failure_class_last_seen.get(failure_class, 0.0)
+        if time.time() - last_seen > SKILL_INSTALL_CIRCUIT_COOLDOWN_SECONDS:
+            self._failure_class_streaks.pop(failure_class, None)
+            self._failure_class_last_seen.pop(failure_class, None)
+            return False
+        return True
+
+    def _record_failure_class(self, failure_class: str) -> None:
+        self._failure_class_streaks[failure_class] = self._failure_class_streaks.get(failure_class, 0) + 1
+        self._failure_class_last_seen[failure_class] = time.time()
+
+    def _reset_failure_streaks(self) -> None:
+        self._failure_class_streaks.clear()
+        self._failure_class_last_seen.clear()
+
+    @staticmethod
+    def _git_host(url: str) -> str:
+        try:
+            return urlparse(url).netloc or "unknown"
+        except Exception:
+            return "unknown"
+
     async def _install_from_git(
         self, git_url: str, name: str | None, subdir: str | None, skills_dir: Path
     ) -> str:
@@ -203,11 +284,61 @@ class SkillManager:
 
         temp_dir = None
         try:
+            for failure_class in ("skill_install_network_timeout", "git_network_failure"):
+                if self._is_failure_class_circuit_open(failure_class):
+                    return self._build_install_skill_error(
+                        error_type=ErrorType.PERMANENT,
+                        message="install_skill circuit breaker is open for repeated network failures",
+                        source=git_url,
+                        failure_class="skill_install_circuit_open",
+                        retry_suggestion=(
+                            "Pause retries and ask the user to fix network/proxy first, "
+                            "or install from local directory/ZIP."
+                        ),
+                        details={
+                            "blocked_by": failure_class,
+                            "host": self._git_host(git_url),
+                            "failure_count": self._failure_class_streaks.get(failure_class, 0),
+                            "cooldown_seconds": SKILL_INSTALL_CIRCUIT_COOLDOWN_SECONDS,
+                        },
+                    )
+
             temp_dir = Path(tempfile.mkdtemp(prefix="skill_install_"))
-            result = await self._shell_tool.run(f'git clone --depth 1 "{git_url}" "{temp_dir}"')
+            result = await self._shell_tool.run(
+                f'git clone --depth 1 "{git_url}" "{temp_dir}"',
+                timeout=SKILL_GIT_CLONE_TIMEOUT_SECONDS,
+            )
 
             if not result.success:
-                return f"❌ Git 克隆失败:\n{result.output}"
+                if self._is_shell_timeout_result(result):
+                    self._record_failure_class("skill_install_network_timeout")
+                    return self._build_install_skill_error(
+                        error_type=ErrorType.TIMEOUT,
+                        message="Git clone timed out while installing skill",
+                        source=git_url,
+                        failure_class="skill_install_network_timeout",
+                        retry_suggestion=(
+                            "Network access to the git host is unstable. "
+                            "Do not keep retrying mirror variants automatically."
+                        ),
+                        details={
+                            "timeout_seconds": SKILL_GIT_CLONE_TIMEOUT_SECONDS,
+                            "raw_output": result.output[:2000],
+                        },
+                    )
+                error_type, failure_class = self._classify_git_clone_failure(result.output)
+                self._record_failure_class(failure_class)
+                return self._build_install_skill_error(
+                    error_type=error_type,
+                    message="Git clone failed while installing skill",
+                    source=git_url,
+                    failure_class=failure_class,
+                    retry_suggestion=(
+                        "Check repository URL and network/proxy settings, "
+                        "or install from local directory/ZIP."
+                    ),
+                    details={"raw_output": result.output[:2000]},
+                )
 
             search_dir = temp_dir / subdir if subdir else temp_dir
             skill_md_path = self._find_skill_md(search_dir)
@@ -237,6 +368,7 @@ class SkillManager:
                     self._catalog_text = self._catalog.generate_catalog()
                     if self._on_skill_loaded:
                         self._on_skill_loaded()
+                    self._reset_failure_streaks()
                     logger.info(f"Skill installed from git: {skill_name}")
                 else:
                     raise RuntimeError("loader 未返回有效技能")
@@ -256,7 +388,12 @@ class SkillManager:
 
         except Exception as e:
             logger.error(f"Failed to install skill from git: {e}")
-            return f"❌ Git 安装失败: {str(e)}"
+            return self._build_install_skill_error(
+                error_type=ErrorType.PERMANENT,
+                message=f"Unexpected failure while installing skill from git: {e}",
+                source=git_url,
+                failure_class="skill_install_unexpected",
+            )
         finally:
             if temp_dir and temp_dir.exists():
                 with contextlib.suppress(BaseException):
@@ -335,6 +472,7 @@ class SkillManager:
                     self._catalog_text = self._catalog.generate_catalog()
                     if self._on_skill_loaded:
                         self._on_skill_loaded()
+                    self._reset_failure_streaks()
                     logger.info(f"Skill installed from URL: {skill_name}")
                 else:
                     raise RuntimeError("loader 未返回有效技能")

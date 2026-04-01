@@ -180,6 +180,34 @@ def cancel_todo(session_id: str) -> bool:
     return True
 
 
+def force_close_plan(session_id: str) -> bool:
+    """
+    强制关闭指定 session 的 Plan 状态（死锁恢复用）。
+
+    无条件清除所有与该 session 关联的 Plan 模块级状态，
+    无论 handler 实例或 plan 数据是否可达。
+    用于打破 plan_required=True + has_active_plan=False 的死锁。
+
+    Returns:
+        True 如果清理了任何状态
+    """
+    had_state = False
+    if session_id in _session_active_plans:
+        plan_id = _session_active_plans.pop(session_id)
+        logger.warning(f"[Plan] Force-closed active plan {plan_id} for {session_id}")
+        had_state = True
+    if session_id in _session_plan_required:
+        del _session_plan_required[session_id]
+        had_state = True
+    handler = _session_handlers.pop(session_id, None)
+    if handler:
+        handler._plans_by_session.pop(session_id, None)
+        had_state = True
+    if had_state:
+        logger.warning(f"[Plan] Force-closed all plan state for session {session_id}")
+    return had_state
+
+
 def register_plan_handler(session_id: str, handler: "PlanHandler") -> None:
     """注册 PlanHandler 实例"""
     _session_handlers[session_id] = handler
@@ -311,10 +339,25 @@ class PlanHandler:
         )
 
     def _get_current_todo(self) -> dict | None:
-        """获取当前会话的 Todo（会话隔离）"""
+        """获取当前会话的 Todo（会话隔离）。
+
+        如果本实例没有数据但模块级 _session_handlers 中有旧 handler
+        持有该 todo（工具系统热重载后的典型场景），自动恢复到本实例。
+        """
         cid = self._get_conversation_id()
         if cid:
-            return self._todos_by_session.get(cid)
+            todo = self._todos_by_session.get(cid)
+            if todo is not None:
+                return todo
+            # 尝试从旧 handler 恢复（热重载后 self 是新实例）
+            old_handler = _session_handlers.get(cid)
+            if old_handler is not None and old_handler is not self:
+                old_todo = old_handler._todos_by_session.get(cid)
+                if old_todo is not None:
+                    self._todos_by_session[cid] = old_todo
+                    logger.info(f"[Todo] Recovered todo {old_todo.get('id')} from previous handler for {cid}")
+                    return old_todo
+            return None
         return self.current_todo
 
     def _set_current_todo(self, plan: dict | None) -> None:
@@ -362,6 +405,12 @@ class PlanHandler:
                 f"请使用 update_todo_step 继续执行当前计划。\n\n{status}"
             )
 
+        # 状态不一致兜底：_session_active_plans 有记录但本实例无 plan 数据
+        cid = self._get_conversation_id()
+        if cid and has_active_plan(cid) and _plan is None:
+            logger.warning(f"[Plan] Inconsistent state: active_plan registered but no plan data for {cid}, force-closing")
+            force_close_plan(cid)
+
         plan_id = f"plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
 
         # 创建 Plan 后：确保工具护栏至少追问 1 次，避免“无确认文本”直接结束
@@ -381,7 +430,30 @@ class PlanHandler:
                 steps = json.loads(steps)
             except (json.JSONDecodeError, TypeError):
                 return "❌ steps 参数格式错误，需要 JSON 数组"
-        for step in steps:
+        if not isinstance(steps, list):
+            return "❌ steps 参数格式错误，需要 JSON 数组"
+
+        normalized_steps: list[dict] = []
+        for index, raw_step in enumerate(steps):
+            if not isinstance(raw_step, dict):
+                return f"❌ steps[{index}] 格式错误，需要对象"
+
+            step = dict(raw_step)
+
+            # 兼容模型偶发输出：把字符串化数组字段还原为 list
+            for field_name in ("skills", "depends_on"):
+                field_value = step.get(field_name)
+                if isinstance(field_value, str):
+                    try:
+                        field_value = json.loads(field_value)
+                    except (json.JSONDecodeError, TypeError):
+                        return f"❌ steps[{index}].{field_name} 参数格式错误，需要 JSON 数组"
+                    if not isinstance(field_value, list):
+                        return f"❌ steps[{index}].{field_name} 参数格式错误，需要 JSON 数组"
+                    step[field_name] = field_value
+                elif field_value is not None and not isinstance(field_value, list):
+                    return f"❌ steps[{index}].{field_name} 参数格式错误，需要 JSON 数组"
+
             step["status"] = "pending"
             step["result"] = ""
             step["started_at"] = None
@@ -389,6 +461,9 @@ class PlanHandler:
             # skills: 每步必须可追溯到对应 skill（系统工具也有 system skill）
             step.setdefault("skills", [])
             step["skills"] = self._ensure_step_skills(step)
+            normalized_steps.append(step)
+
+        steps = normalized_steps
 
         _new_plan = {
             "id": plan_id,
@@ -440,6 +515,10 @@ class PlanHandler:
         """更新步骤状态"""
         _plan = self._get_current_todo()
         if not _plan:
+            cid = self._get_conversation_id()
+            if cid and has_active_todo(cid):
+                logger.warning(f"[Todo] update_step: todo data lost for {cid}, force-closing stale registration")
+                force_close_plan(cid)
             return "❌ 当前没有活动的计划，请先调用 create_todo"
 
         step_id = params.get("step_id", "")
@@ -562,6 +641,11 @@ class PlanHandler:
         """完成计划"""
         _plan = self._get_current_todo()
         if not _plan:
+            cid = self._get_conversation_id()
+            if cid and has_active_plan(cid):
+                logger.warning(f"[Plan] complete_plan: plan data lost for {cid}, force-closing stale registration")
+                force_close_plan(cid)
+                return "⚠️ 旧计划数据已丢失，已强制清除死锁状态。可以开始新任务。"
             return "❌ 当前没有活动的计划"
 
         summary = params.get("summary", "")

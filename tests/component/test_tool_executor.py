@@ -1,20 +1,21 @@
 """L2 Component Tests: ToolExecutor execution and truncation guard."""
 
-import pytest
+import json
 from unittest.mock import AsyncMock, MagicMock
 
-from openakita.core.tool_executor import ToolExecutor, OVERFLOW_MARKER
+import pytest
+
+from openakita.core.tool_executor import OVERFLOW_MARKER, ToolExecutor
+from openakita.tools.errors import ErrorType, ToolError
 
 
 def _make_registry(*tool_names: str) -> MagicMock:
     """Create a mock SystemHandlerRegistry with given tool names."""
     registry = MagicMock()
-    handlers = {}
-    for name in tool_names:
-        handler = AsyncMock(return_value=f"Result of {name}")
-        handlers[name] = handler
-    registry.get_handler.side_effect = lambda n: handlers.get(n)
-    registry.has_handler.side_effect = lambda n: n in handlers
+    result_map = {name: f"Result of {name}" for name in tool_names}
+    registry.has_tool.side_effect = lambda n: n in result_map
+    registry.execute_by_tool = AsyncMock(side_effect=lambda n, _: result_map[n])
+    registry.get_handler_name_for_tool.return_value = "filesystem"
     return registry
 
 
@@ -32,6 +33,32 @@ class TestExecuteTool:
     async def test_execute_unknown_tool(self, executor):
         result = await executor.execute_tool("nonexistent_tool", {})
         assert "error" in result.lower() or "not found" in result.lower() or isinstance(result, str)
+
+    async def test_execute_tool_normalizes_stringified_nested_fields(self):
+        registry = MagicMock()
+        captured = {}
+
+        async def _execute_by_tool(tool_name, params):
+            captured["tool_name"] = tool_name
+            captured["params"] = params
+            return "ok"
+
+        registry.has_tool.return_value = True
+        registry.execute_by_tool.side_effect = _execute_by_tool
+        registry.get_handler_name_for_tool.return_value = "plan"
+        executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+
+        await executor.execute_tool(
+            "create_plan",
+            {
+                "task_summary": "demo",
+                "steps": '[{"id":"step_1","description":"first"}]',
+            },
+        )
+
+        assert captured["tool_name"] == "create_plan"
+        assert isinstance(captured["params"]["steps"], list)
+        assert captured["params"]["steps"][0]["id"] == "step_1"
 
 
 class TestGuardTruncate:
@@ -60,3 +87,30 @@ class TestExecutorInit:
         registry = _make_registry()
         executor = ToolExecutor(handler_registry=registry, max_parallel=5)
         assert executor._max_parallel == 5
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_error_marks_tool_result_as_error():
+    registry = MagicMock()
+    registry.has_tool.return_value = True
+    registry.get_handler_name_for_tool.return_value = "skills"
+    registry.execute_by_tool = AsyncMock(
+        return_value=ToolError(
+            error_type=ErrorType.TIMEOUT,
+            tool_name="install_skill",
+            message="timed out",
+            details={"failure_class": "skill_install_network_timeout"},
+        ).to_tool_result()
+    )
+
+    executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+    tool_results, executed, _ = await executor.execute_batch(
+        [{"id": "u1", "name": "install_skill", "input": {"source": "owner/repo"}}]
+    )
+
+    assert executed == []
+    assert tool_results[0]["is_error"] is True
+    payload = json.loads(tool_results[0]["content"])
+    assert payload["error"] is True
+    assert payload["error_type"] == "timeout"
+

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -133,7 +134,7 @@ async def list_memories(
             results = [m for m in results if (m.type.value if hasattr(m.type, "value") else str(m.type)) == type]
         if min_score > 0:
             results = [m for m in results if m.importance_score >= min_score]
-        results.sort(key=lambda m: m.importance_score, reverse=True)
+        results.sort(key=lambda m: (m.importance_score, m.created_at or datetime.min), reverse=True)
         results = results[:limit]
 
     return {

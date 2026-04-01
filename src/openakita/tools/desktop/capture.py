@@ -33,11 +33,53 @@ except ImportError:
     raise ImportError(import_or_hint("mss"))
 
 
+def _get_self_hwnd() -> int | None:
+    """Get the HWND of the current process's console/window for exclusion."""
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        return hwnd if hwnd else None
+    except Exception:
+        return None
+
+
+def _hide_self_window() -> int | None:
+    """Temporarily hide the current process window before screenshot.
+
+    Returns the HWND if hidden, or None.
+    """
+    try:
+        import ctypes
+        hwnd = _get_self_hwnd()
+        if hwnd:
+            SW_HIDE = 0
+            ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+            import time
+            time.sleep(0.05)  # let the compositor update
+            return hwnd
+    except Exception:
+        pass
+    return None
+
+
+def _restore_window(hwnd: int) -> None:
+    """Restore a previously hidden window."""
+    try:
+        import ctypes
+        SW_SHOW = 5
+        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
+    except Exception:
+        pass
+
+
 class ScreenCapture:
     """
     屏幕截图类
 
-    使用 mss 库实现高性能截图
+    使用 mss 库实现高性能截图。
+    安全增强（参考 CC Computer Use）：
+    - 截屏时自动排除自身窗口
+    - 坐标系与截屏尺寸一致
     """
 
     def __init__(self):
@@ -45,6 +87,7 @@ class ScreenCapture:
         self._last_screenshot: Image.Image | None = None
         self._last_screenshot_time: float = 0
         self._last_screenshot_info: ScreenshotInfo | None = None
+        self._exclude_self: bool = True
 
     @property
     def sct(self) -> mss.mss:
@@ -128,8 +171,16 @@ class ScreenCapture:
                 mon_idx = 0
             capture_area = monitors[mon_idx]
 
-        # 截图
-        sct_img = self.sct.grab(capture_area)
+        # Hide self window before capture (参考 CC prepareForAction)
+        hidden_hwnd = None
+        if self._exclude_self:
+            hidden_hwnd = _hide_self_window()
+
+        try:
+            sct_img = self.sct.grab(capture_area)
+        finally:
+            if hidden_hwnd:
+                _restore_window(hidden_hwnd)
 
         # 转换为 PIL Image
         img = Image.frombytes(

@@ -26,6 +26,37 @@ class PluginPermissionError(PermissionError):
     """Raised when a plugin attempts an unauthorized operation."""
 
 
+def _normalize_tool_definition(defn: dict) -> dict | None:
+    """Convert a plugin tool definition to the internal (Anthropic) format.
+
+    Plugins typically use the OpenAI format::
+
+        {"type": "function", "function": {"name": ..., "parameters": {...}}}
+
+    The internal system uses::
+
+        {"name": ..., "description": ..., "input_schema": {...}}
+
+    If ``defn`` is already in Anthropic format (has top-level "name"), it is
+    returned as-is.  Returns ``None`` if the name cannot be determined.
+    """
+    if "name" in defn:
+        if "input_schema" not in defn and "parameters" in defn:
+            defn = {**defn, "input_schema": defn.pop("parameters")}
+        return defn
+
+    func = defn.get("function", {})
+    name = func.get("name", "")
+    if not name:
+        return None
+
+    return {
+        "name": name,
+        "description": func.get("description", ""),
+        "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+    }
+
+
 class PluginAPI:
     """API handle passed to each plugin — limits interaction to declared permissions.
 
@@ -163,14 +194,14 @@ class PluginAPI:
 
         handler_name = f"plugin_{self._plugin_id}"
         tool_names = []
-        valid_defs = []
+        normalized_defs = []
         for d in definitions:
-            name = d.get("name", d.get("function", {}).get("name", ""))
-            if not name:
+            defn = _normalize_tool_definition(d)
+            if defn is None:
                 self.log(f"Skipping tool definition with no name: {d!r}", "warning")
                 continue
-            tool_names.append(name)
-            valid_defs.append(d)
+            tool_names.append(defn["name"])
+            normalized_defs.append(defn)
 
         if not tool_names:
             self.log("No valid tool definitions provided", "warning")
@@ -181,13 +212,14 @@ class PluginAPI:
 
         tool_defs = self._host.get("tool_definitions")
         if tool_defs is not None and hasattr(tool_defs, "extend"):
-            tool_defs.extend(valid_defs)
+            tool_defs.extend(normalized_defs)
 
         tool_catalog = self._host.get("tool_catalog")
         if tool_catalog is not None and hasattr(tool_catalog, "add_tool"):
-            for defn in valid_defs:
+            source = f"plugin:{self._plugin_id}"
+            for defn in normalized_defs:
                 try:
-                    tool_catalog.add_tool(defn)
+                    tool_catalog.add_tool(defn, source=source)
                 except Exception as e:
                     self.log(f"Failed to add tool to catalog: {e}", "warning")
 

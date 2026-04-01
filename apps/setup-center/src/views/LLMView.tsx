@@ -11,7 +11,7 @@ import {
   longCatFallbackModels,
 } from "../providers";
 import {
-  envKeyFromSlug, nextEnvKeyName, suggestEndpointName, envGet, envSet,
+  suggestEndpointName, envGet, envSet,
 } from "../utils";
 import { copyToClipboard } from "../utils/clipboard";
 import { notifySuccess, notifyError, notifyLoading, dismissLoading } from "../utils/notify";
@@ -83,7 +83,6 @@ export function LLMView(props: LLMViewProps) {
   );
   const [apiType, setApiType] = useState<"openai" | "openai_responses" | "anthropic">("openai");
   const [baseUrl, setBaseUrl] = useState<string>("");
-  const [apiKeyEnv, setApiKeyEnv] = useState<string>("");
   const [apiKeyValue, setApiKeyValue] = useState<string>("");
   const [models, setModels] = useState<ListedModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string>("");
@@ -91,7 +90,6 @@ export function LLMView(props: LLMViewProps) {
   const [capTouched, setCapTouched] = useState(false);
   const [endpointName, setEndpointName] = useState<string>("");
   const [endpointPriority, setEndpointPriority] = useState<number>(1);
-  const [apiKeyEnvTouched, setApiKeyEnvTouched] = useState(false);
   const [endpointNameTouched, setEndpointNameTouched] = useState(false);
   const [baseUrlTouched, setBaseUrlTouched] = useState(false);
   const [baseUrlExpanded, setBaseUrlExpanded] = useState(false);
@@ -108,7 +106,6 @@ export function LLMView(props: LLMViewProps) {
   const [compilerProviderSlug, setCompilerProviderSlug] = useState("");
   const [compilerApiType, setCompilerApiType] = useState<"openai" | "anthropic">("openai");
   const [compilerBaseUrl, setCompilerBaseUrl] = useState("");
-  const [compilerApiKeyEnv, setCompilerApiKeyEnv] = useState("");
   const [compilerApiKeyValue, setCompilerApiKeyValue] = useState("");
   const [compilerModel, setCompilerModel] = useState("");
   const [compilerEndpointName, setCompilerEndpointName] = useState("");
@@ -119,7 +116,6 @@ export function LLMView(props: LLMViewProps) {
   const [sttProviderSlug, setSttProviderSlug] = useState("");
   const [sttApiType, setSttApiType] = useState<"openai" | "anthropic">("openai");
   const [sttBaseUrl, setSttBaseUrl] = useState("");
-  const [sttApiKeyEnv, setSttApiKeyEnv] = useState("");
   const [sttApiKeyValue, setSttApiKeyValue] = useState("");
   const [sttModel, setSttModel] = useState("");
   const [sttEndpointName, setSttEndpointName] = useState("");
@@ -239,14 +235,6 @@ export function LLMView(props: LLMViewProps) {
       setAddEpContextWindow((selectedProvider as ProviderInfo).default_context_window ?? 200000);
       setAddEpMaxTokens((selectedProvider as ProviderInfo).default_max_tokens ?? 0);
     }
-    const suggested = selectedProvider.api_key_env_suggestion || envKeyFromSlug(selectedProvider.slug);
-    const used = new Set(Object.keys(envDraft || {}));
-    for (const ep of savedEndpoints) {
-      if (ep.api_key_env) used.add(ep.api_key_env);
-    }
-    if (!apiKeyEnvTouched) {
-      setApiKeyEnv(nextEnvKeyName(suggested, used));
-    }
     const autoName = suggestEndpointName(selectedProvider.slug, selectedModelId);
     if (!endpointNameTouched) {
       setEndpointName(autoName);
@@ -254,12 +242,11 @@ export function LLMView(props: LLMViewProps) {
     if (isLocalProvider(selectedProvider) && !apiKeyValue.trim()) {
       setApiKeyValue(localProviderPlaceholderKey(selectedProvider));
     }
-  }, [selectedProvider, selectedModelId, envDraft, savedEndpoints, apiKeyEnvTouched, endpointNameTouched, baseUrlTouched, codingPlanMode]);
+  }, [selectedProvider, selectedModelId, endpointNameTouched, baseUrlTouched, codingPlanMode]);
 
   useEffect(() => {
     if (!providerSlug) return;
     if (editModalOpen) return;
-    setApiKeyEnvTouched(false);
     setEndpointNameTouched(false);
     setBaseUrlTouched(false);
     setCodingPlanMode(false);
@@ -956,6 +943,7 @@ export function LLMView(props: LLMViewProps) {
         provider: editDraft.providerSlug || "custom",
         api_type: editDraft.apiType,
         base_url: editDraft.baseUrl.trim(),
+        api_key_env: editDraft.apiKeyEnv || undefined,
         model: editDraft.modelId.trim(),
         priority: normalizePriority(editDraft.priority, 1),
         max_tokens: editDraft.maxTokens ?? 0,
@@ -1150,8 +1138,6 @@ export function LLMView(props: LLMViewProps) {
     setApiType("openai");
     setBaseUrl("");
     setBaseUrlTouched(false);
-    setApiKeyEnv("");
-    setApiKeyEnvTouched(false);
     setApiKeyValue("");
     setModels([]);
     setSelectedModelId("");
@@ -1232,7 +1218,7 @@ export function LLMView(props: LLMViewProps) {
             <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.compiler")}</div>
             <div className="cardHint">{t("llm.compilerHint")}</div>
           </div>
-          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyEnv(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={!!busy}>
+          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={!!busy}>
             + {t("llm.addEndpoint")}
           </Button>
         </div>
@@ -1278,7 +1264,7 @@ export function LLMView(props: LLMViewProps) {
             <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.stt")}</div>
             <div className="cardHint">{t("llm.sttHint")}</div>
           </div>
-          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyEnv(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={!!busy}>
+          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={!!busy}>
             + {t("llm.addEndpoint")}
           </Button>
         </div>
@@ -1442,10 +1428,6 @@ export function LLMView(props: LLMViewProps) {
                     <Label>{t("llm.advPriority")}</Label>
                     <Input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} />
                   </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{t("llm.advKeyEnv")}</Label>
-                  <Input value={apiKeyEnv} onChange={(e) => { setApiKeyEnvTouched(true); setApiKeyEnv(e.target.value); }} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
@@ -1638,10 +1620,6 @@ export function LLMView(props: LLMViewProps) {
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>{t("llm.advKeyEnv")}</Label>
-                  <Input value={editDraft.apiKeyEnv} onChange={(e) => setEditDraft({ ...editDraft, apiKeyEnv: e.target.value })} />
-                </div>
-                <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
                   <Input type="number" min={0} value={editDraft.maxTokens} onChange={(e) => setEditDraft({ ...editDraft, maxTokens: Math.max(0, parseInt(e.target.value) || 0) })} />
                 </div>
@@ -1765,17 +1743,12 @@ export function LLMView(props: LLMViewProps) {
                   if (slug === "custom") {
                     setCompilerApiType("openai");
                     setCompilerBaseUrl("");
-                    setCompilerApiKeyEnv("CUSTOM_COMPILER_API_KEY");
                     setCompilerApiKeyValue("");
                   } else {
                     const p = providers.find((x) => x.slug === slug);
                     if (p) {
                       setCompilerApiType((p.api_type as any) || "openai");
                       setCompilerBaseUrl(p.default_base_url || "");
-                      const suggested = p.api_key_env_suggestion || envKeyFromSlug(p.slug);
-                      const used = new Set(Object.keys(envDraft || {}));
-                      for (const ep of [...savedEndpoints, ...savedCompilerEndpoints]) { if (ep.api_key_env) used.add(ep.api_key_env); }
-                      setCompilerApiKeyEnv(nextEnvKeyName(suggested, used));
                       if (isLocalProvider(p)) {
                         setCompilerApiKeyValue(localProviderPlaceholderKey(p));
                       } else {
@@ -1822,12 +1795,6 @@ export function LLMView(props: LLMViewProps) {
               <Input value={compilerBaseUrl} onChange={(e) => setCompilerBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
             </div>
             ) : null}
-
-            {/* API Key Env */}
-            <div className="space-y-1.5">
-              <Label>{t("llm.apiKeyEnv")}</Label>
-              <Input value={compilerApiKeyEnv} onChange={(e) => setCompilerApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
-            </div>
 
             {/* API Key */}
             <div className="space-y-1.5">
@@ -1881,7 +1848,6 @@ export function LLMView(props: LLMViewProps) {
                   const _isCompLocal = isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug));
                   const cMissing: string[] = [];
                   if (!compilerModel.trim()) cMissing.push(t("status.model"));
-                  if (!_isCompLocal && !compilerApiKeyEnv.trim()) cMissing.push("Key Env Name");
                   if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
                   if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
                   const cBtnDisabled = cMissing.length > 0 || !!busy;
@@ -1897,7 +1863,6 @@ export function LLMView(props: LLMViewProps) {
               const _isCompLocal = isLocalProvider(providers.find((p) => p.slug === compilerProviderSlug));
               const cMissing: string[] = [];
               if (!compilerModel.trim()) cMissing.push(t("status.model"));
-              if (!_isCompLocal && !compilerApiKeyEnv.trim()) cMissing.push("Key Env Name");
               if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
               if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
               const cShow = cMissing.length > 0 && !busy;
@@ -1929,7 +1894,6 @@ export function LLMView(props: LLMViewProps) {
                   if (slug === "custom") {
                     setSttApiType("openai");
                     setSttBaseUrl("");
-                    setSttApiKeyEnv("CUSTOM_STT_API_KEY");
                     setSttApiKeyValue("");
                     setSttModels([]);
                     setSttModel("");
@@ -1938,10 +1902,6 @@ export function LLMView(props: LLMViewProps) {
                     if (p) {
                       setSttApiType((p.api_type as any) || "openai");
                       setSttBaseUrl(p.default_base_url || "");
-                      const suggested = p.api_key_env_suggestion || envKeyFromSlug(p.slug);
-                      const used = new Set(Object.keys(envDraft || {}));
-                      for (const ep of [...savedEndpoints, ...savedCompilerEndpoints, ...savedSttEndpoints]) { if (ep.api_key_env) used.add(ep.api_key_env); }
-                      setSttApiKeyEnv(nextEnvKeyName(suggested, used));
                       if (isLocalProvider(p)) {
                         setSttApiKeyValue(localProviderPlaceholderKey(p));
                       } else {
@@ -1974,12 +1934,6 @@ export function LLMView(props: LLMViewProps) {
               <Input value={sttBaseUrl} onChange={(e) => setSttBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" />
             </div>
             ) : null}
-
-            {/* API Key Env */}
-            <div className="space-y-1.5">
-              <Label>{t("llm.apiKeyEnv")}</Label>
-              <Input value={sttApiKeyEnv} onChange={(e) => setSttApiKeyEnv(e.target.value)} placeholder="MY_API_KEY" />
-            </div>
 
             {/* API Key */}
             <div className="space-y-1.5">

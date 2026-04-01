@@ -384,6 +384,9 @@ def convert_content_blocks(
     if len(blocks) == 1 and isinstance(blocks[0], TextBlock):
         return blocks[0].text
 
+    if len(blocks) == 1 and isinstance(blocks[0], dict) and blocks[0].get("type") == "text":
+        return blocks[0].get("text", "")
+
     result = []
     for block in blocks:
         if isinstance(block, TextBlock):
@@ -412,6 +415,9 @@ def convert_content_blocks(
                 result.append(converter(block.document))
             else:
                 result.append(_degrade_document(block))
+
+        elif isinstance(block, dict):
+            result.append(block)
 
     return result
 

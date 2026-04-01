@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...skills.exposure import get_skill_source_roots
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -39,7 +41,9 @@ class SystemHandler:
             # ask_user 正常由 ReasoningEngine 在 ACT 阶段拦截，不会到达此处
             # 此为防御性兜底：若意外到达，返回问题文本而不是报错
             question = params.get("question", "")
-            logger.warning(f"[SystemHandler] ask_user reached handler (should be intercepted): {question[:80]}")
+            logger.warning(
+                f"[SystemHandler] ask_user reached handler (should be intercepted): {question[:80]}"
+            )
             return question or "（等待用户回复）"
         elif tool_name == "enable_thinking":
             return self._enable_thinking(params)
@@ -121,18 +125,6 @@ class SystemHandler:
 
         root = settings.project_root
 
-        # 统计已安装技能数（用户工作区目录）
-        user_skills_dir = settings.skills_path
-        user_skill_count = 0
-        if user_skills_dir.is_dir():
-            user_skill_count = sum(1 for d in user_skills_dir.iterdir() if d.is_dir())
-
-        # 项目级 skills/ 目录（开发模式）
-        project_skills_dir = root / "skills"
-        project_skill_count = 0
-        if project_skills_dir.is_dir():
-            project_skill_count = sum(1 for d in project_skills_dir.iterdir() if d.is_dir())
-
         try:
             identity_rel = settings.identity_path.relative_to(root)
         except ValueError:
@@ -148,8 +140,8 @@ class SystemHandler:
             f"- **项目根目录**: {root}",
             f"- **用户数据目录**: {settings.openakita_home}",
             f"- **Identity**: {identity_rel}/ — 身份文档 (SOUL.md, AGENT.md, USER.md, MEMORY.md)",
-            f"- **用户技能**: {user_skills_dir}/ — 用户安装的技能 ({user_skill_count} 个)",
-            f"- **项目技能**: skills/ — 项目自带技能 ({project_skill_count} 个)" if project_skills_dir.is_dir() else None,
+            "- **Skills**: 技能系统是多源的，可能来自 builtin、用户工作区或项目目录。",
+            "- **Skills Rule**: 不要根据 workspace map 猜测 skill 文件路径；请使用 list_skills / get_skill_info 查看真实来源与路径。",
             "- **Data**: data/ — 运行数据根目录",
             "  - sessions/ — 会话持久化",
             "  - memory/ — 记忆存储",
@@ -167,6 +159,16 @@ class SystemHandler:
             f"  - {settings.log_file_prefix}.log — 主日志（滚动，最新）",
             "  - error.log — 错误日志（按天滚动）",
         ]
+
+        skill_roots = [
+            f"  - {origin}: {path}"
+            for origin, path in get_skill_source_roots(
+                project_root=root,
+                user_skills_dir=settings.skills_path,
+            )
+        ]
+        lines[6:6] = skill_roots
+
         return "\n".join(line for line in lines if line is not None)
 
     async def _generate_image(self, params: dict) -> str:
@@ -235,10 +237,7 @@ class SystemHandler:
             async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
                 resp = await client.post(api_url, headers=headers, json=body)
                 if resp.status_code >= 400:
-                    return (
-                        f"❌ 图片生成失败: HTTP {resp.status_code}\n"
-                        f"{(resp.text or '')[:800]}"
-                    )
+                    return f"❌ 图片生成失败: HTTP {resp.status_code}\n{(resp.text or '')[:800]}"
                 try:
                     data = resp.json()
                 except Exception as e:

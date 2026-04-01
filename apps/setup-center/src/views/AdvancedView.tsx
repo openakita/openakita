@@ -8,7 +8,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, IS_TAURI } from "../platform";
+import { invoke, IS_TAURI, saveFileDialog } from "../platform";
 import { safeFetch } from "../providers";
 import { joinPath, envGet, envSet } from "../utils";
 import { notifySuccess, notifyError, notifyLoading, dismissLoading } from "../utils/notify";
@@ -181,9 +181,8 @@ export function AdvancedView(props: AdvancedViewProps) {
     try {
       const ts = Math.floor(Date.now() / 1000);
       const filename = `openakita-diagnostic-${ts}.zip`;
-      const { save } = await import("@tauri-apps/plugin-dialog");
       const defaultDir = info?.homeDir ? joinPath(info.homeDir, "Downloads") : undefined;
-      const chosen = await save({
+      const chosen = await saveFileDialog({
         defaultPath: defaultDir ? joinPath(defaultDir, filename) : filename,
         filters: [{ name: "ZIP Archive", extensions: ["zip"] }],
       });

@@ -403,53 +403,78 @@ def _ensure_channel_deps() -> None:
         except Exception as e:
             logger.warning(f"离线 wheels 安装异常，回退在线镜像: {e}")
 
-    for idx, (index_url, trusted_host) in enumerate(_mirror_sources):
-        if installed:
-            break
-        source_label = trusted_host or index_url
-        if idx == 0:
-            console.print(
-                f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] "
-                f"(源: {source_label}) ..."
-            )
-        else:
-            console.print(
-                f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ..."
-            )
-
-        pip_cmd = [
-            py, "-m", "pip", "install",
-            "--target", str(target_dir),
-            "-i", index_url,
-            "--prefer-binary",
-            "--timeout", "60",
-            *missing,
-        ]
-        if trusted_host:
-            pip_cmd.extend(["--trusted-host", trusted_host])
-
-        try:
-            result = subprocess.run(
-                pip_cmd,
-                env=pip_env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=120,
-                **extra,
-            )
-            if result.returncode == 0:
-                _on_install_success(source_label)
-                installed = True
-                break
+    def _pip_install_via_mirrors(
+        packages: list[str], label_prefix: str = "",
+    ) -> bool:
+        """Try installing *packages* through all mirror sources. Return True on success."""
+        for idx, (index_url, trusted_host) in enumerate(_mirror_sources):
+            source_label = trusted_host or index_url
+            if idx == 0:
+                console.print(
+                    f"[yellow]⏳[/yellow] {label_prefix}自动安装 IM 通道依赖: "
+                    f"[bold]{', '.join(packages)}[/bold] (源: {source_label}) ..."
+                )
             else:
-                err_tail = (result.stderr or result.stdout or "").strip()[-300:]
-                logger.warning(f"镜像源 {source_label} 安装失败 (exit {result.returncode}): {err_tail}")
-        except subprocess.TimeoutExpired:
-            logger.warning(f"镜像源 {source_label} 安装超时")
-        except Exception as e:
-            logger.warning(f"镜像源 {source_label} 安装异常: {e}")
+                console.print(
+                    f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ..."
+                )
+
+            pip_cmd = [
+                py, "-m", "pip", "install",
+                "--target", str(target_dir),
+                "-i", index_url,
+                "--prefer-binary",
+                "--timeout", "60",
+                *packages,
+            ]
+            if trusted_host:
+                pip_cmd.extend(["--trusted-host", trusted_host])
+
+            try:
+                result = subprocess.run(
+                    pip_cmd,
+                    env=pip_env,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=120,
+                    **extra,
+                )
+                if result.returncode == 0:
+                    _on_install_success(source_label)
+                    return True
+                else:
+                    err_tail = (result.stderr or result.stdout or "").strip()[-300:]
+                    logger.warning(f"镜像源 {source_label} 安装失败 (exit {result.returncode}): {err_tail}")
+            except subprocess.TimeoutExpired:
+                logger.warning(f"镜像源 {source_label} 安装超时")
+            except Exception as e:
+                logger.warning(f"镜像源 {source_label} 安装异常: {e}")
+        return False
+
+    if not installed:
+        installed = _pip_install_via_mirrors(missing)
+
+    # 批量安装失败且有多个包时，逐个重试——避免一个 C 扩展编译失败拖垮纯 Python 包
+    if not installed and len(missing) > 1:
+        logger.info("批量安装失败，尝试逐个安装 ...")
+        per_pkg_ok: list[str] = []
+        per_pkg_fail: list[str] = []
+        for pkg in missing:
+            if _pip_install_via_mirrors([pkg], label_prefix=f"[逐个] "):
+                per_pkg_ok.append(pkg)
+            else:
+                per_pkg_fail.append(pkg)
+        if per_pkg_ok:
+            installed = True
+            if per_pkg_fail:
+                fail_list = ", ".join(per_pkg_fail)
+                logger.warning(f"部分依赖安装失败（不影响已安装的包）: {fail_list}")
+                console.print(
+                    f"[yellow]⚠[/yellow] 部分依赖安装失败: {fail_list}\n"
+                    f"  相关功能（如语音转码）可能不可用，核心 IM 通道不受影响"
+                )
 
     if not installed:
         logger.error(f"所有镜像源均安装失败: {pkg_list}")
@@ -586,14 +611,36 @@ def _setup_session_backfill(agent_or_master):
                 logger.info(f"Session backfill: recovered {backfilled} turns from SQLite")
 
 
-async def start_im_channels(agent_or_master):
-    """启动配置的 IM 通道"""
-    global _message_gateway, _session_manager
+async def init_core_services(agent_or_master):
+    """初始化所有模式（Desktop / IM / CLI）共享的核心服务。
 
-    # SessionManager 必须在 IM 和 Desktop 模式下都可用
+    必须在 start_im_channels / start_api_server 之前调用。
+    幂等——多次调用安全。
+    """
+    global _desktop_pool
+
     await ensure_session_manager()
 
-    # 检查是否有任何通道启用
+    if _desktop_pool is None:
+        from openakita.agents.factory import AgentFactory, AgentInstancePool
+        _desktop_pool = AgentInstancePool(AgentFactory(), idle_timeout=600)
+        await _desktop_pool.start()
+        logger.info("[Main] Desktop AgentInstancePool initialized (idle_timeout=600s)")
+
+    if settings.multi_agent_enabled:
+        await _init_orchestrator()
+
+    _setup_session_backfill(agent_or_master)
+
+
+async def start_im_channels(agent_or_master):
+    """启动配置的 IM 通道。
+
+    仅处理 IM 相关逻辑（MessageGateway、适配器注册）。
+    核心服务（SessionManager、AgentPool、Orchestrator）由 init_core_services() 负责。
+    """
+    global _message_gateway
+
     any_enabled = (
         settings.telegram_enabled
         or settings.feishu_enabled
@@ -647,16 +694,8 @@ async def start_im_channels(agent_or_master):
         stt_client=stt_client,  # 在线 STT 客户端
     )
 
-    # 初始化 AgentOrchestrator (多 Agent 模式)
-    if settings.multi_agent_enabled:
-        await _init_orchestrator()
-
-    # Desktop Chat per-session Agent pool (always initialized for concurrent streaming)
-    global _desktop_pool
-    from openakita.agents.factory import AgentFactory, AgentInstancePool
-    _desktop_pool = AgentInstancePool(AgentFactory(), idle_timeout=600)
-    await _desktop_pool.start()
-    logger.info("[Main] Desktop AgentInstancePool initialized (idle_timeout=600s)")
+    if _orchestrator is not None:
+        _orchestrator.set_gateway(_message_gateway)
 
     # 注册启用的适配器
     adapters_started = []
@@ -902,12 +941,14 @@ async def start_im_channels(agent_or_master):
 
     async def agent_handler(session, message: str) -> str:
         """通过 Agent 处理消息（运行时检查多Agent模式开关）"""
+        from .channels.gateway import format_user_friendly_error
+
         if settings.multi_agent_enabled and _orchestrator is not None:
             try:
                 return await _orchestrator.handle_message(session, message)
             except Exception as e:
                 logger.error(f"Orchestrator handler error: {e}", exc_info=True)
-                return f"❌ 处理出错: {str(e)}"
+                return format_user_friendly_error(str(e))
 
         try:
             session_messages = session.context.get_messages()
@@ -921,7 +962,7 @@ async def start_im_channels(agent_or_master):
             return response
         except Exception as e:
             logger.error(f"Agent handler error: {e}", exc_info=True)
-            return f"❌ 处理出错: {str(e)}"
+            return format_user_friendly_error(str(e))
 
     agent_handler._agent_ref = agent
     agent_handler.is_stop_command = agent.is_stop_command
@@ -1113,7 +1154,11 @@ async def run_interactive():
     agent_or_master = agent
     agent_name = agent.name
 
-    # 启动 IM 通道
+    # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
+    with console.status("[bold green]正在初始化核心服务...", spinner="dots"):
+        await init_core_services(agent_or_master)
+
+    # 启动 IM 通道（可选）
     im_channels = []
     with console.status("[bold green]正在启动 IM 通道...", spinner="dots"):
         im_channels = await start_im_channels(agent_or_master)
@@ -1121,7 +1166,7 @@ async def run_interactive():
     if im_channels:
         console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
     else:
-        console.print("[yellow]ℹ[/yellow] 未成功启动任何 IM 通道（可能未启用或启动失败）")
+        console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（Desktop Chat 仍可使用）")
 
     console.print()
 
@@ -1724,21 +1769,19 @@ def serve(
 
         agent_or_master = agent
 
-        # 启动 IM 通道
+        # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
+        console.print("[bold green]正在初始化核心服务...[/bold green]")
+        await init_core_services(agent_or_master)
+        console.print("[green]✓[/green] 核心服务已就绪")
+
+        # 启动 IM 通道（可选）
         console.print("[bold green]正在启动 IM 通道...[/bold green]")
         im_channels = await start_im_channels(agent_or_master)
 
-        if not im_channels:
-            console.print("[yellow]⚠[/yellow] 未成功启动任何 IM 通道（HTTP API 仍可使用）")
-
         if im_channels:
             console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
-
-        # 确保多 Agent 模式下 Orchestrator 已初始化
-        # （即使 start_im_channels 因无 IM 通道启用而提前返回，Orchestrator 仍需可用）
-        if settings.multi_agent_enabled and _orchestrator is None:
-            await _init_orchestrator()
-            logger.info("[Main] Orchestrator created as fallback (no IM channels path)")
+        else:
+            console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（HTTP API 仍可使用）")
 
         # 注入 shutdown_event 到网关（供终极重启指令使用）
         if _message_gateway is not None:

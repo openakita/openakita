@@ -152,6 +152,9 @@ async def connect_mcp_server(request: Request, body: MCPConnectRequest):
             "tools": [{"name": t.name, "description": t.description} for t in tools],
         }
 
+    from openakita.tools.mcp_workspace import prepare_chrome_devtools_args
+    await prepare_chrome_devtools_args(client, body.server_name)
+
     result = await client.connect(body.server_name)
     if result.success:
         _sync_tools_to_catalog(request, body.server_name, client)

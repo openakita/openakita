@@ -7,7 +7,7 @@ import {
   IconZap, IconPlug, IconCalendar,
   IconBug, IconBrain, IconGitHub, IconGitee, IconUsers, IconBot,
   IconGear, IconBook, IconStorefront, IconPuzzle, IconFingerprint, IconLayoutGrid,
-  IconShield, IconRadar,
+  IconShield, IconRadar, IconBuilding,
 } from "../icons";
 import logoUrl from "../assets/logo.png";
 import { openExternalUrl } from "../platform";
@@ -109,7 +109,7 @@ export function Sidebar({
 
   const capViews: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
   const monViews: ViewId[] = ["token_stats", "security"];
-  const maViews: ViewId[] = ["dashboard", "org_editor", "agent_manager"];
+  const maViews: ViewId[] = ["dashboard", "org_editor", "pixel_office", "agent_manager"];
   const stViews: ViewId[] = ["agent_store", "skill_store"];
 
   const prevViewRef = useRef(view);
@@ -216,6 +216,9 @@ export function Sidebar({
                 </div>
                 <div className={`navItem ${view === "org_editor" ? "navItemActive" : ""}`} onClick={() => onViewChange("org_editor")} role="button" tabIndex={0} title={t("sidebar.orgEditor")}>
                   <IconLayoutGrid size={16} /> {!collapsed && <span>{t("sidebar.orgEditor")} {BETA_SUP}</span>}
+                </div>
+                <div className={`navItem ${view === "pixel_office" ? "navItemActive" : ""}`} onClick={() => onViewChange("pixel_office")} role="button" tabIndex={0} title="像素办公室">
+                  <IconBuilding size={16} /> {!collapsed && <span>像素办公室 {BETA_SUP}</span>}
                 </div>
                 <div className={`navItem ${view === "agent_manager" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_manager")} role="button" tabIndex={0} title={t("sidebar.agentManager")}>
                   <IconBot size={16} /> {!collapsed && <span>{t("sidebar.agentManager")}</span>}

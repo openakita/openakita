@@ -488,6 +488,23 @@ class ConfigHandler:
 
         return "\n".join(result_lines)
 
+    _INT_CONSTRAINTS: dict[str, tuple[int | None, int | None, str]] = {
+        "max_iterations": (15, 10000, "最大迭代次数范围 15~10000，推荐 100~300"),
+        "progress_timeout_seconds": (60, None, "无进展超时最小 60 秒"),
+        "tool_max_parallel": (1, 32, "并行工具数范围 1~32"),
+    }
+
+    def _check_int_constraints(self, field_name: str, value: int) -> str | None:
+        spec = self._INT_CONSTRAINTS.get(field_name)
+        if not spec:
+            return None
+        lo, hi, msg = spec
+        if lo is not None and value < lo:
+            return f"值 {value} 过小。{msg}"
+        if hi is not None and value > hi:
+            return f"值 {value} 过大。{msg}"
+        return None
+
     def _validate_value(self, field_name: str, field_info: Any, value: Any) -> tuple[Any, str | None]:
         """校验配置值的类型和合法性。返回 (validated_value, error_or_None)"""
         annotation = field_info.annotation
@@ -499,10 +516,13 @@ class ConfigHandler:
         # 处理 int
         if annotation is int:
             try:
-                int(value)
-                return int(value), None
+                v = int(value)
             except (ValueError, TypeError):
                 return None, f"需要整数，但收到: {value}"
+            constraint_err = self._check_int_constraints(field_name, v)
+            if constraint_err:
+                return None, constraint_err
+            return v, None
 
         # 处理 bool
         if annotation is bool:

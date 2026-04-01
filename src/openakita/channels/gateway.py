@@ -40,6 +40,33 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
     except Exception:
         pass
 
+def format_user_friendly_error(error: str) -> str:
+    """Map technical error messages to user-friendly messages for IM channels.
+
+    Keeps the full error in logs; only the return value is shown to the user.
+    """
+    el = error.lower()
+
+    if "data_inspection" in el or "inappropriate content" in el:
+        return (
+            "⚠️ 抱歉，处理过程中获取到的部分内容触发了平台安全审核，"
+            "请换个方式重新提问。"
+        )
+
+    if "all endpoints failed" in el or "allendpointsfailederror" in el:
+        if any(k in el for k in ("api key", "auth", "unauthorized", "401")):
+            return "⚠️ AI 服务认证失败，请检查 API Key 配置是否正确。"
+        if any(k in el for k in ("quota", "rate limit", "429", "余额")):
+            return "⚠️ AI 服务配额已用尽或请求过于频繁，请稍后重试。"
+        return "⚠️ AI 服务暂时不可用，请稍后重试。"
+
+    if "timeout" in el or "timed out" in el:
+        return "⚠️ 处理超时，请稍后重试或简化您的问题。"
+
+    short = error[:120].split("\n")[0]
+    return f"⚠️ 处理出错: {short}"
+
+
 if TYPE_CHECKING:
     from ..core.brain import Brain
     from ..llm.stt_client import STTClient
@@ -877,6 +904,7 @@ class MessageGateway:
         self._started_adapters: list[str] = []
         self._failed_adapters: list[str] = []
         self._failed_adapter_reasons: dict[str, str] = {}
+        self._retry_failed_task: asyncio.Task | None = None
 
         # 中间件
         self._pre_process_hooks: list[Callable[[UnifiedMessage], Awaitable[UnifiedMessage]]] = []
@@ -1045,7 +1073,7 @@ class MessageGateway:
         if not text:
             return False
         t = text.strip().lower()
-        if t in ("/help", "/帮助", "/状态", "/status", "/重置", "/agent_reset"):
+        if t in ("/状态", "/status", "/重置", "/agent_reset"):
             return True
         if t in ("/切换", "/switch") or t.startswith(("/切换 ", "/switch ")):
             return True
@@ -1057,14 +1085,13 @@ class MessageGateway:
         """
         处理多Agent相关命令。仅当 multi_agent_enabled 时执行；否则返回提示。
 
-        支持: /切换 /switch /help /帮助 /状态 /status /重置 /agent_reset
+        支持: /切换 /switch /状态 /status /重置 /agent_reset
         """
         from ..config import settings
 
         if not settings.multi_agent_enabled:
             t = user_text.strip().lower()
-            # Don't intercept generic commands in single-agent mode
-            if t in ("/help", "/帮助", "/状态", "/status"):
+            if t in ("/状态", "/status"):
                 return None
             return "多Agent模式未开启。发送 `/模式 开启` 开启。"
 
@@ -1084,10 +1111,6 @@ class MessageGateway:
         # /切换 或 /switch [agent_id]
         if t in ("/切换", "/switch") or t.startswith(("/切换 ", "/switch ")):
             return await self._handle_agent_switch(session, t)
-
-        # /help 或 /帮助
-        if t in ("/help", "/帮助"):
-            return self._format_agent_help()
 
         # /状态 或 /status
         if t in ("/状态", "/status"):
@@ -1151,28 +1174,55 @@ class MessageGateway:
 
         return f"✅ 已切换到 **{p.icon} {p.name}** ({p.description})"
 
-    def _format_agent_help(self) -> str:
-        """格式化 /help 输出"""
+    def _format_system_help(self) -> str:
+        """格式化全局 /help 输出（所有模式可用）"""
+        from ..config import settings
+
         lines = [
-            "📖 **可用命令**\n",
+            "📖 **快捷指令**\n",
+            "**任务控制:**",
+            "  `停止` / `stop` / `/stop` / `kill` — 停止当前任务",
+            "  `跳过` / `skip` / `/skip` — 跳过当前步骤",
+            "  处理中直接发送新消息 — 自动注入当前任务上下文",
+            "",
+            "**对话管理:**",
+            "  `/new` / `/新话题` — 开启新话题，清除对话上下文",
+            "  `/help` / `/帮助` — 查看所有可用指令",
+            "",
+            "**模型管理:**",
+            "  `/model` — 查看当前模型和可用列表",
+            "  `/switch [模型名]` — 临时切换模型",
+            "  `/restore` — 恢复默认模型",
+            "",
+            "**思考模式:**",
+            "  `/thinking [on|off|auto]` — 切换思考模式",
+            "  `/thinking_depth [low|medium|high]` — 设置思考深度",
+            "  `/chain [on|off]` — 思维链进度推送开关",
+            "",
             "**模式:**",
             "  `/模式` / `/mode` — 查看或切换单/多Agent模式",
-            "  `/模式 开启` — 开启多Agent模式",
-            "  `/模式 关闭` — 关闭多Agent模式",
-            "",
-            "**多Agent（需先开启多Agent模式）:**",
-            "  `/切换` / `/switch` — 列出可用 Agent",
-            "  `/切换 <id>` / `/switch <id>` — 切换当前 Agent",
-            "  `/状态` / `/status` — 查看当前 Agent 信息",
-            "  `/重置` / `/agent_reset` — 重置为默认 Agent",
-            "",
-            "**其他:**",
-            "  `/new` / `/新话题` — 开启新话题",
-            "  `/model` — 模型状态",
-            "  `/thinking` — 思考模式",
-            "  `/chain` — 思维链进度推送开关",
         ]
+
+        if settings.multi_agent_enabled:
+            lines.extend([
+                "",
+                "**多Agent:**",
+                "  `/切换` / `/switch` — 列出或切换 Agent",
+                "  `/状态` / `/status` — 查看当前 Agent 信息",
+                "  `/重置` / `/agent_reset` — 重置为默认 Agent",
+            ])
+
+        lines.extend([
+            "",
+            "**系统:**",
+            "  `/restart` / `/重启` — 重启服务（需确认）",
+        ])
+
         return "\n".join(lines)
+
+    def _format_agent_help(self) -> str:
+        """格式化多Agent专用 /help 输出（保留用于内部兼容）"""
+        return self._format_system_help()
 
     def _format_agent_status(self, session: Session) -> str:
         """格式化 /状态 输出"""
@@ -1455,6 +1505,9 @@ class MessageGateway:
                 f"MessageGateway started with {len(started)}/{len(self._adapters)} adapters"
                 f" (failed: {', '.join(failed)})"
             )
+            self._retry_failed_task = asyncio.create_task(
+                self._retry_failed_adapters_loop()
+            )
         else:
             logger.info(f"MessageGateway started with {len(started)} adapters")
 
@@ -1488,6 +1541,69 @@ class MessageGateway:
             "failed_reasons": dict(self._failed_adapter_reasons),
         })
         logger.warning(f"Adapter {name} reported fatal failure: {reason}")
+
+    async def _retry_failed_adapters_loop(self) -> None:
+        """Periodically retry adapters that failed during initial startup.
+
+        Uses exponential backoff: 15s, 30s, 60s, 120s, 240s (max).
+        Stops when all failed adapters recover or after 5 consecutive rounds
+        with no progress.
+        """
+        _BACKOFF_BASE = 15
+        _BACKOFF_MAX = 240
+        _MAX_STALE_ROUNDS = 5
+
+        delay = _BACKOFF_BASE
+        stale_rounds = 0
+
+        while self._running and self._failed_adapters:
+            await asyncio.sleep(delay)
+            if not self._running:
+                break
+
+            recovered: list[str] = []
+            for name in list(self._failed_adapters):
+                adapter = self._adapters.get(name)
+                if adapter is None:
+                    recovered.append(name)
+                    continue
+                try:
+                    logger.info(f"[RetryAdapter] Retrying startup for {name} ...")
+                    await adapter.start()
+                    adapter._running = True
+                    recovered.append(name)
+                    logger.info(f"[RetryAdapter] Adapter {name} started successfully")
+                except Exception as e:
+                    logger.debug(f"[RetryAdapter] Adapter {name} still failing: {e}")
+
+            for name in recovered:
+                if name in self._failed_adapters:
+                    self._failed_adapters.remove(name)
+                self._failed_adapter_reasons.pop(name, None)
+                if name not in self._started_adapters:
+                    self._started_adapters.append(name)
+
+            if recovered:
+                stale_rounds = 0
+                delay = _BACKOFF_BASE
+                _notify_im_event("im:channel_status", {
+                    "started": list(self._started_adapters),
+                    "failed": list(self._failed_adapters),
+                    "failed_reasons": dict(self._failed_adapter_reasons),
+                })
+                logger.info(
+                    f"[RetryAdapter] Recovered adapters: {recovered}. "
+                    f"Still failing: {list(self._failed_adapters) or 'none'}"
+                )
+            else:
+                stale_rounds += 1
+                delay = min(delay * 2, _BACKOFF_MAX)
+                if stale_rounds >= _MAX_STALE_ROUNDS:
+                    logger.warning(
+                        f"[RetryAdapter] Giving up after {_MAX_STALE_ROUNDS} rounds "
+                        f"with no progress. Still failed: {list(self._failed_adapters)}"
+                    )
+                    break
 
     async def _preload_whisper_async(self) -> None:
         """异步预加载 Whisper 模型"""
@@ -1693,6 +1809,12 @@ class MessageGateway:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._processing_task
 
+        # 停止失败适配器重试任务
+        if self._retry_failed_task and not self._retry_failed_task.done():
+            self._retry_failed_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._retry_failed_task
+
         # 停止 per-session 字典清理任务
         cleanup_task = getattr(self, "_session_dict_cleanup_task", None)
         if cleanup_task:
@@ -1828,6 +1950,7 @@ class MessageGateway:
 
         # 设置消息回调
         adapter.on_message(self._on_message)
+        adapter.on_failure(self.report_adapter_failure)
 
         self._adapters[name] = adapter
         logger.info(f"Registered adapter: {name}")
@@ -2000,9 +2123,57 @@ class MessageGateway:
                                 "display_name": _ins_session.display_name,
                             })
 
+                        # --- 中断路径：下载媒体/文件并增强注入文本 ---
+                        _insert_text = user_text
+                        _has_media = bool(
+                            getattr(message.content, "files", None)
+                            or getattr(message.content, "images", None)
+                            or getattr(message.content, "videos", None)
+                        )
+                        if _has_media:
+                            try:
+                                await self._preprocess_media(message)
+                            except Exception as _dl_err:
+                                logger.warning(f"[Interrupt] Media download failed: {_dl_err}")
+
+                            _file_parts: list[str] = []
+                            for _fil in getattr(message.content, "files", []) or []:
+                                if _fil.local_path and Path(_fil.local_path).exists():
+                                    _fname = _fil.filename or Path(_fil.local_path).name
+                                    _file_parts.append(
+                                        f"[文件已下载: {_fname}, 本地路径: {_fil.local_path}]"
+                                    )
+                                    logger.info(
+                                        f"[Interrupt] File downloaded for insert: {_fil.local_path}"
+                                    )
+                            for _img in getattr(message.content, "images", []) or []:
+                                if _img.local_path and Path(_img.local_path).exists():
+                                    _file_parts.append(
+                                        f"[图片已下载: {_img.filename or Path(_img.local_path).name}, "
+                                        f"本地路径: {_img.local_path}]"
+                                    )
+                            for _vid in getattr(message.content, "videos", []) or []:
+                                if _vid.local_path and Path(_vid.local_path).exists():
+                                    _file_parts.append(
+                                        f"[视频已下载: {_vid.filename or Path(_vid.local_path).name}, "
+                                        f"本地路径: {_vid.local_path}]"
+                                    )
+                            if _file_parts:
+                                _insert_text = _insert_text + "\n" + "\n".join(_file_parts)
+
+                            # 同步设置 pending_files 供 Agent 的下一轮迭代使用
+                            if _ins_session:
+                                _pf = self._build_pending_files(message)
+                                if _pf:
+                                    _ins_session.set_metadata("pending_files", _pf)
+                                    logger.info(
+                                        f"[Interrupt] Set pending_files on session "
+                                        f"({len(_pf)} items)"
+                                    )
+
                         try:
                             ok = await self.agent_handler.insert_user_message(
-                                user_text, session_id=_resolved_sid,
+                                _insert_text, session_id=_resolved_sid,
                             )
                             if ok:
                                 await self._send_feedback(message, "💬 收到，已将消息注入当前任务。")
@@ -2012,7 +2183,7 @@ class MessageGateway:
                             logger.error(f"[Interrupt] INSERT failed for {session_key}: {e}")
                             await self._send_feedback(message, "❌ 消息注入失败，请稍后再试。")
                         logger.info(
-                            f"[Interrupt] INSERT handled for {session_key}: {user_text[:50]}"
+                            f"[Interrupt] INSERT handled for {session_key}: {_insert_text[:80]}"
                         )
                 elif self.agent_handler and not _session_matches:
                     # Agent 不在处理当前用户的任务（可能空闲或在处理其他用户）
@@ -2039,6 +2210,8 @@ class MessageGateway:
         "停止", "停", "stop", "停止执行", "取消", "取消任务",
         "算了", "不用了", "别做了", "停下", "halt", "abort", "cancel",
         "やめて", "중지",
+        "/stop", "/停止", "/取消", "/cancel", "/abort",
+        "kill", "kill all",
     })
 
     @classmethod
@@ -2121,9 +2294,9 @@ class MessageGateway:
           三段式: "telegram:1241684312:tg_1241684312"  (channel:chat_id:user_id)
           四段式: "telegram:1241684312:tg_1241684312:thread_abc"  (channel:chat_id:user_id:thread_id)
 
-        task key 可能是两种格式（取决于 _resolve_conversation_id 的返回）:
-          a) session.id 格式: "telegram_1241684312_20260219031213_xxx"（下划线分隔）
-          b) gateway session_key 格式: "telegram:1241684312:tg_1241684312[:thread_id]"（冒号分隔）
+        task key 格式为 _resolve_conversation_id 的返回值（即传入的 session_id）:
+          IM 路径: session.id 格式 "telegram_1241684312_20260219031213_xxx"（下划线分隔）
+          CLI 路径: "cli_<uuid>" 格式
         """
         if not agent_ref:
             return None
@@ -2383,7 +2556,13 @@ class MessageGateway:
                     await self._send_response(message, feishu_resp)
                     return
 
-            # 检查是否是多Agent相关命令（/切换 /switch /help /帮助 /状态 /status /重置 /agent_reset）
+            # 全局帮助指令（所有模式可用）
+            if _cmd_lower in ("/help", "/帮助"):
+                response_text = self._format_system_help()
+                await self._send_response(message, response_text)
+                return
+
+            # 检查是否是多Agent相关命令（/切换 /switch /状态 /status /重置 /agent_reset）
             if self._is_agent_command(user_text):
                 response_text = await self._handle_agent_command(message, user_text)
                 if response_text is not None:
@@ -2447,6 +2626,12 @@ class MessageGateway:
                 await self._send_response(
                     message, "好的，已开启新话题。之前的对话上下文已清除，请说说你的新需求吧~"
                 )
+                return
+
+            # 停止/跳过指令兜底（非处理中状态下收到这些指令，直接返回提示）
+            _IDLE_STOP_CMDS = {"/stop", "/停止", "/cancel", "/abort", "/skip", "/跳过"}
+            if _cmd_lower in _IDLE_STOP_CMDS:
+                await self._send_response(message, "当前没有正在执行的任务。发送 `/help` 查看可用指令。")
                 return
 
             # ==================== 正常消息处理流程 ====================
@@ -2909,6 +3094,41 @@ class MessageGateway:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    def _build_pending_files(self, message: UnifiedMessage) -> list[dict]:
+        """从已下载的 message 附件构建 pending_files 列表（供 Agent 消费）。"""
+        files_data: list[dict] = []
+        for fil in getattr(message.content, "files", []) or []:
+            if not (fil.local_path and Path(fil.local_path).exists()):
+                continue
+            try:
+                mime = fil.mime_type or ""
+                suffix = Path(fil.local_path).suffix.lower()
+                _fname = fil.filename or Path(fil.local_path).name
+                if suffix == ".pdf" or "pdf" in mime:
+                    file_data = base64.b64encode(
+                        Path(fil.local_path).read_bytes()
+                    ).decode("utf-8")
+                    files_data.append({
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": file_data,
+                        },
+                        "filename": _fname,
+                        "local_path": fil.local_path,
+                    })
+                else:
+                    files_data.append({
+                        "type": "file",
+                        "filename": _fname,
+                        "local_path": fil.local_path,
+                        "mime_type": mime or suffix,
+                    })
+            except Exception as e:
+                logger.warning(f"[Interrupt] _build_pending_files failed for {fil.local_path}: {e}")
+        return files_data
+
     async def _transcribe_voice_local(self, audio_path: str) -> str | None:
         """
         使用本地 Whisper 进行语音转文字
@@ -3080,18 +3300,29 @@ class MessageGateway:
             for img in message.content.images:
                 if img.local_path and Path(img.local_path).exists():
                     try:
-                        with open(img.local_path, "rb") as f:
-                            image_data = base64.b64encode(f.read()).decode("utf-8")
+                        from .media.image_prep import prepare_image_for_context
+
+                        raw = Path(img.local_path).read_bytes()
+                        result = prepare_image_for_context(
+                            raw, media_type=img.mime_type or "image/jpeg",
+                        )
+                        if result:
+                            b64_data, media_type, _w, _h = result
                             images_data.append(
                                 {
                                     "type": "image",
                                     "source": {
                                         "type": "base64",
-                                        "media_type": img.mime_type or "image/jpeg",
-                                        "data": image_data,
+                                        "media_type": media_type,
+                                        "data": b64_data,
                                     },
-                                    "local_path": img.local_path,  # 也保存路径
+                                    "local_path": img.local_path,
                                 }
+                            )
+                        else:
+                            logger.warning(
+                                f"Image too large to embed, skipping: "
+                                f"{img.local_path}"
                             )
                     except Exception as e:
                         logger.error(f"Failed to read image: {e}")
@@ -3322,7 +3553,7 @@ class MessageGateway:
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
-            return (f"处理出错: {str(e)}", False)
+            return (format_user_friendly_error(str(e)), False)
         finally:
             session.set_metadata("pending_images", None)
             session.set_metadata("pending_videos", None)
@@ -3410,7 +3641,7 @@ class MessageGateway:
                 elif etype == "error":
                     err_msg = event.get("message", "")
                     if not reply_text:
-                        reply_text = f"处理出错: {err_msg}"
+                        reply_text = format_user_friendly_error(err_msg)
                 elif etype == "done":
                     pass
 
@@ -3423,7 +3654,7 @@ class MessageGateway:
         except Exception as e:
             logger.error(f"[IM] Streaming agent error: {e}", exc_info=True)
             if not reply_text:
-                reply_text = f"处理出错: {str(e)}"
+                reply_text = format_user_friendly_error(str(e))
 
         if not reply_text or not reply_text.strip():
             return (reply_text, False)
@@ -3699,7 +3930,7 @@ class MessageGateway:
 
     async def _send_error(self, original: UnifiedMessage, error: str) -> None:
         """
-        发送错误提示
+        发送错误提示（对用户展示友好消息，技术细节仅保留在日志中）
         """
         adapter = self._adapters.get(original.channel)
         if not adapter:
@@ -3707,9 +3938,10 @@ class MessageGateway:
 
         try:
             _meta = {"is_group": (original.metadata or {}).get("is_group", original.chat_type == "group")}
+            friendly = format_user_friendly_error(error)
             await adapter.send_text(
                 chat_id=original.chat_id,
-                text=f"❌ 处理出错: {error}",
+                text=friendly,
                 reply_to=original.thread_id or original.channel_message_id,
                 metadata=_meta,
             )

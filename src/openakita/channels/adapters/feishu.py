@@ -404,6 +404,7 @@ class FeishuAdapter(ChannelAdapter):
     _WS_RECONNECT_MAX_DELAY = 120       # 最大退避延迟（秒）
 
     _WS_STABLE_THRESHOLD = 300  # 连接稳定 5 分钟后重置重连计数
+    _WS_FATAL_RESTART_THRESHOLD = 5  # 连续重启超过此次数且未稳定，视为致命失败
 
     async def _ws_watchdog_loop(self) -> None:
         """周期性检查 WebSocket 线程是否存活，退出后自动重启。"""
@@ -431,6 +432,17 @@ class FeishuAdapter(ChannelAdapter):
                 continue
 
             self._ws_restart_count += 1
+
+            if self._ws_restart_count >= self._WS_FATAL_RESTART_THRESHOLD:
+                reason = (
+                    f"WebSocket 连续 {self._ws_restart_count} 次重启失败，"
+                    "请检查飞书 App ID / App Secret 是否有效"
+                )
+                logger.error(f"Feishu WS watchdog: {reason}")
+                self._running = False
+                self._report_failure(reason)
+                return
+
             backoff = min(
                 self._WS_RECONNECT_MIN_INTERVAL * (2 ** min(self._ws_restart_count - 1, 6)),
                 self._WS_RECONNECT_MAX_DELAY,

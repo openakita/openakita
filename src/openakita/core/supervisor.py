@@ -80,23 +80,22 @@ class Intervention:
 
 
 # -- 配置常量 --
-TOOL_THRASH_WINDOW = 6
+TOOL_THRASH_WINDOW = 8
 TOOL_THRASH_FAIL_THRESHOLD = 3
 EDIT_THRASH_WINDOW = 10
 EDIT_THRASH_THRESHOLD = 3
 REASONING_SIMILARITY_THRESHOLD = 0.80
 REASONING_SIMILARITY_WINDOW = 3
 TOKEN_ANOMALY_THRESHOLD = 40000
-SIGNATURE_REPEAT_WARN = 3
-SIGNATURE_REPEAT_TERMINATE = 5
+SIGNATURE_REPEAT_WARN = 2
+SIGNATURE_REPEAT_TERMINATE = 4
 PLAN_DRIFT_WINDOW = 5
 EXTREME_ITERATION_THRESHOLD = 50
 SELF_CHECK_INTERVAL = 10
 UNPRODUCTIVE_WINDOW = 5
 UNPRODUCTIVE_ADMIN_TOOLS = frozenset({
-    "create_todo", "update_todo_step", "search_memory", "add_memory",
-    "list_directory", "get_plan_status", "create_plan", "update_plan_step",
-    "complete_plan",
+    "create_todo", "update_todo_step", "get_todo_status", "complete_todo",
+    "search_memory", "add_memory", "list_directory",
 })
 
 
@@ -305,13 +304,35 @@ class RuntimeSupervisor:
     # ==================== 检测器 ====================
 
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
-        """签名重复检测（从 ReasoningEngine._detect_loops 迁移增强）"""
+        """签名重复检测：工具名维度优先于精确签名。
+
+        TERMINATE 级别的检测优先执行（无论来自工具名还是精确签名），
+        避免低级别 NUDGE 抢先 return 而跳过高级别 TERMINATE。
+        """
         recent = self._signature_history[-TOOL_THRASH_WINDOW:]
         if len(recent) < self._signature_repeat_warn:
             return None
 
+        import re as _re
+        _name_pattern = _re.compile(r"\([^)]*\)")
+        name_sigs = [_name_pattern.sub("", s) for s in recent]
+        name_counts = Counter(name_sigs)
+        top_name, top_count = name_counts.most_common(1)[0]
+
         sig_counts = Counter(recent)
         most_common_sig, most_common_count = sig_counts.most_common(1)[0]
+
+        # --- TERMINATE checks first (highest severity) ---
+        if top_count >= self._signature_repeat_terminate:
+            return Intervention(
+                level=InterventionLevel.TERMINATE,
+                pattern=PatternType.SIGNATURE_REPEAT,
+                message=(
+                    f"Dead loop: tool '{top_name}' called {top_count} times "
+                    f"(exact sig max={most_common_count})"
+                ),
+                should_terminate=True,
+            )
 
         if most_common_count >= self._signature_repeat_terminate:
             return Intervention(
@@ -319,6 +340,20 @@ class RuntimeSupervisor:
                 pattern=PatternType.SIGNATURE_REPEAT,
                 message=f"Dead loop: '{most_common_sig[:60]}' repeated {most_common_count} times",
                 should_terminate=True,
+            )
+
+        # --- NUDGE checks (lower severity) ---
+        if top_count >= self._signature_repeat_warn:
+            return Intervention(
+                level=InterventionLevel.NUDGE,
+                pattern=PatternType.SIGNATURE_REPEAT,
+                message=f"Tool '{top_name}' called {top_count} times with varying args",
+                should_inject_prompt=True,
+                prompt_injection=(
+                    f"[系统提示] 你已经连续 {top_count} 次调用 {top_name}，"
+                    "工具已返回结果。请立即停止调用工具，用自然语言整理结果回复用户。"
+                    "如果还需要其他信息，请换一个不同的工具或方法。"
+                ),
             )
 
         if most_common_count >= self._signature_repeat_warn:
@@ -329,7 +364,7 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 prompt_injection=(
                     "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                    "请评估：1. 任务已完成则停止调用。2. 遇到困难则换方法。"
+                    "请立即停止调用工具，用自然语言回复用户。"
                 ),
             )
 

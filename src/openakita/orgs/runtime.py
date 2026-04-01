@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 AGENT_CACHE_MAX = 10
 AGENT_CACHE_TTL = 600
 _CIRCUIT_BREAKER_THRESHOLD = 3
+_CIRCUIT_BREAKER_COOLDOWN = 300  # 自动恢复冷却期（秒）
 
 _runtime_instance: OrgRuntime | None = None
 
@@ -400,10 +401,10 @@ class OrgRuntime:
 
         # 2. Reset all node statuses to idle, clear frozen state and current_task
         for node in org.nodes:
-            self._set_node_status(org, node, NodeStatus.IDLE, "org_reset")
-            node.frozen_by = None
-            node.frozen_reason = None
-            node.frozen_at = None
+            if node.status == NodeStatus.FROZEN:
+                self.unfreeze_node(org, node)
+            else:
+                self._set_node_status(org, node, NodeStatus.IDLE, "org_reset")
             node.current_task = None
 
         # 3. Evict all agent caches for this org
@@ -681,6 +682,7 @@ class OrgRuntime:
                     self._set_node_status(org, node, NodeStatus.FROZEN, node.frozen_reason)
                 except Exception:
                     node.status = NodeStatus.FROZEN
+                self._schedule_auto_unfreeze(org.id, node.id)
             else:
                 try:
                     self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
@@ -1257,6 +1259,41 @@ class OrgRuntime:
             f"[OrgRuntime] Node {node.id}: {old_status.value} -> {new_status.value}"
             + (f" ({reason})" if reason else "")
         )
+
+    def unfreeze_node(self, org: Organization, node: OrgNode) -> None:
+        """Unfreeze a node: reset status, clear frozen metadata, and reset failure counter."""
+        self._set_node_status(org, node, NodeStatus.IDLE, "unfreeze")
+        node.frozen_by = None
+        node.frozen_reason = None
+        node.frozen_at = None
+        self._node_consecutive_failures.pop(f"{org.id}:{node.id}", None)
+        messenger = self.get_messenger(org.id)
+        if messenger:
+            messenger.unfreeze_mailbox(node.id)
+
+    def _schedule_auto_unfreeze(self, org_id: str, node_id: str) -> None:
+        """Schedule automatic unfreeze after cooldown period."""
+        async def _auto_unfreeze() -> None:
+            await asyncio.sleep(_CIRCUIT_BREAKER_COOLDOWN)
+            org = self._active_orgs.get(org_id)
+            if not org:
+                return
+            node = org.get_node(node_id)
+            if not node or node.status != NodeStatus.FROZEN:
+                return
+            if node.frozen_by != "circuit_breaker":
+                return
+            self.unfreeze_node(org, node)
+            await self._save_org(org)
+            logger.info(
+                f"[OrgRuntime] Auto-unfroze {node.role_title} ({node.id}) "
+                f"after {_CIRCUIT_BREAKER_COOLDOWN}s cooldown"
+            )
+            await self._broadcast_ws("org:node_status", {
+                "org_id": org_id, "node_id": node_id, "status": "idle",
+            })
+
+        asyncio.ensure_future(_auto_unfreeze())
 
     # ------------------------------------------------------------------
     # Internal

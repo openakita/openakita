@@ -93,6 +93,18 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
 
     TOOL_ENTRY_TEMPLATE = "- **{name}**: {description}"
 
+    @staticmethod
+    def _safe_format(template: str, **kwargs: str) -> str:
+        """str.format that won't crash on {/} in values."""
+        try:
+            return template.format(**kwargs)
+        except (KeyError, ValueError, IndexError) as e:
+            logger.warning(
+                "[MCPCatalog] str.format failed (template=%r, keys=%s): %s",
+                template[:60], list(kwargs.keys()), e,
+            )
+            return template + " " + " | ".join(f"{k}={v}" for k, v in kwargs.items())
+
     def __init__(self, mcp_config_dir: Path | None = None):
         """
         初始化 MCP 目录
@@ -154,7 +166,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         instructions: str | None = None,
     ) -> None:
         """
-        注册内置 MCP 服务器 (如 browser-use)
+        注册内置 MCP 服务器
 
         Args:
             identifier: 服务器 ID
@@ -288,7 +300,8 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
             if server.tools:
                 tool_entries = []
                 for tool in server.tools:
-                    entry = self.TOOL_ENTRY_TEMPLATE.format(
+                    entry = self._safe_format(
+                        self.TOOL_ENTRY_TEMPLATE,
                         name=tool.name,
                         description=tool.description,
                     )
@@ -296,13 +309,15 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
 
                 tools_list = "\n".join(tool_entries)
 
-                server_section = self.SERVER_TEMPLATE.format(
+                server_section = self._safe_format(
+                    self.SERVER_TEMPLATE,
                     server_name=server.name,
                     server_id=server.identifier,
                     tools_list=tools_list,
                 )
             else:
-                server_section = self.SERVER_NO_TOOLS_TEMPLATE.format(
+                server_section = self._safe_format(
+                    self.SERVER_NO_TOOLS_TEMPLATE,
                     server_name=server.name,
                     server_id=server.identifier,
                 )
@@ -310,7 +325,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
 
         server_list = "\n\n".join(server_sections)
 
-        catalog = self.CATALOG_TEMPLATE.format(server_list=server_list)
+        catalog = self._safe_format(self.CATALOG_TEMPLATE, server_list=server_list)
         self._cached_catalog = catalog
 
         logger.info(

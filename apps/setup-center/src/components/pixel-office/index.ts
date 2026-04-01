@@ -1,0 +1,16 @@
+export { EventBus } from './EventBus';
+export { OfficeScene } from './OfficeScene';
+export type { OrgData } from './OfficeScene';
+export { AgentSprite } from './AgentSprite';
+export type { AgentSpriteConfig } from './AgentSprite';
+export { PhaserGame } from './PhaserGame';
+export type { GameRef, PhaserGameProps } from './PhaserGame';
+export { ActivitySystem } from './ActivitySystem';
+export type { Activity } from './ActivitySystem';
+export { generateLayout } from './RoomGenerator';
+export type { RoomDef, LayoutResult } from './RoomGenerator';
+export { TilesetManager, TILE, TILE_SIZE } from './TilesetManager';
+export { getTheme, listThemes, THEME_PRESETS } from './SceneTheme';
+export type { SceneTheme, FurnitureStyle } from './SceneTheme';
+export { STATUS_TO_AREA, STATUS_ANIMATION, ACTIVITY_PRIORITY } from './StatusMapping';
+export type { NodeStatus, AreaType, AreaDef, ActivityType } from './StatusMapping';

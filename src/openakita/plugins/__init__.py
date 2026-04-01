@@ -1,6 +1,7 @@
 """OpenAkita Plugin System — unified extensibility for all core modules."""
 
 from .api import PluginAPI, PluginBase
+from .catalog import PluginCatalog
 from .hooks import HookRegistry
 from .manager import PluginManager
 from .manifest import PluginManifest, parse_manifest
@@ -13,6 +14,7 @@ __all__ = [
     "MemoryBackendProtocol",
     "PluginAPI",
     "PluginBase",
+    "PluginCatalog",
     "PluginManager",
     "PluginManifest",
     "PluginState",

@@ -4,7 +4,6 @@
 核心组件：
 - BrowserManager: 浏览器生命周期管理（状态机 + 多策略启动）
 - PlaywrightTools: 基于 Playwright 的直接页面操作
-- BrowserUseRunner: browser-use AI Agent 集成
 - chrome_finder: Chrome 检测与 Profile 管理工具函数
 
 WebMCP 预留接口：
@@ -12,7 +11,6 @@ WebMCP 预留接口：
 - call_webmcp_tool: 调用页面上的 WebMCP 工具
 """
 
-from .browser_use_runner import BrowserUseRunner
 from .chrome_finder import detect_chrome_installation
 from .manager import BrowserManager, BrowserState, StartupStrategy
 from .playwright_tools import PlaywrightTools
@@ -23,7 +21,6 @@ __all__ = [
     "BrowserState",
     "StartupStrategy",
     "PlaywrightTools",
-    "BrowserUseRunner",
     "detect_chrome_installation",
     "WebMCPTool",
     "WebMCPDiscoveryResult",

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toPng } from "html-to-image";
-import { IS_TAURI } from "../platform/detect";
+import { IS_TAURI, saveFileDialog, writeFile } from "../platform";
 import logoUrl from "../assets/logo.png";
 import { ModalOverlay } from "./ModalOverlay";
 
@@ -29,13 +29,11 @@ const TIER_COLORS: Record<string, { bg: string; text: string; accent: string }> 
 
 async function savePngTauri(dataUrl: string, defaultName: string): Promise<boolean> {
   try {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({
+    const path = await saveFileDialog({
       defaultPath: defaultName,
       filters: [{ name: "PNG Image", extensions: ["png"] }],
     });
     if (!path) return false;
-    const { writeFile } = await import("@tauri-apps/plugin-fs");
     const base64 = dataUrl.split(",")[1];
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     await writeFile(path, bytes);

@@ -3,16 +3,13 @@
 import json
 import os
 
-import pytest
-from pathlib import Path
-
 from openakita.llm.config import (
     create_default_config,
     load_endpoints_config,
     save_endpoints_config,
     validate_config,
 )
-from openakita.llm.types import ConfigurationError, EndpointConfig
+from openakita.llm.types import EndpointConfig
 
 
 class TestLoadEndpointsConfig:
@@ -26,8 +23,11 @@ class TestLoadEndpointsConfig:
     def test_invalid_json_raises_error(self, tmp_path):
         bad_file = tmp_path / "bad.json"
         bad_file.write_text("{invalid json}", encoding="utf-8")
-        with pytest.raises(ConfigurationError, match="Invalid JSON"):
-            load_endpoints_config(bad_file)
+        endpoints, compiler_eps, stt_eps, settings = load_endpoints_config(bad_file)
+        assert endpoints == []
+        assert compiler_eps == []
+        assert stt_eps == []
+        assert settings == {}
 
     def test_valid_config_loads_endpoints(self, tmp_path):
         config_file = tmp_path / "endpoints.json"

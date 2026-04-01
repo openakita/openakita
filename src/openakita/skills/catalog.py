@@ -30,11 +30,25 @@ class SkillCatalog:
 ## Available Skills
 
 Use `get_skill_info(skill_name)` to load full instructions when needed.
+Installed skills may come from builtin, user workspace, or project directories.
+Do not infer filesystem paths from the workspace map; `get_skill_info` is authoritative.
 
 {skill_list}
 """
 
     SKILL_ENTRY_TEMPLATE = "- **{name}**: {description}"
+
+    @staticmethod
+    def _safe_format(template: str, **kwargs: str) -> str:
+        """str.format that won't crash on {/} in values."""
+        try:
+            return template.format(**kwargs)
+        except (KeyError, ValueError, IndexError) as e:
+            logger.warning(
+                "[SkillCatalog] str.format failed (template=%r, keys=%s): %s",
+                template[:60], list(kwargs.keys()), e,
+            )
+            return template + " " + " | ".join(f"{k}={v}" for k, v in kwargs.items())
 
     def __init__(self, registry: SkillRegistry):
         self.registry = registry
@@ -59,11 +73,11 @@ Use `get_skill_info(skill_name)` to load full instructions when needed.
 
         skill_entries = []
         for skill in skills:
-            # 获取描述第一行
             desc = skill.description or ""
             first_line = desc.split("\n")[0].strip()
 
-            entry = self.SKILL_ENTRY_TEMPLATE.format(
+            entry = self._safe_format(
+                self.SKILL_ENTRY_TEMPLATE,
                 name=skill.name,
                 description=first_line,
             )
@@ -71,7 +85,7 @@ Use `get_skill_info(skill_name)` to load full instructions when needed.
 
         skill_list = "\n".join(skill_entries)
 
-        catalog = self.CATALOG_TEMPLATE.format(skill_list=skill_list)
+        catalog = self._safe_format(self.CATALOG_TEMPLATE, skill_list=skill_list)
         self._cached_catalog = catalog
 
         logger.info(f"Generated skill catalog with {len(skills)} skills")
@@ -108,9 +122,10 @@ Use `get_skill_info(skill_name)` to load full instructions when needed.
 
     def get_index_catalog(self) -> str:
         """
-        获取已启用技能的“全量索引”（仅名称，尽量短，但完整）。
+        获取已启用技能的"全量索引"（仅名称，尽量短，但完整）。
 
         disabled 技能不会出现在索引中，避免 LLM 误用被禁用的技能。
+        按 system / external / plugin 三组输出。
         """
         skills = self.registry.list_enabled()
         if not skills:
@@ -118,22 +133,27 @@ Use `get_skill_info(skill_name)` to load full instructions when needed.
 
         system_names: list[str] = []
         external_names: list[str] = []
+        plugin_entries: list[str] = []
 
         for s in skills:
             if getattr(s, "system", False):
                 system_names.append(s.name)
+            elif getattr(s, "plugin_source", None):
+                plugin_id = s.plugin_source.replace("plugin:", "")
+                plugin_entries.append(f"{s.name} (via {plugin_id})")
             else:
                 external_names.append(s.name)
 
-        # 稳定排序，减少提示词抖动（也有助于缓存命中/调试）
         system_names.sort()
         external_names.sort()
+        plugin_entries.sort()
 
         lines: list[str] = [
             "## Skills Index (complete)",
             "",
             "Use `get_skill_info(skill_name)` to load full instructions.",
-            "Most external skills are **instruction-only** (no pre-built scripts) — read instructions via get_skill_info, then write code and execute via run_shell.",
+            "Most external skills are **instruction-only** (no pre-built scripts) "
+            "\u2014 read instructions via get_skill_info, then write code and execute via run_shell.",
             "Only use `run_skill_script` when a skill explicitly lists executable scripts.",
         ]
 
@@ -143,6 +163,11 @@ Use `get_skill_info(skill_name)` to load full instructions when needed.
             lines += [
                 "",
                 f"**External skills ({len(external_names)})**: {', '.join(external_names)}",
+            ]
+        if plugin_entries:
+            lines += [
+                "",
+                f"**Plugin skills ({len(plugin_entries)})**: {', '.join(plugin_entries)}",
             ]
 
         return "\n".join(lines)

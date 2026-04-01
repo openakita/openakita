@@ -2,7 +2,7 @@
 BrowserManager - 浏览器生命周期管理
 
 通过状态机管理 Playwright 浏览器的启动、停止和健康检查。
-对外提供 ``page``（供 PlaywrightTools）和 ``cdp_url``（供 BrowserUseRunner）。
+对外提供 ``page``（供 PlaywrightTools）和 ``cdp_url``（供外部 CDP 集成）。
 """
 
 from __future__ import annotations
@@ -245,6 +245,76 @@ class StartupStrategy(Enum):
     BUNDLED_CHROMIUM = "bundled_chromium"
 
 
+class _IsolatedBrowserContext:
+    """Lightweight wrapper around a dedicated BrowserContext for parallel sub-agents.
+
+    Implements the same minimal interface as BrowserManager so that
+    PlaywrightTools / BrowserUseRunner can work unchanged.
+    """
+
+    def __init__(self, parent: "BrowserManager", context: Any, page: Any):
+        self._parent = parent
+        self._context = context
+        self._page = page
+        self.state = BrowserState.READY
+        self.visible = parent.visible
+        self.using_user_chrome = parent.using_user_chrome
+
+    @property
+    def page(self) -> Any | None:
+        return self._page
+
+    @property
+    def context(self) -> Any | None:
+        return self._context
+
+    @property
+    def cdp_url(self) -> str | None:
+        return self._parent.cdp_url
+
+    @property
+    def is_ready(self) -> bool:
+        return self.state == BrowserState.READY
+
+    @property
+    def current_url(self) -> str | None:
+        return self._page.url if self._page else None
+
+    async def ensure_ready(self, visible: bool = True) -> bool:
+        return self.state == BrowserState.READY
+
+    async def start(self, visible: bool = True) -> bool:
+        return True
+
+    async def stop(self) -> None:
+        try:
+            if self._context:
+                await self._context.close()
+        except Exception:
+            pass
+        self._context = None
+        self._page = None
+        self.state = BrowserState.IDLE
+
+    async def get_status(self) -> dict:
+        if not self._page:
+            return {"is_open": False, "state": "idle"}
+        try:
+            return {
+                "is_open": True,
+                "state": "ready",
+                "visible": self.visible,
+                "tab_count": len(self._context.pages) if self._context else 0,
+                "current_tab": {
+                    "url": self._page.url,
+                    "title": await self._page.title(),
+                },
+                "isolated": True,
+            }
+        except Exception as e:
+            return {"is_open": True, "state": "ready", "error": str(e)}
+
+
 class BrowserManager:
     """浏览器生命周期管理（状态机 + 多策略启动 + 回退链）"""
 
@@ -278,6 +348,38 @@ class BrowserManager:
 
         if self._is_server:
             logger.info("[Browser] Server environment detected, will use extra launch args")
+
+    # ── 驱动健康辅助 ────────────────────────────────────
+
+    @staticmethod
+    def _is_driver_pipe_broken(error: Exception) -> bool:
+        """检测错误是否表明 Playwright driver 管道已断裂，需要重启。
+
+        当 Chrome 尝试启动但进程崩溃（如 profile 被锁定），Playwright 的 pipe
+        通信会被切断。此时 ``_is_driver_dead()`` 可能因为只检查缓存属性而返回
+        False，但实际通信已不可用。
+        """
+        return "connection closed while reading from the driver" in str(error).lower()
+
+    @staticmethod
+    def _is_chrome_process_running() -> bool:
+        """检测是否有 Chrome 主进程正在运行。"""
+        try:
+            if platform.system() == "Windows":
+                result = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                return '"chrome.exe"' in result.stdout.lower()
+            else:
+                result = subprocess.run(
+                    ["pgrep", "-x", "chrome"],
+                    capture_output=True, timeout=5,
+                )
+                return result.returncode == 0
+        except Exception:
+            return False
 
     # ── 公共属性 ────────────────────────────────────────
 
@@ -343,23 +445,45 @@ class BrowserManager:
                         f"[Browser] Strategy {strategy.value} failed: {e}",
                         exc_info=True,
                     )
+                    if self._is_driver_pipe_broken(e) or await self._is_driver_dead():
+                        logger.warning(
+                            "[Browser] Playwright driver died/pipe broken, "
+                            "restarting before next strategy..."
+                        )
+                        await self._cleanup_playwright()
+                        if not await self._start_playwright_driver():
+                            break
 
             if not headless:
-                logger.info("[Browser] All headed strategies failed, retrying in headless mode...")
-                for strategy in strategies:
-                    try:
-                        ok = await self._try_strategy(strategy, headless=True)
-                        if ok:
-                            self.state = BrowserState.READY
-                            self._last_successful_strategy = strategy
-                            self.visible = False
-                            logger.info(
-                                f"Browser started via {strategy.value} "
-                                f"(headless fallback, cdp={self._cdp_url})"
+                logger.info("[Browser] All headed strategies failed, restarting driver for headless retry...")
+                await self._cleanup_playwright()
+                if not await self._start_playwright_driver():
+                    logger.error("[Browser] Cannot restart Playwright driver for headless fallback")
+                else:
+                    for strategy in strategies:
+                        try:
+                            ok = await self._try_strategy(strategy, headless=True)
+                            if ok:
+                                self.state = BrowserState.READY
+                                self._last_successful_strategy = strategy
+                                self.visible = False
+                                logger.info(
+                                    f"Browser started via {strategy.value} "
+                                    f"(headless fallback, cdp={self._cdp_url})"
+                                )
+                                return True
+                        except Exception as e:
+                            if self._is_driver_pipe_broken(e) or await self._is_driver_dead():
+                                logger.warning(
+                                    f"[Browser] Driver dead/pipe broken after "
+                                    f"{strategy.value}, restarting..."
+                                )
+                                await self._cleanup_playwright()
+                                if not await self._start_playwright_driver():
+                                    break
+                            logger.warning(
+                                f"[Browser] Headless fallback {strategy.value} also failed: {e}"
                             )
-                            return True
-                    except Exception as e:
-                        logger.debug(f"[Browser] Headless fallback {strategy.value} also failed: {e}")
 
             logger.error(
                 f"[Browser] All strategies failed: {'; '.join(self._startup_errors)}"
@@ -452,6 +576,30 @@ class BrowserManager:
         except Exception as e:
             logger.error(f"Failed to get browser status: {e}")
             return {"is_open": True, "state": self.state.value, "error": str(e)}
+
+    async def create_isolated_context(self) -> "BrowserManager":
+        """Create a lightweight isolated browser context for parallel sub-agents.
+
+        Returns a new BrowserManager-like wrapper that has its own BrowserContext
+        and Page, avoiding tab/page crosstalk between concurrent agents.
+        Only works when the main browser is READY with a _browser object that
+        supports new_context() (CDP or standard launch — NOT persistent_context).
+        """
+        if self.state != BrowserState.READY:
+            await self.ensure_ready()
+
+        if self._browser and hasattr(self._browser, "new_context"):
+            new_ctx = await self._browser.new_context()
+            new_page = await new_ctx.new_page()
+
+            isolated = _IsolatedBrowserContext(
+                parent=self,
+                context=new_ctx,
+                page=new_page,
+            )
+            return isolated
+
+        return self
 
     async def reset_state(self) -> None:
         """只清除引用不关闭资源（用于检测到浏览器被外部关闭时）。"""
@@ -591,6 +739,11 @@ class BrowserManager:
         else:
             if not self._chrome_user_data:
                 raise RuntimeError("Chrome user data dir not found")
+            if self._is_chrome_process_running():
+                raise RuntimeError(
+                    "Chrome is already running — user profile is locked by "
+                    "the running instance, skipping to avoid driver pipe break"
+                )
             user_data = self._chrome_user_data
             label = "user profile"
 
@@ -835,6 +988,16 @@ class BrowserManager:
         self.state = BrowserState.IDLE
         if prev == BrowserState.READY:
             logger.info("Browser stopped")
+
+    async def _is_driver_dead(self) -> bool:
+        """检测 Playwright driver 进程是否已崩溃。"""
+        if not self._playwright:
+            return True
+        try:
+            _ = self._playwright.chromium.executable_path
+            return False
+        except Exception:
+            return True
 
     async def _cleanup_playwright(self) -> None:
         if self._playwright:

@@ -925,12 +925,15 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                               {items.map(ch => {
                                 const itemBase = extractPlatformBase(ch.channel_id).toLowerCase();
                                 const ItemLogo = IM_LOGO_MAP[itemBase];
+                                const noPairedChat = !ch.chat_id;
+                                const label = ch.alias || ch.chat_name || shortChatId(ch.chat_id)
+                                  || ch.bot_display_name || t("scheduler.channelPending");
                                 return (
                                   <SelectItem key={`${ch.channel_id}|${ch.chat_id}`} value={`${ch.channel_id}|${ch.chat_id}`}>
                                     <span className="flex items-center gap-1.5">
                                       {ItemLogo && <ItemLogo size={14} />}
-                                      {ch.chat_type === "group" ? "👥" : "💬"}
-                                      <span>{ch.alias || ch.chat_name || shortChatId(ch.chat_id)}</span>
+                                      {noPairedChat ? "🔗" : ch.chat_type === "group" ? "👥" : "💬"}
+                                      <span className={noPairedChat ? "text-muted-foreground" : ""}>{label}</span>
                                     </span>
                                   </SelectItem>
                                 );

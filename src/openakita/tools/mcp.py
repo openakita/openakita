@@ -36,31 +36,112 @@ try:
 except ImportError:
     pass
 
-# 尝试导入官方 MCP SDK
-try:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+# ── MCP SDK 导入（支持懒加载重试 + 自动安装） ──
 
-    MCP_SDK_AVAILABLE = True
-except ImportError:
-    MCP_SDK_AVAILABLE = False
-    logger.warning("MCP SDK not installed. Run: pip install mcp")
-
-# 尝试导入 Streamable HTTP 客户端（MCP SDK >= 1.2.0）
+MCP_SDK_AVAILABLE = False
 MCP_HTTP_AVAILABLE = False
-try:
-    from mcp.client.streamable_http import streamablehttp_client
+MCP_SSE_AVAILABLE = False
+_mcp_import_attempted = False
+_mcp_auto_install_attempted = False
 
-    MCP_HTTP_AVAILABLE = True
+
+def _try_import_mcp() -> bool:
+    """尝试导入 MCP SDK，更新全局可用性标志。成功返回 True。"""
+    global MCP_SDK_AVAILABLE, MCP_HTTP_AVAILABLE, MCP_SSE_AVAILABLE, _mcp_import_attempted
+    _mcp_import_attempted = True
+
+    try:
+        from mcp import ClientSession, StdioServerParameters  # noqa: F401
+        from mcp.client.stdio import stdio_client  # noqa: F401
+        MCP_SDK_AVAILABLE = True
+    except ImportError:
+        MCP_SDK_AVAILABLE = False
+        logger.warning("MCP SDK not installed. Run: pip install mcp")
+        return False
+
+    try:
+        from mcp.client.streamable_http import streamablehttp_client  # noqa: F401
+        MCP_HTTP_AVAILABLE = True
+    except ImportError:
+        pass
+
+    try:
+        from mcp.client.sse import sse_client  # noqa: F401
+        MCP_SSE_AVAILABLE = True
+    except ImportError:
+        pass
+
+    return True
+
+
+def _auto_install_mcp() -> bool:
+    """尝试自动安装 MCP SDK，返回是否成功。"""
+    global _mcp_auto_install_attempted
+    if _mcp_auto_install_attempted:
+        return False
+    _mcp_auto_install_attempted = True
+
+    logger.info("[MCP] MCP SDK not found, attempting auto-install...")
+    try:
+        import subprocess
+        exe = sys.executable
+        mirrors = [
+            ("pypi", [exe, "-m", "pip", "install", "mcp", "--quiet"]),
+            ("tuna", [exe, "-m", "pip", "install", "mcp", "--quiet",
+                      "-i", "https://pypi.tuna.tsinghua.edu.cn/simple/"]),
+            ("aliyun", [exe, "-m", "pip", "install", "mcp", "--quiet",
+                        "-i", "https://mirrors.aliyun.com/pypi/simple/"]),
+        ]
+        for label, cmd in mirrors:
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode == 0:
+                    logger.info("[MCP] Auto-installed MCP SDK via %s", label)
+                    return _try_import_mcp()
+            except Exception as e:
+                logger.debug("[MCP] Install via %s failed: %s", label, e)
+                continue
+        logger.warning("[MCP] Auto-install failed for all mirrors")
+        return False
+    except Exception as e:
+        logger.warning("[MCP] Auto-install error: %s", e)
+        return False
+
+
+def ensure_mcp_sdk() -> bool:
+    """确保 MCP SDK 可用。首次调用时导入，失败则尝试自动安装。"""
+    if MCP_SDK_AVAILABLE:
+        return True
+    if not _mcp_import_attempted:
+        if _try_import_mcp():
+            return True
+    if not _mcp_auto_install_attempted:
+        return _auto_install_mcp()
+    return False
+
+
+# 首次导入尝试
+_try_import_mcp()
+
+# 保持向后兼容的 try/except 占位
+try:
+    if MCP_SDK_AVAILABLE:
+        from mcp import ClientSession, StdioServerParameters  # noqa: F811
+        from mcp.client.stdio import stdio_client  # noqa: F811
 except ImportError:
     pass
 
-# 尝试导入 SSE 客户端（兼容旧版 MCP 服务器）
-MCP_SSE_AVAILABLE = False
 try:
-    from mcp.client.sse import sse_client
+    if MCP_HTTP_AVAILABLE:
+        from mcp.client.streamable_http import streamablehttp_client  # noqa: F811
+except ImportError:
+    pass
 
-    MCP_SSE_AVAILABLE = True
+try:
+    if MCP_SSE_AVAILABLE:
+        from mcp.client.sse import sse_client  # noqa: F811
 except ImportError:
     pass
 
@@ -213,9 +294,18 @@ class MCPClient:
             MCPConnectResult 包含成功状态、错误详情、发现的工具数
         """
         if not MCP_SDK_AVAILABLE:
-            msg = "MCP SDK 未安装，请运行: pip install mcp"
-            logger.error(msg)
-            return MCPConnectResult(success=False, error=msg)
+            if not ensure_mcp_sdk():
+                msg = (
+                    "MCP SDK 未安装且自动安装失败。\n"
+                    "请在 OpenAkita 的 Python 环境中手动安装:\n"
+                    f"  {sys.executable} -m pip install mcp\n"
+                    "安装后重启 OpenAkita 即可生效。"
+                )
+                logger.error(msg)
+                return MCPConnectResult(success=False, error=msg)
+            logger.info("[MCP] SDK became available after lazy install, re-importing...")
+            from mcp import ClientSession, StdioServerParameters  # noqa: F811
+            from mcp.client.stdio import stdio_client  # noqa: F811
 
         if server_name not in self._servers:
             msg = f"服务器未配置: {server_name}"
@@ -418,6 +508,8 @@ class MCPClient:
     async def _connect_streamable_http(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
         """通过 Streamable HTTP 连接到 MCP 服务器"""
         if not MCP_HTTP_AVAILABLE:
+            ensure_mcp_sdk()
+        if not MCP_HTTP_AVAILABLE:
             msg = "Streamable HTTP 传输不可用，请升级 MCP SDK: pip install 'mcp>=1.2.0'"
             logger.error(msg)
             return MCPConnectResult(success=False, error=msg)
@@ -482,6 +574,8 @@ class MCPClient:
 
     async def _connect_sse(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
         """通过 SSE (Server-Sent Events) 连接到 MCP 服务器"""
+        if not MCP_SSE_AVAILABLE:
+            ensure_mcp_sdk()
         if not MCP_SSE_AVAILABLE:
             msg = "SSE 传输不可用，请升级 MCP SDK: pip install 'mcp>=1.2.0'"
             logger.error(msg)
@@ -809,10 +903,14 @@ class MCPClient:
             MCPCallResult
         """
         if not MCP_SDK_AVAILABLE:
-            return MCPCallResult(
-                success=False,
-                error="MCP SDK not available. Install with: pip install mcp",
-            )
+            if not ensure_mcp_sdk():
+                return MCPCallResult(
+                    success=False,
+                    error=(
+                        "MCP SDK 未安装且自动安装失败。"
+                        f"请运行: {sys.executable} -m pip install mcp"
+                    ),
+                )
 
         if server_name not in self._connections:
             return MCPCallResult(

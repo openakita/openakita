@@ -866,14 +866,8 @@ class OrgToolHandler:
             return f"节点未找到: {target_id}"
         if target.status != NodeStatus.FROZEN:
             return f"{target.role_title} 未处于冻结状态"
-        target.status = NodeStatus.IDLE
-        target.frozen_by = None
-        target.frozen_reason = None
-        target.frozen_at = None
+        self._runtime.unfreeze_node(org, target)
         await self._runtime._save_org(org)
-        messenger = self._runtime.get_messenger(org_id)
-        if messenger:
-            messenger.unfreeze_mailbox(target.id)
         self._runtime.get_event_store(org_id).emit(
             "node_unfrozen", node_id, {"target": target.id},
         )
@@ -1110,6 +1104,46 @@ class OrgToolHandler:
             self._recalc_parent_progress(org_id, chain_id)
 
         return f"已打回 {from_node} 的交付物，原因：{reason[:50]}"
+
+    # ------------------------------------------------------------------
+    # Pixel appearance
+    # ------------------------------------------------------------------
+
+    async def _handle_org_set_appearance(
+        self, args: dict, org_id: str, node_id: str
+    ) -> str:
+        org = self._runtime.get_org(org_id)
+        if not org:
+            return "组织未找到"
+        node = org.get_node(node_id)
+        if not node:
+            return f"节点 {node_id} 不存在"
+
+        appearance: dict[str, Any] = {}
+        for key in ("body_type", "skin_tone", "hair_style", "hair_color",
+                     "outfit_color", "accessory"):
+            if key in args and args[key] is not None:
+                appearance[key] = args[key]
+        if "description" in args and args["description"]:
+            appearance["description"] = args["description"]
+
+        if not appearance:
+            return "请至少提供一个形象参数或描述"
+
+        from openakita.agents.profile import get_profile_store
+        store = get_profile_store()
+        profile = store.get(node.agent_profile_id) if node.agent_profile_id else None
+        if profile:
+            store.update(profile.id, {"pixel_appearance": appearance})
+
+        messenger = self._runtime.get_messenger(org_id)
+        if messenger:
+            await messenger.broadcast_ws_event(
+                "org:appearance_changed",
+                {"org_id": org_id, "node_id": node_id, "appearance": appearance},
+            )
+
+        return f"像素形象已更新：{json.dumps(appearance, ensure_ascii=False)}"
 
     # ------------------------------------------------------------------
     # Meeting tools

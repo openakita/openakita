@@ -2,7 +2,6 @@
 OpenAkita 配置模块
 """
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -34,7 +33,11 @@ class Settings(BaseSettings):
 
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")
-    max_iterations: int = Field(default=300, description="Ralph 循环最大迭代次数")
+    max_iterations: int = Field(
+        default=30,
+        ge=5,
+        description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
+    )
 
     # 自检配置
     selfcheck_autofix: bool = Field(
@@ -67,7 +70,7 @@ class Settings(BaseSettings):
         description="IM 通道的 ForceToolCall 最低重试次数（0=与全局一致，不强制下限）",
     )
     confirmation_text_max_retries: int = Field(
-        default=2,
+        default=1,
         description="工具执行后无可见文本时的最大追问次数（0=禁用）",
     )
 
@@ -235,7 +238,7 @@ class Settings(BaseSettings):
     # === 调度器配置 ===
     scheduler_timezone: str = Field(default="Asia/Shanghai", description="调度器时区")
     scheduler_task_timeout: int = Field(
-        default=600, description="定时任务执行超时时间（秒），默认 600 秒（10分钟）"
+        default=1200, description="定时任务执行超时时间（秒），默认 1200 秒（20分钟）"
     )
 
     # === 记忆整理配置 ===
@@ -482,6 +485,18 @@ class Settings(BaseSettings):
     evaluation_enabled: bool = Field(default=False, description="是否启用每日自动评估")
     evaluation_output_dir: str = Field(default="data/evaluation", description="评估报告输出目录")
 
+    @model_validator(mode="after")
+    def _enforce_min_max_iterations(self) -> "Settings":
+        MIN_ITERATIONS = 15
+        if self.max_iterations < MIN_ITERATIONS:
+            logger.warning(
+                "[Config] max_iterations=%d is too low (minimum %d). "
+                "Resetting to %d. Please update your .env file.",
+                self.max_iterations, MIN_ITERATIONS, MIN_ITERATIONS,
+            )
+            self.max_iterations = MIN_ITERATIONS
+        return self
+
     @model_validator(mode="before")
     @classmethod
     def _strip_inline_comments(cls, values: dict) -> dict:  # type: ignore[override]
@@ -717,26 +732,27 @@ class RuntimeState:
         return self._state_file
 
     def save(self) -> None:
-        """把当前 settings 中的可持久化字段写入 JSON 文件。"""
+        """把当前 settings 中的可持久化字段写入 JSON 文件（原子写入 + 备份）。"""
+        from .utils.atomic_io import safe_json_write
+
         data: dict = {}
         for key in _PERSISTABLE_KEYS:
             data[key] = getattr(settings, key)
         try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            safe_json_write(self.state_file, data)
             logger.info(f"[RuntimeState] Saved: {data}")
         except Exception as e:
             logger.error(f"[RuntimeState] Failed to save: {e}")
 
     def load(self) -> None:
-        """从 JSON 文件恢复设置到 settings 单例，仅覆盖可持久化字段。"""
-        if not self.state_file.exists():
+        """从 JSON 文件恢复设置到 settings 单例，仅覆盖可持久化字段（支持 .bak 回退）。"""
+        from .utils.atomic_io import read_json_safe
+
+        data = read_json_safe(self.state_file)
+        if data is None:
             logger.info("[RuntimeState] No saved state found, using defaults.")
             return
         try:
-            with open(self.state_file, encoding="utf-8") as f:
-                data = json.load(f)
             applied = []
             for key in _PERSISTABLE_KEYS:
                 if key in data:
