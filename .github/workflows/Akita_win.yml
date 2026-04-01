@@ -1,0 +1,620 @@
+name: Release Build Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的 commit SHA 或分支（留空则使用默认）"
+        required: false
+        default: ""
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── 任务 0: 获取版本信息 ──
+  get_version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      tag: ${{ steps.get_version.outputs.tag }}
+      ref: ${{ steps.get_version.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 从代码中获取版本号
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${{ github.ref_name }}"
+            REF="${{ github.sha }}"
+          else
+            if [ -f "pyproject.toml" ]; then
+              VERSION=$(grep -m 1 '^version' pyproject.toml | cut -d'"' -f2)
+            elif [ -f "setup.py" ]; then
+              VERSION=$(python setup.py --version)
+            elif [ -f "apps/setup-center/package.json" ]; then
+              VERSION=$(node -p "require('./apps/setup-center/package.json').version")
+            else
+              echo "错误: 无法从代码中确定版本号"
+              exit 1
+            fi
+            
+            # 处理 workflow_dispatch 手动触发时的 ref
+            if [ -n "${{ github.event.inputs.ref }}" ]; then
+              REF="${{ github.event.inputs.ref }}"
+            else
+              REF="${{ github.sha }}"
+            fi
+            
+            TAG="v${VERSION}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "ref=${REF}" >> $GITHUB_OUTPUT
+          
+          echo "📦 版本号: ${VERSION}"
+          echo "🏷️ 标签: ${TAG}"
+          echo "🔖 提交: ${REF}"
+
+  # ── 任务 1: 确保草稿发布存在 ──
+  create_release:
+    needs: get_version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.gh_release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.get_version.outputs.ref }}
+          fetch-depth: 0
+
+      - name: 检查发布是否已存在
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.get_version.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "✅ 发布 $RELEASE_TAG 已存在 — 将上传新的构建产物"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "📦 发布 $RELEASE_TAG 不存在 — 将创建草稿"
+          fi
+
+      - name: 创建草稿发布
+        if: steps.check_release.outputs.exists != 'true'
+        id: gh_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.get_version.outputs.tag }}
+          draft: true
+          generate_release_notes: true
+
+  # ── 任务 2a: Python 包发布 (PyPI) ──
+  python_release:
+    needs: [create_release, get_version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      RELEASE_TAG: ${{ needs.get_version.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.get_version.outputs.ref }}
+          fetch-depth: 0
+
+      - name: 创建 docs-site 目录（修复构建错误）
+        run: |
+          mkdir -p docs-site/.vitepress/dist
+          echo "修复: 创建缺失的 docs-site/.vitepress/dist 目录"
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 检查版本一致性
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') }}
+        run: |
+          if [ -f "scripts/version.py" ]; then
+            python scripts/version.py check --expected "${{ needs.get_version.outputs.version }}"
+          fi
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/setup-center/package-lock.json
+
+      - name: 构建 Web 前端
+        working-directory: apps/setup-center
+        run: |
+          npm ci
+          npm run build:web
+      
+      - name: 构建用户文档 (VitePress)
+        working-directory: docs-site
+        run: |
+          npm ci
+          npx vitepress build
+        continue-on-error: true
+
+      - name: 确保 docs dist 目录存在
+        run: mkdir -p docs-site/.vitepress/dist
+
+      - name: 安装构建依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install build hatchling
+      
+      - name: 构建主包
+        run: python -m build --wheel
+
+      - name: 构建 Plugin SDK 包
+        run: python -m build --wheel openakita-plugin-sdk/ --outdir dist-sdk/
+
+      - name: 上传 Python 构建产物到 GitHub 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ env.RELEASE_TAG }}" dist/* --clobber
+          gh release upload "${{ env.RELEASE_TAG }}" dist-sdk/* --clobber
+
+      - name: 发布主包到 PyPI (受信发布)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: 发布主包到 PyPI (API 令牌)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ env.PYPI_API_TOKEN }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install twine
+          twine upload dist/* --skip-existing
+
+      - name: 发布 Plugin SDK 到 PyPI (受信发布)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-sdk/
+
+      - name: 发布 Plugin SDK 到 PyPI (API 令牌)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ env.PYPI_API_TOKEN }}
+        run: |
+          pip install twine
+          twine upload dist-sdk/* --skip-existing
+
+  # ── 任务 2b: Windows 安装包构建（仅 Windows x64 + AVX2/BMI2 双重极致优化）──
+  windows_release:
+    needs: [create_release, get_version]
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ needs.get_version.outputs.tag }}
+
+      # ========== Python 极致性能优化环境变量 ==========
+      PYTHONOPTIMIZE: 2
+      PYTHONHASHSEED: 42
+      PYTHONFAULTHANDLER: 1
+      PYTHONUNBUFFERED: 1
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.get_version.outputs.ref }}
+          fetch-depth: 0
+
+      - name: 创建 docs-site 目录（修复 Windows 编码和构建错误）
+        shell: bash
+        run: |
+          mkdir -p docs-site/.vitepress/dist
+          echo "修复: 创建缺失的 docs-site/.vitepress/dist 目录"
+          echo "Placeholder for docs-site" > docs-site/.vitepress/dist/index.html
+
+      - name: 设置 Python（启用性能优化）
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 安装 UPX 二进制压缩工具
+        shell: bash
+        run: |
+          curl -L -o upx.zip https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip
+          unzip -o upx.zip
+          mkdir -p ~/bin
+          cp upx-4.2.4-win64/upx.exe ~/bin/
+          echo "$HOME/bin" >> $GITHUB_PATH
+          upx --version
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/setup-center/package-lock.json
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      # ========== 强制清除所有 Rust 缓存 ==========
+      - name: 强制清除所有 Rust 缓存（防止旧代码污染）
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "🧹 强制清除所有 Rust 缓存"
+          echo "=========================================="
+          
+          # 清除 cargo 本地缓存
+          if [ -d "$HOME/.cargo/registry/cache" ]; then
+            echo "清除 cargo registry 缓存..."
+            rm -rf "$HOME/.cargo/registry/cache"/*
+          fi
+          
+          if [ -d "$HOME/.cargo/registry/index" ]; then
+            echo "清除 cargo registry 索引..."
+            rm -rf "$HOME/.cargo/registry/index"/*
+          fi
+          
+          if [ -d "$HOME/.cargo/git/db" ]; then
+            echo "清除 cargo git 缓存..."
+            rm -rf "$HOME/.cargo/git/db"/*
+          fi
+          
+          # 清除项目中的 target 目录
+          TARGET_DIR="apps/setup-center/src-tauri/target"
+          if [ -d "$TARGET_DIR" ]; then
+            echo "清除项目 target 目录: $TARGET_DIR"
+            rm -rf "$TARGET_DIR"
+          fi
+          
+          # 清除任何残留的构建产物
+          rm -rf apps/setup-center/src-tauri/target
+          rm -rf apps/setup-center/src-tauri/.cargo-lock
+          
+          echo "✅ 所有 Rust 缓存已强制清除"
+
+      - name: 构建 Web 前端
+        working-directory: apps/setup-center
+        run: |
+          npm ci
+          npm run build:web
+
+      - name: 安装 Python 项目（修复编码问题 + AVX2 + BMI2 双重优化）
+        shell: bash
+        env:
+          CFLAGS: "-O3 -march=core-avx2 -mtune=core-avx2 -mavx2 -mbmi2 -mfma -mfpmath=sse -pipe -funroll-loops -ftree-vectorize -ffast-math"
+          CXXFLAGS: "-O3 -march=core-avx2 -mtune=core-avx2 -mavx2 -mbmi2 -mfma -mfpmath=sse -pipe -funroll-loops -ftree-vectorize -ffast-math"
+          CFLAGS_FOR_BUILD: "-O3 -march=core-avx2 -mtune=core-avx2 -mavx2 -mbmi2 -mfma -pipe"
+        run: |
+          export PYTHONIOENCODING=utf-8
+          export LANG=en_US.UTF-8
+          export LC_ALL=en_US.UTF-8
+          
+          python -m pip install --upgrade pip setuptools wheel
+          pip install cython
+          pip install numpy --only-binary=:all:
+          
+          python -c "import numpy; import sys; sys.stdout.reconfigure(encoding='utf-8'); print('NumPy 优化状态:'); numpy.show_config()" 2>&1 || true
+          
+          pip install hatchling
+          pip install -e ".[all]"
+          pip install "pyinstaller>=6.18.0"
+
+      - name: 清理之前的 PyInstaller 输出
+        shell: bash
+        run: |
+          rm -rf dist/
+          rm -rf build/openakita-server
+          rm -rf build/pyinstaller_work
+          rm -rf build/modules
+
+      # 🐍 Python 极致优化打包（AVX2 + BMI2 + 最高压缩）
+      - name: 打包 Python 后端（AVX2 + BMI2 双重极致优化）
+        env:
+          PYINSTALLER_OPTIMIZE: "2"
+          PYTHONOPTIMIZE: "2"
+        run: |
+          echo "=========================================="
+          echo "🐍 Python 后端 AVX2 + BMI2 双重极致优化打包"
+          echo "=========================================="
+          echo "Python 版本: $(python --version)"
+          echo "PyInstaller 版本: $(pyinstaller --version)"
+          echo ""
+          echo "🔧 优化设置:"
+          echo "  • PYTHONOPTIMIZE: 2"
+          echo "  • UPX 压缩: 已启用"
+          echo "  • CPU 优化指令集: AVX2, BMI2, FMA, SSE4.2"
+          echo "  • 向量计算优化: AVX2 (SIMD)"
+          echo "  • 位操作优化: BMI2 (哈希/加密/压缩)"
+          echo "=========================================="
+          
+          python build/build_backend.py
+          
+          echo ""
+          echo "📦 打包后的后端大小:"
+          du -sh dist/openakita-server/ || true
+
+      - name: 复制后端到 Tauri 资源目录
+        shell: bash
+        run: |
+          RESOURCE_DIR="apps/setup-center/src-tauri/resources"
+          mkdir -p "$RESOURCE_DIR"
+          rm -rf "$RESOURCE_DIR/openakita-server"
+          cp -r dist/openakita-server "$RESOURCE_DIR/openakita-server"
+          echo "资源已复制:"
+          du -sh "$RESOURCE_DIR"/*
+
+      - name: 验证打包的 Python 后端
+        env:
+          PYTHONOPTIMIZE: 1
+        run: python build/verify_bundled_python_contract.py --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+
+      - name: 创建 gitignored 占位符
+        shell: bash
+        run: |
+          mkdir -p identity/personas
+          if [ ! -f identity/personas/user_custom.md ]; then
+            echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
+          fi
+
+      - name: 安装前端依赖
+        working-directory: apps/setup-center
+        run: npm ci
+
+      - name: 预检 Rust 依赖
+        working-directory: apps/setup-center/src-tauri
+        shell: bash
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
+        run: |
+          set -euo pipefail
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "=== 预检尝试 $ATTEMPT/$MAX_ATTEMPTS ==="
+            if cargo fetch --locked && cargo check; then
+              echo "预检成功"
+              exit 0
+            fi
+            echo "预检失败 (尝试 $ATTEMPT)"
+            ATTEMPT=$((ATTEMPT + 1))
+            [ $ATTEMPT -le $MAX_ATTEMPTS ] && { echo "30秒后重试..."; sleep 30; }
+          done
+          echo "所有预检尝试均失败"
+          exit 1
+
+      - name: 清理 Rust 发布中间文件
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_BASE="apps/setup-center/src-tauri/target"
+          RELEASE_DIR="${TARGET_BASE}/release"
+          rm -rf "${RELEASE_DIR}/deps" "${RELEASE_DIR}/build" "${RELEASE_DIR}/.fingerprint"
+          mkdir -p "${RELEASE_DIR}"
+
+      # 🚀 Rust 极致性能优化构建（AVX2 + BMI2 双重极致优化）
+      - name: 构建 Tauri Windows 安装包（AVX2 + BMI2 双重极致优化）
+        working-directory: apps/setup-center
+        timeout-minutes: 180
+        env:
+          TAURI_CONFIG: '{}'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NO_STRIP: true
+
+          # ========== Rust AVX2 + BMI2 双重极致优化配置 ==========
+          # 同时启用 AVX2 (向量计算) 和 BMI2 (位操作优化)
+          RUSTFLAGS: "-C target-cpu=core-avx2 -C opt-level=3 -C debuginfo=0 -C embed-bitcode=yes -C target-feature=+avx2,+bmi2,+fma,+bmi1,+popcnt,+lzcnt,+aes,+sse3,+ssse3,+sse4.1,+sse4.2,+pclmulqdq,+movbe"
+
+          # Cargo 发布配置
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_PANIC: "abort"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "none"
+          CARGO_PROFILE_RELEASE_LINKER_PLUGIN_LTO: "false"
+
+          CARGO_BUILD_JOBS: "8"
+          RUSTC_BOOTSTRAP: "1"
+
+        shell: bash
+        run: |
+          set +e
+          
+          echo "=========================================="
+          echo "🚀 AVX2 + BMI2 双重极致优化构建"
+          echo "=========================================="
+          echo "Rust 版本: $(rustc --version)"
+          echo ""
+          echo "🔧 Rust 双重优化设置:"
+          echo "  • 目标 CPU: core-avx2"
+          echo "  • 向量计算优化 (AVX2): 启用 SIMD 加速"
+          echo "  • 位操作优化 (BMI2): 启用哈希/加密/压缩加速"
+          echo "  • 完整指令集: avx2, bmi2, fma, bmi1, popcnt, aes, sse4.2"
+          echo "  • 优化级别: 3"
+          echo "  • LTO: thin (兼容 proc-macro)"
+          echo "  • Panic 策略: abort"
+          echo "  • 适用场景: 科学计算 + 哈希查找 + 加密解密 + 数据压缩"
+          echo "=========================================="
+          
+          MAX_ATTEMPTS=2
+          ATTEMPT=1
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo ""
+            echo "=== AVX2 + BMI2 双重优化构建尝试 $ATTEMPT/$MAX_ATTEMPTS ==="
+            echo "开始时间: $(date)"
+            echo ""
+            
+            cargo clean
+            rm -rf src-tauri/target/release/incremental
+            
+            export CARGO_PROFILE_RELEASE_LTO_FOR_PROC_MACRO=false
+            
+            time npx tauri build --bundles "nsis"
+            EXIT_CODE=$?
+            
+            echo "结束时间: $(date)"
+            
+            if [ $EXIT_CODE -eq 0 ]; then
+              echo ""
+              echo "✅ 构建成功 (尝试 $ATTEMPT)"
+              
+              echo ""
+              echo "📦 二进制文件信息 (AVX2 + BMI2 双重优化):"
+              TARGET_BASE="src-tauri/target"
+              RELEASE_DIR="${TARGET_BASE}/release"
+              if [ -f "${RELEASE_DIR}/setup-center.exe" ]; then
+                echo "主程序: ${RELEASE_DIR}/setup-center.exe"
+                ls -la "${RELEASE_DIR}/setup-center.exe"
+                echo "文件大小: $(du -h "${RELEASE_DIR}/setup-center.exe" | cut -f1)"
+              fi
+              exit 0
+            fi
+            
+            echo "❌ 构建失败 (退出码 $EXIT_CODE) 尝试 $ATTEMPT"
+            ATTEMPT=$((ATTEMPT + 1))
+            
+            if [ $ATTEMPT -le $MAX_ATTEMPTS ]; then
+              echo "30秒后重试..."
+              sleep 30
+            fi
+          done
+          
+          echo "❌ 所有 $MAX_ATTEMPTS 次尝试均失败"
+          exit 1
+
+      - name: 列出构建产物
+        shell: bash
+        run: |
+          TARGET_BASE="apps/setup-center/src-tauri/target"
+          RELEASE_DIR="${TARGET_BASE}/release"
+          BUNDLE_DIR="${RELEASE_DIR}/bundle"
+          
+          echo "=========================================="
+          echo "📂 构建产物 (AVX2 + BMI2 双重优化)"
+          echo "=========================================="
+          echo "== 发布目录 =="
+          ls -la "${RELEASE_DIR}" || true
+          echo ""
+          echo "== 捆绑目录 =="
+          ls -la "${BUNDLE_DIR}" || true
+          echo ""
+          echo "== NSIS 安装包目录 =="
+          ls -la "${BUNDLE_DIR}/nsis" || true
+          
+          if ls "${BUNDLE_DIR}/nsis/"*.exe 1> /dev/null 2>&1; then
+            echo ""
+            echo "📊 安装包大小 (AVX2 + BMI2):"
+            ls -lh "${BUNDLE_DIR}"/nsis/*.exe
+          fi
+
+      - name: 收集 Windows 安装包
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_BASE="apps/setup-center/src-tauri/target"
+          BUNDLE_DIR="${TARGET_BASE}/release/bundle"
+          OUT_DIR="${BUNDLE_DIR}/_upload"
+          rm -rf "${OUT_DIR}"
+          mkdir -p "${OUT_DIR}"
+
+          found=0
+          while IFS= read -r -d '' f; do
+            case "$f" in
+              */nsis/*.exe)
+                if [ "$(basename "$f")" = "uninstall.exe" ]; then
+                  continue
+                fi
+                base_name="$(basename "$f" .exe)"
+                cp -f "$f" "${OUT_DIR}/${base_name}_windows-x64-avx2-bmi2.exe"
+                found=$((found+1))
+                ;;
+            esac
+          done < <(find "${BUNDLE_DIR}" -type f -name "*.exe" -print0)
+
+          sig_count=0
+          while IFS= read -r -d '' sigf; do
+            cp -f "$sigf" "${OUT_DIR}/"
+            sig_count=$((sig_count+1))
+          done < <(find "${BUNDLE_DIR}" -type f -name "*.sig" -print0)
+          
+          echo "✅ 已收集 ${found} 个 Windows 安装包 (AVX2 + BMI2 双重优化)"
+          echo "✅ 已收集 ${sig_count} 个签名文件"
+          echo ""
+          echo "📂 输出目录内容:"
+          ls -la "${OUT_DIR}" || true
+
+          if [ "${found}" -eq 0 ]; then
+            echo "❌ 错误: 未找到 Windows 安装包。" >&2
+            exit 1
+          fi
+
+      - name: 上传 Windows 安装包到 GitHub 发布
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TARGET_BASE="apps/setup-center/src-tauri/target"
+          BUNDLE_DIR="${TARGET_BASE}/release/bundle"
+          OUT_DIR="${BUNDLE_DIR}/_upload"
+          
+          echo "📤 上传 AVX2 + BMI2 双重优化构建到 GitHub 发布: $RELEASE_TAG"
+          ls -la "${OUT_DIR}"
+          gh release upload "${RELEASE_TAG}" "${OUT_DIR}"/* --clobber
+          echo "✅ 上传完成"
+
+      - name: 上传签名文件作为构建产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-avx2-bmi2-签名文件
+          path: apps/setup-center/src-tauri/target/**/bundle/_upload/*.sig
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: 上传构建日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-avx2-bmi2-构建日志
+          path: |
+            apps/setup-center/src-tauri/target/release/build/**/output
+            apps/setup-center/src-tauri/target/release/build/**/stderr
+            C:\Users\runneradmin\AppData\Local\tauri\tauri-build*.log
+          if-no-files-found: ignore
+          retention-days: 7
