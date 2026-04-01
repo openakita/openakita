@@ -244,17 +244,17 @@ async def toggle_task(request: Request, task_id: str):
 
 @router.post("/api/scheduler/tasks/{task_id}/trigger")
 async def trigger_task(request: Request, task_id: str):
-    """Trigger a task to run immediately."""
+    """Trigger a task to run immediately (non-blocking)."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
         return {"error": "Agent not initialized"}
 
-    execution = await scheduler.trigger_now(task_id)
-    if execution is None:
-        return {"error": "Task not found or trigger failed"}
+    ok, err = scheduler.trigger_in_background(task_id)
+    if not ok:
+        return {"error": err}
 
     _notify_scheduler_change("trigger")
-    return {"status": "ok", "execution": execution.to_dict()}
+    return {"status": "ok"}
 
 
 @router.get("/api/scheduler/channels")

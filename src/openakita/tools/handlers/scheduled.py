@@ -229,7 +229,7 @@ class ScheduledHandler:
             status = "成功" if execution.status == "success" else "失败"
             return f"✅ 任务已触发执行，状态: {status}\n结果: {execution.result or execution.error or 'N/A'}"
         else:
-            return f"❌ 任务 {task_id} 不存在"
+            return f"❌ 任务 {task_id} 不存在或正在运行中"
 
     def _get_gateway(self):
         """获取消息网关实例"""

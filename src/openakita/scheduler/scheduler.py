@@ -246,16 +246,51 @@ class TaskScheduler:
 
     async def trigger_now(self, task_id: str) -> TaskExecution | None:
         """
-        立即触发任务
+        立即触发任务（阻塞等待执行完成）
+
+        供工具处理器使用——Agent 需要知道执行结果后才能回复用户。
+        如需非阻塞触发（API 场景），请使用 trigger_in_background。
 
         Returns:
-            执行记录
+            执行记录，任务不存在或正在运行时返回 None
         """
         task = self._tasks.get(task_id)
         if not task:
             return None
 
-        return await self._execute_task(task)
+        if task_id in self._running_tasks:
+            return None
+
+        self._running_tasks.add(task_id)
+        try:
+            if self._semaphore:
+                async with self._semaphore:
+                    return await self._execute_task(task)
+            return await self._execute_task(task)
+        finally:
+            self._running_tasks.discard(task_id)
+
+    def trigger_in_background(self, task_id: str) -> tuple[bool, str]:
+        """
+        后台触发任务（立即返回，不等待执行完成）
+
+        供 API 路由使用——前端有请求超时限制，不能阻塞等待长任务。
+        复用与 _scheduler_loop 相同的执行路径：
+        _running_tasks 防重 → create_task(_run_task_safe) → semaphore 限流。
+
+        Returns:
+            (成功标志, 错误信息)
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return False, "Task not found"
+
+        if task_id in self._running_tasks:
+            return False, "Task is already running"
+
+        self._running_tasks.add(task_id)
+        asyncio.create_task(self._run_task_safe(task))
+        return True, ""
 
     # ==================== 调度循环 ====================
 
@@ -295,7 +330,8 @@ class TaskScheduler:
         """
         安全地执行任务
 
-        注意：_running_tasks 已经在调度循环中添加了，这里只需要执行和清理
+        调用方（_scheduler_loop / trigger_in_background）须在调用前将 task.id
+        加入 _running_tasks，本方法只负责执行和清理。
         """
         try:
             async with self._semaphore:
