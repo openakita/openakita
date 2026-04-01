@@ -318,6 +318,88 @@ class EndpointManager:
         return result
 
     # ------------------------------------------------------------------
+    # Granular operations (toggle / reorder / settings)
+    # ------------------------------------------------------------------
+
+    def toggle_endpoint(
+        self,
+        name: str,
+        endpoint_type: str = "endpoints",
+    ) -> dict:
+        """Toggle the ``enabled`` flag for an endpoint. Returns the updated entry."""
+        if endpoint_type not in _ENDPOINT_LISTS:
+            raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
+
+        with self._lock:
+            config = self._read_json()
+            ep_list = config.get(endpoint_type, [])
+
+            target = None
+            for ep in ep_list:
+                if ep.get("name") == name:
+                    target = ep
+                    break
+
+            if target is None:
+                raise ValueError(f"Endpoint '{name}' not found in {endpoint_type}")
+
+            target["enabled"] = not target.get("enabled", True)
+            config[endpoint_type] = ep_list
+            self._write_json(config)
+            return dict(target)
+
+    def reorder_endpoints(
+        self,
+        ordered_names: list[str],
+        endpoint_type: str = "endpoints",
+    ) -> list[dict]:
+        """Reorder endpoints by assigning incremental ``priority`` values.
+
+        Endpoints whose names are in *ordered_names* get priority 10, 20, ...
+        in the given order.  Any endpoints not listed keep their original
+        relative order and are appended after the listed ones.
+        """
+        if endpoint_type not in _ENDPOINT_LISTS:
+            raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
+
+        with self._lock:
+            config = self._read_json()
+            ep_list = config.get(endpoint_type, [])
+
+            by_name: dict[str, dict] = {ep.get("name", ""): ep for ep in ep_list}
+            result: list[dict] = []
+            step = 10
+
+            for i, name in enumerate(ordered_names, 1):
+                if name in by_name:
+                    ep = by_name.pop(name)
+                    ep["priority"] = i * step
+                    result.append(ep)
+
+            for ep in ep_list:
+                name = ep.get("name", "")
+                if name in by_name:
+                    ep["priority"] = (len(ordered_names) + len(result) + 1) * step
+                    result.append(ep)
+                    by_name.pop(name, None)
+
+            config[endpoint_type] = result
+            self._write_json(config)
+            return result
+
+    def update_settings(self, settings: dict) -> dict:
+        """Merge *settings* into the top-level ``settings`` key of the config."""
+        with self._lock:
+            config = self._read_json()
+            existing = config.get("settings", {})
+            if not isinstance(existing, dict):
+                existing = {}
+            existing.update(settings)
+            config["settings"] = existing
+            self._write_json(config)
+            return existing
+
+    # ------------------------------------------------------------------
     # File I/O with atomic write + backup
     # ------------------------------------------------------------------
 

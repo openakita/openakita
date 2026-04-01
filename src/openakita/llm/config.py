@@ -136,9 +136,61 @@ def _safe_load_dotenv(env_path: Path) -> None:
         logger.error("Unexpected error loading %s: %s", env_path, e)
 
 
+def _try_recover_env_from_backup(env_path: Path) -> bool:
+    """If .env is missing or suspiciously small, try to restore from .env.bak.
+
+    Returns True if a backup was restored.
+    """
+    import shutil
+
+    bak = env_path.with_suffix(env_path.suffix + ".bak")
+    if not bak.exists():
+        return False
+
+    env_missing = not env_path.exists()
+    env_empty = False
+    bak_bigger = False
+
+    if not env_missing:
+        try:
+            env_size = env_path.stat().st_size
+            bak_size = bak.stat().st_size
+            env_empty = env_size < 10
+            bak_bigger = bak_size > env_size + 20
+        except OSError:
+            pass
+
+    if env_missing or (env_empty and bak.stat().st_size > 10):
+        reason = "missing" if env_missing else "empty/truncated"
+        logger.warning(
+            "[env recovery] .env is %s, restoring from .env.bak (%s)",
+            reason, bak,
+        )
+        try:
+            shutil.copy2(bak, env_path)
+            return True
+        except OSError as e:
+            logger.error("[env recovery] Failed to restore .env from backup: %s", e)
+
+    if bak_bigger:
+        logger.info(
+            "[env recovery] .env.bak is significantly larger than .env — "
+            "possible data loss. Backup preserved at %s",
+            bak,
+        )
+
+    return False
+
+
 def ensure_env_loaded(config_path: Path | None = None) -> Path | None:
-    """Load the workspace .env associated with the given config path."""
+    """Load the workspace .env associated with the given config path.
+
+    Checks for corruption/truncation first and restores from .bak if needed.
+    """
     env_path = get_workspace_env_path(config_path)
+
+    _try_recover_env_from_backup(env_path)
+
     if env_path.exists():
         _safe_load_dotenv(env_path)
         logger.info("Loaded .env from %s", env_path)
@@ -273,7 +325,10 @@ def save_endpoints_config(
     stt_endpoints: list[EndpointConfig] | None = None,
 ):
     """
-    保存端点配置
+    保存端点配置（CLI / 离线场景专用，通过 safe_write 原子写入）
+
+    注意：当后端 API 服务运行中时，所有端点写入应通过 EndpointManager（HTTP API）。
+    此函数仅用于后端未运行的 CLI 交互 / 初始化场景。
 
     Args:
         endpoints: 主端点配置列表

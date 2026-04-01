@@ -697,23 +697,20 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
 
     def _write_llm_endpoints(self):
         """将 LLM 端点和 Compiler 端点写入 data/llm_endpoints.json"""
-        endpoints_path = self.project_dir / "data" / "llm_endpoints.json"
+        from openakita.llm.endpoint_manager import EndpointManager
 
-        existing_data: dict = {}
-        if endpoints_path.exists():
-            try:
-                existing_data = json.loads(endpoints_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
+        mgr = EndpointManager(self.project_dir)
+        mgr._json_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Use wizard-collected endpoints if available; otherwise fall back to legacy config
+        # Build the list of main endpoints
+        endpoints_to_save: list[dict] = []
         if self._llm_endpoints:
             max_tokens = int(self.config.get("MAX_TOKENS", "0"))
             for ep in self._llm_endpoints:
                 if ep.get("max_tokens", 0) == 0:
                     ep["max_tokens"] = max_tokens
-            existing_data["endpoints"] = self._llm_endpoints
-        elif not existing_data.get("endpoints"):
+            endpoints_to_save = self._llm_endpoints
+        elif not mgr.list_endpoints("endpoints"):
             api_key_env = "ANTHROPIC_API_KEY"
             base_url = self.config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
             model = self.config.get("DEFAULT_MODEL", "claude-sonnet-4-20250514")
@@ -730,7 +727,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             if not capabilities:
                 capabilities = ["text", "tools"]
 
-            existing_data["endpoints"] = [
+            endpoints_to_save = [
                 {
                     "name": "primary",
                     "provider": provider,
@@ -745,9 +742,11 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 }
             ]
 
+        for ep in endpoints_to_save:
+            mgr.save_endpoint(endpoint=ep, endpoint_type="endpoints")
+
         # Compiler endpoints
         compiler_endpoints = []
-
         primary_cfg = self.config.get("_compiler_primary")
         if primary_cfg:
             compiler_endpoints.append({
@@ -780,23 +779,19 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 "note": "Prompt Compiler 备用端点",
             })
 
-        if compiler_endpoints:
-            existing_data["compiler_endpoints"] = compiler_endpoints
+        for ep in compiler_endpoints:
+            mgr.save_endpoint(endpoint=ep, endpoint_type="compiler_endpoints")
 
-        if not existing_data.get("settings"):
-            existing_data["settings"] = {
+        # Default settings
+        existing_settings = mgr.get_all_config().get("settings", {})
+        if not existing_settings:
+            mgr.update_settings({
                 "retry_count": 2,
                 "retry_delay_seconds": 2,
                 "health_check_interval": 60,
                 "fallback_on_error": True,
-            }
+            })
 
-        from openakita.llm.endpoint_manager import EndpointManager
-
-        mgr = EndpointManager(self.project_dir)
-        # Use EndpointManager's atomic write for safety
-        mgr._json_path.parent.mkdir(parents=True, exist_ok=True)
-        mgr._write_json(existing_data)
         console.print(f"  [green]✓[/green] LLM endpoints saved to {mgr.json_path}")
 
     def _configure_im_channels(self):

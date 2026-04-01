@@ -33,6 +33,12 @@ def _project_root() -> Path:
         return Path.cwd()
 
 
+def _read_endpoints_safe(ep_path: Path) -> dict | None:
+    """Read llm_endpoints.json with .bak fallback."""
+    from openakita.utils.atomic_io import read_json_safe
+    return read_json_safe(ep_path)
+
+
 def _endpoints_config_path() -> Path:
     """Return the canonical llm_endpoints.json path.
 
@@ -159,10 +165,6 @@ class EnvUpdateRequest(BaseModel):
     delete_keys: list[str] = []
 
 
-class EndpointsWriteRequest(BaseModel):
-    content: dict  # Full JSON content of llm_endpoints.json
-
-
 class SkillsWriteRequest(BaseModel):
     content: dict  # Full JSON content of skills.json
 
@@ -217,7 +219,10 @@ async def write_env(body: EnvUpdateRequest):
     - Non-empty values are upserted.
     - Empty string values are ignored (original value preserved).
     - Keys listed in ``delete_keys`` are explicitly removed.
+    - Uses atomic write with .bak backup to prevent corruption on crash.
     """
+    from openakita.utils.atomic_io import safe_write
+
     env_path = _project_root() / ".env"
     existing = ""
     if env_path.exists():
@@ -225,7 +230,7 @@ async def write_env(body: EnvUpdateRequest):
     new_content = _update_env_content(
         existing, body.entries, delete_keys=set(body.delete_keys)
     )
-    env_path.write_text(new_content, encoding="utf-8")
+    safe_write(env_path, new_content)
     for key, value in body.entries.items():
         if value:
             os.environ[key] = value
@@ -238,28 +243,12 @@ async def write_env(body: EnvUpdateRequest):
 
 @router.get("/api/config/endpoints")
 async def read_endpoints():
-    """Read data/llm_endpoints.json."""
+    """Read data/llm_endpoints.json, falling back to .bak if primary is corrupt."""
     ep_path = _endpoints_config_path()
-    if not ep_path.exists():
+    data = _read_endpoints_safe(ep_path)
+    if data is None:
         return {"endpoints": [], "raw": {}}
-    try:
-        data = json.loads(ep_path.read_text(encoding="utf-8"))
-        return {"endpoints": data.get("endpoints", []), "raw": data}
-    except Exception as e:
-        return {"error": str(e), "endpoints": [], "raw": {}}
-
-
-@router.post("/api/config/endpoints")
-async def write_endpoints(body: EndpointsWriteRequest):
-    """Write data/llm_endpoints.json."""
-    ep_path = _endpoints_config_path()
-    ep_path.parent.mkdir(parents=True, exist_ok=True)
-    ep_path.write_text(
-        json.dumps(body.content, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    logger.info("[Config API] Updated llm_endpoints.json (%s)", ep_path)
-    return {"status": "ok"}
+    return {"endpoints": data.get("endpoints", []), "raw": data}
 
 
 def _get_endpoint_manager():
@@ -337,6 +326,61 @@ async def endpoint_status():
     """Return key presence status for all configured endpoints."""
     mgr = _get_endpoint_manager()
     return {"endpoints": mgr.get_endpoint_status()}
+
+
+class ToggleEndpointRequest(BaseModel):
+    name: str
+    endpoint_type: str = "endpoints"
+
+
+class ReorderEndpointsRequest(BaseModel):
+    ordered_names: list[str]
+    endpoint_type: str = "endpoints"
+
+
+class UpdateSettingsRequest(BaseModel):
+    settings: dict
+
+
+@router.post("/api/config/toggle-endpoint")
+async def toggle_endpoint(body: ToggleEndpointRequest, request: Request):
+    """Toggle an endpoint's enabled/disabled state via EndpointManager."""
+    mgr = _get_endpoint_manager()
+    try:
+        updated = mgr.toggle_endpoint(body.name, endpoint_type=body.endpoint_type)
+    except (ValueError, Exception) as e:
+        logger.error("[Config API] toggle-endpoint failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+    _trigger_reload(request)
+    return {"status": "ok", "endpoint": updated, "version": mgr.get_version()}
+
+
+@router.post("/api/config/reorder-endpoints")
+async def reorder_endpoints(body: ReorderEndpointsRequest, request: Request):
+    """Reorder endpoints by name list via EndpointManager."""
+    mgr = _get_endpoint_manager()
+    try:
+        result = mgr.reorder_endpoints(
+            body.ordered_names, endpoint_type=body.endpoint_type,
+        )
+    except (ValueError, Exception) as e:
+        logger.error("[Config API] reorder-endpoints failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+    _trigger_reload(request)
+    return {"status": "ok", "endpoints": result, "version": mgr.get_version()}
+
+
+@router.post("/api/config/update-settings")
+async def update_endpoint_settings(body: UpdateSettingsRequest, request: Request):
+    """Merge settings into llm_endpoints.json via EndpointManager."""
+    mgr = _get_endpoint_manager()
+    try:
+        updated = mgr.update_settings(body.settings)
+    except Exception as e:
+        logger.error("[Config API] update-settings failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+    _trigger_reload(request)
+    return {"status": "ok", "settings": updated, "version": mgr.get_version()}
 
 
 def _trigger_reload(request: Request) -> bool:

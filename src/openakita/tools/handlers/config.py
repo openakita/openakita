@@ -421,13 +421,14 @@ class ConfigHandler:
             if not changes:
                 return f"❌ 所有修改都被拒绝:\n{error_lines}"
 
-        # 写入 .env
+        # 写入 .env（原子写入 + 备份）
         if env_entries:
+            from openakita.utils.atomic_io import safe_write
             existing = ""
             if env_path.exists():
                 existing = env_path.read_text(encoding="utf-8", errors="replace")
             new_content = _update_env_content(existing, env_entries)
-            env_path.write_text(new_content, encoding="utf-8")
+            safe_write(env_path, new_content)
 
             # 同步到 os.environ
             for key, value in env_entries.items():
