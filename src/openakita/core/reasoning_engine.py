@@ -803,6 +803,10 @@ class ReasoningEngine:
                 )
                 if retry_result == "retry":
                     _total_r = getattr(state, '_total_llm_retries', 1)
+                    await _emit_progress(
+                        f"⚠️ AI 服务响应异常，正在重试"
+                        f"（{_total_r}/{self.MAX_TOTAL_LLM_RETRIES}）..."
+                    )
                     _retry_sleep = min(2 * _total_r, 15)
                     _sleep = asyncio.create_task(asyncio.sleep(_retry_sleep))
                     _cw = asyncio.create_task(state.cancel_event.wait())
@@ -818,6 +822,9 @@ class ReasoningEngine:
                     continue
                 elif isinstance(retry_result, tuple):
                     current_model, working_messages = retry_result
+                    await _emit_progress(
+                        "🔄 当前模型不可用，正在切换到备用模型..."
+                    )
                     no_tool_call_count = 0
                     tools_executed_in_task = False
                     verify_incomplete_count = 0
@@ -1818,6 +1825,13 @@ class ReasoningEngine:
 
                     if retry_result == "retry":
                         _total_r = getattr(state, '_total_llm_retries', 1)
+                        yield {
+                            "type": "chain_text",
+                            "content": (
+                                f"⚠️ AI 服务响应异常，正在重试"
+                                f"（{_total_r}/{self.MAX_TOTAL_LLM_RETRIES}）..."
+                            ),
+                        }
                         _retry_sleep = min(2 * _total_r, 15)
                         _sleep = asyncio.create_task(asyncio.sleep(_retry_sleep))
                         _cw = asyncio.create_task(state.cancel_event.wait())
@@ -1838,6 +1852,10 @@ class ReasoningEngine:
                         continue
                     elif isinstance(retry_result, tuple):
                         current_model, working_messages = retry_result
+                        yield {
+                            "type": "chain_text",
+                            "content": "🔄 当前模型不可用，正在切换到备用模型...",
+                        }
                         no_tool_call_count = 0
                         tools_executed_in_task = False
                         verify_incomplete_count = 0
