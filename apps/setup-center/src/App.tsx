@@ -1608,31 +1608,6 @@ function MainApp() {
     }
   }
 
-  async function readEndpointsJson(): Promise<{ endpoints: any[]; settings: any }> {
-    if (!currentWorkspaceId && !shouldUseHttpApi()) return { endpoints: [], settings: {} };
-    try {
-      const raw = await readWorkspaceFile("data/llm_endpoints.json");
-      const parsed = raw ? JSON.parse(raw) : { endpoints: [], settings: {} };
-      const eps = Array.isArray(parsed?.endpoints) ? parsed.endpoints : [];
-      const settings = parsed?.settings && typeof parsed.settings === "object" ? parsed.settings : {};
-      return { endpoints: eps, settings };
-    } catch {
-      return { endpoints: [], settings: {} };
-    }
-  }
-
-  async function writeEndpointsJson(endpoints: any[], settings: any) {
-    // readWorkspaceFile and writeWorkspaceFile already do HTTP-first internally
-    let existing: any = {};
-    try {
-      const raw = await readWorkspaceFile("data/llm_endpoints.json");
-      existing = raw ? JSON.parse(raw) : {};
-    } catch { /* ignore */ }
-    const base = { ...existing, endpoints, settings: settings || {} };
-    const next = JSON.stringify(base, null, 2) + "\n";
-    await writeWorkspaceFile("data/llm_endpoints.json", next);
-  }
-
   // ── 配置读写路由 ──
   // 路由原则：
   //   后端运行中 (serviceStatus?.running) 或远程模式 → 必须走 HTTP API（后端负责持久化 + 热加载）
@@ -1688,7 +1663,14 @@ function MainApp() {
         if (relativePath === "data/llm_endpoints.json") {
           const res = await safeFetch(`${base}/api/config/endpoints`);
           const data = await res.json();
-          return JSON.stringify(data.raw || { endpoints: data.endpoints || [] });
+          const raw = data.raw;
+          const hasEndpoints = raw && typeof raw === "object" && Array.isArray(raw.endpoints) && raw.endpoints.length > 0;
+          if (hasEndpoints) return JSON.stringify(raw);
+          const fallback = { endpoints: data.endpoints || [] };
+          if (Array.isArray(raw?.compiler_endpoints)) fallback.compiler_endpoints = raw.compiler_endpoints;
+          if (Array.isArray(raw?.stt_endpoints)) fallback.stt_endpoints = raw.stt_endpoints;
+          if (raw?.settings) fallback.settings = raw.settings;
+          return JSON.stringify(fallback);
         }
         if (relativePath === "data/skills.json") {
           const res = await safeFetch(`${base}/api/config/skills`);
@@ -1717,18 +1699,6 @@ function MainApp() {
     if (shouldUseHttpApi()) {
       try {
         const base = httpApiBase();
-        if (relativePath === "data/llm_endpoints.json") {
-          await safeFetch(`${base}/api/config/endpoints`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: JSON.parse(content) }),
-          });
-          const reloaded = await triggerConfigReload();
-          if (!reloaded) {
-            toast.warning("配置已保存，但热重载未生效。建议重启后端服务以应用更改。", { duration: 6000 });
-          }
-          return;
-        }
         if (relativePath === "data/skills.json") {
           await safeFetch(`${base}/api/config/skills`, {
             method: "POST",
@@ -4068,69 +4038,54 @@ function MainApp() {
       }
 
       // ── STEP: llm-config (via HTTP API, after backend is ready) ──
-      if (savedEndpoints.length > 0) {
+      if (savedEndpoints.length > 0 || savedCompilerEndpoints.length > 0 || savedSttEndpoints.length > 0) {
         updateTask("llm-config", { status: "running" });
         logTask("保存 LLM 配置", "running");
-        if (httpReady) {
+        if (!httpReady) {
+          const msg = "HTTP 服务未就绪，无法保存 LLM 配置。请确保后端已启动。";
+          log(`⚠ ${msg}`);
+          updateTask("llm-config", { status: "error", detail: msg });
+          logTask("保存 LLM 配置", "error", msg);
+          hasErr = true;
+        } else {
           try {
             const base = httpApiBase();
-            for (const ep of savedEndpoints) {
-              const apiKey = envDraft[(ep as any).api_key_env] || "";
-              await safeFetch(`${base}/api/config/save-endpoint`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  endpoint: ep,
-                  api_key: apiKey || null,
-                  endpoint_type: "endpoints",
-                }),
-              });
+            let epErrors: string[] = [];
+            const allBatches: Array<{ eps: typeof savedEndpoints; type: string }> = [
+              { eps: savedEndpoints, type: "endpoints" },
+              { eps: savedCompilerEndpoints, type: "compiler_endpoints" },
+              { eps: savedSttEndpoints, type: "stt_endpoints" },
+            ];
+            for (const { eps, type } of allBatches) {
+              for (const ep of eps) {
+                const apiKey = envDraft[(ep as any).api_key_env] || "";
+                const res = await safeFetch(`${base}/api/config/save-endpoint`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    endpoint: ep,
+                    api_key: apiKey || null,
+                    endpoint_type: type,
+                  }),
+                });
+                const data = await res.json();
+                if (data.status === "error" || data.status === "conflict") {
+                  epErrors.push(`${(ep as any).name || type}: ${data.error || "unknown error"}`);
+                }
+              }
             }
-            for (const ep of savedCompilerEndpoints) {
-              const apiKey = envDraft[(ep as any).api_key_env] || "";
-              await safeFetch(`${base}/api/config/save-endpoint`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  endpoint: ep,
-                  api_key: apiKey || null,
-                  endpoint_type: "compiler_endpoints",
-                }),
-              });
+            if (epErrors.length > 0) {
+              const detail = epErrors.join("; ");
+              log(`⚠ 部分端点保存失败: ${detail}`);
+              updateTask("llm-config", { status: "error", detail: detail.slice(0, 120) });
+              logTask("保存 LLM 配置", "error", detail);
+              hasErr = true;
+            } else {
+              const total = savedEndpoints.length + savedCompilerEndpoints.length + savedSttEndpoints.length;
+              log(t("onboarding.progress.llmConfigSaved"));
+              updateTask("llm-config", { status: "done", detail: `${total} 个端点` });
+              logTask("保存 LLM 配置", "done", `${total} 个端点`);
             }
-            for (const ep of savedSttEndpoints) {
-              const apiKey = envDraft[(ep as any).api_key_env] || "";
-              await safeFetch(`${base}/api/config/save-endpoint`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  endpoint: ep,
-                  api_key: apiKey || null,
-                  endpoint_type: "stt_endpoints",
-                }),
-              });
-            }
-            log(t("onboarding.progress.llmConfigSaved"));
-            updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length + savedCompilerEndpoints.length + savedSttEndpoints.length} 个端点` });
-            logTask("保存 LLM 配置", "done", `${savedEndpoints.length + savedCompilerEndpoints.length + savedSttEndpoints.length} 个端点`);
-          } catch (e) {
-            log(`[!] LLM 配置保存失败: ${String(e)}`);
-            updateTask("llm-config", { status: "error", detail: String(e).slice(0, 120) });
-            logTask("保存 LLM 配置", "error", String(e));
-            hasErr = true;
-          }
-        } else {
-          log("[!] HTTP 服务未就绪，使用 Tauri 直接写入 LLM 配置");
-          try {
-            const llmData = { endpoints: savedEndpoints, compiler_endpoints: savedCompilerEndpoints, stt_endpoints: savedSttEndpoints, settings: {} };
-            await invoke("workspace_write_file", {
-              workspaceId: activeWsId,
-              relativePath: "data/llm_endpoints.json",
-              content: JSON.stringify(llmData, null, 2),
-            });
-            log(t("onboarding.progress.llmConfigSaved"));
-            updateTask("llm-config", { status: "done", detail: `${savedEndpoints.length} 个端点 (Tauri)` });
-            logTask("保存 LLM 配置", "done", `${savedEndpoints.length} 个端点 (Tauri 回退)`);
           } catch (e) {
             log(`[!] LLM 配置保存失败: ${String(e)}`);
             updateTask("llm-config", { status: "error", detail: String(e).slice(0, 120) });
