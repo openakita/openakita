@@ -234,6 +234,7 @@ def _verify_captcha(verify_param: str) -> bool:
 def _create_github_issue(
     report_id: str, report_type: str, title: str,
     summary: str, system_info: str, oss_path: str,
+    contact_email: str = "",
 ) -> str | None:
     token = os.environ.get("GITHUB_TOKEN", "")
     repo = os.environ.get("GITHUB_REPO", "")
@@ -268,6 +269,10 @@ def _create_github_issue(
         f"- **Report ID:** `{report_id}`",
         f"- **Type:** {report_type}",
         f"- **Created:** {datetime.now(timezone.utc).isoformat()}",
+    ]
+    if contact_email:
+        body_parts.append(f"- **Contact:** `{html.escape(contact_email)}`")
+    body_parts += [
         "",
         "## Description",
         summary or "(No description provided)",
@@ -975,7 +980,6 @@ def _handle_prepare(evt: dict) -> dict:
     system_info = body.get("system_info", "")
     captcha_param = body.get("captcha_verify_param", "")
     contact_email = body.get("contact_email", "")
-    contact_wechat = body.get("contact_wechat", "")
     client_ip = _get_client_ip(evt)
 
     if not report_id or not re.match(r"^[a-zA-Z0-9_-]+$", report_id):
@@ -1007,7 +1011,6 @@ def _handle_prepare(evt: dict) -> dict:
         "ip": client_ip,
         "date": date,
         "contact_email": contact_email[:200] if contact_email else "",
-        "contact_wechat": contact_wechat[:100] if contact_wechat else "",
         "email_unsubscribed": False,
         "developer_replies": [],
         "labels": [],
@@ -1089,6 +1092,7 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
         summary=metadata.get("summary", ""),
         system_info=metadata.get("system_info", ""),
         oss_path=zip_key,
+        contact_email=metadata.get("contact_email", ""),
     )
 
     if issue_url:

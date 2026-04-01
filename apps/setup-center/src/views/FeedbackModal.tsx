@@ -279,7 +279,6 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
         url = `${apiBase}/api/feature-request`;
       }
       form.append("contact_email", contactEmail.trim());
-      form.append("contact_wechat", "");
 
       const res = await fetch(url, {
         method: "POST",

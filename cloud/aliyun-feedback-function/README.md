@@ -260,7 +260,6 @@ openakita-feedback/
   "ip": "1.2.3.4",
   "date": "2026-03-08",
   "contact_email": "user@example.com",
-  "contact_wechat": "",
   "email_unsubscribed": false,
   "feedback_token": "aBcDeFgHiJkL_1234567890ab",
   "labels": ["bug", "status:open", "os:Windows"],
@@ -291,14 +290,12 @@ openakita-feedback/
   "summary": "点击设置后白屏...",
   "system_info": "OS: Windows 10 | Python: 3.11 | OpenAkita: 1.25.9",
   "contact_email": "user@example.com",
-  "contact_wechat": "wx_user123",
   "captcha_verify_param": "{\"sceneId\":\"xxx\",\"certifyId\":\"xxx\",\"deviceToken\":\"xxx==\",...}"
 }
 ```
 
 新增字段：
 - `contact_email`（可选）— 用户邮箱，用于接收开发者回复通知
-- `contact_wechat`（可选）— 用户微信号，预留字段供未来微信通知
 
 **响应（200）：**
 ```json

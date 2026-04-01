@@ -1477,7 +1477,10 @@
     "publicTypeFeature": "Feature",
     "publicTypeAll": "All types",
     "communityReply": "Community",
-    "publicViewOnGithub": "View on GitHub"
+    "publicViewOnGithub": "View on GitHub",
+    "publicSubmitter": "Submitter",
+    "publicLoadError": "Failed to load, possibly due to network timeout",
+    "publicRetry": "Retry"
   },
   "adv": {
     "networkSecurityTitle": "Network & Security",

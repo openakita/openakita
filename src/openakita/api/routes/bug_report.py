@@ -387,7 +387,6 @@ async def _upload_to_worker(
     captcha_verify_param: str,
     zip_bytes: bytes,
     contact_email: str = "",
-    contact_wechat: str = "",
 ) -> dict:
     """Upload feedback via pre-signed URL direct upload (three-phase flow).
 
@@ -421,7 +420,6 @@ async def _upload_to_worker(
                     "system_info": extra_info[:2000],
                     "captcha_verify_param": captcha_verify_param,
                     "contact_email": contact_email,
-                    "contact_wechat": contact_wechat,
                 },
                 timeout=15,
             )
@@ -533,7 +531,6 @@ async def _try_upload_or_save(
     captcha_verify_param: str,
     zip_bytes: bytes,
     contact_email: str = "",
-    contact_wechat: str = "",
 ) -> dict:
     """Try uploading to the cloud function. On failure, save locally and return
     a response that tells the frontend about the local fallback."""
@@ -549,7 +546,6 @@ async def _try_upload_or_save(
             captcha_verify_param=captcha_verify_param,
             zip_bytes=zip_bytes,
             contact_email=contact_email,
-            contact_wechat=contact_wechat,
         )
         await feedback_store.save_record(
             report_id=report_id,
@@ -632,7 +628,6 @@ async def _build_bug_zip(
     steps: str,
     sys_info: dict,
     contact_email: str,
-    contact_wechat: str,
     images: list[UploadFile] | None,
     upload_logs: bool,
     upload_debug: bool,
@@ -649,11 +644,8 @@ async def _build_bug_zip(
             "system_info": sys_info,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        if contact_email or contact_wechat:
-            metadata["contact"] = {
-                "email": contact_email,
-                "wechat": contact_wechat,
-            }
+        if contact_email:
+            metadata["contact"] = {"email": contact_email}
         zf.writestr(
             "metadata.json",
             json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -791,7 +783,6 @@ async def _upload_with_progress(
     extra_info: str,
     captcha_verify_param: str,
     contact_email: str,
-    contact_wechat: str,
     zip_bytes: bytes,
 ):
     """Async generator performing 3-phase upload with progress.
@@ -842,7 +833,6 @@ async def _upload_with_progress(
                     "system_info": extra_info[:2000],
                     "captcha_verify_param": captcha_verify_param,
                     "contact_email": contact_email,
-                    "contact_wechat": contact_wechat,
                 },
                 timeout=15,
             )
@@ -992,7 +982,6 @@ async def submit_bug_report(
     upload_logs: bool = Form(True),
     upload_debug: bool = Form(True),
     contact_email: str = Form(""),
-    contact_wechat: str = Form(""),
     images: list[UploadFile] | None = File(None),  # noqa: B008
 ):
     """Submit a bug report with system info, logs, and LLM debug files
@@ -1030,7 +1019,6 @@ async def submit_bug_report(
                 steps=steps,
                 sys_info=sys_info,
                 contact_email=contact_email,
-                contact_wechat=contact_wechat,
                 images=images,
                 upload_logs=upload_logs,
                 upload_debug=upload_debug,
@@ -1060,7 +1048,6 @@ async def submit_bug_report(
                 extra_info=sys_info_brief,
                 captcha_verify_param=captcha_verify_param,
                 contact_email=contact_email,
-                contact_wechat=contact_wechat,
                 zip_bytes=zip_bytes,
             ):
                 if evt_type in ("complete", "error"):
@@ -1108,7 +1095,6 @@ async def submit_feature_request(
     description: str = Form(...),
     captcha_verify_param: str = Form("none"),
     contact_email: str = Form(""),
-    contact_wechat: str = Form(""),
     images: list[UploadFile] | None = File(None),  # noqa: B008
 ):
     """Submit a feature/requirement request (SSE stream)."""
@@ -1139,10 +1125,7 @@ async def submit_feature_request(
                     "type": "feature",
                     "title": title,
                     "description": description,
-                    "contact": {
-                        "email": contact_email,
-                        "wechat": contact_wechat,
-                    },
+                    "contact": {"email": contact_email} if contact_email else {},
                     "created_at": time.strftime(
                         "%Y-%m-%dT%H:%M:%SZ"
                     ),
@@ -1164,14 +1147,7 @@ async def submit_feature_request(
                 ),
             })
 
-            contact_brief = " | ".join(
-                f for f in [
-                    f"Email: {contact_email}"
-                    if contact_email else "",
-                    f"WeChat: {contact_wechat}"
-                    if contact_wechat else "",
-                ] if f
-            ) or "(no contact)"
+            contact_brief = f"Email: {contact_email}" if contact_email else "(no contact)"
 
             result_data: dict = {}
             async for evt_type, evt_data in _upload_with_progress(
@@ -1182,7 +1158,6 @@ async def submit_feature_request(
                 extra_info=contact_brief,
                 captcha_verify_param=captcha_verify_param,
                 contact_email=contact_email,
-                contact_wechat=contact_wechat,
                 zip_bytes=zip_bytes,
             ):
                 if evt_type in ("complete", "error"):
@@ -1482,7 +1457,7 @@ async def public_feedback_search(
             resp = await client.get(
                 f"{endpoint.rstrip('/')}/issues/search",
                 params=params,
-                timeout=8,
+                timeout=15,
             )
             if resp.status_code == 200:
                 return resp.json()
@@ -1506,7 +1481,7 @@ async def public_feedback_issue(issue_number: int):
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{endpoint.rstrip('/')}/issues/{issue_number}",
-                timeout=8,
+                timeout=15,
             )
             if resp.status_code == 200:
                 return resp.json()

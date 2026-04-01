@@ -1477,7 +1477,10 @@
     "publicTypeFeature": "需求",
     "publicTypeAll": "全部类型",
     "communityReply": "社区",
-    "publicViewOnGithub": "在 GitHub 查看"
+    "publicViewOnGithub": "在 GitHub 查看",
+    "publicSubmitter": "提交者",
+    "publicLoadError": "加载失败，可能是网络超时",
+    "publicRetry": "重试"
   },
   "adv": {
     "networkSecurityTitle": "网络与安全",

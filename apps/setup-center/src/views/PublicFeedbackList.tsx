@@ -11,7 +11,7 @@ import {
 import {
   IconSearch, IconBug, IconZap, IconUser, IconLoader,
   IconChevronDown, IconChevronRight, IconMessageCircle,
-  IconSend, IconGlobe,
+  IconSend, IconGlobe, IconRefresh,
 } from "../icons";
 import { useMdModules } from "../hooks/useMdModules";
 
@@ -48,6 +48,7 @@ type IssueDetail = {
 type Props = {
   apiBaseUrl: string;
   serviceRunning: boolean;
+  refreshTrigger?: number;
 };
 
 const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
@@ -70,7 +71,7 @@ const SOURCE_COLORS: Record<string, string> = {
   community: "text-emerald-600 dark:text-emerald-400",
 };
 
-export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
+export function PublicFeedbackList({ apiBaseUrl, serviceRunning, refreshTrigger }: Props) {
   const { t } = useTranslation();
   const mdModules = useMdModules();
   const [query, setQuery] = useState("");
@@ -80,7 +81,8 @@ export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
   const [issues, setIssues] = useState<PublicIssue[]>([]);
   const [page, setPage] = useState(1);
   const [hasNext, setHasNext] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [expandedNumber, setExpandedNumber] = useState<number | null>(null);
   const [detail, setDetail] = useState<IssueDetail | null>(null);
@@ -100,21 +102,23 @@ export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
 
   const fetchIssues = useCallback(async (pg: number, append: boolean) => {
     if (!serviceRunning) return;
-    if (pg === 1) setLoading(true); else setLoadingMore(true);
+    if (pg === 1) { setLoading(true); setLoadError(false); } else setLoadingMore(true);
     try {
       const params = new URLSearchParams({
         q: debouncedQuery, page: String(pg), per_page: "20",
         state: stateFilter,
       });
       if (typeFilter) params.set("type", typeFilter);
-      const res = await safeFetch(`${apiBaseUrl}/api/feedback-public-search?${params}`);
+      const res = await safeFetch(`${apiBaseUrl}/api/feedback-public-search?${params}`, {
+        signal: AbortSignal.timeout(20_000),
+      });
       const data = await res.json();
       const items: PublicIssue[] = data.items ?? [];
       setIssues(prev => append ? [...prev, ...items] : items);
       setHasNext(data.has_next ?? false);
       setPage(pg);
     } catch {
-      if (!append) setIssues([]);
+      if (!append) { setIssues([]); setLoadError(true); }
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -127,6 +131,14 @@ export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
     fetchIssues(1, false);
   }, [fetchIssues]);
 
+  useEffect(() => {
+    if (refreshTrigger && refreshTrigger > 0) {
+      setExpandedNumber(null);
+      setDetail(null);
+      fetchIssues(1, false);
+    }
+  }, [refreshTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadMore = useCallback(() => {
     fetchIssues(page + 1, true);
   }, [fetchIssues, page]);
@@ -136,7 +148,9 @@ export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
     setDetailLoading(true);
     setReplyError(null);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/feedback-public-issue/${num}`);
+      const res = await safeFetch(`${apiBaseUrl}/api/feedback-public-issue/${num}`, {
+        signal: AbortSignal.timeout(20_000),
+      });
       const data: IssueDetail = await res.json();
       if (expandedRef.current === num) setDetail(data);
     } catch {
@@ -255,10 +269,18 @@ export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
 
       {/* Loading */}
       {loading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-14 bg-muted rounded-lg animate-pulse" />
-          ))}
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <IconLoader size={28} className="animate-spin text-muted-foreground/60" />
+          <p className="text-muted-foreground text-[13px]">{t("myFeedback.publicLoading")}</p>
+        </div>
+      ) : loadError && issues.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <IconMessageCircle size={40} className="text-muted-foreground/30" />
+          <p className="text-muted-foreground text-[14px]">{t("myFeedback.publicLoadError")}</p>
+          <Button variant="outline" size="sm" onClick={() => fetchIssues(1, false)} className="gap-1.5 mt-1">
+            <IconRefresh size={14} />
+            {t("myFeedback.publicRetry")}
+          </Button>
         </div>
       ) : issues.length === 0 ? (
         <div className="text-center py-16">
@@ -325,49 +347,53 @@ export function PublicFeedbackList({ apiBaseUrl, serviceRunning }: Props) {
                       ) : detail ? (
                         <div className="space-y-3 mt-2">
                           {detail.summary && (
-                            <div className="px-3 py-2 rounded-lg bg-muted/50 text-[13px] whitespace-pre-wrap break-words border border-border/30">
-                              {detail.summary}
+                            <div className="flex gap-2.5">
+                              <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                <IconUser size={14} />
+                              </div>
+                              <div className="max-w-[85%]">
+                                <div className="flex items-center gap-2 text-[12px]">
+                                  <span className="font-medium text-blue-600 dark:text-blue-400">
+                                    {t("myFeedback.publicSubmitter")}
+                                  </span>
+                                  <span className="text-muted-foreground">{formatDate(detail.created_at)}</span>
+                                </div>
+                                <div className="mt-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-[13px] whitespace-pre-wrap break-words">
+                                  {detail.summary}
+                                </div>
+                              </div>
                             </div>
                           )}
 
                           {detail.comments.length > 0 ? (
                             detail.comments.map((cm, i) => {
-                              const isUser = cm.source === "user_reply";
                               const isCommunity = cm.source === "community";
-                              const isRight = isUser || isCommunity;
-                              return isRight ? (
-                                <div key={i} className="flex justify-end gap-2.5">
-                                  <div className="max-w-[80%]">
-                                    <div className="flex items-center justify-end gap-2 text-[12px]">
-                                      <span className="text-muted-foreground">{formatDate(cm.created_at)}</span>
-                                      <span className={`font-medium ${SOURCE_COLORS[cm.source] ?? ""}`}>
-                                        {sourceLabel(cm.source)}
-                                      </span>
-                                    </div>
-                                    <div className={`mt-1 px-3 py-2 rounded-lg text-[13px] whitespace-pre-wrap break-words ${
-                                      isCommunity ? "bg-emerald-500/10" : "bg-blue-500/10"
-                                    }`}>
-                                      {cm.body}
-                                    </div>
-                                  </div>
-                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
-                                    isCommunity ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                  }`}>
-                                    <IconUser size={14} />
-                                  </div>
-                                </div>
-                              ) : (
+                              const isUserReply = cm.source === "user_reply";
+                              const isDev = !isCommunity && !isUserReply;
+                              const avatarClass = isDev
+                                ? "bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400"
+                                : isUserReply
+                                  ? "bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400"
+                                  : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400";
+                              const bubbleClass = isDev
+                                ? "bg-slate-100 dark:bg-slate-800 border border-border/50"
+                                : isUserReply
+                                  ? "bg-blue-50 dark:bg-blue-900/30"
+                                  : "bg-emerald-50 dark:bg-emerald-900/30";
+                              return (
                                 <div key={i} className="flex gap-2.5">
-                                  <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
-                                    {cm.author.charAt(0).toUpperCase()}
+                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5 ${avatarClass}`}>
+                                    {isDev ? cm.author.charAt(0).toUpperCase() : <IconUser size={14} />}
                                   </div>
-                                  <div className="max-w-[80%]">
+                                  <div className="max-w-[85%]">
                                     <div className="flex items-center gap-2 text-[12px]">
-                                      <span className="font-medium">{cm.author}</span>
+                                      <span className={`font-medium ${SOURCE_COLORS[cm.source] ?? ""}`}>
+                                        {isDev ? cm.author : sourceLabel(cm.source)}
+                                      </span>
                                       <span className="text-muted-foreground">{formatDate(cm.created_at)}</span>
                                     </div>
-                                    <div className="mt-1 px-3 py-2 rounded-lg bg-primary/5 border border-border/50 text-[13px] break-words inline-block">
-                                      {mdModules ? (
+                                    <div className={`mt-1 px-3 py-2 rounded-lg text-[13px] break-words ${bubbleClass}`}>
+                                      {isDev && mdModules ? (
                                         <div className="feedbackMdContent">
                                           <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>{cm.body}</mdModules.ReactMarkdown>
                                         </div>

@@ -97,6 +97,8 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
   const [records, setRecords] = useState<FeedbackRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [publicRefreshing, setPublicRefreshing] = useState(false);
+  const [publicRefreshTrigger, setPublicRefreshTrigger] = useState(0);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, FeedbackDetail>>({});
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
@@ -151,6 +153,12 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
     }
     setRefreshing(false);
   }, [apiBaseUrl, fetchRecords, expandedIds]);
+
+  const handlePublicRefresh = useCallback(() => {
+    setPublicRefreshing(true);
+    setPublicRefreshTrigger(n => n + 1);
+    setTimeout(() => setPublicRefreshing(false), 1500);
+  }, []);
 
   const batchRefreshRef = useRef(batchRefresh);
   batchRefreshRef.current = batchRefresh;
@@ -311,10 +319,9 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
 
   if (loading) {
     return (
-      <div className="p-6 space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />
-        ))}
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <IconLoader size={28} className="animate-spin text-muted-foreground/60" />
+        <p className="text-muted-foreground text-[13px]">{t("myFeedback.publicLoading")}</p>
       </div>
     );
   }
@@ -341,35 +348,35 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
             {t("myFeedback.tabAll")}
           </ToggleGroupItem>
         </ToggleGroup>
-        {activeTab === "mine" && (
-          <div className="flex items-center gap-2">
-            {onOpenFeedbackModal && (
-              <Button
-                size="sm"
-                disabled={!serviceRunning}
-                onClick={() => onOpenFeedbackModal()}
-                className="gap-1.5"
-              >
-                <IconPlus size={14} />
-                {t("myFeedback.submitFeedback")}
-              </Button>
-            )}
+        <div className="flex items-center gap-2">
+          {onOpenFeedbackModal && (
             <Button
-              variant="outline"
               size="sm"
-              disabled={refreshing || !serviceRunning}
-              onClick={batchRefresh}
+              disabled={!serviceRunning}
+              onClick={() => onOpenFeedbackModal()}
               className="gap-1.5"
             >
-              {refreshing ? <IconLoader size={14} className="animate-spin" /> : <IconRefresh size={14} />}
-              {t("myFeedback.refresh")}
+              <IconPlus size={14} />
+              {t("myFeedback.submitFeedback")}
             </Button>
-          </div>
-        )}
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={(activeTab === "mine" ? refreshing : publicRefreshing) || !serviceRunning}
+            onClick={activeTab === "mine" ? batchRefresh : handlePublicRefresh}
+            className="gap-1.5"
+          >
+            {(activeTab === "mine" ? refreshing : publicRefreshing)
+              ? <IconLoader size={14} className="animate-spin" />
+              : <IconRefresh size={14} />}
+            {t("myFeedback.refresh")}
+          </Button>
+        </div>
       </div>
 
       {activeTab === "all" ? (
-        <PublicFeedbackList apiBaseUrl={apiBaseUrl} serviceRunning={serviceRunning} />
+        <PublicFeedbackList apiBaseUrl={apiBaseUrl} serviceRunning={serviceRunning} refreshTrigger={publicRefreshTrigger} />
       ) : records.length === 0 ? (
         <div className="text-center py-16">
           <IconMessageCircle size={40} className="mx-auto mb-3 text-muted-foreground/30" />
@@ -514,11 +521,11 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                                 <span className="text-muted-foreground">{detail.created_at ? formatDate(detail.created_at) : formatDate(rec.submitted_at)}</span>
                                 <span className="font-medium text-blue-600 dark:text-blue-400">{t("myFeedback.originalDescription")}</span>
                               </div>
-                              <div className="mt-1 px-3 py-2 rounded-lg bg-blue-500/10 text-[13px] whitespace-pre-wrap break-words">
+                              <div className="mt-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-[13px] whitespace-pre-wrap break-words">
                                 {detail.summary}
                               </div>
                             </div>
-                            <div className="w-6 h-6 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                            <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
                               <IconUser size={14} />
                             </div>
                           </div>
@@ -534,17 +541,17 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                                     <span className="text-muted-foreground">{formatDate(reply.created_at)}</span>
                                     <span className="font-medium text-blue-600 dark:text-blue-400">{t("myFeedback.you")}</span>
                                   </div>
-                                  <div className="mt-1 px-3 py-2 rounded-lg bg-blue-500/10 text-[13px] whitespace-pre-wrap break-words">
+                                  <div className="mt-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-[13px] whitespace-pre-wrap break-words">
                                     {reply.body}
                                   </div>
                                 </div>
-                                <div className="w-6 h-6 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
                                   <IconUser size={14} />
                                 </div>
                               </div>
                             ) : (
                               <div key={i} className="flex gap-2.5">
-                                <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
+                                <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
                                   {reply.author.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="max-w-[80%]">
@@ -552,7 +559,7 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                                     <span className="font-medium">{reply.author}</span>
                                     <span className="text-muted-foreground">{formatDate(reply.created_at)}</span>
                                   </div>
-                                  <div className="mt-1 px-3 py-2 rounded-lg bg-primary/5 border border-border/50 text-[13px] break-words inline-block">
+                                  <div className="mt-1 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-border/50 text-[13px] break-words inline-block">
                                     {mdModules ? (
                                       <div className="feedbackMdContent">
                                         <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>{reply.body}</mdModules.ReactMarkdown>
