@@ -335,10 +335,11 @@ class LLMProvider(ABC):
     def _classify_error(error: str) -> str:
         """根据错误信息自动分类。
 
-        分类优先级: content_safety > quota > auth > structural > transient > unknown
+        分类优先级: content_safety > quota > auth > rate_limit(→transient) > structural > transient > unknown
         content_safety 必须最优先检测，否则 "data_inspection_failed" 中的
         "(400)" 或其他子串会被错误分到 STRUCTURAL，导致换端点重试浪费配额。
         quota 必须在 auth 之前检测，因为 403 配额耗尽也包含 "403" 关键字。
+        rate_limit 必须在 structural 之前检测，因为某些提供商 429 响应体含 "invalid_request"。
 
         返回 ``FailoverReason`` 枚举成员 (StrEnum, 与字符串互兼容)。
         """
@@ -386,6 +387,21 @@ class LLMProvider(ABC):
         ):
             return FailoverReason.AUTH
 
+        # 限速类（必须在 structural 之前，某些提供商 429 响应体含 "invalid_request"）#324
+        if any(
+            kw in err_lower
+            for kw in [
+                "rate limit",
+                "rate_limit",
+                "too many requests",
+                "rate reaches maximum",
+                "request rate",
+                "(429)",
+            ]
+        ):
+            return FailoverReason.TRANSIENT
+
+        # 结构性/格式类
         # 注意: 用 "(400)" 而非 "400"，避免匹配 HTML 中的 CSS 类名等内容
         if any(
             kw in err_lower
