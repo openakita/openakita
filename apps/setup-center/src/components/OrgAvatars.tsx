@@ -4,6 +4,15 @@
  */
 import React from "react";
 
+let _apiBase = "";
+export function setAvatarApiBase(base: string) { _apiBase = base; }
+
+function resolveAvatarUrl(raw: string): string {
+  if (raw.startsWith("http")) return raw;
+  if (raw.startsWith("/") && _apiBase) return _apiBase + raw;
+  return raw;
+}
+
 export interface AvatarPreset {
   id: string;
   bg: string;
@@ -297,15 +306,13 @@ export function OrgAvatar({
   const preset = !isCustom && avatarId ? AVATAR_MAP[avatarId] : undefined;
   const bg = preset?.bg ?? "#718096";
 
+  const radius = Math.max(size * 0.22, 4);
   const containerStyle: React.CSSProperties = {
     width: size,
     height: size,
-    borderRadius: "50%",
+    borderRadius: radius,
     background: isCustom ? "transparent" : bg,
-    position: "relative",
-    flexShrink: 0,
     overflow: "hidden",
-    cursor: onClick ? "pointer" : undefined,
     boxShadow: statusGlow && statusColor
       ? `0 0 8px ${statusColor}`
       : "0 1px 3px rgba(0,0,0,0.18)",
@@ -313,41 +320,51 @@ export function OrgAvatar({
     ...style,
   };
 
+  const wrapperStyle: React.CSSProperties = {
+    position: "relative",
+    width: size,
+    height: size,
+    flexShrink: 0,
+    cursor: onClick ? "pointer" : undefined,
+  };
+
   return (
-    <div onClick={onClick} style={containerStyle}>
-      {isCustom ? (
-        <img
-          src={avatarId!}
-          alt="avatar"
-          style={{
-            width: size,
-            height: size,
-            borderRadius: "50%",
-            objectFit: "cover",
-            display: "block",
-          }}
-        />
-      ) : (
-        <svg
-          viewBox="0 0 40 40"
-          width={size}
-          height={size}
-          style={{ display: "block", color: bg }}
-        >
-          {preset ? preset.icon("#fff") : (
-            <g>
-              <Head fill="#fff" />
-              <Shoulders fill="#fff" />
-            </g>
-          )}
-        </svg>
-      )}
+    <div onClick={onClick} style={wrapperStyle}>
+      <div style={containerStyle}>
+        {isCustom ? (
+          <img
+            src={resolveAvatarUrl(avatarId!)}
+            alt="avatar"
+            style={{
+              width: size,
+              height: size,
+              borderRadius: radius,
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ) : (
+          <svg
+            viewBox="0 0 40 40"
+            width={size}
+            height={size}
+            style={{ display: "block", color: bg }}
+          >
+            {preset ? preset.icon("#fff") : (
+              <g>
+                <Head fill="#fff" />
+                <Shoulders fill="#fff" />
+              </g>
+            )}
+          </svg>
+        )}
+      </div>
       {statusColor && (
         <div
           style={{
             position: "absolute",
-            bottom: 0,
-            right: 0,
+            bottom: -1,
+            right: -1,
             width: Math.max(size * 0.25, 7),
             height: Math.max(size * 0.25, 7),
             borderRadius: "50%",

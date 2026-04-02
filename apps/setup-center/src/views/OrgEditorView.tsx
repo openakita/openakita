@@ -2026,13 +2026,6 @@ export function OrgEditorView({
             >
               <IconRadar size={13} /> {!isMobile && "实况"}
             </button>
-            <button
-              className={`org-tb-btn${!layoutLocked ? " org-tb-btn--active" : ""}`}
-              onClick={() => setLayoutLocked((v) => !v)}
-              title={layoutLocked ? "解锁布局（可拖拽/连线）" : "锁定布局（防止误操作）"}
-            >
-              <IconSitemap size={13} /> {!isMobile && (layoutLocked ? "拖拽关" : "拖拽开")}
-            </button>
             <button className="org-tb-btn" onClick={handleSave} disabled={saving} title="保存">
               <IconSave size={13} /> {saving ? "..." : (!isMobile && "保存")}
             </button>
@@ -2388,11 +2381,37 @@ export function OrgEditorView({
                   <button className="org-cvs-btn" title="自动布局" onClick={() => { setNodes(computeTreeLayout(nodes, edges)); }}>
                     <IconSitemap size={13} /> 布局
                   </button>
+                  <button
+                    className={`org-cvs-btn${!layoutLocked ? " org-cvs-btn--active" : ""}`}
+                    onClick={() => setLayoutLocked((v) => !v)}
+                    title={layoutLocked ? "解锁拖拽与连线" : "锁定布局，防止误操作"}
+                  >
+                    <IconSitemap size={13} /> {layoutLocked ? "拖拽关" : "拖拽开"}
+                  </button>
                   {selectedNodeId && (
                     <button className="org-cvs-btn org-cvs-btn--danger" onClick={handleDeleteNode} title="删除选中节点">
                       <IconTrash size={13} />
                     </button>
                   )}
+                </div>
+                <div className="org-edge-legend">
+                  {([
+                    { type: "hierarchy", label: "上下级", dash: false },
+                    { type: "collaborate", label: "协作", dash: true },
+                    { type: "escalate", label: "上报", dash: false },
+                    { type: "consult", label: "咨询", dash: false },
+                  ] as const).map((e) => (
+                    <span key={e.type} className="org-edge-legend-item">
+                      <span
+                        className="org-edge-legend-line"
+                        style={{
+                          background: e.dash ? "transparent" : EDGE_COLORS[e.type],
+                          borderBottom: e.dash ? `2px dashed ${EDGE_COLORS[e.type]}` : undefined,
+                        }}
+                      />
+                      {e.label}
+                    </span>
+                  ))}
                 </div>
               </Panel>
               {!isMobile && <CollapsibleMiniMap edgeColors={EDGE_COLORS} />}
@@ -2745,8 +2764,27 @@ export function OrgEditorView({
               transition: background 0.15s;
             }
             .org-cvs-btn:hover { background: rgba(99,102,241,0.15); }
+            .org-cvs-btn--active { color: var(--primary, #6366f1); font-weight: 600; }
             .org-cvs-btn--danger { color: #ef4444; }
             .org-cvs-btn--danger:hover { background: rgba(239,68,68,0.15); }
+
+            .org-edge-legend {
+              display: flex; align-items: center; gap: 8px;
+              margin-top: 4px; padding: 3px 8px;
+              background: var(--card-bg, rgba(30,41,59,0.85));
+              border: 1px solid var(--line, rgba(51,65,85,0.5));
+              border-radius: 6px;
+              backdrop-filter: blur(8px);
+            }
+            .org-edge-legend-item {
+              display: inline-flex; align-items: center; gap: 4px;
+              font-size: 10px; color: var(--muted, #94a3b8);
+              white-space: nowrap;
+            }
+            .org-edge-legend-line {
+              display: inline-block; width: 16px; height: 2px;
+              border-radius: 1px; flex-shrink: 0;
+            }
 
             .org-tb-stats {
               display: flex; gap: 6px; align-items: center;
@@ -3430,7 +3468,7 @@ export function OrgEditorView({
                   <label
                     title="上传自定义头像"
                     style={{
-                      width: 36, height: 36, borderRadius: "50%",
+                      width: 36, height: 36, borderRadius: 8,
                       border: "2px dashed var(--muted, #9ca3af)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       cursor: "pointer", opacity: 0.6, transition: "opacity .15s",

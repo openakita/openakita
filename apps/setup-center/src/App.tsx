@@ -16,6 +16,7 @@ import { IdentityView } from "./views/IdentityView";
 import { AgentDashboardView } from "./views/AgentDashboardView";
 import { AgentManagerView } from "./views/AgentManagerView";
 import { OrgEditorView } from "./views/OrgEditorView";
+import { setAvatarApiBase } from "./components/OrgAvatars";
 import { FeedbackModal, type FeedbackPrefill } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
@@ -333,6 +334,7 @@ export function App() {
     : IS_WEB ? ""
     : (localStorage.getItem("openakita_apiBaseUrl") || "http://127.0.0.1:18900"),
   );
+  useEffect(() => { setAvatarApiBase(apiBaseUrl); }, [apiBaseUrl]);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [connectAddress, setConnectAddress] = useState("");
 
