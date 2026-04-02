@@ -85,7 +85,7 @@ import { useVersionCheck } from "./hooks/useVersionCheck";
 import { useEnvManager } from "./hooks/useEnvManager";
 import { AdvancedView } from "./views/AdvancedView";
 
-const THEME_I18N_KEYS: Record<Theme, string> = { system: "topbar.themeSystem", dark: "topbar.themeDark", light: "topbar.themeLight" };
+const THEME_I18N_KEYS: Record<Theme, string> = { system: "topbar.themeSystem", dark: "topbar.themeDark", light: "topbar.themeLight", "daltonized-light": "topbar.themeDaltonizedLight", "daltonized-dark": "topbar.themeDaltonizedDark", "high-contrast": "topbar.themeHighContrast" };
 
 /** Health-check timeout for recurring monitoring (heartbeat + refreshStatus).
  *  Startup/one-shot probes keep their own shorter timeouts.
@@ -4712,7 +4712,7 @@ export function App() {
           currentWorkspaceId={currentWorkspaceId}
           envDraft={envDraft}
           onEnvChange={setEnvDraft}
-          onSaveEnvKeys={saveEnvKeys}
+          onSaveEnvKeys={async (keys: string[]) => { await saveEnvKeys(keys); }}
           apiBaseUrl={apiBaseUrl}
           serviceRunning={!!serviceStatus?.running}
           dataMode={dataMode}

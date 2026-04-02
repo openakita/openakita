@@ -969,7 +969,7 @@ export function ChatView({
     fileInputRef, pastedLargeText, setPastedLargeText, dragOver, setDragOver,
     handleFileSelect, handlePaste,
   } = useAttachments({
-    uploadFile, apiBaseRef, setPendingAttachments, activeConvId: activeConvId,
+    uploadFile, apiBaseRef, setPendingAttachments, activeConvId: activeConvId ?? "",
   });
 
   const {
@@ -2257,8 +2257,8 @@ export function ChatView({
                 break;
               case "security_confirm": {
                 const secEvent = {
-                  tool: event.tool, args: event.args, reason: event.reason,
-                  risk_level: event.risk_level, needs_sandbox: event.needs_sandbox, id: event.id,
+                  tool: event.tool as string, args: event.args as Record<string, unknown>, reason: event.reason as string,
+                  risk_level: event.risk_level as string, needs_sandbox: event.needs_sandbox as boolean, id: (event.id ?? "") as string,
                 };
                 if (secEvent.id && checkAutoAllow(secEvent)) {
                   logger.info("Chat.Security", "auto.allow", { tool: event.tool, riskLevel: event.risk_level, mode: permissionMode });
@@ -4301,7 +4301,7 @@ export function ChatView({
         onClose={closeLightbox}
         downloadFile={downloadFile}
         showInFolder={showInFolder}
-        t={t}
+        t={t as unknown as (...args: unknown[]) => string}
       />}
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
 

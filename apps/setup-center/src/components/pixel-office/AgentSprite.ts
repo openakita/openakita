@@ -55,9 +55,11 @@ export class AgentSprite {
     this.sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (pointer.rightButtonDown()) {
         pointer.event.preventDefault();
-        this.onAgentContextMenu?.(this.nodeId, this.config, pointer.event.clientX, pointer.event.clientY);
+        const ce = pointer.event as MouseEvent;
+        this.onAgentContextMenu?.(this.nodeId, this.config, ce.clientX, ce.clientY);
       } else {
-        this.onAgentClick?.(this.nodeId, this.config, pointer.event.clientX, pointer.event.clientY);
+        const ce = pointer.event as MouseEvent;
+        this.onAgentClick?.(this.nodeId, this.config, ce.clientX, ce.clientY);
       }
     });
 
