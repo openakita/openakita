@@ -192,7 +192,6 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const tasks = selectedProject?.tasks || [];
 
   const projectStats = useMemo(() => {
-    if (!tasks.length) return null;
     const total = tasks.length;
     const done = tasks.filter(t => t.status === "accepted").length;
     const inProgress = tasks.filter(t => t.status === "in_progress").length;
@@ -217,7 +216,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         .opb-root {
           height: 100%; display: flex; flex-direction: column;
           overflow: hidden; background: var(--bg-app);
-          font-size: 13px; color: var(--text, #e2e8f0);
+          font-size: 13px; color: var(--text);
         }
         .opb-header {
           display: flex; align-items: center; gap: 10px;
@@ -238,8 +237,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           background: #4f46e5; color: #fff !important;
         }
         .opb-proj-btn--inactive {
-          background: var(--bg-subtle, rgba(100,116,139,0.08)); color: var(--text, #e2e8f0);
-          border: 1px solid var(--line, rgba(51,65,85,0.4));
+          background: var(--bg-subtle, rgba(100,116,139,0.08)); color: var(--text);
+          border: 1px solid var(--line, rgba(100,116,139,0.2));
         }
         .opb-proj-btn--inactive:hover { border-color: var(--primary, #6366f1); color: var(--primary, #6366f1); background: var(--nav-hover, rgba(99,102,241,0.08)); }
         .opb-type-tag {
@@ -264,11 +263,11 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         .opb-proj-del:hover { opacity: 1; }
         .opb-proj-confirm {
           position: absolute; left: 0; top: 100%; z-index: 10;
-          background: var(--card-bg, #1e293b); border: 1px solid var(--line);
+          background: var(--card-bg); border: 1px solid var(--line);
           border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
           display: flex; gap: 6px; align-items: center; font-size: 11px;
           white-space: nowrap; margin-top: 4px;
-          color: var(--text, #e2e8f0);
+          color: var(--text);
         }
         .opb-view-tabs {
           display: flex; gap: 0; margin-left: auto;
@@ -461,7 +460,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                 <span>确认删除项目？</span>
                 <button className="opb-action-btn" style={{ background: "#ef4444", color: "#fff", fontSize: 10, padding: "2px 8px" }}
                   onClick={() => { deleteProject(p.id); setConfirmDeleteProjectId(null); }}>删除</button>
-                <button className="opb-action-btn" style={{ fontSize: 10, padding: "2px 8px", background: "transparent", color: "var(--text, #e2e8f0)", border: "1px solid var(--line)" }}
+                <button className="opb-action-btn" style={{ fontSize: 10, padding: "2px 8px", background: "transparent", color: "var(--text)", border: "1px solid var(--line)" }}
                   onClick={() => setConfirmDeleteProjectId(null)}>取消</button>
               </div>
             )}
@@ -488,35 +487,38 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       </div>
 
       {/* ── Stats bar ── */}
-      {selectedProject && projectStats && (
+      {selectedProject && (
         <div className="opb-stats">
-          <div className="opb-stat-item">
-            <span className="opb-stat-num">{projectStats.total}</span>
-            <span className="opb-stat-label">总任务</span>
-          </div>
-          <div className="opb-stat-item">
-            <span className="opb-stat-num" style={{ color: "#3b82f6" }}>{projectStats.inProgress}</span>
-            <span className="opb-stat-label">进行中</span>
-          </div>
-          <div className="opb-stat-item">
-            <span className="opb-stat-num" style={{ color: "#22c55e" }}>{projectStats.done}</span>
-            <span className="opb-stat-label">已完成</span>
-          </div>
-          {projectStats.blocked > 0 && (
+          {projectStats.total > 0 && (<>
             <div className="opb-stat-item">
-              <span className="opb-stat-num" style={{ color: "#ef4444" }}>{projectStats.blocked}</span>
-              <span className="opb-stat-label">异常</span>
+              <span className="opb-stat-num">{projectStats.total}</span>
+              <span className="opb-stat-label">总任务</span>
             </div>
-          )}
+            <div className="opb-stat-item">
+              <span className="opb-stat-num" style={{ color: "#3b82f6" }}>{projectStats.inProgress}</span>
+              <span className="opb-stat-label">进行中</span>
+            </div>
+            <div className="opb-stat-item">
+              <span className="opb-stat-num" style={{ color: "#22c55e" }}>{projectStats.done}</span>
+              <span className="opb-stat-label">已完成</span>
+            </div>
+            {projectStats.blocked > 0 && (
+              <div className="opb-stat-item">
+                <span className="opb-stat-num" style={{ color: "#ef4444" }}>{projectStats.blocked}</span>
+                <span className="opb-stat-label">异常</span>
+              </div>
+            )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, marginLeft: 8 }}>
-            <div className="opb-progress-bar">
-              {projectStats.done > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
-              {projectStats.delivered > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
-              {projectStats.inProgress > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, marginLeft: 8 }}>
+              <div className="opb-progress-bar">
+                {projectStats.done > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
+                {projectStats.delivered > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
+                {projectStats.inProgress > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
+              </div>
+              <span className="opb-pct">{projectStats.pct}%</span>
             </div>
-            <span className="opb-pct">{projectStats.pct}%</span>
-          </div>
+          </>)}
+          {projectStats.total === 0 && <div style={{ flex: 1 }} />}
 
           <button
             className="opb-action-btn"
@@ -792,9 +794,11 @@ function GanttView({
                           {dispatchingTaskId === task.id ? "…" : "派发"}
                         </button>
                       )}
-                      {task.status === "in_progress" && (
-                        <span style={{ fontSize: 10, color: "#3b82f6", fontWeight: 500 }}>⏳ 执行中（节点自动交付）</span>
-                      )}
+                      {task.status === "in_progress" && (<>
+                        <span style={{ fontSize: 10, color: "#3b82f6", fontWeight: 500 }}>⏳ 执行中</span>
+                        <button className="opb-action-btn" style={{ color: "#ef4444", fontSize: 10, padding: "2px 6px" }}
+                          onClick={() => onStatusChange(task.id, "blocked")} title="中止任务">⏹ 中止</button>
+                      </>)}
                       {task.status === "delivered" && (<>
                         <button className="opb-action-btn" style={{ background: "#22c55e", color: "#fff", fontSize: 10, padding: "2px 6px" }}
                           onClick={() => onStatusChange(task.id, "accepted")}>✓ 验收</button>
@@ -904,9 +908,11 @@ function KanbanView({
                               onClick={() => onStatusChange(task.id, "in_progress")}>▶</button>
                           </>
                         )}
-                        {col.key === "in_progress" && (
-                          <span style={{ fontSize: 9, color: "#3b82f6" }}>⏳ 自动交付</span>
-                        )}
+                        {col.key === "in_progress" && (<>
+                          <span style={{ fontSize: 9, color: "#3b82f6" }}>⏳ 执行中</span>
+                          <button className="opb-action-btn" style={{ color: "#ef4444", fontSize: 9, padding: "1px 4px" }}
+                            onClick={() => onStatusChange(task.id, "blocked")} title="中止任务">⏹</button>
+                        </>)}
                         {col.key === "delivered" && (
                           <>
                             <button className="opb-action-btn" style={{ background: "#22c55e", color: "#fff", fontSize: 10, padding: "1px 5px" }}
