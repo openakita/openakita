@@ -140,6 +140,15 @@ def classify_error(
             retry_suggestion="请确认文件路径是否正确",
         )
 
+    if isinstance(error, IsADirectoryError):
+        return ToolError(
+            error_type=ErrorType.VALIDATION,
+            tool_name=tool_name,
+            message=error_msg,
+            retry_suggestion="该路径是目录而非文件，请使用 list_directory 查看目录内容",
+            alternative_tools=["list_directory"],
+        )
+
     if isinstance(error, PermissionError):
         return ToolError(
             error_type=ErrorType.PERMISSION,

@@ -81,6 +81,9 @@ class FileTool:
         file_path = self._resolve_path(path)
         logger.debug(f"Reading file: {file_path}")
 
+        if file_path.is_dir():
+            raise IsADirectoryError(f"'{file_path}' 是一个目录而非文件")
+
         # Office 文档：尝试提取文本内容
         suffix = file_path.suffix.lower()
         if suffix in (".docx", ".xlsx", ".pptx", ".pdf"):
