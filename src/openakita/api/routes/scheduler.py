@@ -222,9 +222,11 @@ async def delete_task(request: Request, task_id: str):
     if not task.deletable:
         return {"error": "System task cannot be deleted, use disable instead"}
 
-    success = await scheduler.remove_task(task_id)
-    if not success:
-        return {"error": "Delete failed"}
+    result = await scheduler.remove_task(task_id)
+    if result == "system_task":
+        return {"error": "System task cannot be deleted, use disable instead"}
+    if result == "not_found":
+        return {"error": "Task not found"}
 
     _notify_scheduler_change("delete")
     return {"status": "ok", "task_id": task_id}

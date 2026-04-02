@@ -629,6 +629,10 @@ class SkillLoader:
                 proc.kill()
                 proc.communicate()
                 return False, "Script execution timed out"
+            except Exception as comm_err:
+                proc.kill()
+                proc.wait()
+                return False, f"Script communication failed: {comm_err}"
 
             truncated = False
             stdout_bytes = raw_stdout[:MAX_OUTPUT_BYTES] if raw_stdout else b""

@@ -210,7 +210,6 @@ class SkillsHandler:
         total_chars = len(content)
         overflow_path = save_overflow(tool_name, content)
         truncated = content[:SKILL_MAX_CHARS]
-        overflow_name = Path(overflow_path).name if overflow_path else "overflow.txt"
         hint = (
             f"\n\n{OVERFLOW_MARKER} 技能内容共 {total_chars} 字符，"
             f"已截断到前 {SKILL_MAX_CHARS} 字符。\n"
@@ -287,7 +286,8 @@ class SkillsHandler:
         resolved_cwd: Path | None = None
         if cwd_raw:
             resolved_cwd = Path(cwd_raw).resolve()
-            project_root = Path(self.agent.settings.get("project_root", ".")).resolve()
+            from openakita.config import settings as _settings
+            project_root = Path(_settings.project_root).resolve()
             skill_entry = self.agent.skill_registry.get(skill_name)
             skill_dir = Path(skill_entry.skill_path).resolve() if skill_entry and skill_entry.skill_path else None
 

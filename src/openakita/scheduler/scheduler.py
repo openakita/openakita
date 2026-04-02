@@ -88,6 +88,11 @@ class TaskScheduler:
             Callable[[ScheduledTask], Awaitable[None]] | None
         ) = None
 
+        # 回调：启动时有 missed 任务汇总通知
+        self.on_missed_tasks_summary: (
+            Callable[[list[ScheduledTask]], Awaitable[None]] | None
+        ) = None
+
         # 加载任务
         self._load_tasks()
         self._load_executions()
@@ -101,20 +106,33 @@ class TaskScheduler:
         # 注意：只有 next_run 为空或已严重过期的任务才重新计算
         # 避免程序重启导致任务立即执行
         now = datetime.now()
+        missed_tasks: list[ScheduledTask] = []
+
         for task in self._tasks.values():
             if task.is_active:
                 if task.next_run is None:
-                    # 没有 next_run，需要计算
                     self._update_next_run(task)
                 elif task.next_run < now:
-                    # next_run 已过期，重新计算（但不设为立即执行）
+                    missed_tasks.append(task)
                     self._recalculate_missed_run(task, now)
-                # 如果 next_run 在未来，保持不变
+
+        self._save_tasks()
 
         # 启动调度循环
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
         logger.info(f"TaskScheduler started with {len(self._tasks)} tasks")
+
+        # 异步通知 missed 任务
+        if missed_tasks and self.on_missed_tasks_summary:
+            asyncio.ensure_future(self._notify_missed_tasks(missed_tasks))
+
+    async def _notify_missed_tasks(self, missed: list[ScheduledTask]) -> None:
+        """安全调用 missed 任务汇总通知"""
+        try:
+            await self.on_missed_tasks_summary(missed)
+        except Exception as e:
+            logger.debug(f"on_missed_tasks_summary callback error: {e}")
 
     async def stop(self, graceful_timeout: float = 30.0) -> None:
         """停止调度器，优雅等待运行中的任务完成"""
@@ -154,16 +172,28 @@ class TaskScheduler:
 
     # ==================== 任务管理 ====================
 
+    MAX_TASKS = 200  # 用户任务数上限，防止无限创建
+
     async def add_task(self, task: ScheduledTask) -> str:
         """
         添加任务
 
         Returns:
             任务 ID
+
+        Raises:
+            ValueError: 任务 ID 重复或达到上限
         """
         async with self._lock:
             if task.id in self._tasks:
                 raise ValueError(f"Task with id {task.id!r} already exists")
+
+            user_tasks = [t for t in self._tasks.values() if t.deletable]
+            if len(user_tasks) >= self.MAX_TASKS:
+                raise ValueError(
+                    f"已达到任务数量上限（{self.MAX_TASKS}），"
+                    f"请先取消不需要的任务再创建新任务"
+                )
 
             trigger = Trigger.from_config(task.trigger_type.value, task.trigger_config)
 
@@ -178,7 +208,7 @@ class TaskScheduler:
         logger.info(f"Added task: {task.id} ({task.name}), next run: {task.next_run}")
         return task.id
 
-    async def remove_task(self, task_id: str, force: bool = False) -> bool:
+    async def remove_task(self, task_id: str, force: bool = False) -> str:
         """
         删除任务
 
@@ -187,11 +217,11 @@ class TaskScheduler:
             force: 强制删除（即使是系统任务）
 
         Returns:
-            是否删除成功
+            "ok" 成功, "not_found" 不存在, "system_task" 系统任务不可删
         """
         async with self._lock:
             if task_id not in self._tasks:
-                return False
+                return "not_found"
 
             task = self._tasks[task_id]
 
@@ -199,7 +229,7 @@ class TaskScheduler:
                 logger.warning(
                     f"Task {task_id} is a system task and cannot be deleted. Use disable instead."
                 )
-                return False
+                return "system_task"
 
             task.cancel()
 
@@ -209,7 +239,7 @@ class TaskScheduler:
             self._save_tasks()
 
         logger.info(f"Removed task: {task_id}")
-        return True
+        return "ok"
 
     _UPDATABLE_FIELDS: set[str] = {
         "name", "description", "prompt", "reminder_message",
@@ -323,28 +353,31 @@ class TaskScheduler:
 
     # ==================== 调度循环 ====================
 
+    @staticmethod
+    def _deterministic_jitter(task_id: str, max_jitter_seconds: int = 10) -> float:
+        """基于 task_id 的确定性抖动，防止多任务同时触发雷群"""
+        return (hash(task_id) % (max_jitter_seconds * 1000)) / 1000.0
+
     async def _scheduler_loop(self) -> None:
         """调度循环"""
         while self._running:
             try:
                 now = datetime.now()
 
-                # 检查需要执行的任务
                 for task_id, task in list(self._tasks.items()):
                     if not task.is_active:
                         continue
 
                     if task_id in self._running_tasks:
-                        continue  # 正在执行
+                        continue
 
-                    # 提前 advance_seconds 秒执行，补偿 Agent 初始化和 LLM 调用延迟
                     if task.next_run:
-                        trigger_time = task.next_run - timedelta(seconds=self.advance_seconds)
+                        jitter = self._deterministic_jitter(task_id)
+                        trigger_time = task.next_run - timedelta(
+                            seconds=self.advance_seconds - jitter
+                        )
                         if now >= trigger_time:
-                            # 重要：先标记为运行中，防止重复触发！
-                            # 必须在 create_task 之前执行
                             self._running_tasks.add(task_id)
-                            # 异步执行任务
                             asyncio.create_task(self._run_task_safe(task))
 
                 await asyncio.sleep(self.check_interval)

@@ -20,7 +20,7 @@ function FloatingTodoStepItem({ step, idx }: { step: ChatTodoStep; idx: number }
     : step.status === "failed" ? "rgba(239,68,68,1)"
     : step.status === "cancelled" ? "var(--muted)"
     : step.status === "skipped" ? "var(--muted)" : "var(--muted)";
-  const descText = typeof step.description === "string" ? step.description : JSON.stringify(step.description);
+  const descText = (typeof step.description === "string" ? step.description : JSON.stringify(step.description)) || "（无描述）";
   const resultText = step.result
     ? (typeof step.result === "string" ? step.result : JSON.stringify(step.result))
     : null;
@@ -58,7 +58,7 @@ export function FloatingPlanBar({ plan }: { plan: ChatTodo }) {
         <div className="floatingTodoHeaderLeft">
           <IconClipboard size={14} style={{ opacity: 0.6 }} />
           <span className="floatingTodoTitle">
-            {typeof plan.taskSummary === "string" ? plan.taskSummary : JSON.stringify(plan.taskSummary)}
+            {(typeof plan.taskSummary === "string" ? plan.taskSummary : JSON.stringify(plan.taskSummary)) || "任务进行中"}
           </span>
         </div>
         <div className="floatingTodoHeaderRight">

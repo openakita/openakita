@@ -417,8 +417,8 @@ class PlanHandler:
             plan_id = _plan["id"]
             status = self._get_status()
             return (
-                f"⚠️ 已有活跃计划 {plan_id}，不允许重复创建。\n"
-                f"请使用 update_todo_step 继续执行当前计划。\n\n{status}"
+                f"⚠️ 已有活跃计划（{plan_id}），请先完成当前计划再创建新的。\n"
+                f"如需继续，请逐步更新步骤状态。\n\n{status}"
             )
 
         # 状态不一致兜底：_session_active_todos 有记录但本实例无 plan 数据
@@ -536,16 +536,16 @@ class PlanHandler:
             if cid and has_active_todo(cid):
                 logger.warning(f"[Todo] update_step: todo data lost for {cid}, force-closing stale registration")
                 force_close_plan(cid)
-            return "❌ 当前没有活动的计划，请先调用 create_todo"
+            return "❌ 当前没有活动的计划，请先创建一个任务计划"
 
         step_id = str(params.get("step_id", "")).strip()
         status = str(params.get("status", "")).strip()
         result = params.get("result", "")
 
         if not step_id:
-            return "❌ step_id 为必填项，请指定要更新的步骤 ID"
+            return "❌ 请指定要更新的步骤"
         if not status:
-            return "❌ status 为必填项，请指定目标状态"
+            return "❌ 请指定步骤的目标状态（如 in_progress、completed、failed、skipped）"
 
         _VALID_TRANSITIONS: dict[str, set[str]] = {
             "pending": {"in_progress", "skipped", "cancelled"},
@@ -655,9 +655,9 @@ class PlanHandler:
                 next_step = pending_steps[0]
                 response += f"\n\n💡 下一步：{next_step.get('description', next_step['id'])}"
             else:
-                response += "\n\n✅ 所有步骤已完成，请调用 complete_todo 结束计划。"
+                response += "\n\n✅ 所有步骤已完成，请结束此计划。"
         elif status == "failed":
-            response += "\n\n⚠️ 该步骤失败，请检查原因后决定是否重试（将状态改回 in_progress）或跳过。"
+            response += "\n\n⚠️ 该步骤失败，请检查原因后决定是否重试或跳过。"
 
         return response
 
@@ -720,7 +720,7 @@ class PlanHandler:
             active_ids = [s.get("id", "?") for s in still_active[:5]]
             return (
                 f"⚠️ 还有 {len(still_active)} 个步骤未完成：{', '.join(active_ids)}。\n"
-                "请先完成或跳过这些步骤，再调用 complete_todo。"
+                "请先完成或跳过这些步骤，再标记计划完成。"
             )
 
         _plan["status"] = "completed"

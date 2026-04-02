@@ -148,7 +148,11 @@ class ScheduledHandler:
         task.metadata["notify_on_start"] = params.get("notify_on_start", True)
         task.metadata["notify_on_complete"] = params.get("notify_on_complete", True)
 
-        task_id = await self.agent.task_scheduler.add_task(task)
+        try:
+            task_id = await self.agent.task_scheduler.add_task(task)
+        except ValueError as e:
+            return f"❌ {e}"
+
         next_run = task.next_run.strftime("%Y-%m-%d %H:%M:%S") if task.next_run else "待计算"
 
         type_display = "📝 简单提醒" if task_type == TaskType.REMINDER else "🔧 复杂任务"
@@ -191,12 +195,14 @@ class ScheduledHandler:
         if not task_id:
             return "❌ 缺少必填参数: task_id"
 
-        success = await self.agent.task_scheduler.remove_task(task_id)
+        result = await self.agent.task_scheduler.remove_task(task_id)
 
-        if success:
+        if result == "ok":
             return f"✅ 任务 {task_id} 已取消"
+        elif result == "system_task":
+            return f"⚠️ 「{task_id}」是系统内置任务，不能删除。如需暂停，可以用 update_scheduled_task 设置 enabled=false"
         else:
-            return f"❌ 任务 {task_id} 不存在或为系统任务无法删除"
+            return f"❌ 任务 {task_id} 不存在"
 
     async def _update_task(self, params: dict) -> str:
         """更新任务（通过 scheduler 公共 API）"""

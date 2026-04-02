@@ -501,6 +501,10 @@ class SkillManager:
                 async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                     for file_url in extra_files:
                         try:
+                            safe, reason = _is_url_safe(file_url)
+                            if not safe:
+                                logger.warning("extra_files URL blocked: %s — %s", file_url, reason)
+                                continue
                             from urllib.parse import urlparse as _urlparse
                             file_name = _urlparse(file_url).path.split("/")[-1]
                             if not file_name:

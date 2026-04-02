@@ -1288,8 +1288,12 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
 
 def _validate_zip_members(zf: "zipfile.ZipFile") -> None:
     """Reject ZIP archives containing path-traversal members (Zip Slip)."""
+    import os
     for name in zf.namelist():
-        if name.startswith("/") or ".." in name.split("/"):
+        normalized = os.path.normpath(name)
+        if (name.startswith("/") or name.startswith("\\")
+                or normalized.startswith("..")
+                or os.path.isabs(normalized)):
             raise RuntimeError(f"Zip Slip detected: dangerous member '{name}'")
 
 

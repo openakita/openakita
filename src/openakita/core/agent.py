@@ -1573,6 +1573,31 @@ class Agent:
 
             self.task_scheduler.on_task_auto_disabled = _on_auto_disabled
 
+            async def _on_missed_tasks(missed_list):
+                if not missed_list or not executor_ref.gateway:
+                    return
+                targets = executor_ref._find_all_im_targets()
+                if not targets:
+                    return
+                lines = []
+                for t in missed_list[:10]:
+                    missed_at = t.metadata.get("missed_at") or t.metadata.get("last_missed_at", "")
+                    lines.append(f"  · {t.name}（原定 {missed_at[:16]}）")
+                if len(missed_list) > 10:
+                    lines.append(f"  ...共 {len(missed_list)} 个")
+                msg = (
+                    f"⚠️ 在我休息期间，有 {len(missed_list)} 个任务/提醒错过了执行时间：\n"
+                    + "\n".join(lines)
+                    + "\n\n周期性任务已自动调整到下一次执行时间，一次性任务已标记为错过。"
+                )
+                ch, cid = targets[0]
+                try:
+                    await executor_ref.gateway.send(channel=ch, chat_id=cid, text=msg)
+                except Exception as e:
+                    logger.debug(f"Missed tasks notification failed: {e}")
+
+            self.task_scheduler.on_missed_tasks_summary = _on_missed_tasks
+
             # 启动调度器
             await self.task_scheduler.start()
 
@@ -4069,7 +4094,7 @@ class Agent:
                     "type": "ask_user",
                     "question": (
                         "⚠️ 这个任务比较复杂\n\n"
-                        "涉及多个步骤或跨模块调整，"
+                        "涉及多个步骤，"
                         "建议先制定计划再动手，避免遗漏。"
                     ),
                     "options": [
