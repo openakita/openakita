@@ -145,6 +145,7 @@ def _create_qqbot(creds: dict, *, channel_name: str, bot_id: str, agent_profile_
         webhook_port=_safe_int(creds.get("webhook_port", 9890), 9890),
         webhook_path=creds.get("webhook_path", "/qqbot/callback"),
         channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id,
+        public_api_url=creds.get("public_api_url", ""),
         footer_elapsed=_cred_bool(creds.get("footer_elapsed")),
     )
 

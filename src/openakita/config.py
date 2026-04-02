@@ -256,10 +256,14 @@ class Settings(BaseSettings):
         description="Telegram 代理地址 (如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)",
     )
 
-    # 飞书
+    # 飞书 / Lark
     feishu_enabled: bool = Field(default=False, description="是否启用飞书")
     feishu_app_id: str = Field(default="", description="飞书 App ID")
     feishu_app_secret: str = Field(default="", description="飞书 App Secret")
+    feishu_domain: str = Field(
+        default="feishu",
+        description="飞书版本：feishu（国内飞书）或 lark（国际版 Lark）",
+    )
 
     # 企业微信（智能机器人 — HTTP 回调模式）
     wework_enabled: bool = Field(default=False, description="是否启用企业微信（HTTP 回调模式）")

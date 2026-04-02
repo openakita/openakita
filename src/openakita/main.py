@@ -227,7 +227,7 @@ def _ensure_channel_deps() -> None:
 
     enabled_channels: list[str] = []
     if settings.feishu_enabled:
-        enabled_channels.append("feishu")
+        enabled_channels.append(settings.feishu_domain if settings.feishu_domain == "lark" else "feishu")
     if settings.dingtalk_enabled:
         enabled_channels.append("dingtalk")
     if settings.wework_enabled:
@@ -725,18 +725,20 @@ async def start_im_channels(agent_or_master):
             except Exception as e:
                 logger.error(f"Failed to start Telegram adapter: {e}")
 
-    # 飞书
+    # 飞书 / Lark
     if settings.feishu_enabled and settings.feishu_app_id:
+        _feishu_domain = settings.feishu_domain if settings.feishu_domain in ("feishu", "lark") else "feishu"
+        _feishu_bot_type = _feishu_domain  # "feishu" or "lark"
         _feishu_dup = any(
-            b.get("type") == "feishu"
+            b.get("type") in ("feishu", "lark")
             and b.get("credentials", {}).get("app_id") == settings.feishu_app_id
             and b.get("enabled", True)
             for b in (settings.im_bots or [])
         )
         if _feishu_dup:
             logger.info(
-                "Feishu adapter skipped: im_bots already contains a feishu bot "
-                f"with the same app_id ({settings.feishu_app_id[:8]}...)"
+                f"{_feishu_bot_type.capitalize()} adapter skipped: im_bots already contains a "
+                f"feishu/lark bot with the same app_id ({settings.feishu_app_id[:8]}...)"
             )
         else:
             try:
@@ -745,12 +747,13 @@ async def start_im_channels(agent_or_master):
                 feishu = FeishuAdapter(
                     app_id=settings.feishu_app_id,
                     app_secret=settings.feishu_app_secret,
+                    domain=_feishu_domain,
                 )
                 await _message_gateway.register_adapter(feishu)
-                adapters_started.append("feishu")
-                logger.info("Feishu adapter registered")
+                adapters_started.append(_feishu_bot_type)
+                logger.info(f"{_feishu_bot_type.capitalize()} adapter registered")
             except Exception as e:
-                logger.error(f"Failed to start Feishu adapter: {e}")
+                logger.error(f"Failed to start {_feishu_bot_type.capitalize()} adapter: {e}")
 
     # 企业微信（智能机器人模式）
     if settings.wework_enabled and settings.wework_corp_id:
@@ -1096,7 +1099,7 @@ def show_channels():
 
     channels = [
         ("Telegram", settings.telegram_enabled, settings.telegram_bot_token),
-        ("飞书", settings.feishu_enabled, settings.feishu_app_id),
+        ("飞书" if settings.feishu_domain != "lark" else "Lark", settings.feishu_enabled, settings.feishu_app_id),
         ("企业微信(HTTP)", settings.wework_enabled, settings.wework_corp_id),
         ("企业微信(WS)", settings.wework_ws_enabled, settings.wework_ws_bot_id),
         ("钉钉", settings.dingtalk_enabled, settings.dingtalk_client_id),
