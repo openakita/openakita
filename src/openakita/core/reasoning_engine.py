@@ -738,8 +738,8 @@ class ReasoningEngine:
             max_no_tool_retries = force_tool_retries
             logger.info(f"[ForceToolCall] Intent override: max_retries={force_tool_retries}")
 
-        max_verify_retries = 3
-        max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
+        max_verify_retries = 1
+        max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 1)))
 
         # 追踪变量
         executed_tool_names: list[str] = []
@@ -1711,6 +1711,12 @@ class ReasoningEngine:
                             "role": "user",
                             "content": intervention.prompt_injection,
                         })
+                        tools = []
+                        max_no_tool_retries = 0
+                        logger.info(
+                            f"[Supervisor] NUDGE: tools stripped to force text response "
+                            f"(iter={iteration}, pattern={intervention.pattern.value})"
+                        )
 
         self._last_working_messages = working_messages
         self._save_react_trace(react_trace, conversation_id, session_type, "max_iterations", _trace_started_at)
@@ -1904,8 +1910,8 @@ class ReasoningEngine:
                 max_no_tool_retries = force_tool_retries
                 logger.info(f"[ForceToolCall/Stream] Intent override: max_retries={force_tool_retries}")
 
-            max_verify_retries = 3
-            max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
+            max_verify_retries = 1
+            max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 1)))
 
             executed_tool_names: list[str] = []
             delivery_receipts: list[dict] = []
@@ -2964,6 +2970,12 @@ class ReasoningEngine:
                                 "role": "user",
                                 "content": intervention.prompt_injection,
                             })
+                            tools = []
+                            max_no_tool_retries = 0
+                            logger.info(
+                                f"[Supervisor] NUDGE: tools stripped to force text response "
+                                f"(iter={_iteration}, pattern={intervention.pattern.value})"
+                            )
 
                     continue  # Next iteration
 
@@ -3935,7 +3947,7 @@ class ReasoningEngine:
                 verify_incomplete_count += 1
 
                 has_todo_pending = self._has_active_todo_pending(conversation_id)
-                effective_max = max_verify_retries * 2 if has_todo_pending else max_verify_retries
+                effective_max = max_verify_retries + 1 if has_todo_pending else max_verify_retries
 
                 is_in_progress_promise = self._is_in_progress_promise(cleaned_text)
 
@@ -4078,8 +4090,6 @@ class ReasoningEngine:
                     no_confirmation_text_count, max_no_tool_retries)
 
         # ── 对话式回复放行（参照 claude-code needsFollowUp 模式） ──
-        # claude-code query.ts: 无 tool_use 块 → needsFollowUp=false → 自然结束。
-        # 这里用两层启发式实现类似效果：信任模型的文本回复决策。
         if intent is None and stripped_text:
             _clean = stripped_text.strip()
             _action_claims_quick = (
@@ -4100,7 +4110,6 @@ class ReasoningEngine:
                 )
                 return clean_llm_response(stripped_text)
 
-        # [REPLY] intent + 有实质文本 → 直接返回，不进入 ForceToolCall
         if intent == "REPLY" and stripped_text and len(stripped_text.strip()) > 10:
             logger.info(
                 "[IntentTag] REPLY intent with substantial text, "
@@ -4108,7 +4117,6 @@ class ReasoningEngine:
             )
             return clean_llm_response(stripped_text)
 
-        # [REPLY] / [ACTION] / 无标记 → 统一使用配置的重试次数
         max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)
         no_tool_call_count += 1
 

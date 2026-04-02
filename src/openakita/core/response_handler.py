@@ -318,9 +318,10 @@ MISSING: 缺失的内容
 NEXT: 建议的下一步"""
 
         try:
-            response = await self._brain.think(
+            response = await self._brain.think_lightweight(
                 prompt=verify_prompt,
                 system="你是一个任务完成度判断助手。请分析任务是否完成，并说明证据和缺失项。",
+                max_tokens=512,
             )
 
             result = response.content.strip().upper() if response.content else ""
@@ -368,9 +369,10 @@ NEXT: 建议的下一步"""
             context = task_monitor.get_retrospect_context()
             prompt = RETROSPECT_PROMPT.format(context=context)
 
-            response = await self._brain.think(
+            response = await self._brain.think_lightweight(
                 prompt=prompt,
                 system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
+                max_tokens=512,
             )
 
             result = strip_thinking_tags(response.content).strip() if response.content else ""

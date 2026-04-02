@@ -1,67 +1,76 @@
 """
-Anthropic Prompt Caching 辅助函数
+Prompt Cache 支持
 
-提供缓存控制标记相关的工具函数：
-- 系统提示缓存块构建
-- 工具列表排序（提升缓存命中率）
-- 工具缓存控制标记
-- 消息缓存断点注入
+实现 Anthropic API 的 prompt caching 策略:
+- 系统提示分段缓存 (静态部分 + 动态部分)
+- 工具 Schema 缓存标记
+- 消息缓存断点 (最后 1-2 条消息)
+- 工具 Schema LRU 缓存 (按 name + schema hash)
+
+参考 Claude Code 的 getCacheControl / addCacheBreakpoints。
 """
 
 from __future__ import annotations
 
-import copy
+import hashlib
+import json
+import logging
+from functools import lru_cache
+
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "<!-- DYNAMIC -->"
 
 
-def build_cached_system_blocks(system: str) -> list[dict]:
-    """将系统提示字符串转换为带缓存控制的 content blocks。
+def build_cached_system_blocks(system_prompt: str) -> list[dict]:
+    """将系统提示拆分为静态/动态部分并添加 cache_control。
 
-    Args:
-        system: 系统提示文本。
+    如果系统提示包含 DYNAMIC_BOUNDARY 标记，则标记之前的部分为静态缓存。
+    否则整个提示都标记为缓存。
 
     Returns:
-        Anthropic messages API 接受的 system content blocks 列表。
+        Anthropic 格式的 system blocks 列表
     """
-    if not system:
+    if not system_prompt:
         return []
-    return [
-        {
-            "type": "text",
-            "text": system,
-            "cache_control": {"type": "ephemeral"},
-        }
-    ]
 
+    if SYSTEM_PROMPT_DYNAMIC_BOUNDARY in system_prompt:
+        parts = system_prompt.split(SYSTEM_PROMPT_DYNAMIC_BOUNDARY, 1)
+        static_part = parts[0].strip()
+        dynamic_part = parts[1].strip() if len(parts) > 1 else ""
 
-def sort_tools_for_cache_stability(tools: list[dict]) -> list[dict]:
-    """对工具列表按名称排序，提升缓存稳定性。
+        blocks = []
+        if static_part:
+            blocks.append({
+                "type": "text",
+                "text": static_part,
+                "cache_control": {"type": "ephemeral"},
+            })
+        if dynamic_part:
+            blocks.append({
+                "type": "text",
+                "text": dynamic_part,
+            })
+        return blocks
 
-    工具定义顺序固定后，Anthropic 可在跨请求间复用相同的 cache block。
-
-    Args:
-        tools: Anthropic 工具定义列表（每项包含 "name" 字段）。
-
-    Returns:
-        按 name 字段升序排列后的新列表（不修改原列表）。
-    """
-    return sorted(tools, key=lambda t: t.get("name", ""))
+    return [{
+        "type": "text",
+        "text": system_prompt,
+        "cache_control": {"type": "ephemeral"},
+    }]
 
 
 def add_tools_cache_control(tools: list[dict]) -> list[dict]:
-    """在最后一个工具上添加 cache_control 标记。
+    """为工具列表添加缓存标记。
 
-    Anthropic Prompt Caching 要求在 cache breakpoint 处设置 cache_control，
-    对工具列表通常标记最后一个工具，使整个工具块被缓存。
-
-    Args:
-        tools: 工具定义列表。
-
-    Returns:
-        深拷贝后、最后一个工具已添加 cache_control 的新列表。
+    最后一个工具添加 cache_control，使整个工具列表可被缓存。
+    工具列表应预先排序以保证缓存稳定性。
     """
     if not tools:
         return tools
-    result = copy.deepcopy(tools)
+
+    result = [dict(t) for t in tools]
+    result[-1] = dict(result[-1])
     result[-1]["cache_control"] = {"type": "ephemeral"}
     return result
 
@@ -70,44 +79,75 @@ def add_message_cache_breakpoints(
     messages: list[dict],
     max_breakpoints: int = 2,
 ) -> list[dict]:
-    """在最后若干条消息的末尾 content block 上注入 cache_control 断点。
+    """在消息列表的末尾添加缓存断点。
 
-    Anthropic 最多支持 4 个 cache breakpoint，通常在最后 1-2 条消息处标记，
-    可让已缓存的对话历史在下一轮请求中直接复用，降低 TTFT 和 token 费用。
+    在最后 N 条消息的最后一个 content block 上添加 cache_control。
+    这使得对话历史中靠后的消息可以被缓存复用。
 
     Args:
-        messages: 消息字典列表（含 role 和 content 字段）。
-        max_breakpoints: 最多在末尾多少条消息上添加断点，默认 2。
-
-    Returns:
-        深拷贝后已注入断点的消息列表。
+        messages: 消息列表
+        max_breakpoints: 最多添加的断点数量 (默认 2)
     """
-    if not messages or max_breakpoints <= 0:
+    if not messages:
         return messages
 
-    result = copy.deepcopy(messages)
-    # 仅在 user/assistant 消息上标记断点（跳过 tool 结果等）
-    eligible_indices = [
-        i for i, m in enumerate(result) if m.get("role") in ("user", "assistant")
-    ]
-    target_indices = eligible_indices[-max_breakpoints:]
+    result = [dict(m) for m in messages]
+    count = 0
 
-    for idx in target_indices:
-        msg = result[idx]
+    for i in range(len(result) - 1, -1, -1):
+        if count >= max_breakpoints:
+            break
+
+        msg = result[i]
         content = msg.get("content")
         if isinstance(content, list) and content:
-            # 在最后一个 content block 上添加 cache_control
-            last_block = content[-1]
-            if isinstance(last_block, dict):
-                last_block["cache_control"] = {"type": "ephemeral"}
-        elif isinstance(content, str):
-            # 字符串内容需先转换为 block 格式才能附加 cache_control
-            msg["content"] = [
-                {
-                    "type": "text",
-                    "text": content,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
+            result[i] = dict(msg)
+            new_content = list(content)
+            last_block = dict(new_content[-1])
+            last_block["cache_control"] = {"type": "ephemeral"}
+            new_content[-1] = last_block
+            result[i]["content"] = new_content
+            count += 1
+        elif isinstance(content, str) and content:
+            result[i] = dict(msg)
+            result[i]["content"] = [{
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }]
+            count += 1
 
     return result
+
+
+def _schema_hash(schema: dict) -> str:
+    """计算 JSON Schema 的稳定哈希。"""
+    canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+    return hashlib.md5(canonical.encode()).hexdigest()
+
+
+@lru_cache(maxsize=512)
+def _cached_tool_schema_json(name: str, schema_hash: str, raw_json: str) -> dict:
+    """缓存工具 Schema 的序列化结果。"""
+    return json.loads(raw_json)
+
+
+def get_cached_tool_schema(tool: dict) -> dict:
+    """获取缓存的工具 Schema，避免每次请求重新序列化。
+
+    Args:
+        tool: 工具定义 dict (含 name, description, input_schema)
+
+    Returns:
+        缓存后的工具 Schema dict
+    """
+    name = tool.get("name", "")
+    schema = tool.get("input_schema", {})
+    h = _schema_hash(schema)
+    raw = json.dumps(tool, sort_keys=True, separators=(",", ":"))
+    return _cached_tool_schema_json(name, h, raw)
+
+
+def sort_tools_for_cache_stability(tools: list[dict]) -> list[dict]:
+    """按名称排序工具列表，保证 prompt cache 稳定性。"""
+    return sorted(tools, key=lambda t: t.get("name", ""))

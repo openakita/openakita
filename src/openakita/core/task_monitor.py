@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # 默认配置
 DEFAULT_TIMEOUT_SECONDS = 600  # 无进展超时阈值（秒）
-DEFAULT_RETROSPECT_THRESHOLD = 60  # 复盘阈值（秒）
+DEFAULT_RETROSPECT_THRESHOLD = 180  # 复盘阈值（秒）
 DEFAULT_RETRY_BEFORE_SWITCH = 2  # 切换模型前重试次数（全局上限由上层 MAX_TOTAL_LLM_RETRIES=3 兜底）
 DEFAULT_RETRY_INTERVAL = 5  # 重试间隔（秒）
 

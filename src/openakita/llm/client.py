@@ -31,14 +31,20 @@ from .types import (
     AllEndpointsFailedError,
     AudioBlock,
     AuthenticationError,
+    ContentBlock,
     DocumentBlock,
     EndpointConfig,
     ImageBlock,
+    ImageContent,
     LLMError,
     LLMRequest,
     LLMResponse,
     Message,
+    TextBlock,
+    ThinkingBlock,
     Tool,
+    ToolResultBlock,
+    ToolUseBlock,
     VideoBlock,
 )
 
@@ -1419,10 +1425,54 @@ class LLMClient:
         try:
             msg_dicts = [m.to_dict() for m in messages]
             normalized = normalize_messages_for_api(msg_dicts)
-            return [Message(role=m["role"], content=m["content"]) for m in normalized]
+            return [self._dict_to_message(m) for m in normalized]
         except Exception as e:
             logger.debug("Message normalization skipped: %s", e)
             return messages
+
+    @staticmethod
+    def _dict_to_message(m: dict) -> Message:
+        """Convert a normalized dict back to a Message with proper ContentBlock types."""
+        content = m["content"]
+        if isinstance(content, str):
+            return Message(role=m["role"], content=content)
+
+        rebuilt: list = []
+        for block in content:
+            if isinstance(block, ContentBlock):
+                rebuilt.append(block)
+                continue
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type", "")
+            if btype == "text":
+                rebuilt.append(TextBlock(text=block.get("text", "")))
+            elif btype == "tool_use":
+                rebuilt.append(ToolUseBlock(
+                    id=block.get("id", ""),
+                    name=block.get("name", ""),
+                    input=block.get("input", {}),
+                ))
+            elif btype == "tool_result":
+                rebuilt.append(ToolResultBlock(
+                    tool_use_id=block.get("tool_use_id", ""),
+                    content=block.get("content", ""),
+                    is_error=block.get("is_error", False),
+                ))
+            elif btype == "image":
+                source = block.get("source", {})
+                rebuilt.append(ImageBlock(
+                    image=ImageContent(
+                        media_type=source.get("media_type", "image/png"),
+                        data=source.get("data", ""),
+                    )
+                ))
+            elif btype == "thinking":
+                rebuilt.append(ThinkingBlock(thinking=block.get("thinking", "")))
+            else:
+                rebuilt.append(TextBlock(text=str(block)))
+
+        return Message(role=m["role"], content=rebuilt if rebuilt else content)
 
     def _get_retry_delay(self, attempt: int, error: Exception | None = None) -> float:
         """计算重试延迟（秒）。使用指数退避 + jitter。"""

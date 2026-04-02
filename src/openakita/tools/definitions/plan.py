@@ -72,6 +72,15 @@ PLAN_TOOLS = [
                                 "items": {"type": "string"},
                                 "description": "依赖的步骤ID（可选）",
                             },
+                            "blocks": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "此步骤完成后才能开始的步骤ID列表（可选）",
+                            },
+                            "owner": {
+                                "type": "string",
+                                "description": "负责执行此步骤的 agent ID（可选，多代理协作时使用）",
+                            },
                         },
                         "required": ["id", "description"],
                     },

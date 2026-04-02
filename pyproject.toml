@@ -141,6 +141,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.1.9",
     "mypy>=1.8.0",
+    "pyright>=1.1.0",
 ]
 
 [project.scripts]

@@ -263,7 +263,9 @@ class Brain:
             logger.warning(f"Failed to reload compiler client: {e}")
             return False
 
-    async def compiler_think(self, prompt: str, system: str = "") -> Response:
+    async def compiler_think(
+        self, prompt: str, system: str = "", max_tokens: int = 512,
+    ) -> Response:
         """
         Prompt Compiler 专用 LLM 调用。
 
@@ -274,35 +276,48 @@ class Brain:
         Args:
             prompt: 用户消息
             system: 系统提示词
+            max_tokens: 最大输出 token（默认 512，调用方可按需调大）
 
         Returns:
             Response 对象
         """
         messages = [Message(role="user", content=[TextBlock(text=prompt)])]
 
+        _source = "compiler"
         if self._compiler_available():
             try:
                 response = await self._compiler_client.chat(
                     messages=messages,
                     system=system,
                     enable_thinking=False,
-                    max_tokens=2048,
+                    max_tokens=max_tokens,
                 )
                 self._compiler_on_success()
                 self._record_usage(response)
-                return self._llm_response_to_response(response)
+                result = self._llm_response_to_response(response)
+                self._dump_llm_request(system, messages, [], caller="compiler_think")
+                self._dump_llm_response(
+                    response, caller="compiler_think",
+                    request_id=f"compiler_{_source}",
+                )
+                return result
             except Exception as e:
                 self._compiler_on_failure(str(e))
                 logger.warning(f"Compiler LLM failed, falling back to main model: {e}")
 
         # 回退到主模型（同样禁用思考，以节省时间）
+        _source = "main_fallback"
         response = await self._llm_client.chat(
             messages=messages,
             system=system,
             enable_thinking=False,
-            max_tokens=2048,
+            max_tokens=max_tokens,
         )
         self._record_usage(response)
+        req_id = self._dump_llm_request(system, messages, [], caller="compiler_think")
+        self._dump_llm_response(
+            response, caller=f"compiler_think({_source})", request_id=req_id,
+        )
         return self._llm_response_to_response(response)
 
     async def think_lightweight(
@@ -878,8 +893,8 @@ class Brain:
     def _convert_tools_to_llm(self, tools: list[ToolParam] | None) -> list[Tool] | None:
         """将工具定义转换为 LLMClient Tool，兼容 Anthropic / OpenAI 两种格式。
 
-        防御性设计：插件可能提交非标准格式的工具定义，此方法在边界层
-        做格式兼容和无效过滤，确保不会因为坏工具定义导致 LLM 调用失败。
+        支持 defer_loading：标记 _deferred=True 的工具只传 name + description，
+        不传 input_schema，减少 token 消耗。模型通过 tool_search 按需获取完整 schema。
 
         支持的格式：
         - Anthropic (内部): {"name": ..., "description": ..., "input_schema": {...}}
@@ -890,10 +905,12 @@ class Brain:
 
         result: list[Tool] = []
         skipped = 0
+        deferred = 0
         for tool in tools:
             name = tool.get("name", "")
             description = tool.get("detail") or tool.get("description", "")
             schema = tool.get("input_schema", {})
+            is_deferred = tool.get("_deferred", False)
 
             if not name:
                 func = tool.get("function")
@@ -906,12 +923,29 @@ class Brain:
                 skipped += 1
                 continue
 
-            result.append(Tool(name=name, description=description, input_schema=schema))
+            if is_deferred:
+                # Deferred: only pass name + short description, empty schema
+                short_desc = description.split("\n")[0][:200] if description else ""
+                result.append(Tool(
+                    name=name,
+                    description=f"[use tool_search to see full params] {short_desc}",
+                    input_schema={"type": "object", "properties": {}},
+                ))
+                deferred += 1
+            else:
+                result.append(Tool(
+                    name=name, description=description, input_schema=schema,
+                ))
 
         if skipped:
             logger.warning(
                 "[Brain] _convert_tools_to_llm: skipped %d tool(s) with empty name "
                 "(total=%d, valid=%d)", skipped, len(tools), len(result),
+            )
+        if deferred:
+            logger.debug(
+                "[Brain] defer_loading: %d/%d tools deferred (schema omitted)",
+                deferred, len(result),
             )
 
         return result if result else None

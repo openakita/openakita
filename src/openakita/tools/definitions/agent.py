@@ -76,6 +76,15 @@ AGENT_TOOLS = [
                     "description": "是否后台运行。后台子代理不阻塞主代理，结果稍后可查。",
                     "default": False,
                 },
+                "fork": {
+                    "type": "boolean",
+                    "description": (
+                        "Fork 模式：子代理继承当前完整对话上下文和 prompt cache。"
+                        "省略 agent_id 时自动开启 fork 模式，创建自身的克隆体。"
+                        "适用场景：需要子代理理解完整对话背景来处理子任务。"
+                    ),
+                    "default": False,
+                },
             },
             "required": ["agent_id", "message"],
         },
@@ -318,5 +327,61 @@ AGENT_TOOLS = [
                 "expected": "✅ Agent created: ephemeral_sql_expert_xxx (ephemeral)",
             },
         ],
+    },
+    {
+        "name": "task_stop",
+        "category": "Agent",
+        "should_defer": True,
+        "description": (
+            "Stop a running background agent or shell process. Use when a background "
+            "task is stuck, no longer needed, or should be cancelled. Provide the task "
+            "or agent ID to stop."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_id": {
+                    "type": "string",
+                    "description": "The agent ID or background task ID to stop.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for stopping (optional, for logging).",
+                },
+            },
+            "required": ["target_id"],
+        },
+    },
+    {
+        "name": "send_agent_message",
+        "category": "Agent",
+        "should_defer": True,
+        "description": (
+            "Send a message to another active agent. Enables inter-agent communication "
+            "in multi-agent scenarios. Target can be a specific agent name or '*' for "
+            "broadcast to all active agents."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "Target agent name, or '*' for broadcast to all active agents."
+                    ),
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The message content to send.",
+                },
+                "message_type": {
+                    "type": "string",
+                    "enum": ["text", "shutdown_request", "status_update", "data"],
+                    "description": "Type of message (default: 'text').",
+                    "default": "text",
+                },
+            },
+            "required": ["target", "message"],
+        },
     },
 ]

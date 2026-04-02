@@ -222,6 +222,7 @@ class MemoryEncoder:
             resp = await self.brain.compiler_think(
                 prompt=prompt,
                 system="You are a memory graph encoder. Output valid JSON only.",
+                max_tokens=2048,
             )
             response_text = resp.content if hasattr(resp, "content") else str(resp)
         except Exception as e:

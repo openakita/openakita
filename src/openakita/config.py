@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")
     max_iterations: int = Field(
-        default=300,
-        ge=15,
-        description="Ralph 循环最大迭代次数（最小值 15，推荐 100~300）",
+        default=30,
+        ge=5,
+        description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
     )
 
     # 自检配置
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
         description="IM 通道的 ForceToolCall 最低重试次数（0=与全局一致，不强制下限）",
     )
     confirmation_text_max_retries: int = Field(
-        default=2,
+        default=1,
         description="工具执行后无可见文本时的最大追问次数（0=禁用）",
     )
 

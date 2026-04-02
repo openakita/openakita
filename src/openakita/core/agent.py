@@ -57,6 +57,7 @@ from ..tools.handlers.config import create_handler as create_config_handler
 from ..tools.handlers.desktop import create_handler as create_desktop_handler
 from ..tools.handlers.filesystem import create_handler as create_filesystem_handler
 from ..tools.handlers.im_channel import create_handler as create_im_channel_handler
+from ..tools.handlers.lsp import create_handler as create_lsp_handler
 from ..tools.handlers.mcp import create_handler as create_mcp_handler
 from ..tools.handlers.memory import create_handler as create_memory_handler
 from ..tools.handlers.mode import create_handler as create_mode_handler
@@ -66,15 +67,20 @@ from ..tools.handlers.opencli import is_available as opencli_available
 from ..tools.handlers.persona import create_handler as create_persona_handler
 from ..tools.handlers.plan import create_todo_handler
 from ..tools.handlers.plugins import create_handler as create_plugins_handler
+from ..tools.handlers.powershell import create_handler as create_powershell_handler
 from ..tools.handlers.profile import create_handler as create_profile_handler
 from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
 from ..tools.handlers.search import create_handler as create_search_handler
 from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
+from ..tools.handlers.sleep import create_handler as create_sleep_handler
+from ..tools.handlers.structured_output import create_handler as create_structured_output_handler
 from ..tools.handlers.sticker import create_handler as create_sticker_handler
 from ..tools.handlers.system import create_handler as create_system_handler
+from ..tools.handlers.tool_search import create_handler as create_tool_search_handler
 from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
+from ..tools.handlers.worktree import create_handler as create_worktree_handler
 
 # MCP 系统
 from ..tools.mcp import mcp_client
@@ -606,7 +612,7 @@ class Agent:
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
     # Categories that must always remain available regardless of intent filtering.
-    # These are infrastructure tools that any task may need.
+    # Infrastructure tools always included regardless of intent filtering.
     _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
         "System",       # ask_user, enable_thinking, get_tool_info, etc.
         "Memory",       # search_memory, add_memory — context recall
@@ -614,21 +620,28 @@ class Agent:
         "Plan",         # create_plan_file, exit_plan_mode — plan mode tools
         "File System",  # read_file, write_file, list_directory — fundamental I/O
         "Skills",       # list_skills, run_skill_script — capability discovery
-        "Plugin",       # list_plugins, get_plugin_info — plugin discovery
-        "Skill Store",  # search/install skills from store
-        "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
+    })
+    # Individual tool names to always keep even when their category is deferred
+    _ALWAYS_KEEP_TOOLS: frozenset[str] = frozenset({
+        "tool_search",  # meta-tool to discover deferred tools
+        "ask_user",     # always need to be able to ask the user
     })
 
-    # Categories deferred from first few turns to reduce token overhead.
-    # These tools are included once intent hints or explicit user request is detected.
+    # Categories deferred by default to reduce token overhead (~40 tools saved).
+    # The model can discover deferred tools via `tool_search` when needed.
     _DEFERRED_CATEGORIES: frozenset[str] = frozenset({
+        "Browser",         # 15 tools — loaded when user needs web interaction
+        "Desktop",         # 10 tools — loaded when user needs desktop automation
+        "MCP",             # 8 tools — loaded when user needs MCP server interaction
         "IM Channel",      # IM platform tools — only needed for channel operations
         "Scheduled",       # scheduler tools — only needed when setting up schedules
         "Agent Package",   # agent packaging — rarely needed in normal conversation
-        "Persona",         # persona traits — deferred until personality discussion
+        "Profile",         # persona traits — deferred until personality discussion
         "Config",          # config management — rarely needed
-        "Browser",         # browser_* tools — only needed for explicit browser operations
-        "Desktop",         # desktop_* tools — only needed in desktop environment
+        "Plugin",          # plugin management — rarely needed
+        "Advanced",        # powershell, lsp, notebook, worktree, etc.
+        "OpenCLI",         # CLI management tools
+        "Platform",        # platform-specific tools
     })
 
     @property
@@ -636,15 +649,13 @@ class Agent:
         """Tools available for the current call context.
 
         Filtering layers (applied in order):
-        0. Sanity: drop entries without a valid name (e.g. malformed plugin defs)
+        0. Sanity: drop entries without a valid name
         1. Sub-agent restriction: remove delegation tools
-        2. Tiered loading: exclude _DEFERRED_CATEGORIES when no intent hints
-           request them (saves ~20 tool definitions on first turn)
-        3. Intent-driven: filter by IntentResult.tool_hints (category-based),
-           but always keep infrastructure categories (System, Memory, Plan,
-           Skills, Skill Store, MCP) so the LLM can recall context, orchestrate
-           plans, invoke skills/MCP, and use meta tools regardless of intent.
-        4. Context window: reduce set for small models
+        2. Tiered loading: exclude _DEFERRED_CATEGORIES (saves ~50 tools)
+           - Intent hints can un-defer specific categories
+           - IM sessions auto-include IM Channel category
+           - _ALWAYS_KEEP_TOOLS are never deferred
+        3. Context window: reduce set for small models
         """
         tools = [t for t in self._tools if t.get("name")]
         dropped = len(self._tools) - len(tools)
@@ -660,9 +671,14 @@ class Agent:
         intent = getattr(self, "_current_intent", None)
         intent_hints = set(intent.tool_hints) if intent and intent.tool_hints else set()
 
+        # IM sessions always need IM Channel tools
+        session_type = getattr(self, "_current_session_type", "cli")
+        if session_type == "im":
+            intent_hints.add("IM Channel")
+
         if intent_hints and hasattr(self, "tool_catalog"):
             tool_groups = self.tool_catalog.get_tool_groups()
-            allowed: set[str] = set()
+            allowed: set[str] = set(self._ALWAYS_KEEP_TOOLS)
             for cat in self._ALWAYS_KEEP_CATEGORIES:
                 allowed |= tool_groups.get(cat, set())
             for hint in intent_hints:
@@ -675,16 +691,18 @@ class Agent:
                 deferred_names: set[str] = set()
                 for cat in deferred_cats:
                     deferred_names |= tool_groups.get(cat, set())
+                deferred_names -= self._ALWAYS_KEEP_TOOLS
                 if deferred_names:
                     before = len(tools)
                     tools = [
                         t for t in tools if t.get("name") not in deferred_names
                     ]
                     if len(tools) < before:
-                        logger.debug(
-                            "[Agent] tiered loading: deferred %d tools from %s",
+                        logger.info(
+                            "[Agent] tiered loading: deferred %d tools from %s (remaining=%d)",
                             before - len(tools),
                             sorted(deferred_cats),
+                            len(tools),
                         )
 
         ctx = self._get_raw_context_window()
@@ -1205,10 +1223,30 @@ class Agent:
         # Agent 包（导入/导出）
         self.handler_registry.register("agent_package", create_agent_package_handler(self))
 
+        # LSP（代码智能）
+        self.handler_registry.register("lsp", create_lsp_handler(self))
+
+        # Sleep（可中断等待）
+        self.handler_registry.register("sleep", create_sleep_handler(self))
+
+        # Structured Output（结构化输出）
+        self.handler_registry.register("structured_output", create_structured_output_handler(self))
+
+        # Tool Search（工具搜索）
+        self.handler_registry.register("tool_search", create_tool_search_handler(self))
+
+        # Worktree（Git 工作树）
+        self.handler_registry.register("worktree", create_worktree_handler(self))
+
         # Agent Hub + Skill Store（平台交互，仅在 hub_enabled 时注册）
         if settings.hub_enabled:
             self.handler_registry.register("agent_hub", create_agent_hub_handler(self))
             self.handler_registry.register("skill_store", create_skill_store_handler(self))
+
+        # PowerShell（仅 Windows 平台注册）
+        import platform
+        if platform.system() == "Windows":
+            self.handler_registry.register("powershell", create_powershell_handler(self))
 
         # 桌面工具（仅 Windows 且依赖可用时注册，与 _tools/ToolCatalog 保持一致）
         if _ensure_desktop():
@@ -1737,7 +1775,6 @@ class Agent:
         session_type: str = "cli",
         tools_enabled: bool = True,
         session: "Session | None" = None,
-        mode: str | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2)
@@ -1787,9 +1824,9 @@ class Agent:
             except Exception:
                 pass
 
-        _mode = mode or "agent"
+        _mode = "agent"
         _skip_catalogs = False
-        if not mode and intent:
+        if intent:
             from .intent_analyzer import IntentType
             if intent.intent == IntentType.CHAT:
                 _mode = "ask"
@@ -1807,11 +1844,6 @@ class Agent:
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
-        if intent and getattr(intent, "suppress_plan", False):
-            prompt += (
-                "\n\n[系统] 此任务为简单单步操作，请直接执行，"
-                "无需创建计划（Plan/Todo）。执行完毕后直接回复结果。"
-            )
         prompt += self._build_multi_agent_prompt_section()
         return prompt
 
@@ -1854,14 +1886,13 @@ class Agent:
             identity_section = "你是默认通用助手。"
             my_id = "default"
 
-        # Roster — only persistent agents (system + custom)
+        # Roster — compact format (no skill lists to save tokens)
         agents_lines = []
         for p in SYSTEM_PRESETS:
             if p.id == my_id:
                 continue
-            skills_desc = f"技能: {', '.join(p.skills)}" if p.skills else "技能: 全部"
             agents_lines.append(
-                f"  - {p.icon} **{p.name}** (`{p.id}`) — {p.description} ({skills_desc})"
+                f"  - {p.icon} **{p.name}** (`{p.id}`) — {p.description}"
             )
 
         try:
@@ -1881,124 +1912,34 @@ class Agent:
 
         roster = "\n".join(agents_lines) if agents_lines else "  （暂无其他可用 Agent）"
 
-        # Available skills list
-        skills_lines = []
-        try:
-            catalog = getattr(self, "skill_catalog", None)
-            if catalog:
-                reg = getattr(catalog, "registry", None)
-                if reg:
-                    for entry in reg.list_all():
-                        skills_lines.append(f"`{entry.name}`")
-        except Exception:
-            pass
-        skills_list = ", ".join(skills_lines) if skills_lines else "（系统会自动分配默认技能）"
+        # Skills list omitted from prompt to save tokens; use list_skills tool to discover
 
         return f"""
 
-## 多Agent协作系统（重要 — 你必须严格遵循）
+## 多Agent协作
 
 {identity_section}
+你有一支 Agent 团队，优先委派给专业 Agent，自己只处理简单通用问答。
 
-你拥有一支专业 Agent 团队。你的工具优先级如下（**必须严格按此顺序选择**）：
-
-### 🔴 绝对禁止
-
-- **严禁**为每个新任务都创建全新 Agent — 系统已有丰富的专业 Agent 可直接使用
-- **严禁**在能用 `delegate_to_agent` 直接委派时使用 `spawn_agent` 或 `create_agent`
-- **严禁**在能用 `spawn_agent` 继承时使用 `create_agent` 从零创建
-
-### 可用的 Agent 团队
+### Agent 团队
 
 {roster}
 
-### ⚡ 工具选择优先级（必须严格遵循，从上到下判断）
+### 委派优先级（从高到低）
 
-**Level 1 — 直接委派 `delegate_to_agent`（首选，单个任务用这个）**
+1. `delegate_to_agent(agent_id, message, reason)` — 首选，直接委派
+2. `spawn_agent(inherit_from, message, ...)` — 需要定制或并行副本时
+3. `delegate_parallel(tasks=[...])` — 多个独立任务同时执行
+4. `create_agent(...)` — 最后手段，系统中完全没有相关 Agent 时才用
 
-已有 Agent 能处理该任务 → 直接委派，不需要任何修改。
+### 规则
 
-```
-delegate_to_agent(agent_id="browser-agent", message="详细任务描述", reason="原因")
-```
-
-**Level 2 — 继承定制 `spawn_agent`（需要定制或多个并行副本时使用）**
-
-- 已有 Agent 基本匹配但需要微调 → 继承并追加技能/提示词
-- **需要同类 Agent 的多个独立副本并行工作** → 用 spawn_agent 为每个任务创建独立实例
-- 每次 spawn 生成唯一 ID，天然支持并行，**任务完成后自动销毁**
-
-```
-spawn_agent(inherit_from="browser-agent", message="任务描述", extra_skills=["额外技能"], custom_prompt_overlay="补充提示", reason="原因")
-```
-
-**Level 3 — 并行委派 `delegate_parallel`（多个独立任务同时执行）**
-
-多个独立任务可同时执行时 → 并行委派。
-⚠️ 同类任务（如多个调研）→ 所有任务用**同一个 agent_id**，系统自动创建独立副本：
-
-```
-delegate_parallel(tasks=[
-  {{"agent_id": "browser-agent", "message": "调研项目A..."}},
-  {{"agent_id": "browser-agent", "message": "调研项目B..."}}
-])
-```
-
-**Level 4 — 全新创建 `create_agent`（最后手段，极少使用）**
-
-**仅当以上 3 种方式都不适用**（系统中完全没有相关 Agent 可用或继承）时才使用。
-
-```
-create_agent(name="名称", description="描述", skills=["技能"], custom_prompt="提示词")
-```
-
-### 🔴 任务分配原则（严格遵守）
-
-1. **专业对口**：只把任务分配给**专业对口**的 Agent。调研任务→网探/浏览器Agent，代码任务→码哥，文档任务→文助。**严禁**把调研任务分给代码助手，或把编码任务分给文档助手。
-2. **同类任务并行**：当需要多个 Agent **同时做同类事情**（如"用多个 Agent 同时调研"），应使用 `spawn_agent` 创建**同一个最合适 Agent 的多个副本**，而不是把任务分配给不相关的 Agent 凑数。例如：3 个调研任务 → spawn 3 个网探副本，而不是分给网探+码哥+数析。
-3. **异类任务并行**：当多个任务**性质不同**时（如同时需要调研+写代码+分析数据），才分配给不同专业的 Agent。
-
-- 默认创建临时 Agent（ephemeral），任务结束自动清理
-- 仅当用户明确要求"记住这个Agent"时才设 `persistent=true`
-- 如果系统检测到已有类似 Agent，会建议使用 spawn_agent 代替
-- 可用技能列表: {skills_list}
-- 每会话最多 5 个动态 Agent
-
-### 委派判断规则
-
-在执行任何工具之前，先判断当前任务是否应该委派：
-
-1. **涉及文档处理**（PPT/Word/Excel/PDF） → `delegate_to_agent(agent_id="office-doc", ...)`
-2. **涉及编写代码或调试** → `delegate_to_agent(agent_id="code-assistant", ...)`
-3. **涉及网络搜索、浏览网页、项目调研、信息采集** → `delegate_to_agent(agent_id="browser-agent", ...)`
-4. **涉及数据分析或可视化** → `delegate_to_agent(agent_id="data-analyst", ...)`
-5. **已有 Agent 接近但需微调** → `spawn_agent(inherit_from="最接近的agent", ...)`
-6. **多个独立同类任务并行**（如同时调研3个项目） → `delegate_parallel` 且所有任务用**同一个 agent_id**
-7. **多个独立异类任务并行**（如调研+编码+分析） → `delegate_parallel` 用不同 agent_id
-8. **完全没有相关 Agent** → `create_agent(...)`（极少使用）
-
-只有当任务是**简单通用问答**、**不涉及上述任何专业领域**、或**用户明确要你亲自做**时，才自己处理。
-
-### 关键规则
-
-1. `message` 必须包含充分上下文（用户原始需求、相关数据、前序结论），让目标 Agent 能独立完成
-2. 结果返回后，你**整合**并**用你自己的语气**回复用户
-3. 委派深度上限 5 层
-4. 如果委派失败或超时，告知用户并尝试自己处理
-5. **有依赖的任务串行委派**（B 需要 A 的结果 → 先 A 再 B）
-6. **独立任务必须用 `delegate_parallel` 并行**，不要逐个串行浪费时间
-7. 对话历史中可能包含以下标记，它们记录了你之前**实际执行**过的操作：
-   - **[子Agent工作总结]**：子Agent的任务、完成状态、交付的文件路径和结果摘要
-   - **[执行摘要]**：你自己调用的工具及其结果
-   你必须仔细阅读这些内容，把它们当作已发生的事实。不要否认已完成的操作，不要说"我没有做过"，不要重复执行已经成功完成的工作。当用户提到相关产出（文件、报告、分析结果）时，直接引用历史记录中的信息。
-
-### 协作行为准则
-
-- 你是协调者，主动告知用户你在调度团队（如"我让数据分析师来处理..."）
-- 永远优先复用已有 Agent，避免创建不必要的新 Agent
-- spawn_agent 创建的临时 Agent 任务完成即消失，放心使用
-- 不要对同一任务反复试不同 Agent
-- 如果所有 Agent 都处理不了，诚实告知用户"""
+- 专业对口：文档→office-doc，代码→code-assistant，浏览→browser-agent，数据→data-analyst
+- 独立任务用 `delegate_parallel` 并行，有依赖的串行
+- message 必须包含充分上下文，让目标 Agent 独立完成
+- 结果返回后整合并用你自己的语气回复用户
+- 委派深度上限 5 层，每会话最多 5 个动态 Agent
+- 对话历史中的 [子Agent工作总结] 和 [执行摘要] 是已完成的事实，不要重复执行"""
 
     def _generate_tools_text(self) -> str:
         """
@@ -3498,7 +3439,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             session_id=session_id,
             timeout_seconds=settings.progress_timeout_seconds,
             hard_timeout_seconds=settings.hard_timeout_seconds,
-            retrospect_threshold=60,
+            retrospect_threshold=180,
             fallback_model=self.brain.get_fallback_model(session_id),
         )
         task_monitor.start(self.brain.model)
@@ -3789,16 +3730,35 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             from .intent_analyzer import IntentType as _IT
             _intent = getattr(self, "_current_intent", None)
 
-            if _intent and _intent.intent == _IT.COMMAND:
-                response_text = await self._chat_with_tools_and_context(
-                    messages, task_monitor=task_monitor, session_type=session_type,
-                    thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
-                    progress_callback=_progress_cb,
-                    session=session,
-                    endpoint_override=endpoint_override,
-                )
+            if (
+                _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
+                # Ultra-fast path: rule-based greeting only, use lightweight model
+                try:
+                    _identity_snippet = ""
+                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                        _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+
+                    _fast_system = (
+                        f"{_identity_snippet}\n\n"
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                    ).strip()
+
+                    _fast_resp = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_fast_system,
+                    )
+                    response_text = clean_llm_response(
+                        _fast_resp.content if _fast_resp.content else ""
+                    ) or "你好！有什么我可以帮你的吗？"
+                except Exception as e:
+                    logger.error(f"[FastReply] Failed: {e}")
+                    response_text = "你好！有什么我可以帮你的吗？"
             else:
-                # TASK / QUERY / FOLLOW_UP → full ReasoningEngine
+                # All non-fast paths (CHAT/TASK/QUERY/COMMAND/FOLLOW_UP) → ReasoningEngine
                 response_text = await self._chat_with_tools_and_context(
                     messages, task_monitor=task_monitor, session_type=session_type,
                     thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
@@ -3866,14 +3826,8 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         Yields:
             SSE 事件字典 {"type": "...", ...}
         """
-        try:
-            if not self._initialized:
-                await self.initialize()
-        except Exception as init_err:
-            logger.error(f"[Session:{session_id}] Initialization failed: {init_err}", exc_info=True)
-            yield {"type": "error", "message": f"初始化失败: {init_err}"}
-            yield {"type": "done"}
-            return
+        if not self._initialized:
+            await self.initialize()
 
         endpoint_override = endpoint_override or self._preferred_endpoint
 
@@ -3970,7 +3924,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 task_description=task_description,
                 session_type=session_type,
                 session=session,
-                mode=mode,
             )
 
             # 注入 TaskDefinition
@@ -4011,11 +3964,57 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 elif _intent.force_tool:
                     pass
                 else:
-                    _force_tool_retries = max(0, settings.max_no_tool_retries - 1) if hasattr(settings, "max_no_tool_retries") else None
+                    _force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 1) - 1)
 
             _agent_profile_id = "default"
             if session and hasattr(session, "context"):
                 _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
+
+            if (
+                _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
+                # Ultra-fast path: rule-based greeting only, use lightweight model
+                try:
+                    _identity_snippet = ""
+                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                        _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+
+                    _fast_system = (
+                        f"{_identity_snippet}\n\n"
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                    ).strip()
+
+                    _fast_response = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_fast_system,
+                    )
+                    _reply_text = clean_llm_response(
+                        _fast_response.content if _fast_response.content else ""
+                    )
+                    if _reply_text:
+                        yield {"type": "text_delta", "content": _reply_text}
+                    else:
+                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                        _reply_text = "你好！有什么我可以帮你的吗？"
+                except Exception as e:
+                    logger.error(f"[FastReply] Failed: {e}")
+                    yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                    _reply_text = "你好！有什么我可以帮你的吗？"
+                yield {"type": "done"}
+
+                await self._finalize_session(
+                    response_text=_reply_text,
+                    session=session,
+                    session_id=session_id,
+                    task_monitor=task_monitor,
+                )
+                return
+
+            # LLM-classified CHAT (non-fast_reply) falls through to reason_stream
+            # with force_tool_retries=0, so tools are available but not forced.
 
             # Complexity detection: force ask_user for complex tasks
             if (
@@ -4084,17 +4083,6 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             logger.error(f"chat_with_session_stream error: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)[:500]}
             yield {"type": "done"}
-            _tm = locals().get("task_monitor")
-            if _tm is not None:
-                try:
-                    await self._finalize_session(
-                        response_text=_reply_text or "",
-                        session=session,
-                        session_id=session_id,
-                        task_monitor=_tm,
-                    )
-                except Exception:
-                    logger.debug(f"[Session:{session_id}] _finalize_session in except handler failed", exc_info=True)
         finally:
             self._cleanup_session_state(im_tokens)
 
@@ -4450,10 +4438,11 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             context = task_monitor.get_retrospect_context()
             prompt = RETROSPECT_PROMPT.format(context=context)
 
-            # 使用 Brain 进行复盘分析（独立上下文）
-            response = await self.brain.think(
+            # 使用 think_lightweight 进行复盘（禁用思考链，节省 token）
+            response = await self.brain.think_lightweight(
                 prompt=prompt,
                 system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
+                max_tokens=512,
             )
 
             result = strip_thinking_tags(response.content).strip() if response.content else ""
@@ -4784,9 +4773,10 @@ MISSING: 缺失的内容（如有）
 NEXT: 建议的下一步（如有）"""
 
         try:
-            response = await self.brain.think(
+            response = await self.brain.think_lightweight(
                 prompt=verify_prompt,
                 system="你是一个任务完成度判断助手。请分析任务是否完成，并说明证据和缺失项。",
+                max_tokens=512,
             )
 
             result = response.content.strip().upper() if response.content else ""
@@ -5079,7 +5069,7 @@ NEXT: 建议的下一步（如有）"""
             elif intent_result.force_tool:
                 pass  # None = use default from settings
             else:
-                force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 0) - 1)
+                force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 1) - 1)
 
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
@@ -5170,7 +5160,7 @@ NEXT: 建议的下一步（如有）"""
         # 追问计数器：当 LLM 没有调用工具时，最多追问几次
         no_tool_call_count = 0
         im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
-        configured = int(getattr(settings, "force_tool_call_max_retries", 0))
+        configured = int(getattr(settings, "force_tool_call_max_retries", 1))
         if session_type == "im":
             base_force_retries = max(im_floor, configured)
         else:
@@ -5767,8 +5757,7 @@ NEXT: 建议的下一步（如有）"""
                     f"text_preview=\"{(stripped_text or '')[:80].replace(chr(10), ' ')}\""
                 )
 
-                # REPLY / ACTION / 无标记 → 统一走配置的 ForceToolCall 重试次数
-                max_no_tool_retries = _effective_force_retries()
+                # REPLY / ACTION / 无标记 → 使用已计算的重试次数（尊重 intent override）
                 no_tool_call_count += 1
 
                 if no_tool_call_count <= max_no_tool_retries:
@@ -6524,16 +6513,6 @@ NEXT: 建议的下一步（如有）"""
 
         start_time = time.time()
 
-        def _fail_result(error_msg: str) -> TaskResult:
-            return TaskResult(
-                success=False,
-                error=error_msg,
-                iterations=iteration,
-                duration_seconds=time.time() - start_time,
-            )
-
-        iteration = 0
-
         if not self._initialized:
             await self.initialize()
 
@@ -6546,7 +6525,7 @@ NEXT: 建议的下一步（如有）"""
             session_id=task.session_id,
             timeout_seconds=settings.progress_timeout_seconds,
             hard_timeout_seconds=settings.hard_timeout_seconds,
-            retrospect_threshold=60,  # 复盘阈值：60秒
+            retrospect_threshold=180,  # 复盘阈值：180秒
             fallback_model=self.brain.get_fallback_model(task.session_id),  # 动态获取备用模型
             retry_before_switch=3,  # 切换前重试 3 次
         )
@@ -6589,7 +6568,7 @@ NEXT: 建议的下一步（如有）"""
         messages = [original_task_message.copy()]
 
         max_tool_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
-        # iteration 已在 _fail_result 辅助函数之前初始化
+        iteration = 0
         final_response = ""
         current_model = self.brain.model
         conversation_id = task.session_id or f"task:{task.id}"
@@ -6621,7 +6600,7 @@ NEXT: 建议的下一步（如有）"""
 
         # 追问计数器：当 LLM 没有调用工具时，最多追问几次
         no_tool_call_count = 0
-        max_no_tool_retries = max(0, int(getattr(settings, "force_tool_call_max_retries", 0)))
+        max_no_tool_retries = max(0, int(getattr(settings, "force_tool_call_max_retries", 1)))
 
         # 获取 cancel_event（用于 LLM 调用竞速取消）
         _cancel_event = (
@@ -6637,7 +6616,7 @@ NEXT: 建议的下一步（如有）"""
                     logger.info(
                         f"[StopTask] Task cancelled in execute_task: {self._cancel_reason}"
                     )
-                    return _fail_result("✅ 任务已停止。")
+                    return "✅ 任务已停止。"
 
                 iteration += 1
                 logger.info(f"Task iteration {iteration}")
@@ -6655,7 +6634,7 @@ NEXT: 建议的下一步（如有）"""
                             f"[Task:{task.id}] Exceeded max model switches "
                             f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
                         )
-                        return _fail_result(
+                        return (
                             "❌ 任务执行失败，已尝试多个模型仍无法恢复。\n"
                             "💡 你可以直接重新发送来重试。"
                         )
@@ -6663,7 +6642,7 @@ NEXT: 建议的下一步（如有）"""
                     new_model = task_monitor.fallback_model
                     if not new_model:
                         logger.warning("[ModelSwitch] No fallback model available for sub-agent timeout")
-                        return _fail_result("任务失败：所有模型端点均不可用，请检查网络连接。")
+                        return "任务失败：所有模型端点均不可用，请检查网络连接。"
                     task_monitor.switch_model(
                         new_model,
                         f"任务执行超过 {task_monitor.timeout_seconds} 秒，重试 {task_monitor.retry_count} 次后切换",
@@ -6683,7 +6662,7 @@ NEXT: 建议的下一步（如有）"""
                                 f"[ModelSwitch] switch_model failed: {msg}. "
                                 f"Aborting task (no healthy endpoint)."
                             )
-                            return _fail_result(
+                            return (
                                 f"❌ 任务失败：模型切换失败（{msg}），无法继续执行。\n"
                                 "💡 建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
                             )
@@ -6736,10 +6715,9 @@ NEXT: 建议的下一步（如有）"""
 
                 except UserCancelledError:
                     logger.info(f"[StopTask] LLM call interrupted by user cancel in execute_task {task.id}")
-                    farewell = await self._handle_cancel_farewell(
+                    return await self._handle_cancel_farewell(
                         messages, _build_effective_system_prompt_task(), current_model
                     )
-                    return _fail_result(farewell)
 
                 except Exception as e:
                     logger.error(f"[LLM] Brain call failed in task {task.id}: {e}")
@@ -6751,7 +6729,7 @@ NEXT: 建议的下一步（如有）"""
                             f"[Task:{task.id}] Global retry limit reached "
                             f"({_total_llm_retries}/{MAX_TOTAL_LLM_RETRIES}), aborting"
                         )
-                        return _fail_result(
+                        return (
                             f"❌ 任务执行失败，已重试 {MAX_TOTAL_LLM_RETRIES} 次仍无法恢复。\n"
                             f"错误: {str(e)[:200]}\n"
                             "💡 你可以直接重新发送来重试。"
@@ -6774,7 +6752,7 @@ NEXT: 建议的下一步（如有）"""
                                     llm_client.reset_all_cooldowns(include_structural=True)
                                 continue
                         logger.error(f"[Task:{task.id}] Structural error, aborting: {str(e)[:200]}")
-                        return _fail_result(
+                        return (
                             f"❌ API 请求格式错误，无法恢复。\n"
                             f"错误: {str(e)[:200]}\n"
                             "💡 你可以直接重新发送来重试。"
@@ -6791,10 +6769,9 @@ NEXT: 建议的下一步（如有）"""
                         try:
                             await self._cancellable_await(asyncio.sleep(2), _cancel_event)
                         except UserCancelledError:
-                            farewell = await self._handle_cancel_farewell(
+                            return await self._handle_cancel_farewell(
                                 messages, _build_effective_system_prompt_task(), current_model
                             )
-                            return _fail_result(farewell)
                         continue
                     else:
                         _task_switch_count += 1
@@ -6803,7 +6780,7 @@ NEXT: 建议的下一步（如有）"""
                                 f"[Task:{task.id}] Exceeded max model switches "
                                 f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
                             )
-                            return _fail_result(
+                            return (
                                 f"❌ 任务执行失败，已尝试多个模型仍无法恢复。\n"
                                 f"错误: {str(e)[:200]}\n"
                                 "💡 你可以直接重新发送来重试。"
@@ -6812,7 +6789,7 @@ NEXT: 建议的下一步（如有）"""
                         new_model = task_monitor.fallback_model
                         if not new_model:
                             logger.warning("[ModelSwitch] No fallback model available for sub-agent error")
-                            return _fail_result("任务失败：所有模型端点均不可用，请检查网络连接。")
+                            return "任务失败：所有模型端点均不可用，请检查网络连接。"
                         task_monitor.switch_model(
                             new_model,
                             f"LLM 调用失败，重试 {task_monitor.retry_count} 次后切换: {e}",
@@ -6833,7 +6810,7 @@ NEXT: 建议的下一步（如有）"""
                                 )
                                 # switch_model 失败（目标在冷静期），不重置 retry_count
                                 # 直接 break，避免无限重试
-                                return _fail_result(
+                                return (
                                     f"❌ 任务失败：模型切换失败（{msg}），无法继续执行。\n"
                                     "💡 建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
                                 )

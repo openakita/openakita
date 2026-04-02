@@ -451,6 +451,9 @@ class SessionManager:
         skipped_error = 0
         for item in data:
             try:
+                if not isinstance(item, dict):
+                    skipped_error += 1
+                    continue
                 session = Session.from_dict(item)
                 if not session.is_expired() and session.state != SessionState.CLOSED:
                     msg_count = len(session.context.messages)
@@ -467,7 +470,13 @@ class SessionManager:
 
                 session_ts = session.last_active.isoformat()
                 existing = self._channel_registry.get(session.channel)
-                if not existing or session_ts >= existing.get("last_seen", ""):
+                _existing_ts = ""
+                if isinstance(existing, dict):
+                    _existing_ts = existing.get("last_seen", "")
+                elif isinstance(existing, list) and existing:
+                    top = existing[0]
+                    _existing_ts = top.get("last_seen", "") if isinstance(top, dict) else ""
+                if not existing or session_ts >= _existing_ts:
                     self._channel_registry[session.channel] = {
                         "chat_id": session.chat_id,
                         "user_id": session.user_id,

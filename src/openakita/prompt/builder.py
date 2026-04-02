@@ -1422,10 +1422,15 @@ def _build_pinned_rules_section(
         lines = ["## 用户设定的规则（必须遵守）\n"]
         total_chars = 0
         max_chars = _PINNED_RULES_MAX_TOKENS * _PINNED_RULES_CHARS_PER_TOKEN
+        seen_prefixes: set[str] = set()
         for r in active_rules:
             content = (r.content or "").strip()
             if not content:
                 continue
+            prefix = content[:40]
+            if prefix in seen_prefixes:
+                continue
+            seen_prefixes.add(prefix)
             line = f"- {content}"
             if total_chars + len(line) > max_chars:
                 break

@@ -1,8 +1,11 @@
 """
-SSE（Server-Sent Events）解析工具
+标准 SSE (Server-Sent Events) 解析器
 
-提供符合 SSE 规范的流式响应解析器，供 Anthropic Provider 使用。
-支持带 event: 字段的具名事件和纯 data: 字段的匿名事件。
+符合 SSE 规范 (https://html.spec.whatwg.org/multipage/server-sent-events.html):
+- 支持多行 data 字段拼接
+- 支持 event type 字段
+- 支持 [DONE] 终止信号
+- 容错: JSONDecodeError 记录警告而非崩溃
 """
 
 from __future__ import annotations
@@ -11,68 +14,61 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
 
-async def parse_sse_stream(response: httpx.Response) -> AsyncIterator[dict]:
-    """解析 SSE 流式响应，yield 解析后的事件字典。
-
-    Anthropic SSE 格式示例：
-        event: message_start
-        data: {"type": "message_start", "message": {...}}
-
-        event: content_block_delta
-        data: {"type": "content_block_delta", "index": 0, "delta": {...}}
-
-        event: message_stop
-        data: {"type": "message_stop"}
+async def parse_sse_stream(response) -> AsyncIterator[dict]:
+    """从 httpx 响应解析 SSE 事件流。
 
     Args:
-        response: httpx 流式响应对象（须在 stream=True 模式下发起请求）。
+        response: httpx.Response (需已调用 .aiter_lines())
 
     Yields:
-        解析后的事件字典，每个事件至少含 "type" 字段。
+        解析后的 JSON 事件 dict
     """
-    current_event_type: str | None = None
+    data_parts: list[str] = []
+    event_type: str | None = None
 
     async for line in response.aiter_lines():
-        line = line.rstrip("\r")
-
-        # 空行 = 事件边界，重置 event type
-        if not line:
-            current_event_type = None
-            continue
-
         if line.startswith("event:"):
-            current_event_type = line[6:].strip()
+            event_type = line[6:].strip()
+        elif line.startswith("data:"):
+            data_parts.append(line[5:].strip())
+        elif line.startswith(":"):
+            # SSE comment, ignore (often used as keepalive)
             continue
-
-        if line.startswith("data:"):
-            data_str = line[5:].strip()
-
-            # SSE 流结束标志
-            if data_str == "[DONE]":
-                break
-
-            if not data_str:
+        elif line == "":
+            # Empty line = end of event
+            if not data_parts:
                 continue
+            full_data = "\n".join(data_parts)
+            data_parts = []
+            current_event_type = event_type
+            event_type = None
+
+            if full_data == "[DONE]":
+                return
 
             try:
-                event = json.loads(data_str)
+                parsed = json.loads(full_data)
             except json.JSONDecodeError:
-                logger.debug("SSE: failed to parse JSON: %r", data_str[:200])
+                logger.warning(
+                    "SSE JSON parse error (event_type=%s): %s",
+                    current_event_type,
+                    full_data[:300],
+                )
                 continue
 
-            # 若有具名 event type 且 dict 中没有 type 字段，则注入
-            if isinstance(event, dict):
-                if current_event_type and "type" not in event:
-                    event["type"] = current_event_type
-                yield event
+            if current_event_type:
+                parsed["_sse_event_type"] = current_event_type
 
-        elif line.startswith(":"):
-            # SSE 注释行，忽略（用于心跳保活）
-            continue
-        else:
-            logger.debug("SSE: unrecognized line: %r", line[:200])
+            yield parsed
+
+    # Handle unterminated final event (no trailing blank line)
+    if data_parts:
+        full_data = "\n".join(data_parts)
+        if full_data != "[DONE]":
+            try:
+                yield json.loads(full_data)
+            except json.JSONDecodeError:
+                logger.warning("SSE final chunk parse error: %s", full_data[:300])
