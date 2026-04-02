@@ -38,7 +38,7 @@ from ..types import (
     Usage,
     normalize_base_url,
 )
-from .base import LLMProvider
+from .base import LLMProvider, parse_sse_field
 from .proxy_utils import (
     build_httpx_timeout,
     get_httpx_transport,
@@ -363,11 +363,12 @@ class OpenAIProvider(LLMProvider):
                     if first_line_raw is None:
                         first_line_raw = line
 
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data.strip() and data != "[DONE]":
+                    parsed = parse_sse_field(line)
+                    if parsed is not None:
+                        field, value = parsed
+                        if field == "data" and value.strip() and value != "[DONE]":
                             try:
-                                event = json.loads(data)
+                                event = json.loads(value)
                                 has_content = True
                                 yield self._convert_stream_event(event)
                             except json.JSONDecodeError:

@@ -34,6 +34,7 @@ from ..types import (
     TextBlock,
     Usage,
 )
+from .base import parse_sse_field
 from .openai import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -414,11 +415,12 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     if not line.strip():
                         continue
 
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data.strip() and data != "[DONE]":
+                    parsed = parse_sse_field(line)
+                    if parsed is not None:
+                        field, value = parsed
+                        if field == "data" and value.strip() and value != "[DONE]":
                             try:
-                                event = json.loads(data)
+                                event = json.loads(value)
                                 converted = self._convert_stream_event(event)
                                 if converted.get("type") == "error":
                                     err_msg = converted.get("error", "Unknown stream error")
@@ -433,8 +435,6 @@ class OpenAIResponsesProvider(OpenAIProvider):
                                 yield converted
                             except json.JSONDecodeError:
                                 continue
-                    elif line.startswith("event:"):
-                        continue
                     elif not has_content and not line.startswith(":"):
                         try:
                             err_data = json.loads(line)

@@ -15,6 +15,30 @@ from ..types import EndpointConfig, LLMRequest, LLMResponse
 
 logger = logging.getLogger(__name__)
 
+_SSE_FIELDS = frozenset({"data", "event", "id", "retry"})
+
+
+def parse_sse_field(line: str) -> tuple[str, str] | None:
+    """Parse an SSE line into (field_name, field_value).
+
+    Recognizes the four standard SSE fields (data, event, id, retry).
+    Per the spec, one leading space after the colon is stripped from the value.
+    Returns None for empty lines, comments (starting with ':'), and
+    non-SSE content (e.g. raw JSON error bodies some providers send).
+    """
+    if not line or line.startswith(":"):
+        return None
+    colon = line.find(":")
+    if colon < 1:
+        return None
+    field = line[:colon]
+    if field not in _SSE_FIELDS:
+        return None
+    value = line[colon + 1:]
+    if value.startswith(" "):
+        value = value[1:]
+    return (field, value)
+
 
 class RPMRateLimiter:
     """滑动窗口 RPM (Requests Per Minute) 限流器。

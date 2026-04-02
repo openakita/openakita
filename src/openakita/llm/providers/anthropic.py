@@ -27,7 +27,7 @@ from ..types import (
     ToolUseBlock,
     Usage,
 )
-from .base import LLMProvider
+from .base import LLMProvider, parse_sse_field
 from .proxy_utils import (
     build_httpx_timeout,
     get_httpx_transport,
@@ -224,13 +224,14 @@ class AnthropicProvider(LLMProvider):
                     )
 
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data.strip():
+                    parsed = parse_sse_field(line)
+                    if parsed is not None and parsed[0] == "data":
+                        value = parsed[1]
+                        if value.strip():
                             import json
 
                             try:
-                                event = json.loads(data)
+                                event = json.loads(value)
                                 yield event
                             except json.JSONDecodeError:
                                 continue
