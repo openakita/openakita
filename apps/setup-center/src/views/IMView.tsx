@@ -101,10 +101,11 @@ type AgentProfile = {
 
 const DEFAULT_API = "http://127.0.0.1:18900";
 
-const BOT_TYPES = ["wechat", "wework", "wework_ws", "qqbot", "feishu", "dingtalk", "telegram", "onebot", "onebot_reverse"] as const;
+const BOT_TYPES = ["wechat", "wework", "wework_ws", "qqbot", "feishu", "lark", "dingtalk", "telegram", "onebot", "onebot_reverse"] as const;
 
 const BOT_TYPE_LABEL_KEYS: Record<string, string> = {
   feishu: "im.botTypeFeishu",
+  lark: "im.botTypeLark",
   telegram: "im.botTypeTelegram",
   dingtalk: "im.botTypeDingtalk",
   wework: "im.botTypeWeworkHttp",
@@ -118,8 +119,14 @@ const BOT_TYPE_LABEL_KEYS: Record<string, string> = {
 const WEWORK_TYPES = new Set(["wework", "wework_ws"]);
 const ONEBOT_TYPES = new Set(["onebot", "onebot_reverse"]);
 
+const FEISHU_LIKE_TYPES = new Set(["feishu", "lark"]);
+
 const CREDENTIAL_FIELDS: Record<string, { key: string; label: string; secret?: boolean; placeholder?: string }[]> = {
   feishu: [
+    { key: "app_id", label: "App ID" },
+    { key: "app_secret", label: "App Secret", secret: true },
+  ],
+  lark: [
     { key: "app_id", label: "App ID" },
     { key: "app_secret", label: "App Secret", secret: true },
   ],
@@ -172,7 +179,7 @@ const EMPTY_BOT: IMBot = {
 };
 
 const BOT_ID_PREFIX: Record<string, string> = {
-  feishu: "feishu", telegram: "telegram", dingtalk: "dingtalk",
+  feishu: "feishu", lark: "lark", telegram: "telegram", dingtalk: "dingtalk",
   wework: "wecom", wework_ws: "wecom", qqbot: "qq",
   onebot: "onebot", onebot_reverse: "onebot", wechat: "wechat",
 };
@@ -1677,7 +1684,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
             </div>
 
             {/* 6. QR scan buttons */}
-            {editingBot.type === "feishu" && venvDir && (
+            {FEISHU_LIKE_TYPES.has(editingBot.type) && venvDir && (
               <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowFeishuQR(true)}>
                 {t("feishu.qrScanCreate")}
               </Button>
@@ -1814,8 +1821,8 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
               </div>
             )}
 
-            {/* Feishu extras */}
-            {editingBot.type === "feishu" && (
+            {/* Feishu / Lark extras */}
+            {FEISHU_LIKE_TYPES.has(editingBot.type) && (
               <div className="space-y-4">
                 <div className="border-t" />
                 <div className="space-y-1.5">
@@ -1906,10 +1913,11 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
         </DialogContent>
       </Dialog>
 
-      {showFeishuQR && venvDir && (
+      {showFeishuQR && venvDir && editingBot && (
         <FeishuQRModal
           venvDir={venvDir}
           apiBaseUrl={apiBaseUrl}
+          domain={editingBot.type === "lark" ? "lark" : "feishu"}
           onClose={() => setShowFeishuQR(false)}
           onSuccess={(appId, appSecret) => {
             updateCredential("app_id", appId);
@@ -1978,6 +1986,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
 const WIZARD_PLATFORMS = [
   { id: "wechat", botType: "wechat", title: "config.imWechat", logo: LogoWechat },
   { id: "feishu", botType: "feishu", title: "config.imFeishu", logo: LogoFeishu },
+  { id: "lark", botType: "lark", title: "im.botTypeLark", logo: LogoFeishu },
   { id: "dingtalk", botType: "dingtalk", title: "config.imDingtalk", logo: LogoDingtalk },
   { id: "wework", botType: "wework_ws", title: "config.imWework", logo: LogoWework },
   { id: "qqbot", botType: "qqbot", title: "config.imQQBot", logo: LogoQQ },
@@ -2004,11 +2013,11 @@ function hasMode(botType: string): boolean {
 }
 
 function hasExtra(botType: string): boolean {
-  return botType === "feishu" || botType === "qqbot";
+  return FEISHU_LIKE_TYPES.has(botType) || botType === "qqbot";
 }
 
 function hasQrScan(botType: string): boolean {
-  return ["feishu", "qqbot", "wework_ws", "wechat"].includes(botType);
+  return ["feishu", "lark", "qqbot", "wework_ws", "wechat"].includes(botType);
 }
 
 function getActiveSteps(botType: string): WizardStep[] {
@@ -2358,7 +2367,7 @@ function BotCreationWizard({
                 {/* QR scan */}
                 {hasQrScan(bot.type) && (
                   <div className="space-y-2">
-                    {bot.type === "feishu" && venvDir && (
+                    {FEISHU_LIKE_TYPES.has(bot.type) && venvDir && (
                       <Button variant="outline" className="w-full border-dashed border-primary text-primary" onClick={() => setShowFeishuQR(true)}>
                         {t("feishu.qrScanCreate")}
                       </Button>
@@ -2474,7 +2483,7 @@ function BotCreationWizard({
             {/* Step: Extra config */}
             {step === "extra" && (
               <div className="space-y-4">
-                {bot.type === "feishu" && (
+                {FEISHU_LIKE_TYPES.has(bot.type) && (
                   <div className="space-y-4">
                     <div className="space-y-1.5">
                       <Label>{t("feishu.streaming")}</Label>
@@ -2662,6 +2671,7 @@ function BotCreationWizard({
       {/* QR Modals */}
       {showFeishuQR && venvDir && (
         <FeishuQRModal venvDir={venvDir} apiBaseUrl={apiBaseUrl}
+          domain={bot.type === "lark" ? "lark" : "feishu"}
           onClose={() => setShowFeishuQR(false)}
           onSuccess={(appId, appSecret) => { updateCredential("app_id", appId); updateCredential("app_secret", appSecret); setShowFeishuQR(false); }}
         />

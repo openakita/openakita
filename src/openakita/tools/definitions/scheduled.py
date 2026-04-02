@@ -48,7 +48,7 @@ SCHEDULED_TOOLS = [
 
 ## 📡 target_channel（通常不需要设置！）
 - 默认不传！系统自动用当前 IM 通道
-- 仅当用户明确要求时才设置（如 wework/telegram/dingtalk/feishu/slack）""",
+- 仅当用户明确要求时才设置（如 wework/telegram/dingtalk/feishu/lark/slack）""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -79,7 +79,7 @@ SCHEDULED_TOOLS = [
                 },
                 "target_channel": {
                     "type": "string",
-                    "description": "指定推送到哪个已配置的 IM 通道（如 wework/telegram/dingtalk/feishu/slack）。不传则自动使用当前会话通道。⚠️ 不需要 Webhook URL，通道已在系统中配置好！",
+                    "description": "指定推送到哪个已配置的 IM 通道（如 wework/telegram/dingtalk/feishu/lark/slack）。不传则自动使用当前会话通道。⚠️ 不需要 Webhook URL，通道已在系统中配置好！",
                 },
                 "notify_on_start": {
                     "type": "boolean",
@@ -156,7 +156,7 @@ reminder 任务的唯一作用就是发送提醒消息。
 - notify_on_start: 开始时是否发"开始执行…"状态消息（不影响 reminder 消息！）
 - notify_on_complete: 结果前是否添加"✅ 任务完成"标题包装（任务结果始终投递，不影响 reminder 消息！）
 - enabled: 是否启用（false=暂停，true=恢复）
-- target_channel: 修改推送通道（如 wework/telegram/dingtalk/feishu/slack）
+- target_channel: 修改推送通道（如 wework/telegram/dingtalk/feishu/lark/slack）
 
 **常见用法**：
 - "暂停任务" → enabled=false
@@ -183,7 +183,7 @@ reminder 任务的唯一作用就是发送提醒消息。
                 "enabled": {"type": "boolean", "description": "启用/暂停任务？不传=不修改"},
                 "target_channel": {
                     "type": "string",
-                    "description": "修改推送通道（如 wework/telegram/dingtalk/feishu/slack）。不传=不修改。⚠️ 不需要 Webhook URL！",
+                    "description": "修改推送通道（如 wework/telegram/dingtalk/feishu/lark/slack）。不传=不修改。⚠️ 不需要 Webhook URL！",
                 },
             },
             "required": ["task_id"],

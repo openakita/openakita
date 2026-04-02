@@ -2436,8 +2436,8 @@ class MessageGateway:
                 await self._send_response(message, response_text)
                 return
 
-            # /feishu 命令族（仅飞书渠道生效）
-            if _cmd_lower.startswith("/feishu") and message.channel.split(":")[0] == "feishu":
+            # /feishu 命令族（飞书 / Lark 渠道生效）
+            if _cmd_lower.startswith("/feishu") and message.channel.split(":")[0] in ("feishu", "lark"):
                 feishu_resp = await self._handle_feishu_command(_cmd_lower, message)
                 if feishu_resp is not None:
                     await self._send_response(message, feishu_resp)
@@ -3518,6 +3518,7 @@ class MessageGateway:
         "wework":   0,       # 0 = 不分片，整条发送
         "dingtalk":  18000,
         "feishu":    28000,
+        "lark":      28000,
         "onebot":    20000,
         "qqbot":     20000,
         "wechat":    4000,

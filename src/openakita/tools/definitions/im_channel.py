@@ -68,7 +68,7 @@ IM_CHANNEL_TOOLS = [
                 },
                 "target_channel": {
                     "type": "string",
-                    "description": "目标 IM 通道名（如 telegram/wework/feishu/dingtalk）。留空或不填则发送到当前通道（IM 模式）或桌面端（Desktop 模式）。",
+                    "description": "目标 IM 通道名（如 telegram/wework/feishu/lark/dingtalk）。留空或不填则发送到当前通道（IM 模式）或桌面端（Desktop 模式）。",
                 },
                 "prefer_chat_type": {
                     "type": "string",

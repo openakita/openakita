@@ -916,6 +916,7 @@
     "wizardSaved": "机器人创建成功",
     "wizardCredRequired": "请至少填写一项凭据信息",
     "botTypeFeishu": "飞书",
+    "botTypeLark": "Lark（国际版）",
     "botTypeTelegram": "Telegram",
     "botTypeDingtalk": "钉钉",
     "botTypeWeworkHttp": "企业微信(HTTP)",

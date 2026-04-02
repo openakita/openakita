@@ -96,13 +96,14 @@ def _import_lark():
 
 @dataclass
 class FeishuConfig:
-    """飞书配置"""
+    """飞书 / Lark 配置"""
 
     app_id: str
     app_secret: str
     verification_token: str | None = None
     encrypt_key: str | None = None
     log_level: str = "INFO"
+    domain: str = "feishu"
 
     def __post_init__(self) -> None:
         if not self.app_id or not self.app_id.strip():
@@ -112,7 +113,28 @@ class FeishuConfig:
         self.log_level = self.log_level.upper()
         if self.log_level not in ("DEBUG", "INFO", "WARN", "ERROR"):
             raise ValueError(f"FeishuConfig: invalid log_level '{self.log_level}'")
+        if self.domain not in ("feishu", "lark"):
+            raise ValueError(
+                f"FeishuConfig: domain must be 'feishu' or 'lark', got {self.domain!r}"
+            )
 
+    @property
+    def is_lark(self) -> bool:
+        return self.domain == "lark"
+
+    @property
+    def api_domain(self) -> str:
+        """REST / Open API base, e.g. https://open.feishu.cn"""
+        return "https://open.larksuite.com" if self.is_lark else "https://open.feishu.cn"
+
+    @property
+    def accounts_domain(self) -> str:
+        """OAuth / Accounts base"""
+        return "https://accounts.larksuite.com" if self.is_lark else "https://accounts.feishu.cn"
+
+    @property
+    def platform_label(self) -> str:
+        return "Lark" if self.is_lark else "飞书"
 
 class FeishuAdapter(ChannelAdapter):
     """
@@ -154,6 +176,7 @@ class FeishuAdapter(ChannelAdapter):
         media_dir: Path | None = None,
         log_level: str = "INFO",
         *,
+        domain: str = "feishu",
         channel_name: str | None = None,
         bot_id: str | None = None,
         agent_profile_id: str = "default",
@@ -166,16 +189,19 @@ class FeishuAdapter(ChannelAdapter):
     ):
         """
         Args:
-            app_id: 飞书应用 App ID（在开发者后台获取）
-            app_secret: 飞书应用 App Secret（在开发者后台获取）
+            app_id: 飞书/Lark 应用 App ID
+            app_secret: 飞书/Lark 应用 App Secret
             verification_token: 事件订阅验证 Token（Webhook 模式需要）
             encrypt_key: 事件加密密钥（如果配置了加密则需要）
             media_dir: 媒体文件存储目录
             log_level: 日志级别 (DEBUG, INFO, WARN, ERROR)
+            domain: "feishu"（国内飞书）或 "lark"（国际 Lark）
             channel_name: 通道名称（多Bot时用于区分实例）
             bot_id: Bot 实例唯一标识
             agent_profile_id: 绑定的 agent profile ID
         """
+        if channel_name is None:
+            channel_name = "lark" if domain == "lark" else "feishu"
         super().__init__(channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id)
 
         self.config = FeishuConfig(
@@ -184,6 +210,7 @@ class FeishuAdapter(ChannelAdapter):
             verification_token=verification_token,
             encrypt_key=encrypt_key,
             log_level=log_level,
+            domain=domain,
         )
         self.media_dir = Path(media_dir) if media_dir else Path("data/media/feishu")
         self.media_dir.mkdir(parents=True, exist_ok=True)
@@ -275,13 +302,15 @@ class FeishuAdapter(ChannelAdapter):
         """
         _import_lark()
 
-        # 创建客户端
+        # 创建客户端（根据 domain 选择飞书国内或 Lark 国际端点）
         log_level = getattr(lark_oapi.LogLevel, self.config.log_level, lark_oapi.LogLevel.INFO)
+        sdk_domain = lark_oapi.LARK_DOMAIN if self.config.is_lark else lark_oapi.FEISHU_DOMAIN
 
         self._client = (
             lark_oapi.Client.builder()
             .app_id(self.config.app_id)
             .app_secret(self.config.app_secret)
+            .domain(sdk_domain)
             .log_level(log_level)
             .build()
         )
@@ -357,13 +386,13 @@ class FeishuAdapter(ChannelAdapter):
             _err_lower = (_bot_info_error or "").lower()
             if any(kw in _err_lower for kw in ("invalid", "app_id", "secret", "token", "auth", "10003")):
                 raise ConnectionError(
-                    f"飞书 App ID 或 App Secret 无效，请在飞书开放平台检查应用凭据。"
-                    f"（错误详情: {_bot_info_error}）"
+                    f"{self.config.platform_label} App ID 或 App Secret 无效，"
+                    f"请在开放平台检查应用凭据。（错误详情: {_bot_info_error}）"
                 )
             if "connect" in _err_lower or "timeout" in _err_lower or "resolve" in _err_lower:
                 raise ConnectionError(
-                    f"无法连接飞书 API (open.feishu.cn)，请检查网络连接。"
-                    f"（错误详情: {_bot_info_error}）"
+                    f"无法连接{self.config.platform_label} API ({self.config.api_domain})，"
+                    f"请检查网络连接。（错误详情: {_bot_info_error}）"
                 )
             logger.warning(
                 "Feishu: bot open_id not available. "
@@ -590,6 +619,7 @@ class FeishuAdapter(ChannelAdapter):
                     log_level=getattr(
                         lark_oapi.LogLevel, self.config.log_level, lark_oapi.LogLevel.INFO
                     ),
+                    domain=self.config.api_domain,
                 )
                 self._ws_client = ws_client
 
@@ -1490,7 +1520,7 @@ class FeishuAdapter(ChannelAdapter):
         Feishu platform automatically uses the redirect URI registered in the
         developer console, avoiding error 20029 (redirect URL mismatch).
         """
-        base = "https://open.feishu.cn/open-apis/authen/v1/authorize"
+        base = f"{self.config.api_domain}/open-apis/authen/v1/authorize"
         url = f"{base}?app_id={self.config.app_id}&response_type=code"
         if redirect_uri:
             url += f"&redirect_uri={redirect_uri}"
