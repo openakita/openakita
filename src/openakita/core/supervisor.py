@@ -353,7 +353,7 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 should_rollback=True,
                 prompt_injection=(
-                    "[系统提示] 检测到连续相同工具调用已达 4 次，系统已回滚。"
+                    "[系统提示] 检测到连续相同工具调用已达 3 次，系统已回滚。"
                     "如果任务已完成，请直接回复用户最终结果，不要再调用任何工具。"
                     "如果确实需要继续，必须使用完全不同的工具或参数。"
                     "禁止再次调用与之前相同的工具+参数组合。"
