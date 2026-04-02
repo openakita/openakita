@@ -66,6 +66,7 @@ import { OrgProjectBoard } from "../components/OrgProjectBoard";
 import { ZoomIn, ZoomOut, Maximize, Map as MapIcon, X as XIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "../components/ui/tooltip";
+import agentOrgImg from "../assets/agent_org.png";
 
 // ── Custom Canvas Controls (shadcn UI) ──
 
@@ -1032,7 +1033,7 @@ export function OrgEditorView({
   const [newNodeTitle, setNewNodeTitle] = useState("");
   const [newNodeDept, setNewNodeDept] = useState("");
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768 || IS_CAPACITOR);
-  const [showLeftPanel, setShowLeftPanel] = useState(() => !(window.innerWidth < 768 || IS_CAPACITOR));
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [creatingOrg, setCreatingOrg] = useState(false);
   const orgCreateBusyRef = useRef(false);
@@ -2053,33 +2054,150 @@ export function OrgEditorView({
 
       {/* ── Content area: Left + Canvas + Right ── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
-      {/* ── Left Panel: Org List ── */}
-      {isMobile && showLeftPanel && (
+
+      {/* ── Welcome: two-card layout when no org selected ── */}
+      {!currentOrg && (
+        <div style={{ flex: 1, display: "flex", padding: 16, gap: 16, overflow: "hidden" }}>
+          {/* Left card: org list */}
+          <div style={{
+            width: 280, flexShrink: 0, display: "flex", flexDirection: "column",
+            background: "var(--card-bg, #fff)", border: "1px solid var(--line)",
+            borderRadius: 12, overflow: "hidden",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          }}>
+            <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>组织编排</span>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">模板</Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">从模板创建组织</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">新建</Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">新建空白组织</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">导入</Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">从文件导入组织</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            </div>
+            {showTemplates && (
+              <div style={{ padding: "0 8px 8px" }}>
+                <div className="card" style={{ padding: 8, fontSize: 12 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>从模板创建</div>
+                  {templates.map((tpl) => (
+                    <div key={tpl.id} onClick={() => handleCreateFromTemplate(tpl.id)}
+                      style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}
+                      className="navItem"
+                    >
+                      <span><IconBuilding size={14} /></span>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{tpl.name}</div>
+                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} 节点</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>
+              {orgList.length === 0 && (
+                <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
+                  暂无组织，点击上方创建
+                </div>
+              )}
+              {orgList.map((org) => (
+                <div key={org.id}
+                  onClick={() => { setSelectedOrgId(org.id); }}
+                  className={`navItem ${selectedOrgId === org.id ? "navItemActive" : ""}`}
+                  style={{ padding: "8px 10px", marginBottom: 4, borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", position: "relative" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+                    <IconBuilding size={16} />
+                    <div style={{ overflow: "hidden" }}>
+                      <div style={{ fontWeight: 500, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{org.name}</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{org.node_count} 节点 · {ORG_STATUS_LABELS[org.status] || org.status}</div>
+                    </div>
+                  </div>
+                  <button className="btnSmall" onClick={(e) => { e.stopPropagation(); setConfirmDeleteOrgId(org.id); }} style={{ opacity: 0.5, fontSize: 10 }} title="删除组织">
+                    <IconTrash size={10} />
+                  </button>
+                  {confirmDeleteOrgId === org.id && (
+                    <div style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: "var(--card-bg, #fff)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px", boxShadow: "0 4px 12px rgba(0,0,0,0.12)", display: "flex", gap: 6, alignItems: "center", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>
+                      <span>确认删除?</span>
+                      <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>删除</button>
+                      <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>取消</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Right card: tutorial / guide */}
+          <div style={{
+            flex: 1, minWidth: 0, minHeight: 0,
+            display: "flex", flexDirection: "column",
+            background: "var(--card-bg, #fff)", border: "1px solid var(--line)",
+            borderRadius: 12, overflow: "hidden",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+          }}>
+            <div style={{
+              flex: 1, minHeight: 0,
+              background: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: 24,
+            }}>
+              <img
+                src={agentOrgImg}
+                alt="组织编排示意图"
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }}
+              />
+            </div>
+            <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)", flexShrink: 0 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>欢迎使用组织编排</h3>
+              <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.8 }}>
+                组织编排可以让多个 AI Agent 协同工作——你可以设计组织架构、定义节点角色、配置协作关系，然后一键启动，让整个 AI 团队自动运转。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Left Panel: Org List (floating, only when org selected) ── */}
+      {currentOrg && showLeftPanel && (
         <div
           onClick={() => setShowLeftPanel(false)}
           style={{
             position: "absolute", inset: 0, zIndex: 49,
-            background: "rgba(0,0,0,0.3)",
           }}
         />
       )}
-      {showLeftPanel && (
+      {currentOrg && showLeftPanel && (
       <div
         style={{
-          width: isMobile ? "80%" : 240,
-          maxWidth: isMobile ? 320 : 240,
-          borderRight: isMobile ? "none" : "1px solid var(--line)",
+          width: isMobile ? "80%" : 260,
+          maxWidth: 320,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          background: "var(--bg-app)",
-          flexShrink: 0,
-          position: isMobile ? "absolute" : "relative",
-          zIndex: isMobile ? 50 : "auto",
-          top: 0,
-          left: 0,
-          bottom: 0,
-          boxShadow: isMobile ? "4px 0 12px rgba(0,0,0,0.15)" : "none",
+          background: "var(--card-bg, #fff)",
+          position: "absolute",
+          zIndex: 50,
+          top: 8,
+          left: 8,
+          bottom: 8,
+          borderRadius: 12,
+          border: "1px solid var(--line)",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)",
         }}
       >
         <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -2118,11 +2236,9 @@ export function OrgEditorView({
               style={{ display: "none" }}
               onChange={handleImportOrg}
             />
-            {isMobile && (
-              <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title="关闭" style={{ minWidth: 36, minHeight: 36 }}>
-                <IconX size={16} />
-              </button>
-            )}
+            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title="关闭" style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
+              <IconX size={14} />
+            </button>
           </div>
         </div>
 
@@ -2224,6 +2340,7 @@ export function OrgEditorView({
       )}
 
       {/* ── Center: Canvas ── */}
+      {currentOrg && (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Add node dialog */}
         {showNewNodeForm && createPortal(
@@ -2354,6 +2471,7 @@ export function OrgEditorView({
                 style: { strokeWidth: 2 },
               }}
               style={{ background: "var(--bg-app)" }}
+              proOptions={{ hideAttribution: true }}
             >
               <Background gap={20} size={1} color="var(--line)" />
               <OrgCanvasControls />
@@ -2888,19 +3006,9 @@ export function OrgEditorView({
             .org-modal-btn--primary:hover { background: #4f46e5; }
           `}</style>
           </>
-        ) : (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)" }}
-            onClick={() => { if (isMobile) setShowLeftPanel(true); }}
-          >
-            <div style={{ textAlign: "center" }}>
-              <IconUsers size={48} />
-              <p style={{ marginTop: 12, fontSize: 14 }}>
-                {isMobile ? "点击打开组织列表" : "选择或创建一个组织开始编排"}
-              </p>
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
+      )}
 
       {/* ── Right Panel: Node Properties ── */}
       {isMobile && selectedNode && showRightPanel && (
