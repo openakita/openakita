@@ -1,10 +1,13 @@
-refactor(browser): 移除 browser-use SDK，统一为 Playwright 单一浏览器控制层
+fix(session): 重构消息历史管理，用 metadata trim 替代破坏性截断，修复 #309
 
-解决 CDP 多客户端资源争用导致 browser-use 100% 失败的架构问题 (#173)。
+根因：旧版 _truncate_history 在 100 条时触发、丢弃 25% 消息，
+多 Agent 工作流下几轮对话就永久删除聊天记录，用户感知"记录丢失"。
 
-- 删除 browser_use_runner.py 及其 LLM 注入机制
-- 移除 browser-use、langchain-openai 两个依赖
-- 将 Playwright 已实现但未暴露的 8 个工具正式注册:
-  browser_click, browser_type, browser_scroll, browser_wait,
-  browser_execute_js, browser_list_tabs, browser_switch_tab, browser_new_tab
-- 清理所有 browser_task 引用 (agent/handler/definitions/prompt/tests)
+架构改动：
+- 引入 _trim_old_metadata()：日常机制，裁剪旧消息的 chain_summary/
+  tool_summary/artifacts 重型字段，不删消息
+- _truncate_history 降级为硬安全网：阈值 100->2000，保留率 75%->95%，
+  正常使用几乎不触发
+- from_dict 迁移：旧 session 的 max_history<500 自动升级
+- API 层保留截断残留物过滤（向后兼容旧 session）
+- config.py session_max_history 对齐至 2000

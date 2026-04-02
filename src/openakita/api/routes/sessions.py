@@ -46,10 +46,20 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     sessions = session_manager.list_sessions(channel=channel)
     sessions.sort(key=lambda s: s.last_active, reverse=True)
 
+    # 向后兼容：旧版 _truncate_history 会在 session 中插入 system 摘要消息，
+    # 新版已不再产生（改用 metadata trim），但已有 session 中可能残留这些消息。
+    _TRUNCATION_PREFIXES_LIST = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
+
     result = []
     for s in sessions:
         msgs = s.context.messages
-        user_msgs = [m for m in msgs if m.get("role") == "user"]
+        visible_msgs = [
+            m for m in msgs
+            if not (m.get("role") == "system"
+                    and isinstance(m.get("content", ""), str)
+                    and m["content"].startswith(_TRUNCATION_PREFIXES_LIST))
+        ]
+        user_msgs = [m for m in visible_msgs if m.get("role") == "user"]
         first_user = user_msgs[0] if user_msgs else None
         title = ""
         if first_user:
@@ -57,8 +67,8 @@ async def list_sessions(request: Request, channel: str = "desktop"):
             title = content[:30] if isinstance(content, str) else ""
 
         last_msg_content = ""
-        if msgs:
-            last_content = msgs[-1].get("content", "")
+        if visible_msgs:
+            last_content = visible_msgs[-1].get("content", "")
             if isinstance(last_content, str):
                 last_msg_content = last_content[:100]
 
@@ -67,7 +77,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
             "title": title or "对话",
             "lastMessage": last_msg_content,
             "timestamp": int(s.last_active.timestamp() * 1000),
-            "messageCount": len(msgs),
+            "messageCount": len(visible_msgs),
             "agentProfileId": getattr(s.context, "agent_profile_id", "default"),
         })
 
@@ -105,12 +115,17 @@ async def get_session_history(
 
     _STRIP_MARKERS = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"]
 
+    # 向后兼容：过滤旧版 _truncate_history 插入的 system 摘要（新版已不再产生）
+    _TRUNCATION_PREFIXES = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
+
     result = []
     for i, msg in enumerate(session.context.messages):
         role = msg.get("role", "user")
         content = msg.get("content", "")
         if not isinstance(content, str):
             content = str(content) if content else ""
+        if role == "system" and content.startswith(_TRUNCATION_PREFIXES):
+            continue
         if role == "assistant":
             for marker in _STRIP_MARKERS:
                 if marker in content:
