@@ -27,7 +27,6 @@ from .types import (
     MemoryType,
     Scratchpad,
     SemanticMemory,
-    _normalize_tags,
 )
 
 logger = logging.getLogger(__name__)
@@ -1021,7 +1020,7 @@ duration 参考:
                     importance_score=importance,
                     subject=item.get("subject", ""),
                     predicate=item.get("predicate", ""),
-                    tags=_normalize_tags(item.get("tags")),
+                    tags=item.get("tags", []),
                 ))
 
         except json.JSONDecodeError as e:

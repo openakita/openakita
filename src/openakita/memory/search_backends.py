@@ -18,6 +18,7 @@ import logging
 import struct
 from typing import Any, Protocol, runtime_checkable
 
+
 logger = logging.getLogger(__name__)
 
 

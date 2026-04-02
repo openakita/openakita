@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
-from openakita.memory.types import _normalize_tags
+from openakita.memory.types import normalize_tags
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -388,6 +388,9 @@ class Organization:
     watchdog_stuck_threshold_s: int = 1800
     watchdog_silence_threshold_s: int = 1800
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -425,7 +428,7 @@ class Organization:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "is_template": self.is_template,
-            "tags": _normalize_tags(self.tags),
+            "tags": self.tags,
             "total_tasks_completed": self.total_tasks_completed,
             "total_messages_exchanged": self.total_messages_exchanged,
             "total_tokens_used": self.total_tokens_used,
@@ -577,6 +580,9 @@ class OrgMemoryEntry:
     last_accessed_at: str = field(default_factory=_now_iso)
     access_count: int = 0
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -587,7 +593,7 @@ class OrgMemoryEntry:
             "content": self.content,
             "source_node": self.source_node,
             "source_message_id": self.source_message_id,
-            "tags": _normalize_tags(self.tags),
+            "tags": self.tags,
             "importance": self.importance,
             "ttl_hours": self.ttl_hours,
             "created_at": self.created_at,
@@ -608,8 +614,6 @@ class OrgMemoryEntry:
                 d["memory_type"] = MemoryType(d["memory_type"])
             except ValueError:
                 d["memory_type"] = MemoryType.FACT
-        if "tags" in d:
-            d["tags"] = _normalize_tags(d["tags"])
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 

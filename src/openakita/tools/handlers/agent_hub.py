@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openakita.memory.types import normalize_tags
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -219,7 +221,7 @@ class AgentHubHandler:
         if a.get("description"):
             lines.append(f"\n**描述**: {a['description']}")
         if a.get("tags"):
-            lines.append(f"**标签**: {', '.join(a['tags'])}")
+            lines.append(f"**标签**: {', '.join(normalize_tags(a['tags']))}")
 
         lines.append(f"\n使用 `install_hub_agent` 安装此 Agent。")
         return "\n".join(lines)
