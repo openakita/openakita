@@ -81,10 +81,31 @@ class FileTool:
         file_path = self._resolve_path(path)
         logger.debug(f"Reading file: {file_path}")
 
-        # 检查是否为二进制文件
+        # Office 文档：尝试提取文本内容
         suffix = file_path.suffix.lower()
+        if suffix in (".docx", ".xlsx", ".pptx", ".pdf"):
+            try:
+                from openakita.channels.media.handler import MediaHandler
+                _handler = MediaHandler()
+                if suffix == ".docx":
+                    text = await _handler._extract_docx(file_path)
+                elif suffix == ".xlsx":
+                    text = await _handler._extract_xlsx(file_path)
+                elif suffix == ".pptx":
+                    text = await _handler._extract_pptx(file_path)
+                else:
+                    text = await _handler._extract_pdf(file_path)
+                if text and text.strip():
+                    return text
+            except ImportError as _imp_err:
+                return (
+                    f"[{suffix.upper().lstrip('.')} 文件: {file_path.name} — "
+                    f"缺少依赖库，无法提取内容。{_imp_err}]"
+                )
+            except Exception as _err:
+                logger.warning(f"Office text extraction failed for {file_path}: {_err}")
+
         if suffix in self.BINARY_EXTENSIONS:
-            # 获取文件大小
             stat = await aiofiles.os.stat(file_path)
             size_kb = stat.st_size / 1024
             return f"[二进制文件: {file_path.name}, 类型: {suffix}, 大小: {size_kb:.1f}KB - 无法作为文本读取]"
