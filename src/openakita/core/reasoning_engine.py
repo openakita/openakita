@@ -3441,30 +3441,19 @@ class ReasoningEngine:
             )
             return clean_llm_response(stripped_text)
 
-        # intent=NONE 且无工具调用 — 很多模型不会可靠地输出 [REPLY] 标记。
-        # 通过启发式判断：如果回复不含任何"已执行操作"的断言，
-        # 则视为合法的对话回复而非幻觉，直接返回以避免无意义的
-        # ForceToolCall 重试（每次重试增加 5-10s 延迟）。
-        if intent is None and stripped_text and self._is_conversational_reply(
-            stripped_text, original_messages
-        ):
-            logger.info(
-                "[IntentTag] No intent tag but response looks conversational "
-                "(no action-execution claims), accepting as valid reply"
+        # intent=ACTION → 明确声明要调工具但没调，一定是幻觉
+        if intent == "ACTION":
+            max_no_tool_retries = self._effective_force_retries(
+                base_force_retries, conversation_id
             )
-            return clean_llm_response(stripped_text)
-
-        max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)
-        no_tool_call_count += 1
-
-        if no_tool_call_count <= max_no_tool_retries:
-            if stripped_text:
-                working_messages.append({
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": stripped_text}],
-                    "reasoning_content": decision.thinking_content or None,
-                })
-            if intent == "ACTION":
+            no_tool_call_count += 1
+            if no_tool_call_count <= max_no_tool_retries:
+                if stripped_text:
+                    working_messages.append({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": stripped_text}],
+                        "reasoning_content": decision.thinking_content or None,
+                    })
                 logger.warning(
                     "[IntentTag] ACTION intent declared but no tool calls — "
                     "hallucination detected, forcing retry"
@@ -3473,26 +3462,108 @@ class ReasoningEngine:
                     "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
                     "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
                 )
-            else:
+                working_messages.append({"role": "user", "content": retry_msg})
+                return (working_messages, no_tool_call_count, verify_incomplete_count,
+                        no_confirmation_text_count, max_no_tool_retries)
+            cleaned_text = clean_llm_response(stripped_text)
+            return cleaned_text or (
+                "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
+                "请重试、或更换端点/模型后再执行。"
+            )
+
+        # intent=None — 先处理空文本异常，再做黑名单检测
+        if not stripped_text or not stripped_text.strip():
+            max_no_tool_retries = self._effective_force_retries(
+                base_force_retries, conversation_id
+            )
+            no_tool_call_count += 1
+            if no_tool_call_count <= max_no_tool_retries:
                 logger.warning(
-                    f"[IntentTag] No intent tag, text claims completion but tool_calls=0 — "
-                    f"hallucination suspected, ForceToolCall retry "
+                    f"[IntentTag] Empty response with no intent tag and tool_calls=0 — "
+                    f"retrying ({no_tool_call_count}/{max_no_tool_retries})"
+                )
+                working_messages.append({
+                    "role": "user",
+                    "content": (
+                        "[系统] ⚠️ 你的上一条回复没有包含任何内容。"
+                        "请根据用户的请求给出回复或调用工具完成任务。"
+                    ),
+                })
+                return (working_messages, no_tool_call_count, verify_incomplete_count,
+                        no_confirmation_text_count, max_no_tool_retries)
+            return (
+                "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
+                "请重试、或更换端点/模型后再执行。"
+            )
+
+        # 黑名单检测：只拦截已知的幻觉模式，其余默认放行
+        # 黑名单 1: 回复声称已执行操作（"已完成"/"已创建"/...）
+        if stripped_text and self._has_action_claims(stripped_text):
+            max_no_tool_retries = self._effective_force_retries(
+                base_force_retries, conversation_id
+            )
+            no_tool_call_count += 1
+            if no_tool_call_count <= max_no_tool_retries:
+                working_messages.append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": stripped_text}],
+                    "reasoning_content": decision.thinking_content or None,
+                })
+                logger.warning(
+                    f"[IntentTag] No intent tag but response contains action claims "
+                    f"with tool_calls=0 — hallucination detected, ForceToolCall retry "
                     f"({no_tool_call_count}/{max_no_tool_retries})"
                 )
                 retry_msg = (
-                    "[系统] ⚠️ 你的上一条回复没有调用任何工具（系统日志确认 tool_calls=0）。"
+                    "[系统] ⚠️ 你的上一条回复声称已完成操作，但系统日志确认 tool_calls=0。"
                     "文字描述不等于实际执行。请立即调用工具完成用户的请求。"
                 )
-            working_messages.append({"role": "user", "content": retry_msg})
-            return (working_messages, no_tool_call_count, verify_incomplete_count,
-                    no_confirmation_text_count, max_no_tool_retries)
+                working_messages.append({"role": "user", "content": retry_msg})
+                return (working_messages, no_tool_call_count, verify_incomplete_count,
+                        no_confirmation_text_count, max_no_tool_retries)
+            cleaned_text = clean_llm_response(stripped_text)
+            return cleaned_text or (
+                "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
+                "请重试、或更换端点/模型后再执行。"
+            )
 
-        # 追问次数用尽
-        cleaned_text = clean_llm_response(stripped_text)
-        return cleaned_text or (
-            "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
-            "请重试、或更换端点/模型后再执行。"
+        # 黑名单 2: 进行中承诺（"正在生成"/"稍等"但实际没调工具）
+        if stripped_text and self._is_in_progress_promise(stripped_text):
+            max_no_tool_retries = self._effective_force_retries(
+                base_force_retries, conversation_id
+            )
+            no_tool_call_count += 1
+            if no_tool_call_count <= max_no_tool_retries:
+                working_messages.append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": stripped_text}],
+                    "reasoning_content": decision.thinking_content or None,
+                })
+                logger.warning(
+                    f"[IntentTag] No intent tag, response is in-progress promise "
+                    f"with tool_calls=0 — forcing retry "
+                    f"({no_tool_call_count}/{max_no_tool_retries})"
+                )
+                retry_msg = (
+                    "[系统] ⚠️ 你的上一条回复只是在描述将要执行的操作，"
+                    "但系统日志确认你没有调用任何工具（tool_calls=0）。"
+                    "请立即调用所需工具来完成任务，不要只输出文字说明。"
+                )
+                working_messages.append({"role": "user", "content": retry_msg})
+                return (working_messages, no_tool_call_count, verify_incomplete_count,
+                        no_confirmation_text_count, max_no_tool_retries)
+            cleaned_text = clean_llm_response(stripped_text)
+            return cleaned_text or (
+                "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
+                "请重试、或更换端点/模型后再执行。"
+            )
+
+        # 未命中任何黑名单 → 合法对话回复，直接返回
+        logger.info(
+            "[IntentTag] No intent tag, no action claims, no in-progress promise — "
+            "accepting as valid conversational reply"
         )
+        return clean_llm_response(stripped_text) or ""
 
     # ==================== 模型切换 ====================
 
@@ -4125,84 +4196,39 @@ class ReasoningEngine:
         return any(re.search(pat, _tail) for pat in confirmation_patterns)
 
     @staticmethod
-    def _is_conversational_reply(text: str, messages: list[dict]) -> bool:
-        """判断无 intent 标记的回复是否为合法的对话式回复。
+    def _has_action_claims(text: str) -> bool:
+        """检测回复是否包含「已执行操作」的断言。
 
-        许多模型（如 kimi-for-coding、部分 OpenAI 兼容端点）不会可靠地
-        输出 [REPLY]/[ACTION] 标记。此方法通过启发式规则区分：
-        - 对话回复（回答问题、闲聊、说明能力）→ True → 直接返回
-        - 伪执行断言（声称已完成操作但未调用工具）→ False → ForceToolCall
+        当 tool_calls=0 时，这类断言意味着模型在「幻觉执行」——
+        声称完成了操作但实际没有调用任何工具。
+
+        采用黑名单策略：只列举已知的幻觉断言模式，
+        未命中则视为合法对话（由调用方决定放行）。
         """
         _text = (text or "").strip()
-        if not _text or len(_text) < 5:
+        if not _text:
             return False
 
-        _action_claims = (
+        _claims_zh = (
             "已完成", "已执行", "已保存", "已发送", "已创建", "已修改",
             "已删除", "已上传", "已下载", "已安装", "已设置", "已配置",
             "我已经", "操作完成", "任务完成", "执行成功", "文件已",
             "脚本已", "命令已", "已写入", "已生成文件",
         )
-        if any(claim in _text for claim in _action_claims):
-            return False
-
-        last_user_text = ""
-        for msg in reversed(messages):
-            if msg.get("role") != "user":
-                continue
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                if content.startswith("[系统]") or content.startswith("[系统提示]"):
-                    continue
-                last_user_text = content
-                break
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        t = part.get("text", "")
-                        if not t.startswith("[系统]") and not t.startswith("[系统提示]"):
-                            last_user_text = t
-                            break
-                if last_user_text:
-                    break
-
-        _ctx_prefix = "[以上是之前的对话历史"
-        if _ctx_prefix in last_user_text:
-            idx = last_user_text.find("：]")
-            if idx != -1:
-                last_user_text = last_user_text[idx + 2:].strip()
-
-        _question_markers = ("?", "？", "吗", "吗？", "嘛", "呢", "不", "能不能", "可以")
-        if any(m in last_user_text for m in _question_markers):
+        if any(c in _text for c in _claims_zh):
             return True
 
-        _greeting_patterns = (
-            "你好", "在吗", "在嘛", "在不在", "嗨", "hello", "hi ",
-            "干嘛", "干啥", "你在", "早上好", "晚上好", "下午好",
+        _claims_en = (
+            "i've created", "i've saved", "i've written", "i've deleted",
+            "i've executed", "i've installed", "i've uploaded", "i've sent",
+            "i have created", "i have saved", "i have written", "i have deleted",
+            "i have executed", "i have installed",
+            "successfully created", "successfully saved", "successfully written",
+            "successfully deleted", "successfully executed",
+            "file has been", "task completed", "operation completed",
         )
-        _lower = last_user_text.lower().strip()
-        if any(_lower.startswith(g) or _lower == g for g in _greeting_patterns):
-            return True
-        if len(last_user_text.strip()) <= 10:
-            return True
-
-        # 信息请求类：用户要求总结/解释/列出等，属于对话回复而非工具操作。
-        # 但如果用户同时要求保存/发送等动作，则仍需工具调用，不可跳过。
-        _info_request_patterns = (
-            "总结", "汇总", "回顾", "梳理", "盘点",
-            "列出", "列举",
-            "解释", "说明", "概述", "介绍",
-            "是什么", "什么意思", "什么区别", "怎么理解",
-        )
-        _action_verbs_in_request = (
-            "保存", "写入", "写到", "发送", "导出", "上传",
-            "创建文件", "生成文件", "写文件",
-        )
-        if any(p in last_user_text for p in _info_request_patterns):
-            if not any(v in last_user_text for v in _action_verbs_in_request):
-                return True
-
-        return False
+        _lower = _text.lower()
+        return any(c in _lower for c in _claims_en)
 
     @staticmethod
     def _effective_force_retries(base_retries: int, conversation_id: str | None) -> int:
