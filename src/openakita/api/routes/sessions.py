@@ -66,8 +66,8 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     sessions = [s for s in sessions if not s.chat_id.startswith("org_")]
     sessions.sort(key=lambda s: s.last_active, reverse=True)
 
-    # Backward compatibility: old truncate_history injected synthetic system
-    # summaries into sessions. Hide them from the conversation list.
+    # 向后兼容：旧版 _truncate_history 会在 session 中插入 system 摘要消息，
+    # 新版已不再产生（改用 metadata trim），但已有 session 中可能残留这些消息。
     truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
 
     result = []
@@ -142,6 +142,7 @@ async def get_session_history(
         return {"messages": []}
 
     _STRIP_MARKERS = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"]
+    # 向后兼容：过滤旧版 _truncate_history 插入的 system 摘要（新版已不再产生）
     truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
 
     result = []

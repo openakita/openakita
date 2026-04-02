@@ -36,7 +36,7 @@ class SessionConfig:
     可覆盖全局配置，实现会话级别的定制
     """
 
-    max_history: int = 100  # 最大历史消息数
+    max_history: int = 2000  # 硬安全上限（日常由 _trim_old_metadata 控制体积，此值仅为极端兜底）
     timeout_minutes: int = 30  # 超时时间（分钟）
     language: str = "zh"  # 语言
     model: str | None = None  # 覆盖默认模型
@@ -366,13 +366,37 @@ class Session:
             key += f":{self.thread_id}"
         return key
 
+    # 重型元数据键（思考链、工具摘要、代码产物），对旧消息裁剪以控制体积
+    _HEAVY_METADATA_KEYS = ("chain_summary", "tool_summary", "artifacts")
+    # 保留最近 N 条消息的完整元数据（前端展示思考链等），更早的仅保留 base content
+    _METADATA_PRESERVE_WINDOW = 50
+
     def add_message(self, role: str, content: str, **metadata) -> bool:
         """添加消息并更新活跃时间。返回 True 表示消息被添加，False 表示被去重跳过。"""
         added = self.context.add_message(role, content, **metadata)
         self.touch()
-        if added and len(self.context.messages) > self.config.max_history:
-            self._truncate_history()
+
+        if added:
+            self._trim_old_metadata()
+            if len(self.context.messages) > self.config.max_history:
+                self._truncate_history()
         return added
+
+    def _trim_old_metadata(self) -> None:
+        """裁剪旧消息的重型元数据以控制内存与序列化体积。
+
+        保留所有消息的 base content（role, content, timestamp），仅移除
+        chain_summary / tool_summary / artifacts 等重型字段。
+        这是日常的体积控制机制，不会删除任何消息——用户永远不会丢失聊天记录。
+        """
+        with self.context._msg_lock:
+            messages = self.context.messages
+            trim_end = len(messages) - self._METADATA_PRESERVE_WINDOW
+            if trim_end <= 0:
+                return
+            for msg in messages[:trim_end]:
+                for key in self._HEAVY_METADATA_KEYS:
+                    msg.pop(key, None)
 
     _RULE_SIGNAL_WORDS = (
         "不要",
@@ -390,15 +414,22 @@ class Session:
     )
 
     def _truncate_history(self) -> None:
-        """截断历史消息，保留 75%，对丢弃部分生成简要摘要插入头部。
+        """硬安全网：仅当消息数超过 max_history（默认 2000）时触发。
 
-        优先保留用户设定的行为规则类消息。
+        日常体积控制由 _trim_old_metadata 负责（不删消息），本方法仅在极端情况
+        下删除最老 5% 的消息。正常使用几乎不会触发。
         """
         with self.context._msg_lock:
-            keep_count = int(self.config.max_history * 3 / 4)
+            keep_count = int(self.config.max_history * 95 / 100)
             messages = self.context.messages
             dropped = messages[:-keep_count]
             kept = messages[-keep_count:]
+
+            logger.warning(
+                f"Session {self.id}: HARD CAP truncation — "
+                f"total {len(messages)}, dropping {len(dropped)}, "
+                f"keeping {len(kept)} (max_history={self.config.max_history})"
+            )
 
             self._mark_dropped_for_extraction(dropped)
 
@@ -454,8 +485,8 @@ class Session:
                 kept.insert(0, {"role": "system", "content": "\n\n".join(header_parts)})
 
             self.context.messages = kept
-            logger.debug(
-                f"Session {self.id}: truncated history — "
+            logger.info(
+                f"Session {self.id}: truncated — "
                 f"dropped {len(dropped)}, kept {len(kept)} messages, "
                 f"preserved {len(rule_snippets)} rule snippets"
             )
@@ -548,7 +579,7 @@ class Session:
             last_active=datetime.fromisoformat(data["last_active"]),
             context=SessionContext.from_dict(data.get("context") or {}),
             config=SessionConfig(
-                max_history=config_data.get("max_history", 100),
+                max_history=max(config_data.get("max_history", 2000), 500),
                 timeout_minutes=config_data.get("timeout_minutes", 30),
                 language=config_data.get("language", "zh"),
                 model=config_data.get("model"),
