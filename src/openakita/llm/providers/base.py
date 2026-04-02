@@ -360,10 +360,13 @@ class LLMProvider(ABC):
         err_lower = error.lower()
 
         # 配额耗尽类（必须在 auth 之前，因为也是 403 状态码）
+        # 包含 HTTP 402 (Payment Required) 和各平台的余额不足变体
         if any(kw in err_lower for kw in [
             "allocationquota", "freetieronly", "insufficient_quota",
             "quota_exceeded", "billing", "free tier",
             "free_tier", "quota", "exceeded your current",
+            "insufficient balance", "insufficient_balance",
+            "(402)",
         ]):
             return "quota"
 

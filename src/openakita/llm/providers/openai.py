@@ -267,6 +267,10 @@ class OpenAIProvider(LLMProvider):
                 body = (response.text or "")[:500]
                 if response.status_code == 401:
                     raise AuthenticationError(f"Authentication failed: {body}")
+                if response.status_code == 402:
+                    raise AuthenticationError(
+                        f"API error (402): Payment required / quota exhausted: {body}"
+                    )
                 if response.status_code == 429:
                     raise RateLimitError(f"Rate limit exceeded: {body}")
                 raise LLMError(f"API error ({response.status_code}): {body}")
@@ -346,6 +350,10 @@ class OpenAIProvider(LLMProvider):
                     if response.status_code == 401:
                         raise AuthenticationError(
                             f"Authentication failed: {error_text}"
+                        )
+                    if response.status_code == 402:
+                        raise AuthenticationError(
+                            f"API error (402): Payment required / quota exhausted: {error_text}"
                         )
                     if response.status_code == 429:
                         raise RateLimitError(

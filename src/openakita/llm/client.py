@@ -595,8 +595,10 @@ class LLMClient:
                 )
 
         hint = _friendly_error_hint(eligible)
+        cats = frozenset(p.error_category for p in eligible if p.error_category)
         raise AllEndpointsFailedError(
-            f"Stream: all {len(eligible)} endpoints failed. {hint} Last error: {last_error}"
+            f"Stream: all {len(eligible)} endpoints failed. {hint} Last error: {last_error}",
+            error_categories=cats,
         )
 
     # ==================== 公共降级策略 ====================
@@ -791,16 +793,18 @@ class LLMClient:
                         f"All endpoints failed with structural errors "
                         f"(cooldown {min_cd}s). {hint} Last error: {last_err}",
                         is_structural=True,
+                        error_categories=frozenset({"structural"}),
                     )
 
                 # ── 全部是配额/认证错误，重试无意义 → 快速报错 ──
                 if quota_or_auth and len(quota_or_auth) == unhealthy_count:
                     last_err = quota_or_auth[0]._last_error or "unknown auth/quota error"
-                    categories = sorted({p.error_category for p in quota_or_auth})
+                    cats = frozenset(p.error_category for p in quota_or_auth)
                     hint = _friendly_error_hint(quota_or_auth)
                     raise AllEndpointsFailedError(
-                        f"All endpoints failed with {'/'.join(categories)} errors. "
-                        f"{hint} Last error: {last_err}"
+                        f"All endpoints failed with {'/'.join(sorted(cats))} errors. "
+                        f"{hint} Last error: {last_err}",
+                        error_categories=cats,
                     )
 
             # ── 降级 3: "最后防线旁路" — 绕过冷静期（对齐 Portkey） ──
@@ -823,11 +827,12 @@ class LLMClient:
 
             # 所有端点都是 quota/auth → 直接报错，不再送回 _try_endpoints 浪费 API 调用
             last_err = base_capability_matched[0]._last_error or "unknown error"
-            categories = sorted({p.error_category for p in base_capability_matched})
+            cats = frozenset(p.error_category for p in base_capability_matched if p.error_category)
             hint = _friendly_error_hint(base_capability_matched)
             raise AllEndpointsFailedError(
-                f"All endpoints failed with {'/'.join(categories)} errors. "
-                f"{hint} Last error: {last_err}"
+                f"All endpoints failed with {'/'.join(sorted(cats))} errors. "
+                f"{hint} Last error: {last_err}",
+                error_categories=cats,
             )
 
         # ── 降级 4: 最终兜底 — 尝试所有端点 ──
@@ -1381,9 +1386,11 @@ class LLMClient:
         all_structural = has_content_error or all(
             fp.error_category == "structural" for fp in failed_providers
         )
+        cats = frozenset(fp.error_category for fp in failed_providers if fp.error_category)
         raise AllEndpointsFailedError(
             f"All endpoints failed: {'; '.join(errors)}\n{hint}",
             is_structural=all_structural,
+            error_categories=cats,
         )
 
     def _has_images(self, messages: list[Message]) -> bool:

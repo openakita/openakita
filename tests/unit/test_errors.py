@@ -141,6 +141,33 @@ class TestLLMErrorClassification:
     def test_auth_still_auth(self):
         assert self._classify("401 Unauthorized: invalid api key") == "auth"
 
+    def test_insufficient_balance_is_quota(self):
+        err = (
+            'API error (402): {"error":{"message":"Insufficient Balance",'
+            '"type":"unknown_error","param":null,"code":"invalid_request_error"}}'
+        )
+        assert self._classify(err) == "quota"
+
+    def test_insufficient_balance_error_is_quota(self):
+        err = (
+            'Rate limit exceeded: {"type":"error","error":'
+            '{"type":"insufficient_balance_error","message":"insufficient balance (1008)"}}'
+        )
+        assert self._classify(err) == "quota"
+
+    def test_402_payment_required_is_quota(self):
+        assert self._classify("Payment required (402): balance exhausted") == "quota"
+
+    def test_allendpoints_carries_error_categories(self):
+        from openakita.llm.types import AllEndpointsFailedError
+        exc = AllEndpointsFailedError(
+            "all failed",
+            error_categories=frozenset({"quota", "auth"}),
+        )
+        assert "quota" in exc.error_categories
+        assert "auth" in exc.error_categories
+        assert not exc.is_structural
+
 
 class TestErrorTypes:
     def test_all_types_exist(self):

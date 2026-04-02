@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 AGENT_CACHE_MAX = 10
 AGENT_CACHE_TTL = 600
 _CIRCUIT_BREAKER_THRESHOLD = 3
+_ORG_QUOTA_PAUSE_THRESHOLD = 2
 
 _runtime_instance: OrgRuntime | None = None
 
@@ -120,6 +121,7 @@ class OrgRuntime:
         self._save_locks: dict[str, asyncio.Lock] = {}
 
         self._node_consecutive_failures: dict[str, int] = {}
+        self._org_quota_failures: dict[str, int] = {}
 
         self._started = False
 
@@ -206,6 +208,7 @@ class OrgRuntime:
         self._node_busy_since.clear()
         self._node_current_chain.clear()
         self._chain_delegation_depth.clear()
+        self._org_quota_failures.clear()
 
         self._started = False
         logger.info("[OrgRuntime] Shutdown complete.")
@@ -463,6 +466,7 @@ class OrgRuntime:
         org.status = OrgStatus.ACTIVE
         org.updated_at = _now_iso()
         self._manager.update(org_id, {"status": org.status.value})
+        self._org_quota_failures.pop(org_id, None)
         if org_id not in self._active_orgs:
             self._activate_org(org)
         self.get_event_store(org_id).emit("org_resumed", "system")
@@ -638,6 +642,7 @@ class OrgRuntime:
             self._set_node_status(org, node, NodeStatus.IDLE, "task_completed")
             org.total_tasks_completed += 1
             self._node_consecutive_failures.pop(f"{org.id}:{node.id}", None)
+            self._org_quota_failures.pop(org.id, None)
             await self._save_org(org)
             self._heartbeat.record_activity(org.id)
 
@@ -663,6 +668,17 @@ class OrgRuntime:
 
         except Exception as e:
             logger.error(f"[OrgRuntime] Task error on {node.id}: {e}")
+
+            # org-level quota/auth failure detection
+            is_quota_auth = self._is_quota_auth_error(e)
+            if is_quota_auth:
+                count = self._org_quota_failures.get(org.id, 0) + 1
+                self._org_quota_failures[org.id] = count
+                if count >= _ORG_QUOTA_PAUSE_THRESHOLD:
+                    did_pause = await self._pause_org_for_quota(org, e)
+                    if did_pause:
+                        return {"node_id": node.id, "error": str(e)}
+
             fail_key = f"{org.id}:{node.id}"
             self._node_consecutive_failures[fail_key] = (
                 self._node_consecutive_failures.get(fail_key, 0) + 1
@@ -708,6 +724,98 @@ class OrgRuntime:
 
         finally:
             self._emit_llm_usage(agent, org, node)
+
+    @staticmethod
+    def _is_quota_auth_error(error: Exception) -> bool:
+        """Check if exception is caused by API quota exhaustion or auth failure."""
+        from openakita.llm.types import AllEndpointsFailedError
+
+        if isinstance(error, AllEndpointsFailedError):
+            return bool(error.error_categories & {"quota", "auth"})
+        err_lower = str(error).lower()
+        return any(kw in err_lower for kw in [
+            "insufficient balance", "insufficient_balance", "quota",
+            "billing", "(402)", "payment required",
+        ])
+
+    async def _pause_org_for_quota(self, org: Organization, error: Exception) -> bool:
+        """Pause organization due to API quota/auth exhaustion across all endpoints.
+
+        Returns:
+            True if this call newly paused the org (caller may short-circuit).
+            False if org was already paused, status disallows pause, or pause failed —
+            caller should still update the failing node's status.
+        """
+        if org.status == OrgStatus.PAUSED:
+            self._org_quota_failures.pop(org.id, None)
+            return False
+        if org.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
+            logger.info(
+                f"[OrgRuntime] Quota pause skipped — org {org.id} status={org.status.value}"
+            )
+            self._org_quota_failures.pop(org.id, None)
+            return False
+
+        logger.warning(
+            f"[OrgRuntime] Quota/auth failure threshold reached for org {org.name} "
+            f"({org.id}), auto-pausing. Error: {str(error)[:200]}"
+        )
+        try:
+            try:
+                self._check_transition(org, OrgStatus.PAUSED)
+            except ValueError as ve:
+                logger.warning(f"[OrgRuntime] Quota pause: invalid transition: {ve}")
+                self._org_quota_failures.pop(org.id, None)
+                return False
+
+            nodes_reset: list[str] = []
+            for node in org.nodes:
+                if node.status in (NodeStatus.BUSY, NodeStatus.WAITING, NodeStatus.ERROR):
+                    self._set_node_status(org, node, NodeStatus.IDLE, "org_quota_pause")
+                    nodes_reset.append(node.id)
+
+            org.status = OrgStatus.PAUSED
+            org.updated_at = _now_iso()
+            self._manager.update(org.id, {"status": org.status.value})
+            await self._save_org(org)
+            self._org_quota_failures.pop(org.id, None)
+
+            self.get_event_store(org.id).emit(
+                "org_paused", "system",
+                {"reason": "quota_exhausted", "error": str(error)[:200]},
+            )
+
+            inbox = self.get_inbox(org.id)
+            inbox.push_warning(
+                org.id, "system",
+                title="API 余额不足，组织已自动暂停",
+                body=(
+                    "所有已配置的 AI 模型端点均因余额不足或认证失败而无法使用。"
+                    "组织已自动暂停以避免持续失败。"
+                    "请前往对应平台充值后，在组织面板点击「恢复」继续运行。"
+                ),
+            )
+
+            for nid in nodes_reset:
+                try:
+                    await self._broadcast_ws("org:node_status", {
+                        "org_id": org.id, "node_id": nid, "status": "idle",
+                        "current_task": "",
+                    })
+                except Exception:
+                    pass
+
+            await self._broadcast_ws("org:status_change", {
+                "org_id": org.id, "status": "paused",
+            })
+            await self._broadcast_ws("org:quota_exhausted", {
+                "org_id": org.id,
+                "message": "API 余额不足，组织已自动暂停。请充值后恢复。",
+            })
+            return True
+        except Exception as pause_err:
+            logger.error(f"[OrgRuntime] Failed to pause org for quota: {pause_err}")
+            return False
 
     async def _run_agent_task(
         self, agent: Any, prompt: str, session_id: str,
@@ -1313,6 +1421,7 @@ class OrgRuntime:
         self._event_stores.pop(org_id, None)
         self._identities.pop(org_id, None)
         self._policies.pop(org_id, None)
+        self._org_quota_failures.pop(org_id, None)
 
         keys_to_remove = [k for k in self._agent_cache if k.startswith(f"{org_id}:")]
         for k in keys_to_remove:
