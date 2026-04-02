@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { EnvMap, ViewId, WorkspaceSummary } from "../types";
 import type { Theme } from "../theme";
+import { setLanguage, getLanguagePref } from "../i18n";
 import {
   DotGreen, DotGray,
   IconX, IconLink, IconPower, IconRefresh,
@@ -422,7 +423,8 @@ export function Topbar({
             <DropdownMenuContent align="end" className="min-w-[140px]">
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{t("topbar.langLabel", "语言")}</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup value={i18n.language?.startsWith("zh") ? "zh" : "en"} onValueChange={(v) => i18n.changeLanguage(v)}>
+              <DropdownMenuRadioGroup value={getLanguagePref()} onValueChange={(v) => setLanguage(v as "auto" | "zh" | "en")}>
+                <DropdownMenuRadioItem value="auto">{t("topbar.langAuto", "跟随系统")}</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="zh">中文</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>

@@ -70,6 +70,7 @@
     "themeDark": "Dark",
     "themeLight": "Light",
     "langLabel": "Language",
+    "langAuto": "System Default",
     "webAccess": "Web Access",
     "remoteUrl": "Remote URL",
     "copyRemoteUrl": "Copy remote access URL",
