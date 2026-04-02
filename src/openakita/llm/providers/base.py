@@ -350,9 +350,11 @@ class LLMProvider(ABC):
     def _classify_error(error: str) -> str:
         """根据错误信息自动分类
 
-        分类优先级：quota > auth > rate_limit(→transient) > structural > transient > unknown
+        分类优先级：quota > auth > rate_limit(→transient)
+                    > model_unavailable(→structural) > structural > transient > unknown
         quota 必须在 auth 之前检测，因为 403 配额耗尽也包含 "403" 关键字。
         rate_limit 必须在 structural 之前检测，因为某些提供商 429 响应体含 "invalid_request"。
+        model_unavailable 必须在 transient 之前检测，因为也返回 503 状态码。
 
         """
         err_lower = error.lower()
@@ -378,6 +380,17 @@ class LLMProvider(ABC):
             "(429)",
         ]):
             return "transient"
+
+        # 模型不可用类（必须在 transient 之前，因为也返回 503 状态码）
+        # API 代理返回 model_not_found 表示模型通道不存在，重试无意义
+        if any(kw in err_lower for kw in [
+            "model_not_found", "model not found",
+            "no available channel",
+            "model_decommissioned", "deprecated_model",
+            "model_not_available", "model not available",
+            "model does not exist",
+        ]):
+            return "structural"
 
         # 结构性/格式类
         # 注意: 用 "(400)" 而非 "400"，避免匹配 HTML 中的 CSS 类名等内容

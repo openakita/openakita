@@ -77,6 +77,7 @@ class ZhipuChinaRegistry(ProviderRegistry):
             "glm-5-plus",
             # GLM-4.7 系列
             "glm-4.7",
+            "glm-4.7-flash",
             # GLM-4.6 系列
             "glm-4.6v",
             # GLM-4.5 系列
@@ -160,6 +161,7 @@ class ZhipuInternationalRegistry(ProviderRegistry):
             "glm-5",
             "glm-5-plus",
             "glm-4.7",
+            "glm-4.7-flash",
             "glm-4.6v",
             "glm-4.5v",
             "glm-4",

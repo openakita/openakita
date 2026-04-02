@@ -521,6 +521,13 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
+        "glm-4.7-flash": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
         # ── GLM-4.6 系列 ──
         "glm-4.6v": {
             "text": True,
