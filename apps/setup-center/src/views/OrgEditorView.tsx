@@ -2516,7 +2516,7 @@ export function OrgEditorView({
             .org-chat-slide {
               position: absolute; top: 0; right: 0; bottom: 0; z-index: 90;
               width: min(420px, 85%);
-              background: var(--bg-app, #0f172a);
+              background: var(--bg-app);
               border-left: 1px solid var(--line, rgba(51,65,85,0.5));
               box-shadow: -8px 0 30px rgba(0,0,0,0.3);
               animation: org-slide-in 0.3s cubic-bezier(0.4,0,0.2,1);
@@ -2525,7 +2525,7 @@ export function OrgEditorView({
 
             .org-ctx-menu {
               min-width: 160px;
-              background: var(--card-bg, #1e293b);
+              background: var(--card-bg);
               border: 1px solid var(--line, rgba(51,65,85,0.6));
               border-radius: 10px;
               padding: 4px;
@@ -2537,7 +2537,7 @@ export function OrgEditorView({
             .org-ctx-menu button {
               display: flex; align-items: center; gap: 8px; width: 100%;
               padding: 8px 12px; border: none; border-radius: 7px;
-              background: transparent; color: var(--text, #e2e8f0);
+              background: transparent; color: var(--text);
               font-size: 13px; cursor: pointer; text-align: left;
               transition: background 0.15s;
             }
@@ -2552,7 +2552,7 @@ export function OrgEditorView({
               align-items: center;
               justify-content: space-between;
               padding: 0 10px;
-              background: var(--bg-app, #0f172a);
+              background: var(--bg-app);
               flex-shrink: 0;
               gap: 8px;
             }
@@ -2564,7 +2564,7 @@ export function OrgEditorView({
               border: none; background: transparent;
               font-weight: 600; font-size: 14px;
               outline: none; width: 140px;
-              color: var(--text, #e2e8f0);
+              color: var(--text);
             }
             .org-topbar-status {
               font-size: 10px; padding: 2px 6px; border-radius: 4px;
@@ -2595,7 +2595,7 @@ export function OrgEditorView({
               cursor: pointer; white-space: nowrap;
               transition: color 0.15s, border-color 0.15s;
             }
-            .org-view-tab:hover { color: var(--text, #e2e8f0); }
+            .org-view-tab:hover { color: var(--text); }
             .org-view-tab--active {
               color: var(--primary, #6366f1) !important; font-weight: 600;
               border-bottom-color: var(--primary, #6366f1) !important;
@@ -2610,7 +2610,7 @@ export function OrgEditorView({
               height: 28px; padding: 0 8px; border-radius: 6px;
               border: 1px solid var(--line, rgba(51,65,85,0.5));
               background: transparent;
-              color: var(--text, #e2e8f0);
+              color: var(--text);
               font-size: 12px; cursor: pointer; white-space: nowrap;
               transition: background 0.15s, color 0.15s, border-color 0.15s;
               position: relative;
@@ -2650,7 +2650,7 @@ export function OrgEditorView({
               display: inline-flex; align-items: center; gap: 4px;
               height: 26px; padding: 0 10px; border-radius: 5px;
               border: none; background: transparent;
-              color: var(--text, #e2e8f0); font-size: 11px;
+              color: var(--text); font-size: 11px;
               cursor: pointer; white-space: nowrap;
               transition: background 0.15s;
             }
@@ -2693,7 +2693,7 @@ export function OrgEditorView({
             }
             .org-feed-icon { flex-shrink: 0; font-size: 12px; }
             .org-feed-who {
-              font-weight: 600; color: var(--text, #e2e8f0); flex-shrink: 0;
+              font-weight: 600; color: var(--text); flex-shrink: 0;
               max-width: 100px; overflow: hidden; text-overflow: ellipsis;
               transition: color 0.15s;
             }
@@ -2732,7 +2732,7 @@ export function OrgEditorView({
               animation: org-overlay-in 0.15s ease;
             }
             .org-modal {
-              background: var(--bg-app, #0f172a);
+              background: var(--bg-app);
               border: 1px solid var(--line, rgba(51,65,85,0.6));
               border-radius: 12px;
               box-shadow: 0 12px 40px rgba(0,0,0,0.4);
@@ -2742,14 +2742,14 @@ export function OrgEditorView({
             .org-modal-header {
               display: flex; justify-content: space-between; align-items: center;
               padding: 14px 16px 10px;
-              font-weight: 600; font-size: 14px; color: var(--text, #e2e8f0);
+              font-weight: 600; font-size: 14px; color: var(--text);
             }
             .org-modal-close {
               background: none; border: none; color: var(--muted, #94a3b8);
               cursor: pointer; padding: 4px; border-radius: 4px;
               transition: color 0.15s;
             }
-            .org-modal-close:hover { color: var(--text, #e2e8f0); }
+            .org-modal-close:hover { color: var(--text); }
             .org-modal-body { padding: 0 16px 12px; }
             .org-modal-label {
               display: block; font-size: 11px; font-weight: 500;
@@ -2763,7 +2763,7 @@ export function OrgEditorView({
             .org-modal-btn {
               height: 32px; padding: 0 16px; border-radius: 6px;
               border: 1px solid var(--line, rgba(51,65,85,0.5));
-              background: transparent; color: var(--text, #e2e8f0);
+              background: transparent; color: var(--text);
               font-size: 12px; cursor: pointer;
               transition: background 0.15s;
             }

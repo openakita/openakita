@@ -390,7 +390,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
 const CHAT_CSS = `
 .ocp-root {
   display: flex; flex-direction: column; height: 100%; overflow: hidden;
-  background: var(--bg-app, #0f172a); color: var(--text, #e2e8f0);
+  background: var(--bg-app); color: var(--text);
 }
 
 /* ─── Header ─── */
@@ -450,8 +450,8 @@ const CHAT_CSS = `
 }
 .ocp-msg-assistant .ocp-msg-bubble {
   background: var(--bg-subtle, rgba(30,41,59,0.8));
-  border: 1px solid var(--line, rgba(51,65,85,0.4));
-  color: var(--text, #e2e8f0);
+  border: 1px solid var(--line, rgba(100,116,139,0.2));
+  color: var(--text);
   border-bottom-left-radius: 4px;
 }
 .ocp-msg-streaming .ocp-msg-bubble {
@@ -480,16 +480,16 @@ const CHAT_CSS = `
   padding: 10px 12px;
   border-top: 1px solid var(--line, rgba(51,65,85,0.5));
   display: flex; gap: 8px; align-items: flex-end;
-  background: var(--bg-app, #0f172a);
+  background: var(--bg-app);
   flex-shrink: 0;
 }
 .ocp-compact { padding: 8px 10px; }
 .ocp-textarea {
-  flex: 1; resize: none; border: 1px solid var(--line, rgba(51,65,85,0.5));
+  flex: 1; resize: none; border: 1px solid var(--line, rgba(100,116,139,0.2));
   border-radius: 10px; padding: 10px 14px;
   font-size: 13px; font-family: inherit; line-height: 1.5;
-  background: var(--bg-app, #0f172a);
-  color: var(--text, #e2e8f0);
+  background: var(--bg-app);
+  color: var(--text);
   outline: none; max-height: 100px; overflow-y: auto;
   transition: border-color 0.2s;
 }

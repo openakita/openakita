@@ -384,7 +384,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         }
         @keyframes opb-fade-in { from { opacity: 0; } to { opacity: 1; } }
         .opb-modal {
-          background: var(--bg-app, #0f172a);
+          background: var(--bg-app);
           border: 1px solid var(--line);
           border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.4);
           width: 420px; max-width: 90vw;
