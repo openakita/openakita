@@ -88,8 +88,12 @@ REASONING_SIMILARITY_WINDOW = 3
 TOKEN_ANOMALY_THRESHOLD = 40000
 SIGNATURE_REPEAT_WARN = 3
 SIGNATURE_REPEAT_TERMINATE = 5
+CYCLE_DETECT_WINDOW = 12
+CYCLE_MIN_REPEATS = 2
+SIGNATURE_NUDGE_ESCALATE = 3
 PLAN_DRIFT_WINDOW = 5
 EXTREME_ITERATION_THRESHOLD = 50
+EXTREME_TERMINATE_THRESHOLD = 80
 SELF_CHECK_INTERVAL = 10
 
 
@@ -131,6 +135,7 @@ class RuntimeSupervisor:
         self._token_per_iteration: list[int] = []
         self._events: list[SupervisionEvent] = []
         self._consecutive_tool_rounds: int = 0
+        self._signature_nudge_streak: int = 0
 
     @property
     def enabled(self) -> bool:
@@ -149,6 +154,7 @@ class RuntimeSupervisor:
         self._token_per_iteration.clear()
         self._events.clear()
         self._consecutive_tool_rounds = 0
+        self._signature_nudge_streak = 0
 
     # ==================== 数据记录 ====================
 
@@ -294,15 +300,17 @@ class RuntimeSupervisor:
     # ==================== 检测器 ====================
 
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
-        """签名重复检测（从 ReasoningEngine._detect_loops 迁移增强）"""
+        """签名重复检测 + 交替循环检测 + NUDGE 升级"""
         recent = self._signature_history[-TOOL_THRASH_WINDOW:]
         if len(recent) < self._signature_repeat_warn:
+            self._signature_nudge_streak = 0
             return None
 
         sig_counts = Counter(recent)
         most_common_sig, most_common_count = sig_counts.most_common(1)[0]
 
         if most_common_count >= self._signature_repeat_terminate:
+            self._signature_nudge_streak = 0
             return Intervention(
                 level=InterventionLevel.TERMINATE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -310,7 +318,33 @@ class RuntimeSupervisor:
                 should_terminate=True,
             )
 
+        cycle = self._detect_cycle()
+        if cycle is not None:
+            period, pattern_str = cycle
+            self._signature_nudge_streak = 0
+            return Intervention(
+                level=InterventionLevel.TERMINATE,
+                pattern=PatternType.SIGNATURE_REPEAT,
+                message=(
+                    f"Alternating loop (period={period}): "
+                    f"'{pattern_str[:80]}' cycling"
+                ),
+                should_terminate=True,
+            )
+
         if most_common_count >= self._signature_repeat_warn:
+            self._signature_nudge_streak += 1
+            if self._signature_nudge_streak >= SIGNATURE_NUDGE_ESCALATE:
+                self._signature_nudge_streak = 0
+                return Intervention(
+                    level=InterventionLevel.TERMINATE,
+                    pattern=PatternType.SIGNATURE_REPEAT,
+                    message=(
+                        f"Nudge ignored {SIGNATURE_NUDGE_ESCALATE} times for "
+                        f"'{most_common_sig[:60]}', force terminating"
+                    ),
+                    should_terminate=True,
+                )
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -322,6 +356,25 @@ class RuntimeSupervisor:
                 ),
             )
 
+        self._signature_nudge_streak = 0
+        return None
+
+    def _detect_cycle(self) -> tuple[int, str] | None:
+        """检测签名历史中的交替/循环模式（如 A,B,A,B 或 A,B,C,A,B,C）"""
+        history = self._signature_history[-CYCLE_DETECT_WINDOW:]
+        for period in (2, 3, 4):
+            needed = period * (CYCLE_MIN_REPEATS + 1)
+            if len(history) < needed:
+                continue
+            tail = history[-needed:]
+            cycle_unit = tail[:period]
+            is_cycle = True
+            for i in range(period, needed):
+                if tail[i] != cycle_unit[i % period]:
+                    is_cycle = False
+                    break
+            if is_cycle and len(set(cycle_unit)) > 1:
+                return period, " → ".join(cycle_unit)
         return None
 
     def _check_tool_thrashing(self, iteration: int) -> Intervention | None:
@@ -436,16 +489,24 @@ class RuntimeSupervisor:
         return None
 
     def _check_extreme_iterations(self, iteration: int) -> Intervention | None:
-        """极端迭代阈值检测"""
-        if self._consecutive_tool_rounds == self._extreme_iteration_threshold:
+        """极端迭代阈值检测（分两级：ESCALATE + TERMINATE）"""
+        rounds = self._consecutive_tool_rounds
+        if rounds >= EXTREME_TERMINATE_THRESHOLD:
+            return Intervention(
+                level=InterventionLevel.TERMINATE,
+                pattern=PatternType.EXTREME_ITERATIONS,
+                message=f"Hard limit: {rounds} consecutive tool rounds",
+                should_terminate=True,
+            )
+        if rounds >= self._extreme_iteration_threshold and rounds % self._self_check_interval == 0:
             return Intervention(
                 level=InterventionLevel.ESCALATE,
                 pattern=PatternType.EXTREME_ITERATIONS,
-                message=f"Reached {self._extreme_iteration_threshold} consecutive iterations",
+                message=f"Reached {rounds} consecutive iterations",
                 should_inject_prompt=True,
                 should_escalate=True,
                 prompt_injection=(
-                    f"[系统提示] 当前任务已连续执行了 {self._extreme_iteration_threshold} 轮。"
+                    f"[系统提示] 当前任务已连续执行了 {rounds} 轮。"
                     "请向用户汇报进度并询问是否继续。"
                 ),
             )

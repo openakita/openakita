@@ -593,10 +593,10 @@ class LLMClient:
                     and (not require_vision or p.config.has_capability("vision"))
                 ]
 
-        # 如果降级了 thinking，更新 request
+        # thinking 降级标记 — 不立即修改 request，等确认确实需要降级时再改
+        _thinking_downgraded = False
         if require_thinking:
-            request.enable_thinking = False
-            logger.info("[LLM] All endpoints in cooldown. Disabling thinking for fallback attempt.")
+            logger.info("[LLM] All endpoints in cooldown, attempting recovery before disabling thinking.")
 
         if base_capability_matched:
             unhealthy = [p for p in base_capability_matched if not p.is_healthy]
@@ -639,7 +639,26 @@ class LLMClient:
                                 pass
                         else:
                             await asyncio.sleep(wait_seconds)
-                        # 等待后重新筛选
+                        # 等待后重新筛选 — 先尝试保留 thinking
+                        if require_thinking:
+                            eligible = self._filter_eligible_endpoints(
+                                require_tools=require_tools,
+                                require_vision=require_vision,
+                                require_video=require_video,
+                                require_thinking=True,
+                                require_audio=require_audio,
+                                require_pdf=require_pdf,
+                                conversation_id=conversation_id,
+                                prefer_endpoint=prefer_endpoint,
+                            )
+                            if eligible:
+                                logger.info(
+                                    f"[LLM] Recovery detected: "
+                                    f"{len(eligible)} endpoints available after wait "
+                                    f"(thinking preserved)"
+                                )
+                                return eligible
+                        # 降级 thinking 再试
                         eligible = self._filter_eligible_endpoints(
                             require_tools=require_tools,
                             require_vision=require_vision,
@@ -651,9 +670,13 @@ class LLMClient:
                             prefer_endpoint=prefer_endpoint,
                         )
                         if eligible:
+                            if require_thinking:
+                                request.enable_thinking = False
+                                _thinking_downgraded = True
                             logger.info(
                                 f"[LLM] Recovery detected: "
                                 f"{len(eligible)} endpoints available after wait"
+                                + (" (thinking disabled)" if _thinking_downgraded else "")
                             )
                             return eligible
 

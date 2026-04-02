@@ -148,6 +148,10 @@ class ReasoningEngine:
             "browser_get_content", "browser_screenshot",
         })
 
+    @property
+    def supervisor(self) -> RuntimeSupervisor:
+        return self._supervisor
+
     # ==================== Failure Analysis (Agent Harness) ====================
 
     def _run_failure_analysis(
@@ -588,8 +592,6 @@ class ReasoningEngine:
         # 循环检测
         recent_tool_signatures: list[str] = []
         tool_pattern_window = 8
-        llm_self_check_interval = 10
-        extreme_safety_threshold = 50
 
         def _build_effective_system_prompt() -> str:
             """动态追加活跃 Plan"""
@@ -1606,8 +1608,8 @@ class ReasoningEngine:
             # 循环检测
             recent_tool_signatures: list[str] = []
             tool_pattern_window = 8
-            llm_self_check_interval = 10
-            extreme_safety_threshold = 50
+
+            _last_chain_text: str = ""
 
             def _make_tool_sig(tc: dict) -> str:
                 nonlocal _last_browser_url
@@ -1887,8 +1889,14 @@ class ReasoningEngine:
                 # === chain_text: LLM 推理意图（text_content 中可能含推理说明） ===
                 _decision_text = (decision.text_content or "").strip()
                 if _decision_text and decision.type == DecisionType.TOOL_CALLS:
-                    # LLM 在调用工具前输出的思路文字
-                    yield {"type": "chain_text", "content": _decision_text[:2000]}
+                    if _decision_text != _last_chain_text:
+                        yield {"type": "chain_text", "content": _decision_text[:2000]}
+                        _last_chain_text = _decision_text
+                    else:
+                        logger.info(
+                            f"[ReAct-Stream] Iter {_iteration+1} — suppressed duplicate chain_text "
+                            f"({len(_decision_text)} chars)"
+                        )
 
                 if task_monitor:
                     task_monitor.end_iteration(decision.text_content or "")
@@ -3485,84 +3493,6 @@ class ReasoningEngine:
             "⚠️ 大模型返回异常：未产生可用输出。任务已中断。"
             "请重试、或更换端点/模型后再执行。"
         )
-
-    # ==================== 循环检测 ====================
-
-    def _detect_loops(
-        self,
-        recent_signatures: list[str],
-        consecutive_rounds: int,
-        working_messages: list[dict],
-        text_content: str,
-        self_check_interval: int,
-        extreme_threshold: int,
-        conversation_id: str | None,
-    ) -> str | None:
-        """
-        循环检测。
-
-        Returns:
-            "terminate" - 终止循环
-            "disable_force" - 禁用 ForceToolCall
-            None - 继续
-        """
-        # 签名重复检测
-        if len(recent_signatures) >= 3:
-            from collections import Counter
-            sig_counts = Counter(recent_signatures)
-            most_common_sig, most_common_count = sig_counts.most_common(1)[0]
-
-            if most_common_count >= 3:
-                logger.warning(
-                    f"[LoopGuard] True loop: '{most_common_sig}' repeated {most_common_count} times"
-                )
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                        "请评估：1. 任务已完成则停止调用。2. 遇到困难则换方法。"
-                    ),
-                })
-
-                if most_common_count >= 5:
-                    logger.error(f"[LoopGuard] Dead loop ({most_common_count} repeats). Terminating.")
-                    return "terminate"
-
-        # 定期 LLM 自检
-        if consecutive_rounds > 0 and consecutive_rounds % self_check_interval == 0:
-            has_plan = self._has_active_plan_pending(conversation_id)
-            if has_plan:
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[系统提示] 已连续执行 {consecutive_rounds} 轮，Plan 仍有未完成步骤。"
-                        "如果遇到困难，请换一种方法继续推进。"
-                    ),
-                })
-            else:
-                working_messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[系统提示] 你已连续执行了 {consecutive_rounds} 轮工具调用。请自我评估：\n"
-                        "1. 当前任务进度如何？\n"
-                        "2. 是否陷入了循环？\n"
-                        "3. 如果任务已完成，请停止工具调用，直接回复用户。"
-                    ),
-                })
-
-        # 极端安全阈值
-        if consecutive_rounds == extreme_threshold:
-            logger.warning(f"[LoopGuard] Extreme safety threshold ({extreme_threshold})")
-            working_messages.append({
-                "role": "user",
-                "content": (
-                    f"[系统提示] 当前任务已连续执行了 {extreme_threshold} 轮。"
-                    "请向用户汇报进度并询问是否继续。"
-                ),
-            })
-            return "disable_force"
-
-        return None
 
     # ==================== 模型切换 ====================
 

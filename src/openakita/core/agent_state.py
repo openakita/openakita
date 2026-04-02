@@ -111,7 +111,6 @@ class TaskState:
 
     # 推理-行动循环状态
     iteration: int = 0
-    consecutive_tool_rounds: int = 0
     tools_executed: list[str] = field(default_factory=list)
     tools_executed_in_task: bool = False
     delivery_receipts: list[dict] = field(default_factory=list)
@@ -122,13 +121,6 @@ class TaskState:
     # 任务验证控制
     verify_incomplete_count: int = 0
     no_confirmation_text_count: int = 0
-
-    # 循环检测
-    recent_tool_signatures: list[str] = field(default_factory=list)
-    tool_pattern_window: int = 8
-    llm_self_check_interval: int = 10
-    extreme_safety_threshold: int = 50
-    last_browser_url: str = ""
 
     # 原始用户消息（用于模型切换时重置上下文）
     original_user_messages: list[dict] = field(default_factory=list)
@@ -236,8 +228,6 @@ class TaskState:
         self.tools_executed_in_task = False
         self.verify_incomplete_count = 0
         self.tools_executed = []
-        self.consecutive_tool_rounds = 0
-        self.recent_tool_signatures = []
         self.no_confirmation_text_count = 0
 
     def record_tool_execution(self, tool_names: list[str]) -> None:
@@ -245,12 +235,6 @@ class TaskState:
         if tool_names:
             self.tools_executed_in_task = True
             self.tools_executed.extend(tool_names)
-
-    def record_tool_signature(self, signature: str) -> None:
-        """记录工具签名用于循环检测"""
-        self.recent_tool_signatures.append(signature)
-        if len(self.recent_tool_signatures) > self.tool_pattern_window:
-            self.recent_tool_signatures = self.recent_tool_signatures[-self.tool_pattern_window :]
 
     @property
     def is_active(self) -> bool:
