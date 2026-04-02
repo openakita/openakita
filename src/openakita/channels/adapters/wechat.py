@@ -70,6 +70,7 @@ def _import_httpx():
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
 DEFAULT_ILINK_BOT_TYPE = "3"
+DEFAULT_CHANNEL_VERSION = "2.0.0"
 
 DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000
 DEFAULT_API_TIMEOUT_MS = 15_000
@@ -409,6 +410,8 @@ class WeChatAdapter(ChannelAdapter):
             remaining = int(self._session_paused_until - time.time())
             raise RuntimeError(f"session paused, {remaining}s remaining")
 
+        body.setdefault("base_info", {"channel_version": DEFAULT_CHANNEL_VERSION})
+
         url = f"{self.config.base_url}/{endpoint}"
         to = timeout_s or (self.config.api_timeout_ms / 1000)
         resp = await self._http.post(
@@ -536,7 +539,10 @@ class WeChatAdapter(ChannelAdapter):
     async def _get_updates(self) -> dict | None:
         url = f"{self.config.base_url}/ilink/bot/getupdates"
         timeout_s = self._next_poll_timeout_ms / 1000 + 5
-        body = {"get_updates_buf": self._get_updates_buf or ""}
+        body = {
+            "get_updates_buf": self._get_updates_buf or "",
+            "base_info": {"channel_version": DEFAULT_CHANNEL_VERSION},
+        }
         try:
             resp = await self._http.post(
                 url,
@@ -749,6 +755,18 @@ class WeChatAdapter(ChannelAdapter):
                     content.voices.append(media)
                 else:
                     content.files.append(media)
+            else:
+                item_type = media_item.get("type", ITEM_FILE)
+                _type_map = {
+                    ITEM_IMAGE: ("image/jpeg", "images"),
+                    ITEM_VIDEO: ("video/mp4", "videos"),
+                    ITEM_VOICE: ("audio/silk", "voices"),
+                }
+                _mime, _list_name = _type_map.get(item_type, ("application/octet-stream", "files"))
+                failed = MediaFile.create(filename="media", mime_type=_mime)
+                failed.status = MediaStatus.FAILED
+                failed.description = "CDN 下载失败"
+                getattr(content, _list_name).append(failed)
 
         ts_ms = msg.get("create_time_ms") or 0
         timestamp = datetime.fromtimestamp(ts_ms / 1000) if ts_ms else datetime.now()
@@ -869,7 +887,9 @@ class WeChatAdapter(ChannelAdapter):
         self, chat_id: str, file_path: str, mime: str, *,
         caption: str = "", ctx_token: str = "",
     ) -> str:
-        uploaded = await self._cdn_upload(file_path, chat_id, mime)
+        uploaded = await self._cdn_upload(
+            file_path, chat_id, mime, context_token=ctx_token,
+        )
         plain_caption = _markdown_to_plaintext(caption) if caption else ""
 
         client_ids: list[str] = []
@@ -1071,7 +1091,8 @@ class WeChatAdapter(ChannelAdapter):
         return data
 
     async def _cdn_upload(
-        self, file_path: str, to_user_id: str, mime: str
+        self, file_path: str, to_user_id: str, mime: str,
+        *, context_token: str = "",
     ) -> dict:
         plaintext = Path(file_path).read_bytes()
         rawsize = len(plaintext)
@@ -1087,7 +1108,7 @@ class WeChatAdapter(ChannelAdapter):
         else:
             media_type = UPLOAD_FILE
 
-        upload_resp = await self._api_post("ilink/bot/getuploadurl", {
+        upload_body: dict = {
             "filekey": filekey,
             "media_type": media_type,
             "to_user_id": to_user_id,
@@ -1096,7 +1117,10 @@ class WeChatAdapter(ChannelAdapter):
             "filesize": filesize,
             "no_need_thumb": True,
             "aeskey": aeskey.hex(),
-        })
+        }
+        if context_token:
+            upload_body["context_token"] = context_token
+        upload_resp = await self._api_post("ilink/bot/getuploadurl", upload_body)
         self._check_send_response(upload_resp, action="getuploadurl")
         upload_param = upload_resp.get("upload_param")
         if not upload_param:
