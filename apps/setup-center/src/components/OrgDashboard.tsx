@@ -289,7 +289,13 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
                 <span className="db-task-to">{(t.to || "?").slice(0, 12)}</span>
                 <span className="db-task-desc">{t.task}</span>
                 <span className={`db-task-badge db-badge-${t.status || "active"}`}>
-                  {t.status === "accepted" ? "✓ 验收" : t.status === "delivered" ? "↑ 交付" : t.status === "rejected" ? "✗ 打回" : t.status === "timeout" ? "⏱ 超时" : "● 进行"}
+                  {t.status === "accepted" ? "✓ 验收"
+                    : t.status === "delivered" ? "↑ 交付"
+                    : t.status === "rejected" ? "✗ 打回"
+                    : t.status === "timeout" ? "⏱ 超时"
+                    : t.status === "completed" ? "✓ 执行完成"
+                    : t.status === "started" ? "▶ 开始执行"
+                    : "● 进行"}
                 </span>
               </div>
             ))}

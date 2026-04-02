@@ -790,7 +790,8 @@ function GanttView({
                     <div style={{ display: "flex", gap: 3 }}>
                       {task.status === "todo" && (
                         <button className="opb-action-btn" style={{ background: "var(--primary, #6366f1)", color: "#fff", fontSize: 10, padding: "2px 8px" }}
-                          onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
+                          onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}
+                          title="向组织派发执行（会启动 Agent）">
                           {dispatchingTaskId === task.id ? "…" : "派发"}
                         </button>
                       )}
@@ -807,7 +808,10 @@ function GanttView({
                       </>)}
                       {(task.status === "rejected" || task.status === "blocked") && (
                         <button className="opb-action-btn" style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6", fontSize: 10, padding: "2px 8px" }}
-                          onClick={() => onStatusChange(task.id, "in_progress")}>重新派发</button>
+                          onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}
+                          title="重新向组织派发执行（非仅改看板状态）">
+                          {dispatchingTaskId === task.id ? "派发中…" : "重新派发"}
+                        </button>
                       )}
                       <button className="opb-action-btn" style={{ color: "#ef4444", fontSize: 10, padding: "2px 6px" }}
                         onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}
@@ -899,14 +903,11 @@ function KanbanView({
                       )}
                       <div style={{ display: "flex", gap: 2 }} onClick={e => e.stopPropagation()}>
                         {col.key === "todo" && (
-                          <>
-                            <button className="opb-action-btn" style={{ background: "var(--primary)", color: "#fff", fontSize: 10, padding: "1px 6px" }}
-                              onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
-                              {dispatchingTaskId === task.id ? "…" : "派发"}
-                            </button>
-                            <button className="opb-action-btn" style={{ color: "#3b82f6", fontSize: 10 }}
-                              onClick={() => onStatusChange(task.id, "in_progress")}>▶</button>
-                          </>
+                          <button className="opb-action-btn" style={{ background: "var(--primary)", color: "#fff", fontSize: 10, padding: "1px 6px" }}
+                            onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}
+                            title="向组织派发执行（会启动 Agent，大屏会显示忙碌）">
+                            {dispatchingTaskId === task.id ? "…" : "派发"}
+                          </button>
                         )}
                         {col.key === "in_progress" && (<>
                           <span style={{ fontSize: 9, color: "#3b82f6" }}>⏳ 执行中</span>
@@ -923,7 +924,10 @@ function KanbanView({
                         )}
                         {(col.key === "rejected" || col.key === "blocked") && (
                           <button className="opb-action-btn" style={{ color: "#3b82f6", fontSize: 10 }}
-                            onClick={() => onStatusChange(task.id, "in_progress")}>↻</button>
+                            onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}
+                            title="重新向组织派发执行">
+                            {dispatchingTaskId === task.id ? "…" : "↻ 重派"}
+                          </button>
                         )}
                         <button className="opb-action-btn" style={{ color: "#ef4444", fontSize: 10, padding: "1px 4px" }}
                           onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}

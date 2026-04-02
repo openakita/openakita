@@ -2431,11 +2431,13 @@ export function OrgEditorView({
               const typeIcon: Record<string, string> = {
                 task_delegated: "📤", task_delivered: "📦", task_accepted: "✅",
                 task_rejected: "↩️", task_timeout: "⏰",
+                task_completed: "✓", node_activated: "▶",
               };
               const typeLabel: Record<string, string> = {
                 task_delegated: "分配任务", task_delivered: "交付成果",
                 task_accepted: "验收通过", task_rejected: "打回",
                 task_timeout: "超时",
+                task_completed: "节点执行完成", node_activated: "开始执行",
               };
 
               const busyLines: { key: string; node: string; text: string; pct: number; color: string }[] = [];
@@ -2471,7 +2473,9 @@ export function OrgEditorView({
                     const timeStr = ts ? `${String(ts.getHours()).padStart(2, "0")}:${String(ts.getMinutes()).padStart(2, "0")}` : "";
                     const icon = typeIcon[t.type] || "📋";
                     const label = typeLabel[t.type] || t.type;
-                    const statusCls = t.status === "accepted" ? "org-feed-ok" : t.status === "rejected" ? "org-feed-err" : "";
+                    const statusCls = t.status === "accepted" || t.status === "completed"
+                      ? "org-feed-ok"
+                      : t.status === "rejected" ? "org-feed-err" : "";
                     return (
                       <div key={`rt-${i}`} className={`org-feed-item ${statusCls}`}>
                         <span className="org-feed-time">{timeStr}</span>

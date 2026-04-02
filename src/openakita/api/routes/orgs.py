@@ -1656,7 +1656,8 @@ async def get_org_stats(request: Request, org_id: str):
     recent_tasks: list[dict] = []
     try:
         es = rt.get_event_store(org_id)
-        task_events = es.query(limit=30)
+        # 需多读一些原始事件：最近 N 条里常混入 llm_usage/heartbeat，过滤后否则任务流仍为空
+        task_events = es.query(limit=400)
         for evt in task_events:
             et = evt.get("event_type", "")
             if et not in (
@@ -1665,16 +1666,20 @@ async def get_org_stats(request: Request, org_id: str):
                 "task_accepted",
                 "task_rejected",
                 "task_timeout",
+                "task_completed",
+                "node_activated",
             ):
                 continue
             d = evt.get("data", {})
+            _pv = d.get("task") or d.get("content") or d.get("result_preview") or d.get("prompt") or ""
+            preview = str(_pv)[:80]
             recent_tasks.append(
                 {
                     "t": evt.get("timestamp"),
                     "type": et,
                     "from": d.get("from_node") or evt.get("actor", ""),
                     "to": d.get("to_node", ""),
-                    "task": (d.get("task") or d.get("content") or "")[:80],
+                    "task": preview,
                     "status": (
                         "accepted"
                         if et == "task_accepted"
@@ -1684,6 +1689,10 @@ async def get_org_stats(request: Request, org_id: str):
                         if et == "task_timeout"
                         else "delivered"
                         if et == "task_delivered"
+                        else "completed"
+                        if et == "task_completed"
+                        else "started"
+                        if et == "node_activated"
                         else "running"
                     ),
                 }
@@ -1854,9 +1863,16 @@ async def dispatch_task(request: Request, org_id: str, project_id: str, task_id:
     chain_id = f"dispatch:{task_id}:{uuid.uuid4().hex[:8]}"
     store.update_task(project_id, task_id, {"chain_id": chain_id})
 
+    # 若任务指定负责人节点，派发到该节点（与看板 assignee 一致）；否则走根节点
+    target_node_id: str | None = task_data.assignee_node_id
+    if target_node_id and not org.get_node(target_node_id):
+        target_node_id = None
+
     import asyncio
 
-    asyncio.ensure_future(to_engine(runtime.send_command(org_id, None, prompt, chain_id=chain_id)))
+    asyncio.ensure_future(
+        to_engine(runtime.send_command(org_id, target_node_id, prompt, chain_id=chain_id)),
+    )
 
     return {"ok": True, "task_id": task_id, "chain_id": chain_id, "dispatched": True}
 
