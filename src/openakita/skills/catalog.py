@@ -8,12 +8,21 @@
 
 技能清单在 Agent 启动时生成，并注入到系统提示中，
 让大模型在首次对话时就知道有哪些技能可用。
+
+三级降级预算策略:
+- Level A (full): name + description + when_to_use
+- Level B (compact): name + when_to_use
+- Level C (index): names only
 """
 
 import logging
 import threading
+from typing import TYPE_CHECKING
 
 from .registry import SkillRegistry
+
+if TYPE_CHECKING:
+    from .usage import SkillUsageTracker
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +45,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 """
 
     SKILL_ENTRY_TEMPLATE = "- **{name}**: {description}"
+    SKILL_ENTRY_WITH_HINT_TEMPLATE = "- **{name}**: {description} _(Use when: {when_to_use})_"
 
     @staticmethod
     def _safe_format(template: str, **kwargs: str) -> str:
@@ -49,19 +59,28 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             )
             return template + " " + " | ".join(f"{k}={v}" for k, v in kwargs.items())
 
-    def __init__(self, registry: SkillRegistry):
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        usage_tracker: "SkillUsageTracker | None" = None,
+    ):
         self.registry = registry
+        self._usage_tracker = usage_tracker
         self._lock = threading.Lock()
         self._cached_catalog: str | None = None
         self._cached_index: str | None = None
         self._cached_compact: str | None = None
 
     def _list_model_visible(self) -> list:
-        """Return enabled skills that are also visible to the model."""
-        return [
+        """Return enabled skills that are also visible to the model, sorted by usage."""
+        skills = [
             s for s in self.registry.list_enabled()
             if not s.disable_model_invocation
         ]
+        if self._usage_tracker:
+            scores = self._usage_tracker.get_all_scores()
+            skills.sort(key=lambda s: scores.get(s.skill_id, 0), reverse=True)
+        return skills
 
     def generate_catalog(self) -> str:
         """
@@ -82,12 +101,21 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             for skill in skills:
                 desc = skill.description or ""
                 first_line = desc.split("\n")[0].strip()
+                when = getattr(skill, "when_to_use", "") or ""
 
-                entry = self._safe_format(
-                    self.SKILL_ENTRY_TEMPLATE,
-                    name=skill.name,
-                    description=first_line,
-                )
+                if when:
+                    entry = self._safe_format(
+                        self.SKILL_ENTRY_WITH_HINT_TEMPLATE,
+                        name=skill.name,
+                        description=first_line,
+                        when_to_use=when,
+                    )
+                else:
+                    entry = self._safe_format(
+                        self.SKILL_ENTRY_TEMPLATE,
+                        name=skill.name,
+                        description=first_line,
+                    )
                 skill_entries.append(entry)
 
             skill_list = "\n".join(skill_entries)
@@ -177,6 +205,33 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             result = "\n".join(lines)
             self._cached_index = result
             return result
+
+    def generate_catalog_budgeted(self, budget_chars: int = 0) -> str:
+        """Generate catalog with three-level degradation if budget_chars is set.
+
+        Level A: full (name + description + when_to_use)
+        Level B: compact (name + when_to_use hint)
+        Level C: index (names only)
+
+        If budget_chars <= 0, returns full catalog without budget constraint.
+        """
+        if budget_chars <= 0:
+            return self.generate_catalog()
+
+        full = self.generate_catalog()
+        if len(full) <= budget_chars:
+            return full
+
+        compact = self.get_compact_catalog()
+        if len(compact) <= budget_chars:
+            return compact
+
+        with self._lock:
+            skills = self._list_model_visible()
+            if not skills:
+                return "No skills installed."
+            names = [s.name for s in skills[:50]]
+            return f"Skills ({len(skills)}): {', '.join(names)}"
 
     def get_skill_summary(self, skill_name: str) -> str | None:
         """获取单个技能的摘要"""

@@ -71,6 +71,17 @@ class SkillEntry:
     # 技能配置 schema（从 SKILL.md frontmatter 传递）
     config: list[dict] = field(default_factory=list)
 
+    # F1: 扩展 frontmatter 字段
+    when_to_use: str = ""
+    keywords: list[str] = field(default_factory=list)
+    arguments: list[dict] = field(default_factory=list)
+    argument_hint: str = ""
+    execution_context: str = "inline"
+    agent_profile: str | None = None
+    paths: list[str] = field(default_factory=list)
+    hooks: dict = field(default_factory=dict)
+    model: str | None = None
+
     # 全局启用 / 禁用标记
     # 用户通过 UI / skills.json 禁用的技能在注册表中保留但标记 disabled=True，
     # 这样 SkillCatalog 和 list_skills 工具会过滤它们，
@@ -128,6 +139,15 @@ class SkillEntry:
             required_bins=list(meta.required_bins),
             required_env=list(meta.required_env),
             config=list(meta.config) if meta.config else [],
+            when_to_use=meta.when_to_use,
+            keywords=list(meta.keywords),
+            arguments=list(meta.arguments),
+            argument_hint=meta.argument_hint,
+            execution_context=meta.execution_context,
+            agent_profile=meta.agent_profile,
+            paths=list(meta.paths),
+            hooks=dict(meta.hooks) if meta.hooks else {},
+            model=meta.model,
             skill_path=str(skill.path),
             source_url=source_url,
             name_i18n=dict(meta.name_i18n),
@@ -397,6 +417,16 @@ class SkillRegistry:
 
             if sid in context_lower or sname in context_lower:
                 score += 10
+
+            for kw in skill.keywords:
+                if kw.lower() in context_lower:
+                    score += 5
+
+            if skill.when_to_use and any(
+                w in context_lower for w in skill.when_to_use.lower().split()
+                if len(w) > 3 and w not in self._STOP_WORDS
+            ):
+                score += 3
 
             desc_words = set(skill.description.lower().split()) - self._STOP_WORDS
             for word in desc_words:

@@ -80,6 +80,8 @@ async def list_tasks(
     if scheduler is None:
         return {"error": "Agent not initialized", "tasks": []}
 
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
     all_tasks = scheduler.list_tasks(enabled_only=enabled_only)
     total = len(all_tasks)
     page = all_tasks[offset : offset + limit]
@@ -138,7 +140,10 @@ async def create_task(request: Request, body: TaskCreateRequest):
     task.chat_id = body.chat_id or None
     task.enabled = body.enabled
 
-    task_id = await scheduler.add_task(task)
+    try:
+        task_id = await scheduler.add_task(task)
+    except ValueError as e:
+        return {"error": str(e)}
     _notify_scheduler_change("create")
     return {"status": "ok", "task_id": task_id, "task": task.to_dict()}
 

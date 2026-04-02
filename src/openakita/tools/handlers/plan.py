@@ -1063,12 +1063,15 @@ class PlanHandler:
             return
         plan_file = self.plan_dir / f"{plan['id']}.md"
 
-        content = f"""# 任务计划：{plan["task_summary"]}
+        content = f"""---
+id: {plan["id"]}
+name: {plan["task_summary"]}
+status: {plan["status"]}
+created_at: {plan["created_at"]}
+completed_at: {plan.get("completed_at") or ""}
+---
 
-**计划ID**: {plan["id"]}
-**创建时间**: {plan["created_at"]}
-**状态**: {plan["status"]}
-**完成时间**: {plan.get("completed_at", "-")}
+# 任务计划：{plan["task_summary"]}
 
 ## 步骤列表
 

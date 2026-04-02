@@ -22,6 +22,9 @@ from typing import Any
 import json
 from datetime import datetime, timezone
 
+import asyncio
+import random
+
 import httpx
 
 from ..config import settings
@@ -29,6 +32,53 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
+
+_RETRY_STATUS_CODES = {500, 502, 503, 504}
+_MAX_RETRIES = 3
+_BASE_BACKOFF = 1.0
+_RATE_LIMIT_BACKOFF = 5.0
+
+
+async def _retry_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    max_retries: int = _MAX_RETRIES,
+    **kwargs,
+) -> httpx.Response:
+    """Execute an HTTP request with retry + exponential backoff for 5xx/timeout and 429."""
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            resp = await client.request(method, url, **kwargs)
+            if resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", _RATE_LIMIT_BACKOFF))
+                wait = min(retry_after, 30.0) + random.uniform(0, 1)
+                logger.warning("Rate limited (429) on %s, waiting %.1fs", url, wait)
+                await asyncio.sleep(wait)
+                continue
+            if resp.status_code in _RETRY_STATUS_CODES and attempt < max_retries:
+                wait = _BASE_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
+                logger.warning(
+                    "Server error %d on %s, retry %d/%d in %.1fs",
+                    resp.status_code, url, attempt + 1, max_retries, wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+            return resp
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_exc = e
+            if attempt < max_retries:
+                wait = _BASE_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5)
+                logger.warning(
+                    "Request to %s failed (%s), retry %d/%d in %.1fs",
+                    url, type(e).__name__, attempt + 1, max_retries, wait,
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
+    raise last_exc  # type: ignore[misc]
 
 
 class SkillStoreClient:
@@ -86,13 +136,13 @@ class SkillStoreClient:
         if trust_level:
             params["trustLevel"] = trust_level
 
-        resp = await client.get("/skills", params=params)
+        resp = await _retry_request(client, "GET", "/skills", params=params)
         resp.raise_for_status()
         return resp.json()
 
     async def get_detail(self, skill_id: str) -> dict[str, Any]:
         client = await self._get_client()
-        resp = await client.get(f"/skills/{skill_id}")
+        resp = await _retry_request(client, "GET", f"/skills/{skill_id}")
         resp.raise_for_status()
         return resp.json()
 
@@ -195,8 +245,8 @@ class SkillStoreClient:
         import zipfile
 
         client = await self._get_client()
-        resp = await client.get(
-            f"/skills/{skill_id}/download",
+        resp = await _retry_request(
+            client, "GET", f"/skills/{skill_id}/download",
             follow_redirects=True,
             timeout=60.0,
         )
@@ -297,8 +347,8 @@ class SkillStoreClient:
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        resp = await client.post(
-            f"/skills/{skill_id}/rate",
+        resp = await _retry_request(
+            client, "POST", f"/skills/{skill_id}/rate",
             json={"score": score, "comment": comment},
             headers=headers,
         )
@@ -307,8 +357,8 @@ class SkillStoreClient:
 
     async def submit_repo(self, repo_url: str) -> dict[str, Any]:
         client = await self._get_client()
-        resp = await client.post(
-            "/skills/submit-repo",
+        resp = await _retry_request(
+            client, "POST", "/skills/submit-repo",
             json={"repoUrl": repo_url},
         )
         resp.raise_for_status()

@@ -3662,6 +3662,7 @@ class Agent:
         session: Any = None,
         gateway: Any = None,
         *,
+        mode: str = "agent",
         endpoint_override: str | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
@@ -3678,6 +3679,7 @@ class Agent:
             session_id: 会话 ID
             session: Session 对象
             gateway: MessageGateway 对象
+            mode: 交互模式 (ask/plan/agent)，默认 agent
             endpoint_override: 端点覆盖（为 None 时使用 _preferred_endpoint）
             thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
             thinking_depth: 思考深度 ('low'/'medium'/'high'/None)

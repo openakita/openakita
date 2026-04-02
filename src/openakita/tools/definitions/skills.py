@@ -38,10 +38,11 @@ SKILLS_TOOLS = [
         "detail": """获取技能的详细信息和指令（Level 2 披露）。
 
 **返回信息**：
-- 完整的 SKILL.md 内容
+- 完整的 SKILL.md 内容（经参数替换后）
 - 使用说明
 - 可用脚本列表
 - 参考文档列表
+- 参数定义（如有）
 
 **适用场景**：
 - 了解技能的使用方法
@@ -49,7 +50,13 @@ SKILLS_TOOLS = [
 - 学习技能参数""",
         "input_schema": {
             "type": "object",
-            "properties": {"skill_name": {"type": "string", "description": "技能名称"}},
+            "properties": {
+                "skill_name": {"type": "string", "description": "技能名称"},
+                "args": {
+                    "type": "object",
+                    "description": "传递给技能的参数（可选，用于占位符替换）",
+                },
+            },
             "required": ["skill_name"],
         },
     },

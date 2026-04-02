@@ -63,6 +63,17 @@ class SkillMetadata:
     #            "required": bool, "help": str, "default": Any, "options": list, "min": num, "max": num}
     config: list[dict] = field(default_factory=list)
 
+    # --- F1: 新增 9 个 frontmatter 字段 ---
+    when_to_use: str = ""
+    keywords: list[str] = field(default_factory=list)
+    arguments: list[dict] = field(default_factory=list)
+    argument_hint: str = ""
+    execution_context: str = "inline"  # "inline" | "fork"
+    agent_profile: str | None = None
+    paths: list[str] = field(default_factory=list)
+    hooks: dict = field(default_factory=dict)
+    model: str | None = None
+
     # 国际化（由 agents/openai.yaml i18n 字段注入，兼容旧的 .openakita-i18n.json）
     # key 为语言代码 (如 "zh")，value 为该语言的显示名/描述
     name_i18n: dict[str, str] = field(default_factory=dict)
@@ -213,8 +224,8 @@ class SkillParser:
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML frontmatter in {path}: {e}")
 
-        # 构建元数据
-        metadata = self._build_metadata(data, path)
+        # 构建元数据（body 用于 description 自动提取回退）
+        metadata = self._build_metadata(data, path, body=body)
 
         # 验证目录名匹配（命名空间格式取 @ 后部分比较）
         skill_dir = path.parent
@@ -239,14 +250,19 @@ class SkillParser:
             assets_dir=assets_dir if assets_dir.exists() else None,
         )
 
-    def _build_metadata(self, data: dict, path: Path) -> SkillMetadata:
+    def _build_metadata(self, data: dict, path: Path, body: str = "") -> SkillMetadata:
         """从 YAML 数据构建元数据"""
         # 必需字段
         name = data.get("name")
-        description = data.get("description")
+        description = data.get("description", "")
 
         if not name:
             raise ValueError(f"Missing required 'name' field in {path}")
+
+        if not description and body:
+            first_para = body.split("\n\n")[0].replace("\n", " ").strip()
+            description = first_para[:100] + ("..." if len(first_para) > 100 else "")
+
         if not description:
             raise ValueError(f"Missing required 'description' field in {path}")
 
@@ -309,6 +325,23 @@ class SkillParser:
                 if isinstance(env_val, list):
                     required_env = [str(e) for e in env_val]
 
+        # F1: 新字段解析
+        when_to_use = str(data.get("when-to-use", "") or "")
+        keywords_raw = data.get("keywords", [])
+        keywords = [str(k) for k in keywords_raw] if isinstance(keywords_raw, list) else []
+        arguments_raw = data.get("arguments", [])
+        arguments = [a for a in arguments_raw if isinstance(a, dict)] if isinstance(arguments_raw, list) else []
+        argument_hint = str(data.get("argument-hint", "") or "")
+        execution_context = str(data.get("execution-context", "inline") or "inline")
+        if execution_context not in ("inline", "fork"):
+            execution_context = "inline"
+        agent_profile = data.get("agent-profile") or None
+        paths_raw = data.get("paths", [])
+        paths = [str(p) for p in paths_raw] if isinstance(paths_raw, list) else []
+        hooks_raw = data.get("hooks", {})
+        hooks = hooks_raw if isinstance(hooks_raw, dict) else {}
+        model = data.get("model") or None
+
         return SkillMetadata(
             name=name,
             description=description.strip(),
@@ -326,6 +359,15 @@ class SkillParser:
             required_bins=required_bins,
             required_env=required_env,
             config=config,
+            when_to_use=when_to_use,
+            keywords=keywords,
+            arguments=arguments,
+            argument_hint=argument_hint,
+            execution_context=execution_context,
+            agent_profile=agent_profile if isinstance(agent_profile, str) else None,
+            paths=paths,
+            hooks=hooks,
+            model=model if isinstance(model, str) else None,
         )
 
     def parse_directory(self, skill_dir: Path) -> ParsedSkill:

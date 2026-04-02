@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ class ScheduledTask:
         )
 
     # 合法状态转换表：当前状态 → 允许的目标状态集合
-    _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
+    _VALID_TRANSITIONS: ClassVar[dict[TaskStatus, set[TaskStatus]]] = {
         TaskStatus.PENDING: {TaskStatus.SCHEDULED, TaskStatus.CANCELLED, TaskStatus.DISABLED},
         TaskStatus.SCHEDULED: {
             TaskStatus.RUNNING, TaskStatus.DISABLED, TaskStatus.CANCELLED,
@@ -299,7 +300,7 @@ class ScheduledTask:
         TaskStatus.RUNNING: {
             TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SCHEDULED, TaskStatus.CANCELLED,
         },
-        TaskStatus.COMPLETED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED},
+        TaskStatus.COMPLETED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
         TaskStatus.FAILED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
         TaskStatus.DISABLED: {TaskStatus.SCHEDULED, TaskStatus.CANCELLED},
         TaskStatus.CANCELLED: {TaskStatus.SCHEDULED},
@@ -325,21 +326,26 @@ class ScheduledTask:
                 f"(run_at has already passed)"
             )
             return
-        self._check_transition(TaskStatus.SCHEDULED)
+        if self.status == TaskStatus.SCHEDULED and self.enabled:
+            return
+        if not self._check_transition(TaskStatus.SCHEDULED):
+            return
         self.enabled = True
         self.status = TaskStatus.SCHEDULED
         self.updated_at = datetime.now()
 
     def disable(self) -> None:
         """禁用任务"""
-        self._check_transition(TaskStatus.DISABLED)
+        if not self._check_transition(TaskStatus.DISABLED):
+            return
         self.enabled = False
         self.status = TaskStatus.DISABLED
         self.updated_at = datetime.now()
 
     def cancel(self) -> None:
         """取消任务"""
-        self._check_transition(TaskStatus.CANCELLED)
+        if not self._check_transition(TaskStatus.CANCELLED):
+            return
         self.enabled = False
         self.status = TaskStatus.CANCELLED
         self.updated_at = datetime.now()
@@ -353,8 +359,11 @@ class ScheduledTask:
 
     def mark_completed(self, next_run: datetime | None = None) -> None:
         """标记执行完成"""
-        if not self._check_transition(TaskStatus.COMPLETED) and \
-           not self._check_transition(TaskStatus.SCHEDULED):
+        if self.status != TaskStatus.RUNNING:
+            logger.warning(
+                f"Task {self.id}: mark_completed called from {self.status.value}, "
+                f"expected RUNNING"
+            )
             return
 
         self.last_run = datetime.now()
@@ -376,10 +385,15 @@ class ScheduledTask:
                 f"Task {self.id}: mark_failed called from {self.status.value}, "
                 f"expected RUNNING"
             )
+            return
 
         self.last_run = datetime.now()
         self.fail_count += 1
         self.updated_at = datetime.now()
+        if error:
+            if not self.metadata:
+                self.metadata = {}
+            self.metadata["last_error"] = error
 
         if self.fail_count >= 5:
             self.status = TaskStatus.FAILED
@@ -453,6 +467,12 @@ class ScheduledTask:
         if not isinstance(metadata, dict):
             metadata = {}
 
+        def _safe_int(val, default=0):
+            try:
+                return int(val) if val is not None else default
+            except (TypeError, ValueError):
+                return default
+
         now_iso = datetime.now().isoformat()
 
         try:
@@ -498,8 +518,8 @@ class ScheduledTask:
             deletable=data.get("deletable", True),
             last_run=_parse_dt(data.get("last_run")),
             next_run=_parse_dt(data.get("next_run")),
-            run_count=int(data.get("run_count", 0)) if data.get("run_count") is not None else 0,
-            fail_count=int(data.get("fail_count", 0)) if data.get("fail_count") is not None else 0,
+            run_count=_safe_int(data.get("run_count"), 0),
+            fail_count=_safe_int(data.get("fail_count"), 0),
             created_at=_parse_dt(data.get("created_at"), now_iso),
             updated_at=_parse_dt(data.get("updated_at"), now_iso),
             metadata=metadata,

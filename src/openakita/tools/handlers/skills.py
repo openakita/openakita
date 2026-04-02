@@ -225,6 +225,7 @@ class SkillsHandler:
     def _get_skill_info(self, params: dict) -> str:
         """获取技能详细信息（自动内联引用的子文件）"""
         skill_name = params["skill_name"]
+        user_args = params.get("args", {})
         skill = self.agent.skill_registry.get(skill_name)
 
         if not skill or skill.disabled:
@@ -235,8 +236,22 @@ class SkillsHandler:
                 f"请检查技能名称是否正确，或使用 list_skills 查看所有可用技能。"
             )
 
+        # F6: usage tracking
+        usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
+        if usage_tracker:
+            usage_tracker.record(skill.skill_id)
+
         exposed = build_skill_exposure(skill)
         body = skill.get_body() or "(无详细指令)"
+
+        # F4: argument substitution
+        if "{{" in body:
+            from openakita.skills.arguments import substitute
+            from openakita.config import settings as _cfg
+            extra = {}
+            if isinstance(user_args, dict):
+                extra = {k: str(v) for k, v in user_args.items()}
+            body = substitute(body, extra, project_root=_cfg.project_root)
 
         # 自动内联 SKILL.md body 中引用的同目录 .md 文件
         if exposed.skill_path:
@@ -246,6 +261,8 @@ class SkillsHandler:
         output = f"# 技能: {skill.name}\n\n"
         output += f"**ID**: {skill.skill_id}\n"
         output += f"**描述**: {skill.description}\n"
+        if skill.when_to_use:
+            output += f"**适用场景**: {skill.when_to_use}\n"
         output += f"**来源**: {exposed.origin_label}\n"
         if exposed.skill_dir:
             output += f"**路径**: {exposed.skill_dir}\n"
@@ -271,6 +288,14 @@ class SkillsHandler:
             output += f"**许可证**: {skill.license}\n"
         if skill.compatibility:
             output += f"**兼容性**: {skill.compatibility}\n"
+
+        # F4: display argument schema
+        if skill.arguments:
+            from openakita.skills.arguments import format_argument_schema
+            args_block = format_argument_schema(skill.arguments)
+            if args_block:
+                output += f"\n{args_block}\n"
+
         output += "\n---\n\n"
         output += body
 

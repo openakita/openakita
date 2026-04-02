@@ -34,6 +34,7 @@ from .registry import (
     get_skill,
     register_skill,
 )
+from .usage import SkillUsageTracker
 
 __all__ = [
     # Parser
@@ -57,4 +58,6 @@ __all__ = [
     # Events
     "register_on_change",
     "notify_skills_changed",
+    # Usage
+    "SkillUsageTracker",
 ]
