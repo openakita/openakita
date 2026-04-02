@@ -36,7 +36,7 @@ def normalize_tags(val: object) -> list[str]:
     return []
 
 
-# Back-compat alias (will be removed in a future version)
+# Back-compat alias
 _normalize_tags = normalize_tags
 
 
