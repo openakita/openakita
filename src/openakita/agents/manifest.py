@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+from openakita.memory.types import normalize_tags
+
 SPEC_VERSION = "1.1"
 SUPPORTED_SPEC_VERSIONS = {"1.0", "1.1"}
 
@@ -84,6 +86,9 @@ class AgentManifest:
     required_external_skills: list[ExternalSkillRef] = field(default_factory=list)
     created_at: str = ""
     checksum: str = ""
+
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
 
     def validate(self) -> list[str]:
         """返回所有校验错误。空列表表示有效。"""

@@ -13,6 +13,8 @@ import logging
 import threading
 from pathlib import Path
 
+from .types import normalize_tags
+
 logger = logging.getLogger(__name__)
 
 # 延迟导入，避免未安装依赖时报错
@@ -338,7 +340,7 @@ class VectorStore:
                             "type": memory_type,
                             "priority": priority,
                             "importance": importance,
-                            "tags": ",".join(tags) if tags else "",
+                            "tags": ",".join(normalize_tags(tags)),
                         }
                     ],
                 )
@@ -485,7 +487,7 @@ class VectorStore:
                             "type": memory_type,
                             "priority": priority,
                             "importance": importance,
-                            "tags": ",".join(tags) if tags else "",
+                            "tags": ",".join(normalize_tags(tags)),
                         }
                     ],
                 )
@@ -558,7 +560,7 @@ class VectorStore:
                     "type": m.get("type", "fact"),
                     "priority": m.get("priority", "short_term"),
                     "importance": m.get("importance", 0.5),
-                    "tags": ",".join(m.get("tags", [])),
+                    "tags": ",".join(normalize_tags(m.get("tags"))),
                 }
                 for m in memories
             ]

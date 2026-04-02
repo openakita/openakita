@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .types import normalize_tags
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 2
@@ -489,7 +491,7 @@ class MemoryStorage:
                         memory.get("source", ""),
                         memory.get("importance_score", 0.5),
                         memory.get("access_count", 0),
-                        json.dumps(memory.get("tags", []), ensure_ascii=False),
+                        json.dumps(normalize_tags(memory.get("tags")), ensure_ascii=False),
                         memory.get("created_at", now),
                         now,
                         memory.get("expires_at"),
@@ -536,7 +538,7 @@ class MemoryStorage:
                             m.get("source", ""),
                             m.get("importance_score", 0.5),
                             m.get("access_count", 0),
-                            json.dumps(m.get("tags", []), ensure_ascii=False),
+                            json.dumps(normalize_tags(m.get("tags")), ensure_ascii=False),
                             m.get("created_at", now),
                             now,
                             m.get("expires_at"),
@@ -621,8 +623,8 @@ class MemoryStorage:
         if not filtered:
             return False
 
-        if "tags" in filtered and isinstance(filtered["tags"], list):
-            filtered["tags"] = json.dumps(filtered["tags"], ensure_ascii=False)
+        if "tags" in filtered:
+            filtered["tags"] = json.dumps(normalize_tags(filtered["tags"]), ensure_ascii=False)
         if "metadata" in filtered and isinstance(filtered["metadata"], dict):
             filtered["metadata"] = json.dumps(filtered["metadata"], ensure_ascii=False)
 
@@ -825,7 +827,7 @@ class MemoryStorage:
                         json.dumps(episode.get("entities", []), ensure_ascii=False),
                         json.dumps(episode.get("tools_used", []), ensure_ascii=False),
                         json.dumps(episode.get("linked_memory_ids", []), ensure_ascii=False),
-                        json.dumps(episode.get("tags", []), ensure_ascii=False),
+                        json.dumps(normalize_tags(episode.get("tags")), ensure_ascii=False),
                         episode.get("importance_score", 0.5),
                         episode.get("access_count", 0),
                         episode.get("source", "session_end"),
@@ -1387,9 +1389,7 @@ class MemoryStorage:
     def save_attachment(self, data: dict) -> None:
         if not self._conn:
             return
-        tags_val = data.get("tags", [])
-        if isinstance(tags_val, list):
-            tags_val = json.dumps(tags_val, ensure_ascii=False)
+        tags_val = json.dumps(normalize_tags(data.get("tags")), ensure_ascii=False)
         linked_val = data.get("linked_memory_ids", [])
         if isinstance(linked_val, list):
             linked_val = json.dumps(linked_val, ensure_ascii=False)
@@ -1607,5 +1607,7 @@ class MemoryStorage:
                         d[jf] = json.loads(d[jf])
                     except (json.JSONDecodeError, TypeError):
                         pass
+            if "tags" in d:
+                d["tags"] = normalize_tags(d["tags"])
             results.append(d)
         return results

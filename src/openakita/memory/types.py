@@ -22,7 +22,7 @@ from datetime import datetime
 from enum import Enum
 
 
-def _normalize_tags(val: object) -> list[str]:
+def normalize_tags(val: object) -> list[str]:
     """Ensure *val* is always ``list[str]``.
 
     LLMs sometimes return tags as a comma-separated string instead of an
@@ -34,6 +34,10 @@ def _normalize_tags(val: object) -> list[str]:
     if isinstance(val, str) and val:
         return [t.strip() for t in val.replace("、", ",").split(",") if t.strip()]
     return []
+
+
+# Back-compat alias
+_normalize_tags = normalize_tags
 
 
 class MemoryType(Enum):
@@ -177,6 +181,9 @@ class SemanticMemory:
     # v2: retention / TTL
     expires_at: datetime | None = None
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         d = {
             "id": self.id,
@@ -186,7 +193,7 @@ class SemanticMemory:
             "source": self.source,
             "subject": self.subject,
             "predicate": self.predicate,
-            "tags": _normalize_tags(self.tags),
+            "tags": self.tags,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "access_count": self.access_count,
@@ -215,7 +222,7 @@ class SemanticMemory:
             source=data.get("source", ""),
             subject=data.get("subject", ""),
             predicate=data.get("predicate", ""),
-            tags=_normalize_tags(data.get("tags")),
+            tags=data.get("tags", []),
             created_at=datetime.fromisoformat(data["created_at"])
             if "created_at" in data
             else datetime.now(),
@@ -316,6 +323,9 @@ class Episode:
     access_count: int = 0
     source: str = "session_end"  # session_end / context_compress / daily_consolidation
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -329,7 +339,7 @@ class Episode:
             "entities": self.entities,
             "tools_used": self.tools_used,
             "linked_memory_ids": self.linked_memory_ids,
-            "tags": _normalize_tags(self.tags),
+            "tags": self.tags,
             "importance_score": self.importance_score,
             "access_count": self.access_count,
             "source": self.source,
@@ -355,7 +365,7 @@ class Episode:
             entities=data.get("entities", []),
             tools_used=data.get("tools_used", []),
             linked_memory_ids=data.get("linked_memory_ids", []),
-            tags=_normalize_tags(data.get("tags")),
+            tags=data.get("tags", []),
             importance_score=data.get("importance_score", 0.5),
             access_count=data.get("access_count", 0),
             source=data.get("source", "session_end"),
@@ -475,6 +485,9 @@ class Attachment:
 
     created_at: datetime = field(default_factory=datetime.now)
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -490,7 +503,7 @@ class Attachment:
             "description": self.description,
             "transcription": self.transcription,
             "extracted_text": self.extracted_text,
-            "tags": _normalize_tags(self.tags),
+            "tags": self.tags,
             "linked_memory_ids": self.linked_memory_ids,
             "created_at": self.created_at.isoformat(),
         }
@@ -516,7 +529,7 @@ class Attachment:
             description=data.get("description", ""),
             transcription=data.get("transcription", ""),
             extracted_text=data.get("extracted_text", ""),
-            tags=_normalize_tags(data.get("tags")),
+            tags=data.get("tags", []),
             linked_memory_ids=data.get("linked_memory_ids", []),
             created_at=datetime.fromisoformat(data["created_at"])
             if "created_at" in data
