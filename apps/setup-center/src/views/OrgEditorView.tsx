@@ -1261,6 +1261,7 @@ export function OrgEditorView({
 
           if (currentOrg.status !== "active" && currentOrg.status !== "running") {
             setCurrentOrg((prev) => prev ? { ...prev, status: "active" } : prev);
+            setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "active" } : o));
           }
 
           if (ev === "org:node_status") {
@@ -1320,6 +1321,7 @@ export function OrgEditorView({
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/start`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "active" });
+      setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "active" } : o));
       setLiveMode(true);
       setLayoutLocked(true);
       const mode = (currentOrg as any).operation_mode || "command";
@@ -1337,6 +1339,7 @@ export function OrgEditorView({
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/stop`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "dormant" });
+      setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "dormant" } : o));
       setLiveMode(false);
       setLayoutLocked(false);
     } catch (e) { console.error("Failed to stop org:", e); }
