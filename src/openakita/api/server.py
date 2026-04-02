@@ -312,6 +312,13 @@ def create_app(
         pm = getattr(agent, "_plugin_manager", None)
         if pm is not None:
             pm._host_refs["api_app"] = app
+            pending = pm._host_refs.pop("_pending_plugin_routers", [])
+            for plugin_id, router in pending:
+                try:
+                    app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
+                    logger.info("Mounted pending plugin routes for '%s'", plugin_id)
+                except Exception as e:
+                    logger.warning("Failed to mount pending routes for plugin '%s': %s", plugin_id, e)
 
     # Initialize OrgManager & OrgRuntime
     from openakita.orgs.manager import OrgManager

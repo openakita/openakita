@@ -71,10 +71,11 @@ export type StreamEvent =
   | { type: "text_replace"; content: string }
   | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
   | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean; skipped?: boolean }
-  | { type: "todo_created"; plan: ChatTodo }
+  | { type: "todo_created"; plan: ChatTodo; restored?: boolean }
   | { type: "todo_step_updated"; stepId?: string; stepIdx?: number; status: string }
   | { type: "todo_completed" }
   | { type: "todo_cancelled" }
+  | { type: "plan_ready_for_approval"; data: { conversation_id: string; summary: string; plan_id: string; plan_file: string } }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "user_insert"; content: string }
   | { type: "agent_switch"; agentName: string; reason: string }

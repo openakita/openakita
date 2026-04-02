@@ -21,6 +21,7 @@ from .todo_state import (
     force_close_plan,
     unregister_active_todo,
 )
+from .todo_store import TodoStore
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -48,6 +49,7 @@ class PlanHandler:
         self._todos_by_session: dict[str, dict] = {}
         self.plan_dir = Path("data/plans")
         self.plan_dir.mkdir(parents=True, exist_ok=True)
+        self._store = TodoStore(self.plan_dir / "todo_store.json")
 
     def _get_conversation_id(self) -> str:
         return (
@@ -135,6 +137,7 @@ class PlanHandler:
         self._todos_by_session.pop(session_id, None)
         if self.current_todo is plan:
             self.current_todo = None
+        self._store.remove(session_id)
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
@@ -240,6 +243,9 @@ class PlanHandler:
             register_plan_handler(conversation_id, self)
 
         self._add_log(f"计划创建：{params.get('task_summary', '')}")
+
+        if conversation_id:
+            self._store.upsert(conversation_id, _new_plan)
         for step in steps:
             logger.info(
                 f"[Plan] Step {step.get('id')} tool={step.get('tool','-')} skills={step.get('skills', [])}"
@@ -333,6 +339,9 @@ class PlanHandler:
             return f"❌ 未找到步骤：{step_id}"
 
         self._save_plan_markdown()
+        cid_for_store = self._get_conversation_id()
+        if cid_for_store:
+            self._store.upsert(cid_for_store, _plan)
 
         status_emoji = {"in_progress": "🔄", "completed": "✅", "failed": "❌", "skipped": "⏭️"}.get(
             status, "📌"
@@ -486,6 +495,7 @@ class PlanHandler:
         conversation_id = self._get_conversation_id()
         if conversation_id:
             unregister_active_todo(conversation_id)
+            self._store.remove(conversation_id)
 
         return f"✅ 计划 {plan_id} 已完成\n\n{complete_message}"
 
@@ -577,6 +587,7 @@ class PlanHandler:
         if conversation_id:
             register_active_todo(conversation_id, plan_id)
             register_plan_handler(conversation_id, self)
+            self._store.upsert(conversation_id, _new_plan)
 
         self._add_log(f"Plan 文件创建：{name}")
 

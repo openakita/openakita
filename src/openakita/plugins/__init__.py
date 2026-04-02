@@ -12,6 +12,8 @@ from .state import PluginState
 __all__ = [
     "HookRegistry",
     "MemoryBackendProtocol",
+    "PLUGIN_PROVIDER_MAP",
+    "PLUGIN_REGISTRY_MAP",
     "PluginAPI",
     "PluginBase",
     "PluginCatalog",

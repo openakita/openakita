@@ -3,6 +3,7 @@ export { AttachmentPreview } from "./AttachmentPreview";
 export { ErrorCard } from "./ErrorCard";
 export { ThinkingBlock, ToolCallDetail, ToolCallsGroup, ThinkingChain } from "./ThinkingChain";
 export { FloatingPlanBar } from "./FloatingPlanBar";
+export { PlanApprovalPanel } from "./PlanApprovalPanel";
 export { AskUserBlock } from "./AskUser";
 export { ArtifactList } from "./Artifacts";
 export { SlashCommandPanel } from "./SlashCommandPanel";

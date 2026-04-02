@@ -1091,6 +1091,23 @@ class Agent:
         except Exception as e:
             logger.debug(f"[Persona] trait loading skipped: {e}")
 
+        # --- Todo 状态恢复 + 防抖保存循环 ---
+        try:
+            from ..tools.handlers.plan import register_active_todo, register_plan_handler
+            plan_handle_fn = self.handler_registry.get_handler("plan")
+            plan_handler = getattr(plan_handle_fn, "__self__", None) if plan_handle_fn else None
+            if plan_handler and hasattr(plan_handler, '_store'):
+                restored = plan_handler._store.load()
+                for conv_id, plan_data in restored.items():
+                    if plan_data.get("status") == "in_progress":
+                        plan_handler._todos_by_session[conv_id] = plan_data
+                        register_active_todo(conv_id, plan_data.get("id", plan_data.get("plan_id", "")))
+                        register_plan_handler(conv_id, plan_handler)
+                        logger.info(f"[TodoStore] Restored plan {plan_data.get('id')} for {conv_id}")
+                self._todo_save_task = asyncio.create_task(plan_handler._store.start_save_loop())
+        except Exception as e:
+            logger.debug(f"[TodoStore] Restore/save-loop failed: {e}")
+
         self._initialized = True
         total_mcp = self.mcp_catalog.server_count + self._builtin_mcp_count
         logger.info(
@@ -1673,13 +1690,13 @@ class Agent:
 
             self.task_scheduler.on_missed_tasks_summary = _on_missed_tasks
 
-            # 启动调度器
-            await self.task_scheduler.start()
-
             if hasattr(self, "_plugin_manager") and self._plugin_manager:
                 self.task_scheduler._plugin_hooks = (
                     self._plugin_manager.hook_registry
                 )
+
+            # 启动调度器
+            await self.task_scheduler.start()
 
             # 注册内置系统任务（每日记忆整理 + 每日自检）
             await self._register_system_tasks()
@@ -7341,6 +7358,30 @@ NEXT: 建议的下一步（如有）"""
         """
         logger.info("Shutting down agent...")
 
+        # 插件系统清理：dispatch on_shutdown → unload → 清全局 map
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is not None:
+            try:
+                await pm.hook_registry.dispatch("on_shutdown", agent=self)
+            except Exception as e:
+                logger.debug(f"on_shutdown hook dispatch error: {e}")
+            for pid in list(pm.loaded_plugins.keys()):
+                try:
+                    await pm.unload_plugin(pid)
+                except Exception as e:
+                    logger.warning(f"Plugin '{pid}' unload error during shutdown: {e}")
+            try:
+                from ..plugins import PLUGIN_PROVIDER_MAP, PLUGIN_REGISTRY_MAP
+                PLUGIN_PROVIDER_MAP.clear()
+                PLUGIN_REGISTRY_MAP.clear()
+            except Exception:
+                pass
+            try:
+                from ..prompt.builder import set_prompt_hook_registry
+                set_prompt_hook_registry(None)
+            except Exception:
+                pass
+
         # F9: 清理技能相关资源
         self._cleanup_skill_resources()
 
@@ -7364,6 +7405,22 @@ NEXT: 建议的下一步（如有）"""
             await self.memory_manager.await_pending_tasks(timeout=15.0)
         except Exception as e:
             logger.warning(f"Failed to await memory pending tasks: {e}")
+
+        # Flush TodoStore 并停止防抖循环
+        try:
+            todo_save_task = getattr(self, '_todo_save_task', None)
+            if todo_save_task and not todo_save_task.done():
+                todo_save_task.cancel()
+                try:
+                    await todo_save_task
+                except asyncio.CancelledError:
+                    pass
+            plan_handle_fn = self.handler_registry.get_handler("plan")
+            plan_handler = getattr(plan_handle_fn, "__self__", None) if plan_handle_fn else None
+            if plan_handler and hasattr(plan_handler, '_store'):
+                await plan_handler._store.flush()
+        except Exception as e:
+            logger.debug(f"[TodoStore] Shutdown flush failed: {e}")
 
         self._running = False
         logger.info("Agent shutdown complete")

@@ -42,7 +42,8 @@ def _normalize_tool_definition(defn: dict) -> dict | None:
     """
     if "name" in defn:
         if "input_schema" not in defn and "parameters" in defn:
-            defn = {**defn, "input_schema": defn.pop("parameters")}
+            defn = {**defn, "input_schema": defn["parameters"]}
+            del defn["parameters"]
         return defn
 
     func = defn.get("function", {})
@@ -154,19 +155,27 @@ class PluginAPI:
     def get_config(self) -> dict:
         if not self._check_permission("config.read"):
             return {}
-        config_path = self._data_dir / "config.json"
-        if config_path.exists():
-            import json
+        return self._read_config_file()
 
+    def _read_config_file(self) -> dict:
+        """Read config.json without permission check (internal use)."""
+        import json
+
+        config_path = self._data_dir / "config.json"
+        if not config_path.exists():
+            return {}
+        try:
             return json.loads(config_path.read_text(encoding="utf-8"))
-        return {}
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            self.log(f"Corrupt config.json, returning empty config: {e}", "warning")
+            return {}
 
     def set_config(self, updates: dict) -> None:
         if not self._check_permission("config.write"):
             return
         import json
 
-        config = self.get_config()
+        config = self._read_config_file()
         config.update(updates)
         config_path = self._data_dir / "config.json"
         config_path.write_text(
@@ -269,14 +278,20 @@ class PluginAPI:
         if not self._check_permission("routes.register"):
             return
         api_server = self._host.get("api_app")
-        if api_server is None:
-            self.log("No API app available, routes not registered", "warning")
-            return
-        try:
-            api_server.include_router(router, prefix=f"/api/plugins/{self._plugin_id}")
-            self.log(f"Registered API routes under /api/plugins/{self._plugin_id}")
-        except Exception as e:
-            self.log_error(f"Failed to register API routes: {e}", e)
+        if api_server is not None:
+            try:
+                api_server.include_router(router, prefix=f"/api/plugins/{self._plugin_id}")
+                self.log(f"Registered API routes under /api/plugins/{self._plugin_id}")
+                return
+            except Exception as e:
+                self.log_error(f"Failed to register API routes: {e}", e)
+                return
+
+        pending = self._host.setdefault("_pending_plugin_routers", [])
+        pending.append((self._plugin_id, router))
+        self.log(
+            f"API app not yet available, routes queued for /api/plugins/{self._plugin_id}"
+        )
 
     # --- Channel registration (advanced) ---
 
@@ -469,6 +484,11 @@ class PluginAPI:
             logger.debug("Plugin '%s' channel cleanup error: %s", self._plugin_id, e)
 
         try:
+            self._cleanup_mcp()
+        except Exception as e:
+            logger.debug("Plugin '%s' MCP cleanup error: %s", self._plugin_id, e)
+
+        try:
             memory_backends = self._host.get("memory_backends")
             if memory_backends is not None:
                 memory_backends.pop(self._plugin_id, None)
@@ -559,6 +579,32 @@ class PluginAPI:
             except Exception:
                 pass
         self._registered_channels.clear()
+
+    def _cleanup_mcp(self) -> None:
+        """Disconnect and remove MCP server registered by this plugin."""
+        mcp_client = self._host.get("mcp_client")
+        if mcp_client is None:
+            return
+        server_name = self._plugin_id
+        if not hasattr(mcp_client, "get_server") or mcp_client.get_server(server_name) is None:
+            return
+        import asyncio
+
+        async def _do_cleanup():
+            try:
+                if hasattr(mcp_client, "disconnect"):
+                    await mcp_client.disconnect(server_name)
+            except Exception:
+                pass
+            if hasattr(mcp_client, "remove_server"):
+                mcp_client.remove_server(server_name)
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_do_cleanup())
+        except RuntimeError:
+            if hasattr(mcp_client, "remove_server"):
+                mcp_client.remove_server(server_name)
 
 
 class PluginBase(ABC):

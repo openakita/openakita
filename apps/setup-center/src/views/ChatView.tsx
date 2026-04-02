@@ -31,6 +31,7 @@ import type {
   ChainEntry,
   ChainSummaryItem,
   ChatDisplayMode,
+  PlanApprovalEvent,
 } from "../types";
 import { genId, formatTime, formatDate, timeAgo } from "../utils";
 import { notifyError, notifyInfo, notifySuccess } from "../utils/notify";
@@ -75,7 +76,7 @@ import type { QueryState } from "./chat/hooks/useQueryGuard";
 import {
   SpinnerTipDisplay, AttachmentPreview, ErrorCard,
   ThinkingBlock, ToolCallDetail, ToolCallsGroup, ThinkingChain,
-  FloatingPlanBar, AskUserBlock, ArtifactList,
+  FloatingPlanBar, AskUserBlock, ArtifactList, PlanApprovalPanel,
   SlashCommandPanel, RenderIcon, SubAgentCards,
   SecurityConfirmModal, ContextMenuInner, LightboxOverlay,
   MessageBubble, FlatMessageItem,
@@ -153,6 +154,8 @@ export function ChatView({
   const msgSearchRef = useRef<HTMLInputElement | null>(null);
   const messageListRef = useRef<MessageListHandle>(null);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [pendingApproval, setPendingApproval] = useState<PlanApprovalEvent | null>(null);
+  const pendingApprovalRef = useRef<PlanApprovalEvent | null>(null);
   const [lightbox, setLightbox] = useState<{ url: string; downloadUrl: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [securityConfirm, setSecurityConfirm] = useState<{
@@ -500,8 +503,12 @@ export function ChatView({
     if (!activeConvId) {
       setMessages([]);
       setPendingAttachments([]);
+      setPendingApproval(null);
+      pendingApprovalRef.current = null;
       return;
     }
+    setPendingApproval(null);
+    pendingApprovalRef.current = null;
     if (skipConvLoadRef.current) {
       skipConvLoadRef.current = false;
       return;
@@ -2264,6 +2271,9 @@ export function ChatView({
                   currentPlan = { ...currentPlan, status: "cancelled" } as ChatTodo;
                 }
                 break;
+              case "plan_ready_for_approval":
+                pendingApprovalRef.current = event.data;
+                break;
               case "security_confirm": {
                 const secEvent = {
                   tool: event.tool, args: event.args, reason: event.reason,
@@ -2416,6 +2426,10 @@ export function ChatView({
                       : m
                   );
                 });
+                if (pendingApprovalRef.current) {
+                  setPendingApproval(pendingApprovalRef.current);
+                  pendingApprovalRef.current = null;
+                }
                 break;
               default:
                 break;
@@ -2661,6 +2675,37 @@ export function ChatView({
     // reason_stream 在 ask_user 后中断流，用户回复通过新 /api/chat 请求继续处理
     sendMessage(answer, undefined, displayText !== answer ? displayText : undefined, isPlanSwitch ? "plan" : undefined);
   }, [sendMessage]);
+
+  // ── Plan 审批回调 ──
+  const handlePlanApprove = useCallback(() => {
+    setPendingApproval(null);
+    setChatMode("agent");
+    sendMessage("请按计划执行", undefined, undefined, "agent");
+  }, [sendMessage]);
+
+  const handlePlanReject = useCallback((feedback: string) => {
+    setPendingApproval(null);
+    const rejectMessage = feedback
+      ? `计划需要修改。修改意见：\n${feedback}`
+      : "计划需要修改，请重新调整。";
+    sendMessage(rejectMessage, undefined, undefined, "plan");
+  }, [sendMessage]);
+
+  const handlePlanDismiss = useCallback(async () => {
+    const approval = pendingApproval;
+    setPendingApproval(null);
+    if (approval?.conversation_id) {
+      try {
+        await safeFetch(`${apiBase}/api/plan/dismiss`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: approval.conversation_id }),
+        });
+      } catch (e) {
+        console.warn("Failed to dismiss plan approval:", e);
+      }
+    }
+  }, [pendingApproval, apiBase]);
 
   // ── 停止生成 ──
   const stopStreaming = useCallback((targetConvId?: string) => {
@@ -3431,8 +3476,8 @@ export function ChatView({
           )}
           {!hydrating && messages.length === 0 && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 24 }}>
-              <div style={{ opacity: 0.4, textAlign: "center" }}>
-                <div style={{ marginBottom: 12 }}><IconMessageCircle size={48} /></div>
+              <div style={{ opacity: 0.4, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <div style={{ marginBottom: 12, display: "flex", justifyContent: "center" }}><IconMessageCircle size={48} /></div>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>{t("chat.emptyTitle")}</div>
                 <div style={{ fontSize: 13, marginTop: 4 }}>{t("chat.emptyDesc")}</div>
               </div>
@@ -3496,6 +3541,21 @@ export function ChatView({
           const activePlan = [...messages].reverse().find((m) => m.todo && m.todo.status !== "completed" && m.todo.status !== "failed" && m.todo.status !== "cancelled")?.todo;
           return activePlan ? <FloatingPlanBar plan={activePlan} /> : null;
         })()}
+
+        {/* Plan 审批面板 */}
+        {pendingApproval && (
+          <PlanApprovalPanel
+            approval={pendingApproval}
+            plan={
+              [...messages].reverse().find(
+                (m) => m.todo && m.todo.id === pendingApproval.plan_id
+              )?.todo ?? null
+            }
+            onApprove={handlePlanApprove}
+            onReject={handlePlanReject}
+            onDismiss={handlePlanDismiss}
+          />
+        )}
 
         {/* 长闲置回归提示 (6.7) */}
         {idleReturnPrompt && (

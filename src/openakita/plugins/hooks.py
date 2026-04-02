@@ -26,6 +26,7 @@ HOOK_NAMES = frozenset({
 })
 
 DEFAULT_HOOK_TIMEOUT = 5.0
+_SKIP = object()  # sentinel for skipped/failed callbacks
 
 
 def _wrap_callback(fn: Callable, plugin_id: str) -> Callable:
@@ -101,34 +102,33 @@ class HookRegistry:
         return removed
 
     async def dispatch(self, hook_name: str, **kwargs) -> list[Any]:
-        """Dispatch a hook to all registered callbacks.
+        """Dispatch a hook to all registered callbacks in parallel.
 
         Each callback is independently wrapped with timeout and exception
-        isolation — a failing callback never blocks the chain.
+        isolation — a failing callback never blocks others.
+        Snapshot the callback list to avoid concurrent-modification issues.
         """
-        callbacks = self._hooks.get(hook_name, [])
+        callbacks = list(self._hooks.get(hook_name, []))
         if not callbacks:
             return []
 
-        results: list[Any] = []
-        for callback in callbacks:
+        async def _run_one(callback: Callable) -> Any:
             plugin_id = getattr(callback, "__plugin_id__", "unknown")
             timeout = getattr(callback, "__hook_timeout__", DEFAULT_HOOK_TIMEOUT)
 
             if self._error_tracker.is_disabled(plugin_id):
-                continue
+                return _SKIP
 
             try:
                 if asyncio.iscoroutinefunction(callback):
-                    result = await asyncio.wait_for(
+                    return await asyncio.wait_for(
                         callback(**kwargs), timeout=timeout
                     )
                 else:
-                    result = await asyncio.wait_for(
+                    return await asyncio.wait_for(
                         asyncio.to_thread(callback, **kwargs),
                         timeout=timeout,
                     )
-                results.append(result)
             except TimeoutError:
                 logger.warning(
                     "Hook '%s' callback from plugin '%s' timed out (%.1fs), skipped",
@@ -142,6 +142,7 @@ class HookRegistry:
                         "Plugin '%s' auto-disabled due to repeated errors",
                         plugin_id,
                     )
+                return _SKIP
             except Exception as e:
                 logger.error(
                     "Hook '%s' callback from plugin '%s' raised %s: %s",
@@ -155,8 +156,10 @@ class HookRegistry:
                         "Plugin '%s' auto-disabled due to repeated errors",
                         plugin_id,
                     )
+                return _SKIP
 
-        return results
+        raw = await asyncio.gather(*(_run_one(cb) for cb in callbacks))
+        return [r for r in raw if r is not _SKIP]
 
     def get_hooks(self, hook_name: str) -> list[Callable]:
         return list(self._hooks.get(hook_name, []))

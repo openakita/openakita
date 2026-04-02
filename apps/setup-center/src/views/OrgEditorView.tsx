@@ -2779,7 +2779,7 @@ export function OrgEditorView({
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)" }}
             onClick={() => { if (isMobile) setShowLeftPanel(true); }}
           >
-            <div style={{ textAlign: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
               <IconUsers size={48} />
               <p style={{ marginTop: 12, fontSize: 14 }}>
                 {isMobile ? "点击打开组织列表" : "选择或创建一个组织开始编排"}

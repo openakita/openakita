@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import time
 from collections import defaultdict
@@ -122,33 +121,3 @@ def safe_call_sync(
         return default
 
 
-def sandbox_async(
-    timeout: float = 5.0,
-    default: Any = None,
-    context: str = "",
-):
-    """Decorator that wraps an async method with timeout + exception isolation."""
-
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await asyncio.wait_for(
-                    func(*args, **kwargs), timeout=timeout
-                )
-            except TimeoutError:
-                logger.warning(
-                    "%s timed out (%.1fs), returning default",
-                    context or func.__qualname__, timeout,
-                )
-                return default
-            except Exception as e:
-                logger.error(
-                    "%s raised %s: %s",
-                    context or func.__qualname__, type(e).__name__, e,
-                )
-                return default
-
-        return wrapper
-
-    return decorator

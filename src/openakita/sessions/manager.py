@@ -106,11 +106,20 @@ class SessionManager:
             import asyncio
 
             loop = asyncio.get_running_loop()
-            loop.create_task(self._plugin_hooks.dispatch(hook_name, **kwargs))
+            task = loop.create_task(self._plugin_hooks.dispatch(hook_name, **kwargs))
+            task.add_done_callback(self._hook_task_done)
         except RuntimeError:
             pass
         except Exception as e:
             logger.debug(f"Hook '{hook_name}' dispatch error: {e}")
+
+    @staticmethod
+    def _hook_task_done(task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("Plugin hook task failed: %s", exc)
 
     def flush(self) -> None:
         """立即保存所有待写入的会话（绕过防抖延迟）"""

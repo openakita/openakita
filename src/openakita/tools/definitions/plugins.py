@@ -29,7 +29,7 @@ PLUGIN_TOOLS = [
     {
         "name": "get_plugin_info",
         "category": "Plugin",
-        "description": "Get detailed information about a specific plugin including its README, registered tools, configuration schema, and permission status.",
+        "description": "Get detailed information about a specific plugin including its README, registered tools, current configuration, and permission status.",
         "detail": """获取单个插件的详细信息。
 
 **返回信息**：

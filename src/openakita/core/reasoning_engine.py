@@ -1940,6 +1940,26 @@ class ReasoningEngine:
                 param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
                 return f"{name}({param_hash})"
 
+            # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
+            if conversation_id:
+                try:
+                    from ..tools.handlers.plan import has_active_todo, get_todo_handler_for_session
+                    if has_active_todo(conversation_id):
+                        _rh = get_todo_handler_for_session(conversation_id)
+                        _rp = _rh.get_plan_for(conversation_id) if _rh else None
+                        if _rp and _rp.get("status") == "in_progress":
+                            yield {"type": "todo_created", "restored": True, "plan": {
+                                "id": _rp.get("id", ""),
+                                "taskSummary": _rp.get("task_summary", ""),
+                                "steps": [
+                                    {"id": s.get("id", ""), "description": s.get("description", ""), "status": s.get("status", "pending")}
+                                    for s in _rp.get("steps", [])
+                                ],
+                                "status": "in_progress",
+                            }}
+                except Exception:
+                    pass
+
             # ==================== 主循环 ====================
             logger.info(
                 f"[ReAct-Stream] === Loop started (max_iterations={max_iterations}, model={current_model}) ==="
@@ -2792,6 +2812,18 @@ class ReasoningEngine:
                             "The user can approve the plan to switch to Agent mode, "
                             "or request changes to continue refining."
                         )
+
+                        # SSE: 通知前端显示审批面板（通过 SSE 而非 WS，确保 Tauri 本地模式可用）
+                        _pending = getattr(self.agent, "_plan_exit_pending", {})
+                        _pending_data = _pending.get(conversation_id, {}) if isinstance(_pending, dict) else {}
+                        if _pending_data:
+                            yield {"type": "plan_ready_for_approval", "data": {
+                                "conversation_id": conversation_id,
+                                "summary": _pending_data.get("summary", ""),
+                                "plan_id": _pending_data.get("plan_id", ""),
+                                "plan_file": _pending_data.get("plan_file", ""),
+                            }}
+
                         yield {"type": "text_delta", "content": _summary_text}
                         self._save_react_trace(
                             react_trace, conversation_id, session_type,

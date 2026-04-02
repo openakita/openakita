@@ -84,7 +84,10 @@ class PluginCatalog:
         loaded = self._pm.get_loaded(plugin_id)
         if loaded is None:
             return []
-        skill_file = loaded.manifest.provides.get("skill", "")
+        provides = loaded.manifest.provides
+        if not isinstance(provides, dict):
+            return []
+        skill_file = provides.get("skill", "")
         if skill_file:
             return [skill_file.replace("SKILL.md", "").strip("/") or loaded.manifest.id]
         if loaded.manifest.plugin_type == "skill":

@@ -243,6 +243,13 @@ export type ChatTodoStep = {
   result?: string | null;
 };
 
+export type PlanApprovalEvent = {
+  conversation_id: string;
+  summary: string;
+  plan_id: string;
+  plan_file: string;
+};
+
 export type ChatAskQuestion = {
   id: string;
   prompt: string;

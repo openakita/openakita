@@ -8,7 +8,6 @@ Session Todo 状态管理 + 生命周期函数
 """
 
 import logging
-from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -34,6 +33,8 @@ __all__ = [
     "require_plan_for_session", "is_plan_required",
     "register_active_plan", "unregister_active_plan",
     "clear_session_plan_state",
+    "auto_close_plan", "cancel_plan",
+    "get_plan_handler_for_session",
 ]
 
 # ============================================
@@ -164,7 +165,7 @@ def cancel_todo(session_id: str) -> bool:
     logger.info(f"[Todo] Cancelled todo for session {session_id}")
 
     unregister_active_todo(session_id)
-    _emit_todo_lifecycle_event(session_id, "todo_completed", plan)
+    _emit_todo_lifecycle_event(session_id, "todo_cancelled", plan)
     return True
 
 

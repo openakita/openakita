@@ -40,11 +40,27 @@ def _find_plugin_json_root(root: Path) -> Path | None:
     return min(candidates, key=lambda p: len(p.parts))
 
 
+_MAX_EXTRACT_SIZE = 500 * 1024 * 1024  # 500 MB
+_MAX_EXTRACT_FILES = 10_000
+
+
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
     dest = dest.resolve()
+    total_size = 0
+    file_count = 0
     for info in zf.infolist():
         if info.is_dir():
             continue
+        total_size += info.file_size
+        file_count += 1
+        if total_size > _MAX_EXTRACT_SIZE:
+            raise PluginInstallError(
+                f"Zip archive exceeds size limit ({_MAX_EXTRACT_SIZE // 1024 // 1024} MB)"
+            )
+        if file_count > _MAX_EXTRACT_FILES:
+            raise PluginInstallError(
+                f"Zip archive exceeds file count limit ({_MAX_EXTRACT_FILES})"
+            )
         name = info.filename
         if name.startswith("/") or ".." in Path(name).parts:
             raise PluginInstallError(f"Unsafe zip entry: {name!r}")
@@ -162,16 +178,43 @@ def install_from_url(url: str, plugins_dir: Path) -> str:
 
         dest = plugins_dir / _sanitize_dir_name(manifest.id)
         if dest.exists():
-            raise PluginInstallError(
-                f"Plugin directory already exists: {dest} (id={manifest.id!r})"
-            )
+            backup = dest.with_suffix(".bak")
+            try:
+                if backup.exists():
+                    shutil.rmtree(backup)
+                dest.rename(backup)
+            except OSError as e:
+                raise PluginInstallError(
+                    f"Cannot upgrade: failed to backup existing plugin: {e}"
+                ) from e
+        else:
+            backup = None
 
         try:
             shutil.copytree(plugin_src, dest)
         except OSError as e:
+            if backup is not None:
+                try:
+                    backup.rename(dest)
+                except OSError:
+                    pass
             raise PluginInstallError(f"Could not install plugin files: {e}") from e
 
-    return _finalize_install(dest)
+    try:
+        result = _finalize_install(dest)
+    except PluginInstallError:
+        if backup is not None and backup.exists():
+            try:
+                if dest.exists():
+                    shutil.rmtree(dest)
+                backup.rename(dest)
+            except OSError:
+                pass
+        raise
+
+    if backup is not None and backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    return result
 
 
 def install_from_path(source: Path, plugins_dir: Path) -> str:
@@ -188,6 +231,7 @@ def install_from_path(source: Path, plugins_dir: Path) -> str:
     dest = plugins_dir / _sanitize_dir_name(manifest.id)
     plugins_dir.mkdir(parents=True, exist_ok=True)
 
+    backup = None
     if dest.exists():
         try:
             same = dest.samefile(source)
@@ -195,14 +239,41 @@ def install_from_path(source: Path, plugins_dir: Path) -> str:
             same = False
         if same:
             return _finalize_install(dest, remove_on_failure=False)
-        raise PluginInstallError(f"Plugin directory already exists: {dest} (id={manifest.id!r})")
+        backup = dest.with_suffix(".bak")
+        try:
+            if backup.exists():
+                shutil.rmtree(backup)
+            dest.rename(backup)
+        except OSError as e:
+            raise PluginInstallError(
+                f"Cannot upgrade: failed to backup existing plugin: {e}"
+            ) from e
 
     try:
         shutil.copytree(source, dest)
     except OSError as e:
+        if backup is not None:
+            try:
+                backup.rename(dest)
+            except OSError:
+                pass
         raise PluginInstallError(f"Could not copy plugin: {e}") from e
 
-    return _finalize_install(dest)
+    try:
+        result = _finalize_install(dest)
+    except PluginInstallError:
+        if backup is not None and backup.exists():
+            try:
+                if dest.exists():
+                    shutil.rmtree(dest)
+                backup.rename(dest)
+            except OSError:
+                pass
+        raise
+
+    if backup is not None and backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    return result
 
 
 def install_bundle(source: str, plugins_dir: Path) -> str:
@@ -217,7 +288,9 @@ def install_bundle(source: str, plugins_dir: Path) -> str:
         raise PluginInstallError(f"No supported bundle format under {path}")
 
     manifest_dict = mapper.map_to_manifest(bundle)
-    plugin_id = str(manifest_dict["id"])
+    plugin_id = str(manifest_dict.get("id", ""))
+    if not plugin_id:
+        raise PluginInstallError("Bundle mapping produced no plugin ID")
     dest = plugins_dir / _sanitize_dir_name(plugin_id)
     plugins_dir.mkdir(parents=True, exist_ok=True)
 

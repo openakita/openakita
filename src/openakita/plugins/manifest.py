@@ -42,7 +42,7 @@ ADVANCED_PERMISSIONS = frozenset({
 SYSTEM_PERMISSIONS = frozenset({
     "hooks.all",
     "memory.replace",
-    "system.config.write",
+    "system.config.write",  # reserved: will gate writes to global settings in P1
 })
 
 ALL_PERMISSIONS = BASIC_PERMISSIONS | ADVANCED_PERMISSIONS | SYSTEM_PERMISSIONS
@@ -64,7 +64,7 @@ class PluginManifest:
     permissions: list[str] = field(default_factory=list)
     requires: dict[str, Any] = field(default_factory=dict)
     provides: dict[str, Any] = field(default_factory=dict)
-    replaces: list[str] = field(default_factory=list)
+    replaces: list[str] = field(default_factory=list)  # reserved: plugins this one supersedes
     conflicts: list[str] = field(default_factory=list)
     category: str = ""
     tags: list[str] = field(default_factory=list)
@@ -124,6 +124,12 @@ def parse_manifest(plugin_dir: Path) -> PluginManifest:
         )
 
     permissions = raw.get("permissions", [])
+    if not isinstance(permissions, list):
+        raise ManifestError(
+            f"'permissions' must be a list in {manifest_path}, "
+            f"got {type(permissions).__name__}"
+        )
+
     unknown = set(permissions) - ALL_PERMISSIONS
     if unknown:
         logger.warning(
@@ -151,11 +157,22 @@ def parse_manifest(plugin_dir: Path) -> PluginManifest:
         category=raw.get("category", ""),
         tags=raw.get("tags", []),
         icon=raw.get("icon", ""),
-        load_timeout=float(raw.get("load_timeout", 10)),
-        hook_timeout=float(raw.get("hook_timeout", 5)),
-        retrieve_timeout=float(raw.get("retrieve_timeout", 3)),
+        load_timeout=_safe_float(raw.get("load_timeout", 10), 10.0, "load_timeout", manifest_path),
+        hook_timeout=_safe_float(raw.get("hook_timeout", 5), 5.0, "hook_timeout", manifest_path),
+        retrieve_timeout=_safe_float(raw.get("retrieve_timeout", 3), 3.0, "retrieve_timeout", manifest_path),
         raw=raw,
     )
+
+
+def _safe_float(value: Any, default: float, field_name: str, path: Path) -> float:
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        logger.warning(
+            "Invalid %s value %r in %s, using default %.1f",
+            field_name, value, path, default,
+        )
+        return default
 
 
 def _default_entry(plugin_type: str) -> str:

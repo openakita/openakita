@@ -1041,3 +1041,24 @@ async def get_sub_agent_records(request: Request, conversation_id: str = ""):
     except Exception as e:
         logger.warning(f"[Chat API] sub-records query error: {e}")
     return []
+
+
+@router.post("/api/plan/dismiss")
+async def dismiss_plan_approval(request: Request):
+    """用户关闭审批面板时清除后端 pending 状态"""
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False, "error": "invalid JSON body"}
+    conversation_id = body.get("conversation_id", "")
+    if not conversation_id:
+        return {"ok": False, "error": "missing conversation_id"}
+
+    agent = _get_existing_agent(request, conversation_id)
+    if agent is None:
+        return {"ok": True}
+
+    pending_map = getattr(agent, "_plan_exit_pending", None)
+    if isinstance(pending_map, dict):
+        pending_map.pop(conversation_id, None)
+    return {"ok": True}

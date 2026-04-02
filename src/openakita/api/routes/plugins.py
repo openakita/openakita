@@ -23,6 +23,7 @@ from ...plugins.state import PluginState
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
+_plugin_op_lock = asyncio.Lock()
 
 
 def _plugins_dir() -> Path:
@@ -230,52 +231,54 @@ async def list_plugins(request: Request) -> dict[str, Any]:
         return {"plugins": plugins, "failed": failed}
     except Exception as e:
         logger.exception("Failed to list plugins")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to list plugins") from e
 
 
 @router.post("/install")
 async def install_plugin(body: InstallBody, request: Request) -> dict[str, str]:
-    plugins_dir = _plugins_dir()
-    src = body.source.strip()
-    try:
-        if src.startswith(("http://", "https://")):
-            plugin_id = await asyncio.to_thread(installer.install_from_url, src, plugins_dir)
-        else:
-            plugin_id = await asyncio.to_thread(
-                installer.install_from_path, Path(src), plugins_dir
-            )
-    except (PluginInstallError, ValueError, OSError, FileNotFoundError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("Unexpected error installing plugin from %s", src)
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    pm = _get_plugin_manager(request)
-    if pm is not None:
+    async with _plugin_op_lock:
+        plugins_dir = _plugins_dir()
+        src = body.source.strip()
         try:
-            await pm.reload_plugin(plugin_id)
+            if src.startswith(("http://", "https://")):
+                plugin_id = await asyncio.to_thread(installer.install_from_url, src, plugins_dir)
+            else:
+                plugin_id = await asyncio.to_thread(
+                    installer.install_from_path, Path(src), plugins_dir
+                )
+        except (PluginInstallError, ValueError, OSError, FileNotFoundError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+            logger.exception("Unexpected error installing plugin from %s", src)
+            raise HTTPException(status_code=500, detail="Plugin installation failed") from e
 
-    return {"plugin_id": plugin_id}
+        pm = _get_plugin_manager(request)
+        if pm is not None:
+            try:
+                await pm.reload_plugin(plugin_id)
+            except Exception as e:
+                logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+
+        return {"plugin_id": plugin_id}
 
 
 @router.delete("/{plugin_id}")
 async def uninstall_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
-    plugins_dir = _plugins_dir()
-    state_path = _plugin_state_path()
-    pm = _get_plugin_manager(request)
-    if pm:
-        await pm.unload_plugin(plugin_id)
-        pm.state.remove_plugin(plugin_id)
-        pm.state.save(state_path)
-    else:
-        state = PluginState.load(state_path)
-        state.remove_plugin(plugin_id)
-        state.save(state_path)
+    async with _plugin_op_lock:
+        plugins_dir = _plugins_dir()
+        state_path = _plugin_state_path()
+        pm = _get_plugin_manager(request)
+        if pm:
+            await pm.unload_plugin(plugin_id)
+            pm.state.remove_plugin(plugin_id)
+            pm.state.save(state_path)
+        else:
+            state = PluginState.load(state_path)
+            state.remove_plugin(plugin_id)
+            state.save(state_path)
 
-    await asyncio.to_thread(installer.uninstall, plugin_id, plugins_dir)
-    return {"ok": True}
+        await asyncio.to_thread(installer.uninstall, plugin_id, plugins_dir)
+        return {"ok": True}
 
 
 @router.post("/{plugin_id}/enable")
@@ -429,9 +432,10 @@ async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, 
 @router.post("/{plugin_id}/reload")
 async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     """Reload a plugin (useful after granting permissions or changing config)."""
-    pm = _require_manager(request)
-    await pm.reload_plugin(plugin_id)
-    return {"ok": True}
+    async with _plugin_op_lock:
+        pm = _require_manager(request)
+        await pm.reload_plugin(plugin_id)
+        return {"ok": True}
 
 
 @router.get("/{plugin_id}/logs")
@@ -485,12 +489,21 @@ async def export_plugin(plugin_id: str) -> Response:
     if not plugin_dir.is_dir():
         raise HTTPException(status_code=404, detail="Plugin not found")
 
+    _EXPORT_EXCLUDE_DIRS = {"logs", "deps", "__pycache__", ".env", "node_modules"}
+    _EXPORT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
+
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in sorted(plugin_dir.rglob("*")):
-            if file.is_file():
-                arc_name = f"{plugin_id}/{file.relative_to(plugin_dir)}"
-                zf.write(file, arc_name)
+            if not file.is_file():
+                continue
+            rel = file.relative_to(plugin_dir)
+            if any(part in _EXPORT_EXCLUDE_DIRS for part in rel.parts):
+                continue
+            if file.stat().st_size > _EXPORT_MAX_FILE_SIZE:
+                continue
+            arc_name = f"{plugin_id}/{rel}"
+            zf.write(file, arc_name)
     buf.seek(0)
     filename = f"{plugin_id}.zip"
     return Response(
@@ -529,5 +542,5 @@ async def hub_search(
         "category": category,
         "results": [],
         "total": 0,
-        "message": "Plugin marketplace coming soon",
+        "message": "插件市场即将上线",
     }
