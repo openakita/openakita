@@ -45,7 +45,6 @@ import {
   IconRadar,
   IconSave,
   IconInbox,
-  IconMaximize2,
   IconSnowflake,
   IconLayoutGrid,
   IconBuilding,
@@ -56,7 +55,7 @@ import {
   IconUpload,
 } from "../icons";
 import { safeFetch } from "../providers";
-import { openPopupWindow, canOpenPopupWindow, IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile } from "../platform";
+import { IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile } from "../platform";
 import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { OrgAvatar, AVATAR_PRESETS, AVATAR_MAP } from "../components/OrgAvatars";
@@ -2032,22 +2031,6 @@ export function OrgEditorView({
                 <span className="org-notif-dot" />
               )}
             </button>
-            {canOpenPopupWindow() && (
-              <button
-                className="org-tb-btn"
-                onClick={() => {
-                  const base = window.location.href.split("#")[0].split("?")[0];
-                  openPopupWindow(
-                    `${base}#/org-editor`,
-                    "org-editor-popup",
-                    { width: 1400, height: 900, title: "组织编排" },
-                  );
-                }}
-                title="在独立窗口中打开"
-              >
-                <IconMaximize2 size={13} />
-              </button>
-            )}
           </div>
         </div>
       )}
