@@ -70,6 +70,7 @@
     "themeDark": "暗色",
     "themeLight": "亮色",
     "langLabel": "语言",
+    "langAuto": "跟随系统",
     "webAccess": "网页访问",
     "remoteUrl": "远程地址",
     "copyRemoteUrl": "复制远程访问地址",
