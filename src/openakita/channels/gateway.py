@@ -2901,6 +2901,8 @@ class MessageGateway:
         sem = asyncio.Semaphore(4)
 
         async def _process_voice(voice) -> None:
+            if voice.status == MediaStatus.FAILED:
+                return
             try:
                 async with sem:
                     if not voice.local_path:
@@ -2930,7 +2932,7 @@ class MessageGateway:
 
         async def _process_image(img) -> None:
             try:
-                if img.local_path:
+                if img.local_path or img.status == MediaStatus.FAILED:
                     return
                 async with sem:
                     local_path = await adapter.download_media(img)
@@ -2944,7 +2946,7 @@ class MessageGateway:
 
         async def _process_video(vid) -> None:
             try:
-                if vid.local_path:
+                if vid.local_path or vid.status == MediaStatus.FAILED:
                     return
                 async with sem:
                     local_path = await adapter.download_media(vid)
@@ -2958,7 +2960,7 @@ class MessageGateway:
 
         async def _process_file(fil) -> None:
             try:
-                if fil.local_path:
+                if fil.local_path or fil.status == MediaStatus.FAILED:
                     return
                 async with sem:
                     local_path = await adapter.download_media(fil)
