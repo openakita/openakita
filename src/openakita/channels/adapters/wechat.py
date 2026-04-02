@@ -1097,9 +1097,18 @@ class WeChatAdapter(ChannelAdapter):
             "no_need_thumb": True,
             "aeskey": aeskey.hex(),
         })
+        self._check_send_response(upload_resp, action="getuploadurl")
         upload_param = upload_resp.get("upload_param")
         if not upload_param:
-            raise RuntimeError("getUploadUrl returned no upload_param")
+            logger.error(
+                f"{self.channel_name}: getUploadUrl returned no upload_param, "
+                f"resp keys={list(upload_resp.keys())}, "
+                f"ret={upload_resp.get('ret')}, errmsg={upload_resp.get('errmsg', '')!r}"
+            )
+            raise RuntimeError(
+                f"getUploadUrl returned no upload_param "
+                f"(ret={upload_resp.get('ret')}, errmsg={upload_resp.get('errmsg', '')})"
+            )
 
         ciphertext = _encrypt_aes_ecb(plaintext, aeskey)
         cdn_url = (
