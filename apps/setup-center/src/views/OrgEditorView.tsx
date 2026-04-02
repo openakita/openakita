@@ -889,7 +889,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
                 <div>状态: <span style={{ color: statusColor, fontWeight: 500 }}>{STATUS_LABELS[data.status] || data.status}</span></div>
                 {idleSecs != null && <div>空闲: {idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : idleSecs >= 60 ? `${Math.floor(idleSecs / 60)}m` : `${idleSecs}s`}</div>}
                 {pendingMsgs != null && pendingMsgs > 0 && <div>待处理: {pendingMsgs} 条消息</div>}
-                <Sep />
+                {((pp && pp.total != null && pp.total > 0) || (ds && (ds.total ?? 0) > 0)) && <Sep />}
                 {pp && pp.total != null && pp.total > 0 && (
                   <div>
                     计划进度: {pp.completed ?? 0}/{pp.total}
@@ -901,14 +901,14 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
                 {ds && (ds.total ?? 0) > 0 && (
                   <div>委派: 进行中 {ds.in_progress ?? 0} · 已完成 {ds.completed ?? 0} / {ds.total}</div>
                 )}
-                <Sep />
+                {(runningSince != null || extTools.length > 0 || recentTs != null || watchdog) && <Sep />}
                 {runningSince != null && (
                   <div>运行中: {typeof runningSince === "number" ? fmtTime(runningSince) : fmtShortDate(runningSince)}</div>
                 )}
                 {extTools.length > 0 && <div>外部工具: {extTools.slice(0, 3).join(", ")}{extTools.length > 3 ? ` +${extTools.length - 3}` : ""}</div>}
                 {recentTs != null && <div>最近活动: {fmtShortDate(recentTs)}</div>}
                 {watchdog && <div>看门狗: {watchdog}</div>}
-                <Sep />
+                {(data.current_task || isAnomaly) && <Sep />}
                 {data.current_task && <div style={{ marginTop: 2, color: "#b45309" }}>任务: {data.current_task.slice(0, 50)}</div>}
                 {isAnomaly && <div style={{ marginTop: 2, color: "#f59e0b", fontWeight: 500 }}>{typeof isAnomaly === "string" ? isAnomaly : "异常"}</div>}
               </div>
