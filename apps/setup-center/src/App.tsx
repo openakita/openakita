@@ -2930,7 +2930,7 @@ export function App() {
           {/* ── Hallucination Guard ── */}
           <details className="group/hguard rounded-lg border border-border mt-2">
             <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronDown className="size-4 shrink-0 transition-transform group-open/hguard:rotate-180 text-muted-foreground" />
+              <ChevronRight className="size-4 shrink-0 transition-transform group-open/hguard:rotate-90 text-muted-foreground" />
               {t("config.toolsHallucinationGuard")}
             </summary>
             <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">

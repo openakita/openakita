@@ -332,14 +332,14 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             {messages.length > 0 && (
-              <button className="ocp-close" onClick={handleClear} title="清空历史">
+              <button className="ocp-close" data-slot="ocp" onClick={handleClear} title="清空历史">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
                 </svg>
               </button>
             )}
             {onClose && (
-              <button className="ocp-close" onClick={onClose}>
+              <button className="ocp-close" data-slot="ocp" onClick={onClose}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -394,6 +394,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       {!showHeader && messages.length > 0 && (
         <div style={{ display: "flex", justifyContent: "center", padding: "2px 0", flexShrink: 0 }}>
           <button
+            data-slot="ocp"
             onClick={handleClear}
             style={{
               fontSize: 10, color: "var(--muted, #64748b)", background: "none",
@@ -416,6 +417,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           className="ocp-textarea"
         />
         <button
+          data-slot="ocp"
           onClick={handleSend}
           disabled={sending || !input.trim()}
           className={`ocp-send ${sending ? "ocp-send-busy" : ""}`}
