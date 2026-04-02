@@ -3320,7 +3320,7 @@ export function OrgEditorView({
                           <div style={{ fontSize: 10, color: "#374151", marginTop: 2, lineHeight: 1.4 }}>
                             {bb.content}
                           </div>
-                          {bb.tags?.length > 0 && (
+                          {Array.isArray(bb.tags) && bb.tags.length > 0 && (
                             <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
                               {bb.tags.map((t: string) => (
                                 <span key={t} style={{ fontSize: 8, padding: "0 3px", borderRadius: 2, background: "#f3f4f6", color: "#6b7280" }}>#{t}</span>
@@ -4627,7 +4627,7 @@ export function OrgEditorView({
                       <div style={{ lineHeight: 1.5, wordBreak: "break-word" }}>
                         {entry.content}
                       </div>
-                      {entry.tags && entry.tags.length > 0 && (
+                      {Array.isArray(entry.tags) && entry.tags.length > 0 && (
                         <div style={{ marginTop: 3, display: "flex", gap: 3, flexWrap: "wrap" }}>
                           {entry.tags.map((t: string) => (
                             <span key={t} style={{

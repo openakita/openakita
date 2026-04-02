@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
+from openakita.memory.types import _normalize_tags
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -423,7 +425,7 @@ class Organization:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "is_template": self.is_template,
-            "tags": list(self.tags) if self.tags else [],
+            "tags": _normalize_tags(self.tags),
             "total_tasks_completed": self.total_tasks_completed,
             "total_messages_exchanged": self.total_messages_exchanged,
             "total_tokens_used": self.total_tokens_used,
@@ -585,7 +587,7 @@ class OrgMemoryEntry:
             "content": self.content,
             "source_node": self.source_node,
             "source_message_id": self.source_message_id,
-            "tags": list(self.tags) if self.tags else [],
+            "tags": _normalize_tags(self.tags),
             "importance": self.importance,
             "ttl_hours": self.ttl_hours,
             "created_at": self.created_at,
@@ -606,6 +608,8 @@ class OrgMemoryEntry:
                 d["memory_type"] = MemoryType(d["memory_type"])
             except ValueError:
                 d["memory_type"] = MemoryType.FACT
+        if "tags" in d:
+            d["tags"] = _normalize_tags(d["tags"])
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 

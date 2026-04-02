@@ -11,6 +11,8 @@ import json
 import logging
 from typing import Any, TYPE_CHECKING
 
+from openakita.memory.types import _normalize_tags
+
 from .models import (
     MemoryType,
     MsgType,
@@ -712,7 +714,7 @@ class OrgToolHandler:
             content=args["content"],
             source_node=node_id,
             memory_type=mt,
-            tags=args.get("tags", []),
+            tags=_normalize_tags(args.get("tags")),
             importance=args.get("importance", 0.5),
         )
         if entry is None:
@@ -759,7 +761,7 @@ class OrgToolHandler:
         entry = bb.write_department(
             dept, args["content"], node_id,
             memory_type=mt,
-            tags=args.get("tags", []),
+            tags=_normalize_tags(args.get("tags")),
             importance=args.get("importance", 0.5),
         )
         if entry is None:
