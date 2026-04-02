@@ -623,6 +623,7 @@ def _build_python_info(
 
 _PLATFORM_NAMES = {
     "feishu": "飞书",
+    "lark": "Lark",
     "telegram": "Telegram",
     "wechat_work": "企业微信",
     "dingtalk": "钉钉",

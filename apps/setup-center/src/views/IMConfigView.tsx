@@ -31,6 +31,7 @@ const DEFAULT_API = "http://127.0.0.1:18900";
 const PLATFORMS = [
   { id: "wechat", title: "config.imWechat", logo: LogoWechat, docUrl: "https://developers.weixin.qq.com/doc/" },
   { id: "feishu", title: "config.imFeishu", logo: LogoFeishu, docUrl: "https://open.feishu.cn/" },
+  { id: "lark", title: "im.botTypeLark", logo: LogoFeishu, docUrl: "https://open.larksuite.com/" },
   { id: "dingtalk", title: "config.imDingtalk", logo: LogoDingtalk, docUrl: "https://open.dingtalk.com/" },
   { id: "wework", title: "config.imWework", logo: LogoWework, docUrl: "https://work.weixin.qq.com/" },
   { id: "qqbot", title: "config.imQQBot", logo: LogoQQ, docUrl: "https://bot.q.qq.com/wiki/develop/api-v2/" },

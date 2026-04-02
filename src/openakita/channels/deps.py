@@ -9,6 +9,7 @@
 # 通道名 → [(import_name, pip_package), ...]
 CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
     "feishu": [("lark_oapi", "lark-oapi")],
+    "lark": [("lark_oapi", "lark-oapi")],
     "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
     "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
     "wework_ws": [("websockets", "websockets"), ("cryptography", "cryptography")],
@@ -21,6 +22,7 @@ CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
 # 通道名 → pyproject.toml extras 名称（用于 pip install openakita[xxx] 提示）
 CHANNEL_EXTRAS: dict[str, str] = {
     "feishu": "feishu",
+    "lark": "feishu",
     "dingtalk": "dingtalk",
     "wework": "wework",
     "wework_ws": "wework_ws",

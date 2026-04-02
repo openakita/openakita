@@ -40,11 +40,14 @@ def _safe_int(val: Any, default: int) -> int:
         return default
 
 
-def _create_feishu(creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str):
+def _create_feishu(
+    creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str, domain: str = "feishu",
+):
     from .adapters import FeishuAdapter
     return FeishuAdapter(
         app_id=creds.get("app_id", ""),
         app_secret=creds.get("app_secret", ""),
+        domain=domain,
         channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id,
         streaming_enabled=_cred_bool(creds.get("streaming_enabled")),
         group_streaming=_cred_bool(creds.get("group_streaming")),
@@ -157,8 +160,17 @@ def _create_wechat(creds: dict, *, channel_name: str, bot_id: str, agent_profile
     )
 
 
+def _create_lark(creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str):
+    return _create_feishu(
+        creds,
+        channel_name=channel_name, bot_id=bot_id,
+        agent_profile_id=agent_profile_id, domain="lark",
+    )
+
+
 # 自动注册所有内置适配器
 register_adapter("feishu", _create_feishu)
+register_adapter("lark", _create_lark)
 register_adapter("telegram", _create_telegram)
 register_adapter("dingtalk", _create_dingtalk)
 register_adapter("wework", _create_wework)
