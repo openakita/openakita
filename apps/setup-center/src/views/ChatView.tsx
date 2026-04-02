@@ -302,6 +302,12 @@ function generateGroupSummary(tools: ChainToolCall[]): string {
 
 // ─── 子组件 ───
 
+const mdComponents = {
+  table: ({ children, ...props }: React.HTMLAttributes<HTMLTableElement>) => (
+    <div className="tableWrapper"><table {...props}>{children}</table></div>
+  ),
+};
+
 /** ThinkingBlock: 旧版组件保留做 bubble 模式向后兼容 */
 function ThinkingBlock({ content, defaultOpen }: { content: string; defaultOpen?: boolean }) {
   const { t } = useTranslation();
@@ -492,12 +498,13 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
 }
 
 /** 单个迭代组: 叙事流模式 */
-function ChainGroupItem({ group, onToggle, isLast, streaming, onSkipStep }: {
+function ChainGroupItem({ group, onToggle, isLast, streaming, onSkipStep, flowRef }: {
   group: ChainGroup;
   onToggle: () => void;
   isLast: boolean;
   streaming: boolean;
   onSkipStep?: () => void;
+  flowRef?: React.Ref<HTMLDivElement>;
 }) {
   const { t } = useTranslation();
   const isActive = isLast && streaming;
@@ -534,7 +541,7 @@ function ChainGroupItem({ group, onToggle, isLast, streaming, onSkipStep }: {
         {isActive && <IconLoader size={11} className="chainSpinner" />}
       </div>
       {showContent && (
-        <div className="chainNarrFlow">
+        <div className="chainNarrFlow" ref={flowRef}>
           {group.entries.map((entry, i) => (
             <ChainEntryLine key={i} entry={entry} onSkipStep={onSkipStep} />
           ))}
@@ -556,7 +563,7 @@ function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
 }) {
   const { t } = useTranslation();
   const [localChain, setLocalChain] = useState(chain);
-  const chainEndRef = useRef<HTMLDivElement>(null);
+  const lastFlowRef = useRef<HTMLDivElement>(null);
 
   // 同步外部 chain 数据，但保留用户手动修改的 collapsed 状态
   useEffect(() => {
@@ -569,10 +576,11 @@ function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
     });
   }, [chain]);
 
-  // 流式输出时自动滚到底部
+  // 流式输出时自动滚动最后一组的 chainNarrFlow 面板（不影响外层主滚动容器）
   useEffect(() => {
-    if (streaming && chainEndRef.current) {
-      chainEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = lastFlowRef.current;
+    if (streaming && el) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [chain, streaming]);
 
@@ -595,21 +603,24 @@ function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
 
   return (
     <div className="thinkingChain">
-      {localChain.map((group, idx) => (
-        <ChainGroupItem
-          key={group.iteration}
-          group={group}
-          isLast={idx === localChain.length - 1}
-          streaming={streaming}
-          onSkipStep={onSkipStep}
-          onToggle={() => {
-            setLocalChain(prev => prev.map((g, i) =>
-              i === idx ? { ...g, collapsed: !g.collapsed } : g
-            ));
-          }}
-        />
-      ))}
-      <div ref={chainEndRef} />
+      {localChain.map((group, idx) => {
+        const isLast = idx === localChain.length - 1;
+        return (
+          <ChainGroupItem
+            key={group.iteration}
+            group={group}
+            isLast={isLast}
+            streaming={streaming}
+            onSkipStep={onSkipStep}
+            flowRef={isLast ? lastFlowRef : undefined}
+            onToggle={() => {
+              setLocalChain(prev => prev.map((g, i) =>
+                i === idx ? { ...g, collapsed: !g.collapsed } : g
+              ));
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -1318,7 +1329,7 @@ const MessageBubble = memo(function MessageBubble({
         {msg.content && (isUser ? msg.content : stripLegacySummary(msg.content)) && (
           <div className={isUser ? "chatMdContent chatMdContentUser" : "chatMdContent"}>
             {mdModules ? (
-              <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]} rehypePlugins={[mdModules.rehypeHighlight]}>
+              <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]} rehypePlugins={[mdModules.rehypeHighlight]} components={mdComponents}>
                 {isUser ? msg.content : stripLegacySummary(msg.content)}
               </mdModules.ReactMarkdown>
             ) : (
@@ -1443,7 +1454,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
           {msg.content && stripLegacySummary(msg.content) && (
             <div className="chatMdContent">
               {mdModules ? (
-                <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]} rehypePlugins={[mdModules.rehypeHighlight]}>
+                <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]} rehypePlugins={[mdModules.rehypeHighlight]} components={mdComponents}>
                   {stripLegacySummary(msg.content)}
                 </mdModules.ReactMarkdown>
               ) : (
@@ -1963,7 +1974,6 @@ export function ChatView({
     // 否则流结束后 setConversations 更新 messageCount 会触发竞态覆盖。
   }, [activeConvId, hydrateConversationMessages, multiAgentEnabled]);
 
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
   const lastScrollTimeRef = useRef(0); // throttle scroll during streaming to reduce flicker when thinking is long
@@ -2336,47 +2346,49 @@ export function ChatView({
   }, []);
 
   // ── 自动滚到底部 ──
-  // 当 visible=false (display:none) 时 scrollIntoView 无效，
-  // 所以需要在变为可见时重新触发滚动。
+  // 使用 scrollTop 代替 scrollIntoView 避免滚动传播到父容器（表格等大元素渲染时会导致页面跳到顶部）。
+  // 当 visible=false (display:none) 时 scroll 无效，所以需要在变为可见时重新触发。
   const needsScrollOnVisible = useRef(false);
 
+  const scrollToBottom = useCallback((smooth = false) => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, []);
+
   useEffect(() => {
-    if (!messagesEndRef.current) return;
+    if (!scrollContainerRef.current) return;
     if (!visible) {
       needsScrollOnVisible.current = true;
       return;
     }
     if (isInitialScrollRef.current) {
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-      });
+      requestAnimationFrame(() => scrollToBottom(false));
       isInitialScrollRef.current = false;
     } else if (isNearBottomRef.current) {
-      // During streaming: throttle scroll to ~8Hz to reduce flicker when thinking content is long.
-      // Non-streaming: scroll every time with smooth behavior.
       const now = Date.now();
       const scrollThrottleMs = 120;
       const shouldScroll = !isCurrentConvStreaming || (now - lastScrollTimeRef.current >= scrollThrottleMs);
       if (shouldScroll) {
         lastScrollTimeRef.current = now;
-        messagesEndRef.current.scrollIntoView({
-          behavior: isCurrentConvStreaming ? "auto" : "smooth",
-        });
+        scrollToBottom(!isCurrentConvStreaming);
       }
     }
     needsScrollOnVisible.current = false;
-  }, [messages, visible, isCurrentConvStreaming]);
+  }, [messages, visible, isCurrentConvStreaming, scrollToBottom]);
 
   // 从隐藏变为可见时，补一次即时滚动到底部
   useEffect(() => {
-    if (visible && needsScrollOnVisible.current && messagesEndRef.current) {
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-      });
+    if (visible && needsScrollOnVisible.current && scrollContainerRef.current) {
+      requestAnimationFrame(() => scrollToBottom(false));
       needsScrollOnVisible.current = false;
       isInitialScrollRef.current = false;
     }
-  }, [visible]);
+  }, [visible, scrollToBottom]);
 
   // ── 思维链: 流式结束后自动折叠 ──
   useEffect(() => {
@@ -4183,7 +4195,7 @@ export function ChatView({
         </div>
 
         {/* 消息列表 */}
-        <div ref={scrollContainerRef} style={{ flex: 1, overflow: "auto", padding: "16px 20px", minHeight: 0 }}>
+        <div ref={scrollContainerRef} style={{ flex: 1, overflow: "auto", padding: "16px 20px", minHeight: 0, overscrollBehavior: "contain" }}>
           {messages.length === 0 && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.4 }}>
               <div style={{ marginBottom: 12 }}><IconMessageCircle size={48} /></div>
@@ -4204,7 +4216,6 @@ export function ChatView({
             <SubAgentCards tasks={displaySubAgentTasks} />
           )}
 
-          <div ref={messagesEndRef} />
         </div>
 
         {/* 浮动 Plan 进度条 —— 贴在输入框上方，仅显示进行中的 plan */}

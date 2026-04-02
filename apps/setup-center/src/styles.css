@@ -876,10 +876,16 @@ button.btnApplyRestart:hover {
   border-radius: 0 8px 8px 0;
 }
 
+.chatMdContent .tableWrapper {
+  overflow-x: auto;
+  margin: 8px 0;
+  -webkit-overflow-scrolling: touch;
+}
+
 .chatMdContent table {
   border-collapse: collapse;
   width: 100%;
-  margin: 8px 0;
+  min-width: 280px;
   font-size: 13px;
 }
 
