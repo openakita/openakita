@@ -346,7 +346,7 @@ function SkillDetailModal({
   onUninstall?: () => void;
   uninstalling?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -376,8 +376,11 @@ function SkillDetailModal({
               {isSystem ? <IconGear size={16} /> : <IconZap size={16} />}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>{skill.name}</div>
-              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{skill.description}</div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>{getSkillDisplayName(skill, i18n.language)}</div>
+              {getSkillDisplayName(skill, i18n.language) !== skill.name && (
+                <div style={{ fontSize: 11, opacity: 0.4, fontFamily: "monospace" }}>{skill.name}</div>
+              )}
+              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{getSkillDisplayDesc(skill, i18n.language)}</div>
             </div>
             <Button
               variant="ghost"

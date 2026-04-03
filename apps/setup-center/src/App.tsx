@@ -2045,7 +2045,10 @@ export function App() {
           setSkillSummary({ count: skills.length, systemCount, externalCount });
           setSkillsDetail(
             skills.map((s: any) => ({
+              skill_id: String(s?.skill_id || s?.name || ""),
               name: String(s?.name || ""), description: String(s?.description || ""),
+              name_i18n: (s?.name_i18n as Record<string, string> | null) ?? null,
+              description_i18n: (s?.description_i18n as Record<string, string> | null) ?? null,
               system: !!s?.system, enabled: typeof s?.enabled === "boolean" ? s.enabled : undefined,
               tool_name: s?.tool_name ?? null, category: s?.category ?? null, path: s?.path ?? null,
             })),
@@ -2062,6 +2065,8 @@ export function App() {
               setSkillsDetail(skills.map((s) => ({
                 skill_id: String(s?.skill_id || s?.name || ""),
                 name: String(s?.name || ""), description: String(s?.description || ""),
+                name_i18n: (s?.name_i18n as Record<string, string> | null) ?? null,
+                description_i18n: (s?.description_i18n as Record<string, string> | null) ?? null,
                 system: !!s?.system, enabled: typeof s?.enabled === "boolean" ? s.enabled : undefined,
                 tool_name: s?.tool_name ?? null, category: s?.category ?? null, path: s?.path ?? null,
               })));
@@ -2148,6 +2153,8 @@ export function App() {
             skill_id: String(s?.skill_id || s?.name || ""),
             name: String(s?.name || ""),
             description: String(s?.description || ""),
+            name_i18n: (s?.name_i18n as Record<string, string> | null) ?? null,
+            description_i18n: (s?.description_i18n as Record<string, string> | null) ?? null,
             system: !!s?.system,
             enabled: typeof s?.enabled === "boolean" ? s.enabled : undefined,
             tool_name: s?.tool_name ?? null,
@@ -2566,6 +2573,8 @@ export function App() {
           skill_id: String(s?.skill_id || s?.name || ""),
           name: String(s?.name || ""),
           description: String(s?.description || ""),
+          name_i18n: (s?.name_i18n as Record<string, string> | null) ?? null,
+          description_i18n: (s?.description_i18n as Record<string, string> | null) ?? null,
           system: !!s?.system,
           enabled: typeof s?.enabled === "boolean" ? s.enabled : undefined,
           tool_name: s?.tool_name ?? null,

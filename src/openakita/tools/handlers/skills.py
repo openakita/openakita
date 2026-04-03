@@ -63,7 +63,7 @@ class SkillsHandler:
         elif tool_name == "install_skill":
             return await self._install_skill(params)
         elif tool_name == "load_skill":
-            return self._load_skill(params)
+            return await self._load_skill(params)
         elif tool_name == "reload_skill":
             return self._reload_skill(params)
         elif tool_name == "manage_skill_enabled":
@@ -348,7 +348,7 @@ class SkillsHandler:
         notify_skills_changed("install")
         return result
 
-    def _load_skill(self, params: dict) -> str:
+    async def _load_skill(self, params: dict) -> str:
         """加载新创建的技能"""
         skill_name = params["skill_name"]
 
@@ -378,6 +378,13 @@ class SkillsHandler:
             loaded = self.agent.skill_loader.load_skill(skill_dir)
 
             if loaded:
+                # 新建技能没有 i18n 文件时，自动调用 LLM 生成中文显示名
+                display_name = loaded.metadata.name
+                if not loaded.metadata.name_i18n:
+                    display_name = await self._auto_translate_loaded_skill(
+                        skill_dir, skill_name, loaded,
+                    )
+
                 # 刷新技能目录缓存 + handler 映射
                 self.agent._skill_catalog_text = self.agent.skill_catalog.generate_catalog()
                 self.agent._update_skill_tools()
@@ -388,7 +395,7 @@ class SkillsHandler:
 
                 return f"""✅ 技能加载成功！
 
-**技能名称**: {loaded.metadata.name}
+**技能名称**: {display_name}
 **描述**: {loaded.metadata.description}
 **类型**: {"系统技能" if loaded.metadata.system else "外部技能"}
 **路径**: {skill_dir}
@@ -400,6 +407,34 @@ class SkillsHandler:
         except Exception as e:
             logger.error(f"Failed to load skill {skill_name}: {e}")
             return f"❌ 加载技能时出错: {e}"
+
+    async def _auto_translate_loaded_skill(
+        self, skill_dir: Path, skill_name: str, loaded: "Any",
+    ) -> str:
+        """为新加载的技能自动生成 i18n 显示名。成功返回中文名，失败返回原始 name。"""
+        try:
+            from ...skills.i18n import auto_translate_skill
+
+            brain = getattr(self.agent, "brain", None)
+            if not brain:
+                return loaded.metadata.name
+
+            translated = await auto_translate_skill(
+                skill_dir, loaded.metadata.name,
+                loaded.metadata.description, brain,
+            )
+            if translated:
+                # 把新生成的 i18n 文件加载进内存
+                self.agent.skill_loader._load_i18n(skill_dir, loaded.metadata)
+                entry = self.agent.skill_registry.get(skill_name)
+                if entry and loaded.metadata.name_i18n:
+                    entry.name_i18n = dict(loaded.metadata.name_i18n)
+                    entry.description_i18n = dict(loaded.metadata.description_i18n)
+                    return loaded.metadata.name_i18n.get("zh", loaded.metadata.name)
+        except Exception as e:
+            logger.debug(f"Auto-translate for {skill_name}: {e}")
+
+        return loaded.metadata.name
 
     def _reload_skill(self, params: dict) -> str:
         """重新加载已存在的技能"""
@@ -467,9 +502,11 @@ class SkillsHandler:
             pass
 
         # 如果没有 allowlist 文件，初始化为当前所有外部技能
+        # 必须用 skill_id（目录名）而非 name（YAML 声明名），
+        # 因为 prune_external_by_allowlist 按目录名匹配
         if existing_allowlist is None:
             all_skills = self.agent.skill_registry.list_all()
-            existing_allowlist = {s.name for s in all_skills if not s.system}
+            existing_allowlist = {s.skill_id for s in all_skills if not s.system}
 
         # 收集所有已知外部技能名（包括被 prune 的）
         all_external_names = set(existing_allowlist)
