@@ -63,6 +63,11 @@ import { OrgDashboard } from "../components/OrgDashboard";
 import { OrgProjectBoard } from "../components/OrgProjectBoard";
 import { ZoomIn, ZoomOut, Maximize, X as XIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { Input as ShadInput } from "../components/ui/input";
+import { Label as ShadLabel } from "../components/ui/label";
+import { Slider } from "../components/ui/slider";
+import { Switch } from "../components/ui/switch";
+import { Badge } from "../components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "../components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import agentOrgImg from "../assets/agent_org.png";
@@ -3717,7 +3722,7 @@ export function OrgEditorView({
                     <span style={{ fontSize: 11, color: "var(--muted)" }}>自定义头像</span>
                     <button
                       className="btn btn-sm"
-                      style={{ fontSize: 10, padding: "2px 6px" }}
+                      style={{ fontSize: 11, padding: "2px 6px" }}
                       onClick={() => updateNodeData("avatar", null)}
                     >
                       移除
@@ -4486,71 +4491,68 @@ export function OrgEditorView({
       {/* ── Right Panel: Edge Properties ── */}
       {selectedEdge && !selectedNode && showRightPanel && (
         <div
+          className="flex flex-col gap-4 border-l border-border bg-background overflow-y-auto"
           style={{
             width: isMobile ? "85%" : 280,
             maxWidth: isMobile ? 360 : 280,
-            borderLeft: isMobile ? "none" : "1px solid var(--line)",
-            overflowY: "auto",
-            background: "var(--bg-app)",
             flexShrink: 0,
-            padding: 12,
+            padding: 16,
             position: isMobile ? "absolute" : "relative",
             zIndex: isMobile ? 50 : "auto",
             right: 0, top: 0, bottom: 0,
             boxShadow: isMobile ? "-4px 0 12px rgba(0,0,0,0.15)" : "none",
+            borderLeft: isMobile ? "none" : undefined,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>连线属性</div>
-            <button className="btnSmall" onClick={() => setSelectedEdgeId(null)} style={{ fontSize: 10 }}>
-              <IconX size={12} />
-            </button>
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold">连线属性</span>
+            <Button variant="ghost" size="icon-xs" onClick={() => setSelectedEdgeId(null)}>
+              <XIcon className="size-3.5" />
+            </Button>
           </div>
 
           {/* Source / Target */}
-          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
-            <div>起点: <strong style={{ color: "var(--text)" }}>{(() => { const n = nodes.find(n => n.id === selectedEdge.source); return (n?.data as any)?.role_title || selectedEdge.source; })()}</strong></div>
-            <div>终点: <strong style={{ color: "var(--text)" }}>{(() => { const n = nodes.find(n => n.id === selectedEdge.target); return (n?.data as any)?.role_title || selectedEdge.target; })()}</strong></div>
+          <div className="rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+            <div>起点: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.source); return (n?.data as any)?.role_title || selectedEdge.source; })()}</strong></div>
+            <div>终点: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.target); return (n?.data as any)?.role_title || selectedEdge.target; })()}</strong></div>
           </div>
 
           {/* Edge type */}
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>连线类型</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          <div className="space-y-2">
+            <ShadLabel className="text-xs">连线类型</ShadLabel>
+            <ToggleGroup
+              type="single"
+              value={selectedEdge.edge_type || "hierarchy"}
+              onValueChange={(v) => { if (v) updateEdgeData("edge_type", v); }}
+              className="flex flex-wrap gap-1.5"
+            >
               {([
                 { key: "hierarchy", label: "上下级", color: EDGE_COLORS.hierarchy },
                 { key: "collaborate", label: "协作", color: EDGE_COLORS.collaborate },
                 { key: "escalate", label: "上报", color: EDGE_COLORS.escalate },
                 { key: "consult", label: "咨询", color: EDGE_COLORS.consult || "var(--muted)" },
               ] as const).map((t) => (
-                <button
+                <ToggleGroupItem
                   key={t.key}
-                  className="btnSmall"
-                  style={{
-                    fontSize: 11, padding: "3px 8px",
-                    background: selectedEdge.edge_type === t.key ? `${t.color}20` : undefined,
-                    color: selectedEdge.edge_type === t.key ? t.color : "var(--muted)",
-                    borderColor: selectedEdge.edge_type === t.key ? t.color : undefined,
-                    fontWeight: selectedEdge.edge_type === t.key ? 600 : 400,
-                  }}
-                  onClick={() => updateEdgeData("edge_type", t.key)}
+                  value={t.key}
+                  size="sm"
+                  className="h-7 gap-1.5 px-2.5 text-xs data-[state=on]:font-semibold"
+                  style={selectedEdge.edge_type === t.key ? { color: t.color, borderColor: t.color } : undefined}
                 >
-                  <span style={{ display: "inline-block", width: 10, height: 2, background: t.color, borderRadius: 1, marginRight: 4 }} />
+                  <span className="inline-block h-0.5 w-2.5 rounded-full" style={{ background: t.color }} />
                   {t.label}
-                </button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
           </div>
 
           {/* Label */}
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>标签</div>
-            <input
-              style={{
-                width: "100%", padding: "4px 8px", fontSize: 12,
-                border: "1px solid var(--line)", borderRadius: 4,
-                background: "var(--bg-card, #fff)", color: "var(--text)",
-              }}
+          <div className="space-y-2">
+            <ShadLabel className="text-xs" htmlFor="edge-label">标签</ShadLabel>
+            <ShadInput
+              id="edge-label"
+              className="h-8 text-xs"
               placeholder="可选，如「技术指导」「审批」"
               value={selectedEdge.label || ""}
               onChange={(e) => updateEdgeData("label", e.target.value)}
@@ -4558,57 +4560,53 @@ export function OrgEditorView({
           </div>
 
           {/* Bidirectional */}
-          <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={selectedEdge.bidirectional ?? true}
-                onChange={(e) => updateEdgeData("bidirectional", e.target.checked)}
-              />
-              <span style={{ fontWeight: 500 }}>双向通信</span>
-            </label>
-            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2, marginLeft: 22 }}>
-              关闭后只能从起点向终点发消息
+          <div className="flex items-center justify-between rounded-md border border-border px-3 py-2.5">
+            <div className="space-y-0.5">
+              <ShadLabel className="text-xs cursor-pointer" htmlFor="edge-bidir">双向通信</ShadLabel>
+              <p className="text-[11px] text-muted-foreground leading-tight">关闭后只能从起点向终点发消息</p>
             </div>
+            <Switch
+              id="edge-bidir"
+              checked={selectedEdge.bidirectional ?? true}
+              onCheckedChange={(v) => updateEdgeData("bidirectional", v)}
+            />
           </div>
 
           {/* Priority */}
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>
-              优先级 <span style={{ fontWeight: 400, color: "var(--muted)" }}>{selectedEdge.priority ?? 0}</span>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <ShadLabel className="text-xs">优先级</ShadLabel>
+              <Badge variant="secondary" className="h-5 text-[10px] tabular-nums">{selectedEdge.priority ?? 0}</Badge>
             </div>
-            <input
-              type="range" min={0} max={10} step={1}
-              value={selectedEdge.priority ?? 0}
-              onChange={(e) => updateEdgeData("priority", Number(e.target.value))}
-              style={{ width: "100%" }}
+            <Slider
+              min={0} max={10} step={1}
+              value={[selectedEdge.priority ?? 0]}
+              onValueChange={([v]) => updateEdgeData("priority", v)}
             />
           </div>
 
           {/* Bandwidth limit */}
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>通信频率上限 (次/小时)</div>
-            <input
+          <div className="space-y-2">
+            <ShadLabel className="text-xs" htmlFor="edge-bw">通信频率上限 (次/小时)</ShadLabel>
+            <ShadInput
+              id="edge-bw"
               type="number" min={1} max={999}
-              style={{
-                width: 80, padding: "4px 8px", fontSize: 12,
-                border: "1px solid var(--line)", borderRadius: 4,
-                background: "var(--bg-card, #fff)", color: "var(--text)",
-              }}
+              className="h-8 w-24 text-xs tabular-nums"
               value={selectedEdge.bandwidth_limit ?? 60}
               onChange={(e) => updateEdgeData("bandwidth_limit", Number(e.target.value))}
             />
           </div>
 
           {/* Delete */}
-          <div style={{ marginTop: 16, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
-            <button
-              className="btnSmall"
+          <div className="mt-2 border-t border-border pt-3">
+            <Button
+              variant="destructive"
+              size="sm"
+              className="w-full gap-1.5 text-xs"
               onClick={handleDeleteEdge}
-              style={{ color: "var(--danger)", fontSize: 11, width: "100%" }}
             >
               <IconTrash size={12} /> 删除连线
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -4625,16 +4623,16 @@ export function OrgEditorView({
             padding: 12,
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>组织设置</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>组织设置</div>
 
           {/* ── 运行模式 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>运行模式</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>运行模式</div>
             <div style={{ display: "flex", gap: 4 }}>
               <button
                 className="btnSmall"
                 style={{
-                  flex: 1, fontSize: 11, padding: "6px 10px",
+                  flex: 1, fontSize: 12, padding: "6px 10px",
                   background: ((currentOrg as any).operation_mode || "command") === "command" ? "var(--primary)" : "var(--bg-subtle, var(--bg-card))",
                   color: ((currentOrg as any).operation_mode || "command") === "command" ? "#fff" : "var(--text)",
                   border: "1px solid var(--line)",
@@ -4647,7 +4645,7 @@ export function OrgEditorView({
               <button
                 className="btnSmall"
                 style={{
-                  flex: 1, fontSize: 11, padding: "6px 10px",
+                  flex: 1, fontSize: 12, padding: "6px 10px",
                   background: ((currentOrg as any).operation_mode || "command") === "autonomous" ? "var(--primary)" : "var(--bg-subtle, var(--bg-card))",
                   color: ((currentOrg as any).operation_mode || "command") === "autonomous" ? "#fff" : "var(--text)",
                   border: "1px solid var(--line)",
@@ -4658,7 +4656,7 @@ export function OrgEditorView({
                 自主模式
               </button>
             </div>
-            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
               {((currentOrg as any).operation_mode || "command") === "command"
                 ? "通过聊天或命令面板下达任务，按需执行"
                 : "组织根据核心业务自动运转，顶层负责人持续运营"}
@@ -4672,17 +4670,17 @@ export function OrgEditorView({
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
               onClick={() => setBizCollapsed(!bizCollapsed)}
             >
-              <div style={{ fontWeight: 600, fontSize: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
                 核心业务
                 {bizCollapsed && (currentOrg.core_business || "").trim() && (
-                  <span style={{ fontWeight: 400, fontSize: 10, color: "var(--ok)", marginLeft: 6 }}>已配置</span>
+                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>已配置</span>
                 )}
               </div>
-              <span style={{ fontSize: 10, color: "var(--muted)" }}>{bizCollapsed ? "▸" : "▾"}</span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{bizCollapsed ? "▸" : "▾"}</span>
             </div>
             {!bizCollapsed && (
               <div style={{ marginTop: 6 }}>
-                <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
                   填写后组织启动即自主运转——顶层负责人自动接收任务书并开始工作，心跳变为定期复盘。
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
@@ -4696,7 +4694,7 @@ export function OrgEditorView({
                     <button
                       key={tpl.label}
                       className="btnSmall"
-                      style={{ fontSize: 10, padding: "2px 7px" }}
+                      style={{ fontSize: 11, padding: "3px 8px" }}
                       onClick={() => {
                         if ((currentOrg.core_business || "").trim() && !confirm("将覆盖当前内容，确认？")) return;
                         setCurrentOrg({ ...currentOrg, core_business: tpl.tpl });
@@ -4708,13 +4706,13 @@ export function OrgEditorView({
                 </div>
                 <textarea
                   className="input"
-                  style={{ width: "100%", fontSize: 11, minHeight: 120, resize: "vertical", lineHeight: 1.6, fontFamily: "inherit" }}
+                  style={{ width: "100%", fontSize: 12, minHeight: 120, resize: "vertical", lineHeight: 1.6, fontFamily: "inherit" }}
                   placeholder={"填写或选择模板后编辑。\n\n组织启动后，顶层节点将根据此内容自动制定策略、分配任务、持续推进。"}
                   value={currentOrg.core_business || ""}
                   onChange={(e) => setCurrentOrg({ ...currentOrg, core_business: e.target.value })}
                 />
                 {(currentOrg.core_business || "").trim() && (
-                  <div style={{ fontSize: 9, color: "var(--ok)", marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 4 }}>
                     启动组织后，顶层负责人将自动接收任务书并开始自主运营
                   </div>
                 )}
@@ -4729,19 +4727,19 @@ export function OrgEditorView({
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
               onClick={() => setPersonaCollapsed(!personaCollapsed)}
             >
-              <div style={{ fontWeight: 600, fontSize: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
                 用户身份
                 {currentOrg.user_persona?.title && (
-                  <span style={{ fontWeight: 400, fontSize: 10, color: "var(--muted)", marginLeft: 6 }}>
+                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--muted)", marginLeft: 6 }}>
                     {currentOrg.user_persona.display_name || currentOrg.user_persona.title}
                   </span>
                 )}
               </div>
-              <span style={{ fontSize: 10, color: "var(--muted)" }}>{personaCollapsed ? "▸" : "▾"}</span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{personaCollapsed ? "▸" : "▾"}</span>
             </div>
             {!personaCollapsed && (
               <div style={{ marginTop: 6 }}>
-                <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
                   你在本组织中的角色。节点会以此身份认知你。
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
@@ -4757,7 +4755,7 @@ export function OrgEditorView({
                       key={preset.title}
                       className="btnSmall"
                       style={{
-                        fontSize: 10, padding: "2px 7px",
+                        fontSize: 11, padding: "3px 8px",
                         background: currentOrg.user_persona?.title === preset.title ? "var(--primary)" : undefined,
                         color: currentOrg.user_persona?.title === preset.title ? "#fff" : undefined,
                       }}
@@ -4773,10 +4771,10 @@ export function OrgEditorView({
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <div style={{ display: "flex", gap: 6 }}>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 9, color: "var(--muted)", display: "block", marginBottom: 1 }}>头衔</label>
+                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>头衔</label>
                       <input
                         className="input"
-                        style={{ width: "100%", fontSize: 11 }}
+                        style={{ width: "100%", fontSize: 12 }}
                         placeholder="董事长"
                         value={currentOrg.user_persona?.title || ""}
                         onChange={(e) => setCurrentOrg({
@@ -4786,10 +4784,10 @@ export function OrgEditorView({
                       />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 9, color: "var(--muted)", display: "block", marginBottom: 1 }}>显示名</label>
+                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>显示名</label>
                       <input
                         className="input"
-                        style={{ width: "100%", fontSize: 11 }}
+                        style={{ width: "100%", fontSize: 12 }}
                         placeholder="留空用头衔"
                         value={currentOrg.user_persona?.display_name || ""}
                         onChange={(e) => setCurrentOrg({
@@ -4800,10 +4798,10 @@ export function OrgEditorView({
                     </div>
                   </div>
                   <div>
-                    <label style={{ fontSize: 9, color: "var(--muted)", display: "block", marginBottom: 1 }}>简介</label>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>简介</label>
                     <input
                       className="input"
-                      style={{ width: "100%", fontSize: 11 }}
+                      style={{ width: "100%", fontSize: 12 }}
                       placeholder="例如：组织最高决策者"
                       value={currentOrg.user_persona?.description || ""}
                       onChange={(e) => setCurrentOrg({
@@ -4819,19 +4817,19 @@ export function OrgEditorView({
 
           {/* ── Quick actions ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>操作</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>操作</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              <button className="btnSmall" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => setConfirmReset(true)}>重置组织</button>
-              <button className="btnSmall" style={{ fontSize: 10, padding: "4px 8px" }} onClick={handleExportOrg}>导出配置</button>
-              <label className="btnSmall" style={{ fontSize: 10, padding: "4px 8px", cursor: "pointer" }}>
+              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => setConfirmReset(true)}>重置组织</button>
+              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={handleExportOrg}>导出配置</button>
+              <label className="btnSmall" style={{ fontSize: 11, padding: "4px 8px", cursor: "pointer" }}>
                 导入配置
                 <input type="file" accept=".json" style={{ display: "none" }} onChange={handleImportOrg} />
               </label>
               {liveMode && (<>
-                <button className="btnSmall" style={{ fontSize: 10, padding: "4px 8px" }} onClick={async () => {
+                <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
                   try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/heartbeat/trigger`, { method: "POST" }); } catch {}
                 }}>触发心跳</button>
-                <button className="btnSmall" style={{ fontSize: 10, padding: "4px 8px" }} onClick={async () => {
+                <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
                   try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/standup/trigger`, { method: "POST" }); } catch {}
                 }}>触发晨会</button>
               </>)}
@@ -4844,7 +4842,7 @@ export function OrgEditorView({
               <div style={{ fontWeight: 600, fontSize: 13 }}>组织黑板</div>
               <button
                 className="btnSmall"
-                style={{ fontSize: 10, padding: "2px 8px" }}
+                style={{ fontSize: 11, padding: "2px 8px" }}
                 onClick={() => fetchBlackboard(currentOrg.id, bbScope)}
                 disabled={bbLoading}
               >
@@ -4863,7 +4861,7 @@ export function OrgEditorView({
                   key={s.key}
                   className="btnSmall"
                   style={{
-                    fontSize: 10, padding: "2px 6px",
+                    fontSize: 11, padding: "2px 7px",
                     fontWeight: bbScope === s.key ? 600 : 400,
                     background: bbScope === s.key ? "var(--primary)" : "transparent",
                     color: bbScope === s.key ? "#fff" : "var(--muted)",
@@ -4886,7 +4884,12 @@ export function OrgEditorView({
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {bbEntries.map((entry: any) => {
-                  const scopeLabel = entry.scope === "org" ? "组织" : entry.scope === "department" ? entry.scope_owner : entry.source_node || "节点";
+                  const bbNodeName = (id: string) => {
+                    if (!id) return "";
+                    const nd = nodes.find(n => n.id === id);
+                    return (nd?.data as any)?.role_title || id;
+                  };
+                  const scopeLabel = entry.scope === "org" ? "组织" : entry.scope === "department" ? entry.scope_owner : bbNodeName(entry.source_node) || "节点";
                   const typeColors: Record<string, string> = {
                     fact: "#3b82f6", decision: "#f59e0b", lesson: "#10b981",
                     progress: "#8b5cf6", todo: "#ef4444",
@@ -4900,25 +4903,25 @@ export function OrgEditorView({
                       key={entry.id}
                       style={{
                         border: "1px solid var(--line)", borderRadius: 6,
-                        padding: "6px 8px", background: "var(--card-bg, #fff)",
+                        padding: "6px 8px", background: "var(--card-bg)",
                         fontSize: 11,
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
                         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                           <span style={{
-                            fontSize: 9, padding: "1px 5px", borderRadius: 3,
-                            background: (typeColors[entry.memory_type] || "#6b7280") + "18",
-                            color: typeColors[entry.memory_type] || "#6b7280",
+                            fontSize: 11, padding: "1px 5px", borderRadius: 3,
+                            background: (typeColors[entry.memory_type] || "#6b7280") + "20",
+                            color: typeColors[entry.memory_type] || "var(--muted)",
                             fontWeight: 600,
                           }}>
                             {typeLabels[entry.memory_type] || entry.memory_type}
                           </span>
-                          <span style={{ fontSize: 9, color: "var(--muted)" }}>{scopeLabel}</span>
+                          <span style={{ fontSize: 11, color: "var(--muted)" }}>{scopeLabel}</span>
                         </div>
                         <button
                           className="btnSmall"
-                          style={{ fontSize: 9, padding: "0 4px", color: "var(--muted)" }}
+                          style={{ fontSize: 11, padding: "0 4px", color: "var(--muted)" }}
                           title="删除此条"
                           onClick={async () => {
                             try {
@@ -4937,14 +4940,14 @@ export function OrgEditorView({
                         <div style={{ marginTop: 3, display: "flex", gap: 3, flexWrap: "wrap" }}>
                           {entry.tags.map((t: string) => (
                             <span key={t} style={{
-                              fontSize: 9, padding: "0 4px", borderRadius: 3,
-                              background: "#f3f4f6", color: "#6b7280",
+                              fontSize: 11, padding: "0 5px", borderRadius: 3,
+                              background: "var(--hover-bg, rgba(100,100,100,0.1))", color: "var(--muted)",
                             }}>#{t}</span>
                           ))}
                         </div>
                       )}
-                      <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 3 }}>
-                        {entry.source_node && <span>来自 {entry.source_node} · </span>}
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                        {entry.source_node && <span>来自 {bbNodeName(entry.source_node)} · </span>}
                         {fmtShortDate(entry.created_at)}
                       </div>
                     </div>

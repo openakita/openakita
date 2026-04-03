@@ -605,6 +605,7 @@ textarea {
   color: var(--text);
   padding: 4px 12px;
   font-size: 14px;
+  font-family: inherit;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
@@ -1368,6 +1369,7 @@ button.btnApplyRestart:hover {
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  font-family: inherit;
   color: var(--text);
   transition: all 0.15s ease;
   line-height: 1.4;
@@ -1800,6 +1802,7 @@ button.btnApplyRestart:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 13px;
+  font-family: inherit;
   background: var(--panel2);
   color: var(--text);
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;

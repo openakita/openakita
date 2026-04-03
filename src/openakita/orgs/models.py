@@ -304,7 +304,14 @@ class UserPersona:
     def from_dict(cls, d: dict | None) -> UserPersona:
         if not d:
             return cls()
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        cleaned = {}
+        for k, v in d.items():
+            if k not in cls.__dataclass_fields__:
+                continue
+            if isinstance(v, str) and "\ufffd" in v:
+                v = v.replace("\ufffd", "")
+            cleaned[k] = v
+        return cls(**cleaned)
 
     @property
     def label(self) -> str:
