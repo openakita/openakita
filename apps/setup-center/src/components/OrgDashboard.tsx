@@ -5,6 +5,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { safeFetch } from "../providers";
 import { OrgAvatar } from "./OrgAvatars";
+import { useMdModules } from "../hooks/useMdModules";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./ui/tooltip";
 
 /* ─── Inline SVG mini-icons (replace emoji) ─── */
 const SvgNodes = () => (
@@ -85,6 +87,33 @@ const HEALTH_MAP: Record<string, [string, string, string]> = {
   critical: ["异常", "#ef4444", "#ef444430"],
 };
 
+const DB_TYPE_META: Record<string, { icon: string; label: string; tip: string; cls: string }> = {
+  task_delegated:  { icon: "↗", label: "分配", tip: "分配任务给下级节点",     cls: "db-ev-delegated" },
+  task_delivered:  { icon: "↙", label: "交付", tip: "向上级交付任务成果",     cls: "db-ev-delivered" },
+  task_accepted:   { icon: "✓", label: "通过", tip: "上级验收通过",           cls: "db-ev-accepted" },
+  task_rejected:   { icon: "✗", label: "打回", tip: "上级打回，需要重新处理", cls: "db-ev-rejected" },
+  task_timeout:    { icon: "⏱", label: "超时", tip: "任务执行超时",           cls: "db-ev-timeout" },
+  task_completed:  { icon: "✓", label: "完成", tip: "节点执行完成",           cls: "db-ev-completed" },
+  node_activated:  { icon: "▶", label: "执行", tip: "节点开始执行任务",       cls: "db-ev-activated" },
+  _default:        { icon: "•", label: "事件", tip: "",                       cls: "" },
+};
+
+function stripMd(s: string): string {
+  return s
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\n+/g, " ")
+    .trim();
+}
+
 function fmtDuration(s: number | null | undefined): string {
   if (!s || s <= 0) return "--";
   if (s >= 86400) return `${Math.floor(s / 86400)}天 ${Math.floor((s % 86400) / 3600)}时`;
@@ -135,6 +164,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const mdModules = useMdModules();
 
   const fetchStats = useCallback(async () => {
     try {
@@ -171,10 +201,29 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
   const recentBB: any[] = stats.recent_blackboard || [];
   const recentTasks: any[] = stats.recent_tasks || [];
   const deptWorkload: Record<string, { total: number; busy: number }> = stats.department_workload || {};
+  const nodeName = (id: string) => {
+    if (!id) return "?";
+    const n = perNode.find((n: any) => n.id === id);
+    return n?.role_title || id;
+  };
   const healthPct = stats.node_count > 0 ? Math.round(((stats.node_count - (nodeStats.error || 0)) / stats.node_count) * 100) : 100;
   const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
+  const FeedTip = ({ text }: { text: string }) => (
+    <div className="db-tip-content">
+      {mdModules ? (
+        <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+          {text}
+        </mdModules.ReactMarkdown>
+      ) : (
+        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text}</pre>
+      )}
+    </div>
+  );
+  const tipCls = "db-tip-wrap bg-popover text-popover-foreground border border-border shadow-lg";
+
   return (
+    <TooltipProvider delayDuration={300}>
     <div className="db-root">
       <div className="db-grid-bg" />
 
@@ -281,24 +330,35 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
           <div className="db-scroll-area">
             {recentTasks.length === 0 ? (
               <div className="db-empty">暂无任务</div>
-            ) : recentTasks.map((t, i) => (
-              <div key={i} className="db-task-item">
-                <span className="db-task-time">{fmtTime(t.t)}</span>
-                <span className="db-task-from">{(t.from || "?").slice(0, 12)}</span>
-                <span className="db-task-arrow">→</span>
-                <span className="db-task-to">{(t.to || "?").slice(0, 12)}</span>
-                <span className="db-task-desc">{t.task}</span>
-                <span className={`db-task-badge db-badge-${t.status || "active"}`}>
-                  {t.status === "accepted" ? "✓ 验收"
-                    : t.status === "delivered" ? "↑ 交付"
-                    : t.status === "rejected" ? "✗ 打回"
-                    : t.status === "timeout" ? "⏱ 超时"
-                    : t.status === "completed" ? "✓ 执行完成"
-                    : t.status === "started" ? "▶ 开始执行"
-                    : "● 进行"}
-                </span>
-              </div>
-            ))}
+            ) : recentTasks.map((t, i) => {
+              const meta = DB_TYPE_META[t.type] || DB_TYPE_META._default;
+              const fromName = nodeName(t.from);
+              const toName = nodeName(t.to);
+              return (
+                <div key={i} className="db-task-item">
+                  <span className="db-task-time">{fmtTime(t.t)}</span>
+                  <span className={`db-task-badge ${meta.cls}`} title={meta.tip}>
+                    <span className="db-task-badge-icon">{meta.icon}</span>
+                    {meta.label}
+                  </span>
+                  <span className="db-task-who">{fromName}</span>
+                  {toName && <>
+                    <span className="db-task-arrow">→</span>
+                    <span className="db-task-who">{toName}</span>
+                  </>}
+                  {t.task && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="db-task-desc">{stripMd(t.task)}</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" align="start" className={tipCls}>
+                        <FeedTip text={t.task} />
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </GlassCard>
 
@@ -311,7 +371,15 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
                 <span className="db-alert-icon" style={{ color: a.type === "error" ? "#ef4444" : a.type === "stuck" ? "#f59e0b" : "#3b82f6" }}>
                   {a.type === "error" ? "✕" : "▲"}
                 </span>
-                <span><b>{a.role_title || a.node_id}</b> {a.message}</span>
+                <span className="db-alert-who"><b>{a.role_title || a.node_id}</b></span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="db-alert-desc">{stripMd(String(a.message))}</span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="start" className={tipCls}>
+                    <FeedTip text={String(a.message)} />
+                  </TooltipContent>
+                </Tooltip>
               </div>
             ))}
           </div>
@@ -326,8 +394,15 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
                 <span className={`db-bb-badge db-bb-${b.memory_type}`}>
                   {b.memory_type === "decision" ? "决策" : b.memory_type === "progress" ? "进度" : b.memory_type === "fact" ? "事实" : b.memory_type}
                 </span>
-                <span className="db-bb-source">{b.source_node}</span>
-                <span className="db-bb-content">{b.content}</span>
+                <span className="db-bb-source">{nodeName(b.source_node)}</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="db-bb-content">{stripMd(String(b.content))}</span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="start" className={tipCls}>
+                    <FeedTip text={String(b.content)} />
+                  </TooltipContent>
+                </Tooltip>
               </div>
             ))}
           </div>
@@ -370,6 +445,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
 
       <style>{DASHBOARD_CSS}</style>
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -392,7 +468,7 @@ const DASHBOARD_CSS = `
 .db-root {
   height: 100%; overflow: auto; position: relative;
   background: #040a18;
-  color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif;
+  color: #e2e8f0; font-family: "Noto Sans SC", system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   padding: 16px 20px 24px;
 }
 .db-grid-bg {
@@ -449,7 +525,7 @@ const DASHBOARD_CSS = `
 .db-header-right { text-align: right; }
 .db-clock {
   font-size: 20px; font-weight: 300; color: #94a3b8;
-  font-variant-numeric: tabular-nums; font-family: "SF Mono", monospace, system-ui;
+  font-variant-numeric: tabular-nums; font-family: "SF Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
 }
 .db-refresh-indicator { height: 2px; width: 80px; background: #1e293b; border-radius: 1px; margin-top: 4px; overflow: hidden; margin-left: auto; }
 .db-refresh-bar {
@@ -541,47 +617,107 @@ const DASHBOARD_CSS = `
 .db-empty { color: #475569; font-size: 12px; padding: 8px 0; }
 .db-all-good { color: #22c55e; font-size: 12px; padding: 8px 0; display: flex; align-items: center; gap: 4px; }
 
-/* Task items */
+/* Task items — mirroring org editor feed style */
 .db-task-item {
-  display: flex; align-items: center; gap: 6px; padding: 5px 0;
-  border-bottom: 1px solid rgba(30,41,59,0.6); font-size: 11px;
-  transition: background 0.15s;
+  display: flex; align-items: center; gap: 7px; padding: 4px 0;
+  border-bottom: 1px solid rgba(51,65,85,0.15); font-size: 12px;
+  white-space: nowrap; line-height: 1.5; transition: background 0.15s;
 }
-.db-task-item:hover { background: rgba(30,41,59,0.4); }
-.db-task-time { color: #475569; font-family: "SF Mono", monospace; font-size: 10px; flex-shrink: 0; width: 52px; }
-.db-task-from { color: #60a5fa; font-weight: 500; flex-shrink: 0; }
-.db-task-arrow { color: #334155; flex-shrink: 0; }
-.db-task-to { color: #a78bfa; font-weight: 500; flex-shrink: 0; }
-.db-task-desc { color: #64748b; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-task-item:last-child { border-bottom: none; }
+.db-task-item:hover { background: rgba(30,41,59,0.3); }
+.db-task-time {
+  font-size: 11px; color: #64748b;
+  font-family: "SF Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 56px; opacity: 0.75;
+}
 .db-task-badge {
-  font-size: 9px; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 3px;
+  flex-shrink: 0; padding: 1px 7px 1px 5px; border-radius: 4px;
+  font-size: 11px; font-weight: 500; white-space: nowrap;
+  background: rgba(99,102,241,0.12); color: #818cf8;
 }
-.db-badge-accepted { background: rgba(34,197,94,0.15); color: #22c55e; }
-.db-badge-delivered { background: rgba(59,130,246,0.15); color: #60a5fa; }
-.db-badge-rejected { background: rgba(239,68,68,0.15); color: #ef4444; }
-.db-badge-timeout  { background: rgba(245,158,11,0.15); color: #f59e0b; }
-.db-badge-active   { background: rgba(99,102,241,0.15); color: #818cf8; }
+.db-task-badge-icon {
+  font-weight: 700; font-size: 11px; line-height: 1;
+  font-family: system-ui, sans-serif;
+}
+.db-ev-completed, .db-ev-accepted { background: rgba(34,197,94,0.12); color: #22c55e; }
+.db-ev-activated  { background: rgba(59,130,246,0.12); color: #3b82f6; }
+.db-ev-rejected   { background: rgba(239,68,68,0.12); color: #ef4444; }
+.db-ev-timeout    { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.db-ev-delegated  { background: rgba(99,102,241,0.12); color: #818cf8; }
+.db-ev-delivered  { background: rgba(6,182,212,0.12); color: #06b6d4; }
+.db-task-who {
+  font-weight: 600; color: #e2e8f0; flex-shrink: 0;
+  max-width: 100px; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12px;
+}
+.db-task-arrow { color: #475569; flex-shrink: 0; }
+.db-task-desc {
+  color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; cursor: pointer; min-width: 0;
+}
 
 /* Alert items */
 .db-alert-item {
-  display: flex; align-items: flex-start; gap: 6px; padding: 5px 0;
-  border-bottom: 1px solid rgba(30,41,59,0.6); font-size: 11px; color: #cbd5e1;
+  display: flex; align-items: center; gap: 7px; padding: 4px 0;
+  border-bottom: 1px solid rgba(51,65,85,0.15); font-size: 12px;
+  white-space: nowrap; line-height: 1.5;
 }
-.db-alert-icon { font-weight: 700; flex-shrink: 0; font-size: 10px; margin-top: 1px; }
+.db-alert-item:last-child { border-bottom: none; }
+.db-alert-icon { font-weight: 700; flex-shrink: 0; font-size: 10px; }
+.db-alert-who { flex-shrink: 0; color: #e2e8f0; font-size: 12px; }
+.db-alert-desc {
+  color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; cursor: pointer; min-width: 0;
+}
 
 /* Blackboard items */
 .db-bb-item {
-  display: flex; align-items: baseline; gap: 6px; padding: 5px 0;
-  border-bottom: 1px solid rgba(30,41,59,0.6); font-size: 11px;
+  display: flex; align-items: center; gap: 7px; padding: 4px 0;
+  border-bottom: 1px solid rgba(51,65,85,0.15); font-size: 12px;
+  white-space: nowrap; line-height: 1.5;
 }
+.db-bb-item:last-child { border-bottom: none; }
 .db-bb-badge {
-  font-size: 9px; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; font-weight: 500;
+  display: inline-flex; align-items: center;
+  font-size: 11px; padding: 1px 7px; border-radius: 4px; flex-shrink: 0; font-weight: 500;
 }
-.db-bb-decision { background: rgba(139,92,246,0.15); color: #a78bfa; }
-.db-bb-progress { background: rgba(59,130,246,0.15); color: #60a5fa; }
-.db-bb-fact { background: rgba(245,158,11,0.15); color: #fbbf24; }
-.db-bb-source { color: #64748b; font-weight: 500; flex-shrink: 0; }
-.db-bb-content { color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-bb-decision { background: rgba(139,92,246,0.12); color: #a78bfa; }
+.db-bb-progress { background: rgba(59,130,246,0.12); color: #60a5fa; }
+.db-bb-fact { background: rgba(245,158,11,0.12); color: #fbbf24; }
+.db-bb-source { color: #94a3b8; font-weight: 500; flex-shrink: 0; font-size: 12px; }
+.db-bb-content {
+  color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; cursor: pointer; min-width: 0;
+}
+
+/* ── Tooltip (markdown) ── */
+.db-tip-wrap {
+  max-width: 420px !important; min-width: 200px;
+  padding: 10px 14px !important; text-align: left !important;
+  white-space: normal !important; border-radius: 8px !important;
+  z-index: 9999;
+}
+.db-tip-wrap [data-slot="tooltip-arrow"] { display: none; }
+.db-tip-content {
+  font-size: 12px; line-height: 1.7;
+  max-height: 300px; overflow-y: auto;
+  scrollbar-width: thin; color: inherit;
+}
+.db-tip-content p { margin: 0 0 6px; }
+.db-tip-content p:last-child { margin-bottom: 0; }
+.db-tip-content ul, .db-tip-content ol { margin: 4px 0; padding-left: 1.4em; }
+.db-tip-content li { margin: 2px 0; }
+.db-tip-content strong { font-weight: 600; }
+.db-tip-content code {
+  font-size: 11px; padding: 1px 4px; border-radius: 3px;
+  background: rgba(99,102,241,0.1); font-family: "SF Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+}
+.db-tip-content pre { margin: 4px 0; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); overflow-x: auto; }
+.db-tip-content pre code { padding: 0; background: none; }
+.db-tip-content blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid rgba(99,102,241,0.3); color: inherit; opacity: 0.8; }
+.db-tip-content table { border-collapse: collapse; margin: 4px 0; font-size: 11px; }
+.db-tip-content th, .db-tip-content td { padding: 3px 8px; border: 1px solid rgba(100,116,139,0.3); }
 
 /* ─── Node Grid ─────────────────────────────── */
 .db-node-grid {
