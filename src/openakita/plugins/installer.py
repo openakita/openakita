@@ -8,8 +8,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import zipfile
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,6 +24,75 @@ logger = logging.getLogger(__name__)
 
 class PluginInstallError(Exception):
     """Installation could not complete."""
+
+
+class InstallProgress:
+    """Thread-safe installation progress tracker.
+
+    Usage from REST API:
+        progress = InstallProgress()
+        installer.install_from_url(url, dir, progress=progress)
+        # Poll progress.snapshot() from SSE endpoint
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stage = "pending"
+        self._message = ""
+        self._percent = 0.0
+        self._finished = False
+        self._error = ""
+        self._result: dict[str, Any] = {}
+        self._updated_at = time.monotonic()
+
+    def update(self, stage: str, message: str, percent: float = -1) -> None:
+        with self._lock:
+            self._stage = stage
+            self._message = message
+            if percent >= 0:
+                self._percent = min(percent, 100.0)
+            self._updated_at = time.monotonic()
+
+    def finish(self, *, error: str = "", result: dict[str, Any] | None = None) -> None:
+        with self._lock:
+            self._finished = True
+            self._error = error
+            self._stage = "error" if error else "done"
+            self._percent = 100.0 if not error else self._percent
+            self._result = result or {}
+            self._updated_at = time.monotonic()
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            snap: dict[str, Any] = {
+                "stage": self._stage,
+                "message": self._message,
+                "percent": self._percent,
+                "finished": self._finished,
+                "error": self._error,
+            }
+            if self._result:
+                snap["result"] = dict(self._result)
+            return snap
+
+
+_active_installs: dict[str, InstallProgress] = {}
+_active_installs_lock = threading.Lock()
+
+
+def get_install_progress(install_id: str) -> InstallProgress | None:
+    with _active_installs_lock:
+        return _active_installs.get(install_id)
+
+
+def _register_progress(install_id: str, progress: InstallProgress) -> None:
+    with _active_installs_lock:
+        _active_installs[install_id] = progress
+
+
+def _unregister_progress(install_id: str) -> None:
+    with _active_installs_lock:
+        _active_installs.pop(install_id, None)
 
 
 def _sanitize_dir_name(plugin_id: str) -> str:
@@ -188,10 +260,15 @@ def _normalize_git_url(source: str) -> str:
     return s + ".git"
 
 
-def install_from_git(source: str, plugins_dir: Path, *, branch: str = "") -> str:
+def install_from_git(
+    source: str, plugins_dir: Path, *, branch: str = "",
+    progress: InstallProgress | None = None,
+) -> str:
     """Clone a Git repository and install the plugin from it."""
     plugins_dir = plugins_dir.resolve()
     plugins_dir.mkdir(parents=True, exist_ok=True)
+    if progress:
+        progress.update("cloning", f"正在克隆仓库: {source[:80]}", 10)
 
     git_url = _normalize_git_url(source)
 
@@ -218,6 +295,9 @@ def install_from_git(source: str, plugins_dir: Path, *, branch: str = "") -> str
             err = (proc.stderr or proc.stdout or "").strip()[:300]
             raise PluginInstallError(f"Git clone failed: {err}")
 
+        if progress:
+            progress.update("validating", "正在验证插件清单", 50)
+
         plugin_src = _find_plugin_json_root(clone_dir)
         if plugin_src is None:
             raise PluginInstallError("No plugin.json found in cloned repository")
@@ -226,6 +306,9 @@ def install_from_git(source: str, plugins_dir: Path, *, branch: str = "") -> str
             manifest = parse_manifest(plugin_src)
         except ManifestError as e:
             raise PluginInstallError(str(e)) from e
+
+        if progress:
+            progress.update("installing", f"正在安装插件: {manifest.id}", 65)
 
         dest = plugins_dir / _sanitize_dir_name(manifest.id)
         backup = None
@@ -254,6 +337,9 @@ def install_from_git(source: str, plugins_dir: Path, *, branch: str = "") -> str
                     pass
             raise PluginInstallError(f"Could not install plugin files: {e}") from e
 
+    if progress:
+        progress.update("dependencies", "正在安装依赖", 80)
+
     try:
         result = _finalize_install(dest)
     except PluginInstallError:
@@ -268,17 +354,27 @@ def install_from_git(source: str, plugins_dir: Path, *, branch: str = "") -> str
 
     if backup is not None and backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
+
+    if progress:
+        progress.update("done", f"插件 {result} 安装完成", 100)
     return result
 
 
-def install_from_url(url: str, plugins_dir: Path) -> str:
+def install_from_url(
+    url: str, plugins_dir: Path, *, progress: InstallProgress | None = None,
+) -> str:
     plugins_dir = plugins_dir.resolve()
     plugins_dir.mkdir(parents=True, exist_ok=True)
+    if progress:
+        progress.update("downloading", f"正在下载: {url[:80]}", 10)
 
     with tempfile.TemporaryDirectory(prefix="openakita-plugin-") as tmp:
         tmp_path = Path(tmp)
         archive = tmp_path / "plugin.zip"
         _download_to_file(url, archive)
+
+        if progress:
+            progress.update("extracting", "正在解压插件包", 40)
 
         extract_root = tmp_path / "extract"
         extract_root.mkdir()
@@ -292,10 +388,16 @@ def install_from_url(url: str, plugins_dir: Path) -> str:
         if plugin_src is None:
             raise PluginInstallError("No plugin.json found in archive")
 
+        if progress:
+            progress.update("validating", "正在验证插件清单", 55)
+
         try:
             manifest = parse_manifest(plugin_src)
         except ManifestError as e:
             raise PluginInstallError(str(e)) from e
+
+        if progress:
+            progress.update("installing", f"正在安装插件: {manifest.id}", 65)
 
         dest = plugins_dir / _sanitize_dir_name(manifest.id)
         if dest.exists():
@@ -321,6 +423,9 @@ def install_from_url(url: str, plugins_dir: Path) -> str:
                     pass
             raise PluginInstallError(f"Could not install plugin files: {e}") from e
 
+    if progress:
+        progress.update("dependencies", "正在安装依赖", 80)
+
     try:
         result = _finalize_install(dest)
     except PluginInstallError:
@@ -335,6 +440,9 @@ def install_from_url(url: str, plugins_dir: Path) -> str:
 
     if backup is not None and backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
+
+    if progress:
+        progress.update("done", f"插件 {result} 安装完成", 100)
     return result
 
 
@@ -438,12 +546,6 @@ def install_bundle(source: str, plugins_dir: Path) -> str:
                 pass
         raise PluginInstallError(f"Could not copy bundle: {e}") from e
 
-    if backup is not None:
-        try:
-            shutil.rmtree(backup)
-        except OSError:
-            pass
-
     manifest_path = dest / "plugin.json"
     try:
         manifest_path.write_text(
@@ -455,7 +557,18 @@ def install_bundle(source: str, plugins_dir: Path) -> str:
             shutil.rmtree(dest)
         except OSError:
             logger.warning("Could not remove partial install at %s", dest)
+        if backup is not None:
+            try:
+                backup.rename(dest)
+            except OSError:
+                pass
         raise PluginInstallError(f"Could not write plugin.json: {e}") from e
+
+    if backup is not None:
+        try:
+            shutil.rmtree(backup)
+        except OSError:
+            pass
 
     return _finalize_install(dest)
 

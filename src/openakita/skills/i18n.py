@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from ..utils.atomic_io import safe_write
+
 if TYPE_CHECKING:
     from ..core.brain import Brain
 
@@ -106,9 +108,10 @@ def write_i18n(skill_dir: Path, data: dict[str, dict[str, str]]) -> None:
     existing["i18n"] = data
 
     yaml_file.parent.mkdir(parents=True, exist_ok=True)
-    yaml_file.write_text(
+    safe_write(
+        yaml_file,
         yaml.dump(existing, allow_unicode=True, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
+        backup=True,
     )
 
 

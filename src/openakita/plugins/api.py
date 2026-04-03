@@ -331,8 +331,6 @@ class PluginAPI:
             self.log("No channel_registry available", "warning")
 
     # --- Memory backend (advanced / system) ---
-    # NOTE: Registered backends are stored but not yet consumed by MemoryManager.
-    # Full wiring is planned — see plugin_system_enhancement plan P2-5.
 
     def register_memory_backend(self, backend: MemoryBackendProtocol) -> None:
         replace_mode = "memory.replace" in self._granted_permissions

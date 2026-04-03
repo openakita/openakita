@@ -63,6 +63,12 @@ class SystemHandlerRegistry:
 
         if tool_names:
             for tool_name in tool_names:
+                existing = self._tool_to_handler.get(tool_name)
+                if existing and existing != handler_name:
+                    logger.warning(
+                        f"[Registry] 工具名冲突: '{tool_name}' 已注册到 '{existing}'，"
+                        f"现被 '{handler_name}' 覆盖"
+                    )
                 self._tool_to_handler[tool_name] = handler_name
         else:
             logger.warning(

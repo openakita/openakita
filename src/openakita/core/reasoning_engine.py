@@ -50,6 +50,31 @@ from ..llm.converters.tools import PARSE_ERROR_KEY
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
+_MAX_TOOL_RESULTS_TOTAL_CHARS = 200_000
+
+
+def _apply_tool_result_budget(
+    tool_results: list[dict], max_total: int = _MAX_TOOL_RESULTS_TOTAL_CHARS,
+) -> list[dict]:
+    """Proportionally truncate tool results if total exceeds budget."""
+    total = sum(len(str(r.get("content", ""))) for r in tool_results)
+    if total <= max_total:
+        return tool_results
+
+    ratio = max_total / total
+    for r in tool_results:
+        content = str(r.get("content", ""))
+        if len(content) > 1000:
+            budget = max(500, int(len(content) * ratio))
+            if len(content) > budget:
+                half = budget // 2
+                r["content"] = (
+                    content[:half]
+                    + f"\n\n... [{len(content) - budget} chars truncated] ...\n\n"
+                    + content[-half:]
+                )
+    return tool_results
+
 
 # ---------------------------------------------------------------------------
 # Mode-based tool filtering
@@ -59,6 +84,7 @@ from .permission import (
     disabled as permission_disabled,
     PLAN_MODE_RULESET,
     ASK_MODE_RULESET,
+    COORDINATOR_MODE_RULESET,
     DEFAULT_RULESET,
     Ruleset as PermissionRuleset,
 )
@@ -70,6 +96,8 @@ def _get_mode_ruleset(mode: str) -> PermissionRuleset:
         return PLAN_MODE_RULESET
     elif mode == "ask":
         return ASK_MODE_RULESET
+    elif mode == "coordinator":
+        return COORDINATOR_MODE_RULESET
     return DEFAULT_RULESET
 
 
@@ -80,6 +108,7 @@ def _filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
     - agent: DEFAULT_RULESET (all tools allowed)
     - ask: ASK_MODE_RULESET (write tools removed)
     - plan: PLAN_MODE_RULESET (write tools visible but path-restricted at runtime)
+    - coordinator: COORDINATOR_MODE_RULESET (delegation/planning tools only)
     """
     if mode == "agent" or not tools:
         return tools
@@ -683,7 +712,8 @@ class ReasoningEngine:
             "model": self._brain.model,
         })
 
-        max_iterations = settings.max_iterations
+        max_iterations = getattr(self, "_max_iterations_override", None) or settings.max_iterations
+        self._max_iterations_override = None  # consume once
         self._empty_content_retries = 0
 
         # 进度回调辅助（安全调用，忽略异常）
@@ -791,6 +821,11 @@ class ReasoningEngine:
 
             param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
             return f"{name}({param_hash})"
+
+        # Coordinator mode override: orchestrator sets _forced_mode on the engine
+        _forced = getattr(self, "_forced_mode", None)
+        if _forced and mode == "agent":
+            mode = _forced
 
         # Mode-based tool filtering (same as reason_stream)
         tools = _filter_tools_by_mode(tools, mode)
@@ -1390,9 +1425,10 @@ class ReasoningEngine:
                     await _emit_progress(f"🔧 {self._describe_tool_call(_tc_name, _tc_args)}")
 
                 # 同名工具频率限制：超阈值的调用跳过执行，返回提示
-                _rate_limited_results: list[dict] = []
+                _all_tool_calls = list(decision.tool_calls or [])
+                _rate_limited_by_id: dict[str, dict] = {}
                 _calls_to_execute = []
-                for tc in (decision.tool_calls or []):
+                for tc in _all_tool_calls:
                     _tc_name = tc.get("name", "")
                     _tool_call_counter[_tc_name] = _tool_call_counter.get(_tc_name, 0) + 1
                     if _tool_call_counter[_tc_name] > _MAX_SAME_TOOL_PER_TASK:
@@ -1401,7 +1437,7 @@ class ReasoningEngine:
                             f"{_tool_call_counter[_tc_name]} times (limit={_MAX_SAME_TOOL_PER_TASK}), "
                             f"skipping execution"
                         )
-                        _rate_limited_results.append({
+                        _rate_limited_by_id[tc.get("id", "")] = {
                             "type": "tool_result",
                             "tool_use_id": tc.get("id", ""),
                             "content": (
@@ -1409,7 +1445,7 @@ class ReasoningEngine:
                                 f"{_tool_call_counter[_tc_name] - 1} 次，已达上限。"
                                 f"请整合操作或继续下一步。"
                             ),
-                        })
+                        }
                     else:
                         _calls_to_execute.append(tc)
                 decision.tool_calls = _calls_to_execute
@@ -1422,8 +1458,16 @@ class ReasoningEngine:
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
                 )
-                if _rate_limited_results:
-                    tool_results.extend(_rate_limited_results)
+                if _rate_limited_by_id:
+                    _executed_by_id = {r.get("tool_use_id"): r for r in tool_results}
+                    merged_results = []
+                    for tc in _all_tool_calls:
+                        tid = tc.get("id", "")
+                        if tid in _rate_limited_by_id:
+                            merged_results.append(_rate_limited_by_id[tid])
+                        elif tid in _executed_by_id:
+                            merged_results.append(_executed_by_id[tid])
+                    tool_results = merged_results
 
                 if executed:
                     if any(t not in _ADMIN_TOOL_NAMES for t in executed):
@@ -1585,7 +1629,8 @@ class ReasoningEngine:
                         working_messages, _build_effective_system_prompt(), current_model, state
                     )
 
-                # 添加工具结果
+                # 添加工具结果（按预算截断过长批次）
+                tool_results = _apply_tool_result_budget(tool_results)
                 working_messages.append({
                     "role": "user",
                     "content": tool_results,
@@ -1835,6 +1880,11 @@ class ReasoningEngine:
 
             effective_prompt = _build_effective_prompt()
 
+            # Coordinator mode override: orchestrator sets _forced_mode on the engine
+            _forced = getattr(self, "_forced_mode", None)
+            if _forced and mode == "agent":
+                mode = _forced
+
             # Backward compat: plan_mode bool → mode string
             _effective_mode = mode
             if plan_mode and _effective_mode == "agent":
@@ -1851,6 +1901,15 @@ class ReasoningEngine:
                 _ask_rules = _build_mode_rules("ask")
                 if _ask_rules:
                     effective_prompt += f"\n\n{_ask_rules}"
+            elif _effective_mode == "coordinator":
+                effective_prompt += (
+                    "\n\n## Coordinator Mode\n"
+                    "你当前处于 **协调者模式**。你的职责是规划、委派和监督，而非直接执行。\n"
+                    "- 使用 delegate_to_agent / delegate_parallel / spawn_agent 将具体任务委派给下属 Agent\n"
+                    "- 使用 create_todo / update_todo_step 跟踪任务进度\n"
+                    "- 使用 ask_user 向用户确认重要决策\n"
+                    "- 你不能直接编辑文件、执行命令或进行文件操作——这些由你委派的 Agent 完成\n"
+                )
 
             # Tool filtering by mode — restrict available tools based on current mode
             tools = _filter_tools_by_mode(tools, _effective_mode)
@@ -1890,7 +1949,8 @@ class ReasoningEngine:
             state.original_user_messages = [
                 msg for msg in messages if self._is_human_user_message(msg)
             ]
-            max_iterations = settings.max_iterations
+            max_iterations = getattr(self, "_max_iterations_override", None) or settings.max_iterations
+            self._max_iterations_override = None  # consume once
             self._empty_content_retries = 0
             working_messages = list(messages)
 
@@ -2430,6 +2490,24 @@ class ReasoningEngine:
                             if _pr.decision == PolicyDecision.DENY:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
+                            elif _pr.decision == PolicyDecision.CONFIRM:
+                                _risk = _pr.metadata.get("risk_level", "HIGH")
+                                _pe.store_ui_pending(t_id, t_name, t_args if isinstance(t_args, dict) else {}, session_id=conversation_id or "")
+                                yield {
+                                    "type": "security_confirm",
+                                    "tool": t_name,
+                                    "args": t_args if isinstance(t_args, dict) else {},
+                                    "id": t_id,
+                                    "reason": _pr.reason,
+                                    "risk_level": _risk,
+                                    "needs_sandbox": _pr.metadata.get("needs_sandbox", False),
+                                }
+                                r = (
+                                    f"⚠️ 需要用户确认: {_pr.reason}\n"
+                                    "请使用 ask_user 工具询问用户是否允许此操作，"
+                                    "得到用户同意后再重新调用此工具。"
+                                )
+                                _tool_is_error = True
                             else:
                                 _tool_is_error = False
                                 try:
@@ -2913,6 +2991,7 @@ class ReasoningEngine:
                         yield {"type": "done"}
                         return
 
+                    tool_results_for_msg = _apply_tool_result_budget(tool_results_for_msg)
                     working_messages.append({
                         "role": "user",
                         "content": tool_results_for_msg,
@@ -3402,6 +3481,82 @@ class ReasoningEngine:
             logger.debug(f"[CancelFarewell] Failed to reset cooldown: {exc}")
 
     @staticmethod
+    def _yield_missing_tool_results(working_messages: list[dict]) -> None:
+        """Patch *working_messages* in-place so every ``tool_use`` block in the
+        last assistant message has a matching ``tool_result`` in a subsequent
+        user message.
+
+        When an exception (cancel / timeout / model-switch) fires after the
+        assistant emits ``tool_use`` blocks but before all tool executions
+        complete, some ``tool_result`` entries will be absent.  The next LLM
+        API call would then fail with HTTP 400.  This helper fills the gaps
+        with synthetic ``[cancelled]`` results.
+        """
+        if not working_messages:
+            return
+
+        last_asst_idx: int | None = None
+        for i in range(len(working_messages) - 1, -1, -1):
+            msg = working_messages[i]
+            if msg.get("role") == "assistant":
+                content = msg.get("content")
+                if isinstance(content, list) and any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    for b in content
+                ):
+                    last_asst_idx = i
+                break
+
+        if last_asst_idx is None:
+            return
+
+        tool_use_ids: set[str] = set()
+        for block in working_messages[last_asst_idx].get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id"):
+                tool_use_ids.add(block["id"])
+        if not tool_use_ids:
+            return
+
+        answered_ids: set[str] = set()
+        existing_result_msg: dict | None = None
+        for msg in working_messages[last_asst_idx + 1:]:
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            tid = block.get("tool_use_id")
+                            if tid:
+                                answered_ids.add(tid)
+                                if existing_result_msg is None:
+                                    existing_result_msg = msg
+
+        missing_ids = tool_use_ids - answered_ids
+        if not missing_ids:
+            return
+
+        synthetic = [
+            {
+                "type": "tool_result",
+                "tool_use_id": mid,
+                "content": "[cancelled]",
+                "is_error": True,
+            }
+            for mid in missing_ids
+        ]
+
+        if existing_result_msg is not None:
+            existing_result_msg["content"].extend(synthetic)
+        else:
+            working_messages.append({"role": "user", "content": synthetic})
+
+        logger.debug(
+            "[ToolResultSafetyNet] Injected %d synthetic tool_result(s) for IDs: %s",
+            len(synthetic),
+            ", ".join(missing_ids),
+        )
+
+    @staticmethod
     def _sanitize_messages_for_farewell(messages: list[dict]) -> list[dict]:
         """
         清理 working_messages 使其可安全发送给 LLM 的 farewell 调用。
@@ -3457,6 +3612,8 @@ class ReasoningEngine:
         state: TaskState | None = None,
     ) -> str:
         """非流式场景下的取消收尾：立即返回默认文本，后台异步发起 LLM 收尾。"""
+        self._yield_missing_tool_results(working_messages)
+
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         logger.info(
             f"[ReAct][CancelFarewell] 进入收尾流程: cancel_reason={cancel_reason!r}, "
@@ -3487,6 +3644,8 @@ class ReasoningEngine:
         Yields:
             {"type": "user_insert", ...} 和 {"type": "text_delta", ...} 事件
         """
+        self._yield_missing_tool_results(working_messages)
+
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         logger.info(
             f"[ReAct-Stream][CancelFarewell] 进入收尾流程: cancel_reason={cancel_reason!r}, "
@@ -3520,6 +3679,7 @@ class ReasoningEngine:
     ) -> None:
         """后台执行 LLM 收尾调用，将结果持久化到上下文（不阻塞用户）。"""
         try:
+            self._yield_missing_tool_results(working_messages)
             cancel_msg = (
                 f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
                 "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"

@@ -741,26 +741,44 @@ class MemoryStorage:
     # FTS5 Search
     # ======================================================================
 
-    def search_fts(self, query: str, limit: int = 10) -> list[dict]:
+    def search_fts(
+        self,
+        query: str,
+        limit: int = 10,
+        scope: str | None = None,
+        scope_owner: str | None = None,
+    ) -> list[dict]:
         """Full-text search using FTS5 with BM25 ranking, with LIKE fallback for CJK.
 
-        TODO: Add scope filtering. FTS5 virtual tables don't support easy
-        column-based filtering; post-filter or JOIN with scope columns needed.
+        Args:
+            scope: If provided, restrict results to this scope (e.g. 'global').
+            scope_owner: If provided, restrict results to this scope_owner.
         """
         if not self._conn or not query.strip():
             return []
+
+        scope_clauses: list[str] = []
+        scope_params: list[Any] = []
+        if scope is not None:
+            scope_clauses.append("(m.scope IS NULL OR m.scope = ?)")
+            scope_params.append(scope)
+        if scope_owner is not None:
+            scope_clauses.append("(m.scope_owner IS NULL OR m.scope_owner = ?)")
+            scope_params.append(scope_owner)
+        scope_where = (" AND " + " AND ".join(scope_clauses)) if scope_clauses else ""
+
         try:
             safe_query = self._sanitize_fts_query(query)
             cursor = self._conn.execute(
-                """
+                f"""
                 SELECT m.*, bm25(memories_fts) AS rank
                 FROM memories_fts fts
                 JOIN memories m ON m.rowid = fts.rowid
-                WHERE memories_fts MATCH ?
+                WHERE memories_fts MATCH ?{scope_where}
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (safe_query, limit),
+                [safe_query] + scope_params + [limit],
             )
             results = self._rows_to_dicts(cursor)
             if results:
@@ -773,11 +791,19 @@ class MemoryStorage:
             keywords = query.strip().split()
             if not keywords:
                 return []
-            conditions = " OR ".join(["content LIKE ?"] * len(keywords))
-            params = [f"%{kw}%" for kw in keywords] + [limit]
+            like_conditions = " OR ".join(["content LIKE ?"] * len(keywords))
+            like_params: list[Any] = [f"%{kw}%" for kw in keywords]
+            where = f"({like_conditions})"
+            if scope is not None:
+                where += " AND (scope IS NULL OR scope = ?)"
+                like_params.append(scope)
+            if scope_owner is not None:
+                where += " AND (scope_owner IS NULL OR scope_owner = ?)"
+                like_params.append(scope_owner)
+            like_params.append(limit)
             cursor = self._conn.execute(
-                f"SELECT * FROM memories WHERE {conditions} LIMIT ?",
-                params,
+                f"SELECT * FROM memories WHERE {where} LIMIT ?",
+                like_params,
             )
             return self._rows_to_dicts(cursor)
         except Exception as e:

@@ -798,6 +798,17 @@ class OrgRuntime:
 
         profile = self._build_profile_for_node(node, org_context_prompt)
 
+        # CC-3: Coordinator mode — nodes with children act as coordinators
+        try:
+            from openakita.config import settings as _cfg
+            if getattr(_cfg, "coordinator_mode_enabled", False):
+                has_children = bool(org.get_children(node.id))
+                is_root = node.level == 0
+                if has_children or (is_root and len(org.nodes) > 1):
+                    profile.role = "coordinator"
+        except Exception:
+            pass
+
         agent = await factory.create(profile)
 
         # Free-form delegation tools conflict with org_delegate_task

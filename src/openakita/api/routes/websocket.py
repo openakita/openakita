@@ -42,19 +42,33 @@ class ConnectionManager:
         logger.debug("WebSocket client disconnected (total: %d)", len(self._connections))
 
     async def broadcast(self, event: str, data: Any = None) -> None:
-        """Send an event to all connected clients."""
+        """Send an event to all connected clients concurrently."""
         if not self._connections:
             return
         message = json.dumps({"event": event, "data": data, "ts": time.time()})
-        dead: list[WebSocket] = []
+
         async with self._lock:
-            for ws, _loc in self._connections:
-                try:
-                    await ws.send_text(message)
-                except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                self._connections = [(c, loc) for c, loc in self._connections if c is not ws]
+            connections = list(self._connections)
+
+        async def _safe_send(ws: WebSocket) -> WebSocket | None:
+            try:
+                await asyncio.wait_for(ws.send_text(message), timeout=5.0)
+            except Exception:
+                return ws
+            return None
+
+        results = await asyncio.gather(
+            *[_safe_send(ws) for ws, _loc in connections],
+            return_exceptions=True,
+        )
+
+        dead = [ws for ws in results if isinstance(ws, WebSocket)]
+        if dead:
+            dead_set = set(id(ws) for ws in dead)
+            async with self._lock:
+                self._connections = [
+                    (c, loc) for c, loc in self._connections if id(c) not in dead_set
+                ]
 
     async def disconnect_remote_clients(self) -> int:
         """Close all non-local WebSocket connections (e.g. after password change)."""

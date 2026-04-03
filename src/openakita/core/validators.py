@@ -219,13 +219,12 @@ class ToolSuccessValidator(BaseValidator):
                 reason="No tools executed",
             )
 
-        error_indicators = ["❌", "⚠️ 工具执行错误", "错误类型:", "Error:"]
         error_results = []
         for tr in context.tool_results:
-            content = str(tr.get("content", "")) if isinstance(tr, dict) else str(tr)
-            if any(indicator in content for indicator in error_indicators):
-                tool_id = tr.get("tool_use_id", "?") if isinstance(tr, dict) else "?"
-                error_results.append(tool_id)
+            if not isinstance(tr, dict):
+                continue
+            if tr.get("is_error", False):
+                error_results.append(tr.get("tool_use_id", "?"))
 
         if error_results:
             total = len(context.tool_results)

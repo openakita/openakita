@@ -155,6 +155,9 @@ class MemoryManager:
         # Global store fallback for isolated agents (set by AgentFactory)
         self._global_store_ref: UnifiedStore | None = None
 
+        # Plugin-provided memory backends (shared dict from host_refs)
+        self._plugin_backends: dict | None = None
+
         # Load existing memories
         self._load_memories()
 
@@ -325,6 +328,11 @@ class MemoryManager:
             self._turn_offset = 0
         if self._turn_offset > 0:
             logger.info(f"[Memory] start_session({session_id}): resuming at turn_offset={self._turn_offset}")
+
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.start_session(session_id))
         else:
             logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
 
@@ -341,6 +349,11 @@ class MemoryManager:
                 filename, mime_type, local_path, url, description,
                 transcription, extracted_text, tags, direction, file_size
         """
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.record_turn(role, content))
+
         turn = ConversationTurn(
             role=role,
             content=content,
@@ -644,6 +657,11 @@ class MemoryManager:
         """结束会话: 生成 Episode + 双轨提取（用户画像 + 任务经验）+ 引用评分"""
         if not self._current_session_id:
             return
+
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.end_session())
 
         session_id = self._current_session_id
         turns = list(self._session_turns)
@@ -977,6 +995,11 @@ class MemoryManager:
             sem.expires_at = memory.expires_at
         self.store.save_semantic(self._stamp_agent_id(sem), scope=scope, scope_owner=scope_owner)
 
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.store(sem.to_dict()))
+
         logger.debug(f"Added memory: {memory.id} - {memory.content}")
         return memory.id
 
@@ -1026,6 +1049,21 @@ class MemoryManager:
                 return True
             return False
 
+    # ==================== Plugin Memory Backends ====================
+
+    def set_plugin_backends(self, backends: dict) -> None:
+        """Bind the shared plugin memory_backends dict from host_refs."""
+        self._plugin_backends = backends
+
+    def _get_replace_backend(self):
+        """Return the active replace-mode plugin backend, if any."""
+        if not self._plugin_backends:
+            return None
+        for entry in self._plugin_backends.values():
+            if isinstance(entry, dict) and entry.get("replace"):
+                return entry.get("backend")
+        return None
+
     # ==================== Injection (v1 compat) ====================
 
     def get_injection_context(
@@ -1036,6 +1074,21 @@ class MemoryManager:
         scope_owner: str = "",
     ) -> str:
         """v1 compat — prefer using builder.py's three-layer injection"""
+        replace = self._get_replace_backend()
+        if replace is not None:
+            try:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        replace.get_injection_context(task_description, 700),
+                    )
+                    return future.result(timeout=10)
+            except Exception:
+                logger.warning(
+                    "Replace-mode memory backend failed, falling back to built-in",
+                    exc_info=True,
+                )
         return self.retrieval_engine.retrieve(
             query=task_description,
             recent_messages=self._recent_messages,
@@ -1045,9 +1098,21 @@ class MemoryManager:
     async def get_injection_context_async(
         self, task_description: str = "", scope: str = "global", scope_owner: str = ""
     ) -> str:
+        replace = self._get_replace_backend()
+        if replace is not None:
+            try:
+                return await asyncio.wait_for(
+                    replace.get_injection_context(task_description, 700),
+                    timeout=10,
+                )
+            except Exception:
+                logger.warning(
+                    "Replace-mode memory backend failed, falling back to built-in",
+                    exc_info=True,
+                )
         return await asyncio.to_thread(
-            self.get_injection_context, task_description,
-            scope=scope, scope_owner=scope_owner,
+            self.retrieval_engine.retrieve,
+            task_description, self._recent_messages, None, 700,
         )
 
     def _keyword_search(self, query: str, limit: int = 5) -> list[Memory]:

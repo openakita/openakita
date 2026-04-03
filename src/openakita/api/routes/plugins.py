@@ -11,14 +11,17 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Any
 
+import uuid
+
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from ...config import settings
 from ...plugins import installer
 from ...plugins.errors import PluginErrorCode, make_error_response
-from ...plugins.installer import PluginInstallError
+from ...plugins.installer import InstallProgress, PluginInstallError
 from ...plugins.manifest import ManifestError, parse_manifest
 from ...plugins.state import PluginState
 
@@ -61,12 +64,8 @@ def _check_plugin_id(plugin_id: str) -> None:
     if not _SAFE_ID_RE.match(plugin_id):
         raise HTTPException(
             status_code=400,
-            detail=make_error_response(PluginErrorCode.INVALID_MANIFEST, detail="无效的插件 ID"),
+            detail=make_error_response(PluginErrorCode.INVALID_ID),
         )
-
-
-class InstallBody(BaseModel):
-    source: str = Field(..., min_length=1)
 
 
 def _read_readme(plugin_dir: Path) -> str:
@@ -251,27 +250,76 @@ async def list_plugins(request: Request) -> dict[str, Any]:
         ) from e
 
 
-@router.post("/install")
-async def install_plugin(body: InstallBody, request: Request) -> dict[str, str]:
-    async with _plugin_op_lock:
-        plugins_dir = _plugins_dir()
-        src = body.source.strip()
+class InstallBody(BaseModel):
+    source: str = Field(..., min_length=1)
+    background: bool = Field(False, description="Return immediately with install_id for SSE progress tracking")
+
+
+_PROGRESS_TTL = 120
+
+
+async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, request: Request):
+    """Core install logic shared by sync and background modes."""
+    if installer._is_git_url(src):
+        plugin_id = await asyncio.to_thread(
+            installer.install_from_git, src, plugins_dir, progress=progress,
+        )
+    elif src.startswith(("http://", "https://")):
+        plugin_id = await asyncio.to_thread(
+            installer.install_from_url, src, plugins_dir, progress=progress,
+        )
+    else:
+        local = Path(src)
+        if (local / "plugin.json").is_file():
+            plugin_id = await asyncio.to_thread(
+                installer.install_from_path, local, plugins_dir
+            )
+        else:
+            plugin_id = await asyncio.to_thread(
+                installer.install_bundle, local, plugins_dir
+            )
+
+    pm = _get_plugin_manager(request)
+    hot_loaded = False
+    if pm is not None:
         try:
-            if installer._is_git_url(src):
-                plugin_id = await asyncio.to_thread(installer.install_from_git, src, plugins_dir)
-            elif src.startswith(("http://", "https://")):
-                plugin_id = await asyncio.to_thread(installer.install_from_url, src, plugins_dir)
-            else:
-                local = Path(src)
+            await pm.reload_plugin(plugin_id)
+            hot_loaded = True
+        except Exception as e:
+            logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+
+    return plugin_id, hot_loaded
+
+
+@router.post("/install")
+async def install_plugin(body: InstallBody, request: Request) -> dict[str, Any]:
+    plugins_dir = _plugins_dir()
+    src = body.source.strip()
+    progress = InstallProgress()
+    install_id = uuid.uuid4().hex[:12]
+    installer._register_progress(install_id, progress)
+
+    if body.background:
+        async def _background():
+            async with _plugin_op_lock:
                 try:
-                    plugin_id = await asyncio.to_thread(
-                        installer.install_from_path, local, plugins_dir
-                    )
-                except PluginInstallError:
-                    plugin_id = await asyncio.to_thread(
-                        installer.install_bundle, local, plugins_dir
-                    )
+                    plugin_id, hot_loaded = await _do_install(src, plugins_dir, progress, request)
+                    progress.finish(result={"plugin_id": plugin_id, "hot_loaded": hot_loaded})
+                except Exception as e:
+                    logger.exception("Background install failed for %s", src)
+                    progress.finish(error=str(e))
+            await asyncio.sleep(_PROGRESS_TTL)
+            installer._unregister_progress(install_id)
+
+        asyncio.create_task(_background())
+        return {"ok": True, "data": {"install_id": install_id}}
+
+    async with _plugin_op_lock:
+        try:
+            plugin_id, hot_loaded = await _do_install(src, plugins_dir, progress, request)
         except PluginInstallError as e:
+            progress.finish(error=str(e))
+            installer._unregister_progress(install_id)
             err_str = str(e)
             if "not a valid zip" in err_str.lower():
                 code = PluginErrorCode.ZIP_INVALID
@@ -283,33 +331,48 @@ async def install_plugin(body: InstallBody, request: Request) -> dict[str, str]:
                 code = PluginErrorCode.NETWORK_ERROR
             else:
                 code = PluginErrorCode.INSTALL_FAILED
-            raise HTTPException(
-                status_code=400,
-                detail=make_error_response(code, detail=err_str),
-            ) from e
-        except (ValueError, OSError, FileNotFoundError) as e:
-            logger.warning("Plugin install error: %s", e)
-            raise HTTPException(
-                status_code=400,
-                detail=make_error_response(PluginErrorCode.INSTALL_FAILED),
-            ) from e
+            raise HTTPException(status_code=400, detail=make_error_response(code, detail=err_str)) from e
         except Exception as e:
+            progress.finish(error=str(e))
+            installer._unregister_progress(install_id)
             logger.exception("Unexpected error installing plugin from %s", src)
             raise HTTPException(
-                status_code=500,
-                detail=make_error_response(PluginErrorCode.INTERNAL_ERROR),
+                status_code=500, detail=make_error_response(PluginErrorCode.INTERNAL_ERROR),
             ) from e
 
-        pm = _get_plugin_manager(request)
-        hot_loaded = False
-        if pm is not None:
-            try:
-                await pm.reload_plugin(plugin_id)
-                hot_loaded = True
-            except Exception as e:
-                logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+        progress.finish(result={"plugin_id": plugin_id, "hot_loaded": hot_loaded})
+        installer._unregister_progress(install_id)
+        return {
+            "ok": True,
+            "data": {
+                "plugin_id": plugin_id,
+                "hot_loaded": hot_loaded,
+                "install_id": install_id,
+            },
+        }
 
-        return {"ok": True, "data": {"plugin_id": plugin_id, "hot_loaded": hot_loaded}}
+
+@router.get("/install/progress/{install_id}")
+async def install_progress_sse(install_id: str):
+    """SSE endpoint for real-time install progress. Frontend connects here after POST /install."""
+
+    async def _event_stream():
+        progress = installer.get_install_progress(install_id)
+        if progress is None:
+            yield f"data: {json.dumps({'stage': 'done', 'message': '安装已完成', 'percent': 100, 'finished': True, 'error': ''})}\n\n"
+            return
+        while True:
+            snap = progress.snapshot()
+            yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
+            if snap["finished"]:
+                break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.delete("/{plugin_id}")

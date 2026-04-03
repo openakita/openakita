@@ -20,7 +20,7 @@ __all__ = [
     "require_todo_for_session", "is_todo_required",
     "has_active_todo", "get_active_plan_id",
     "register_active_todo", "unregister_active_todo",
-    "clear_session_todo_state",
+    "clear_session_todo_state", "cleanup_session",
     "auto_close_todo", "cancel_todo", "force_close_plan",
     "register_plan_handler", "get_todo_handler_for_session",
     "get_active_todo_prompt",
@@ -41,6 +41,8 @@ __all__ = [
 # Session Todo 状态管理（模块级别）
 # ============================================
 
+_MAX_SESSIONS = 100
+
 # 记录哪些 session 被标记为需要 Todo（compound 任务）
 _session_todo_required: dict[str, bool] = {}
 
@@ -51,8 +53,33 @@ _session_active_todos: dict[str, str] = {}
 _session_handlers: dict[str, "PlanHandler"] = {}
 
 
+def _prune_oldest_sessions() -> None:
+    """当任一模块级字典超过 _MAX_SESSIONS 时，淘汰最早注册的条目。"""
+    all_ids = set(_session_todo_required) | set(_session_active_todos) | set(_session_handlers)
+    if len(all_ids) <= _MAX_SESSIONS:
+        return
+    excess = len(all_ids) - _MAX_SESSIONS
+    stale = set(_session_todo_required) - set(_session_active_todos)
+    victims = list(stale)[:excess]
+    if len(victims) < excess:
+        remaining = [sid for sid in all_ids if sid not in set(victims)]
+        victims.extend(remaining[:excess - len(victims)])
+    for sid in victims:
+        cleanup_session(sid)
+    if victims:
+        logger.debug(f"[Todo] Pruned {len(victims)} stale sessions (max={_MAX_SESSIONS})")
+
+
+def cleanup_session(session_id: str) -> None:
+    """Remove all entries for the given session_id from all module-level dicts."""
+    _session_todo_required.pop(session_id, None)
+    _session_active_todos.pop(session_id, None)
+    _session_handlers.pop(session_id, None)
+
+
 def require_todo_for_session(session_id: str, required: bool) -> None:
     """标记 session 是否需要 Todo（由 Prompt Compiler 调用）"""
+    _prune_oldest_sessions()
     _session_todo_required[session_id] = required
     logger.info(f"[Plan] Session {session_id} todo_required={required}")
 
@@ -74,6 +101,7 @@ def get_active_plan_id(session_id: str) -> str | None:
 
 def register_active_todo(session_id: str, plan_id: str) -> None:
     """注册活跃的 Todo"""
+    _prune_oldest_sessions()
     _session_active_todos[session_id] = plan_id
     logger.info(f"[Plan] Registered active todo {plan_id} for session {session_id}")
 
@@ -225,6 +253,7 @@ def force_close_plan(session_id: str) -> bool:
 
 def register_plan_handler(session_id: str, handler: "PlanHandler") -> None:
     """注册 PlanHandler 实例"""
+    _prune_oldest_sessions()
     _session_handlers[session_id] = handler
     logger.debug(f"[Plan] Registered handler for session {session_id}")
 

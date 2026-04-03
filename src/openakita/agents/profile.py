@@ -83,6 +83,7 @@ class AgentProfile:
     name: str
     description: str = ""
     type: AgentType = AgentType.CUSTOM
+    role: str = "worker"  # "worker" | "coordinator"
 
     # 技能配置
     skills: list[str] = field(default_factory=list)
@@ -147,6 +148,12 @@ class AgentProfile:
     memory_mode: str = "shared"  # "shared" | "isolated"
     memory_inherit_global: bool = True
     user_profile_content: str = ""
+
+    # Execution constraints (inspired by Claude Code's BaseAgentDefinition)
+    max_turns: int | None = None  # Max reasoning iterations per delegation
+    background: bool = False  # Force background execution
+    omit_system_context: bool = False  # Skip full system prompt for sub-agents (saves tokens)
+    timeout_seconds: int | None = None  # Per-profile timeout override
 
     def __post_init__(self):
         self.type = safe_agent_type(self.type)

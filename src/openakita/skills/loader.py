@@ -667,7 +667,15 @@ class SkillLoader:
         if not skill or not skill.references_dir:
             return None
 
-        ref_path = skill.references_dir / ref_name
+        ref_path = (skill.references_dir / ref_name).resolve()
+        try:
+            ref_path.relative_to(skill.references_dir.resolve())
+        except ValueError:
+            logger.warning(
+                "Reference path traversal blocked: %s resolves outside references dir %s",
+                ref_name, skill.references_dir,
+            )
+            return None
         if ref_path.exists():
             return ref_path.read_text(encoding="utf-8", errors="replace")
 

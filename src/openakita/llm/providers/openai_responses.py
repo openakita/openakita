@@ -121,10 +121,10 @@ class OpenAIResponsesProvider(OpenAIProvider):
             if response.status_code >= 400:
                 body = (response.text or "")[:500]
                 if response.status_code == 401:
-                    raise AuthenticationError(f"Authentication failed: {body}")
+                    raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {body}")
-                raise LLMError(f"API error ({response.status_code}): {body}")
+                    raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
+                raise LLMError(f"API error ({response.status_code}): {body}", status_code=response.status_code)
 
             from json import JSONDecodeError
             try:
@@ -404,10 +404,10 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     error_body = await response.aread()
                     error_text = error_body.decode(errors="replace")[:500]
                     if response.status_code == 401:
-                        raise AuthenticationError(f"Authentication failed: {error_text}")
+                        raise AuthenticationError(f"Authentication failed: {error_text}", status_code=401)
                     if response.status_code == 429:
-                        raise RateLimitError(f"Rate limit exceeded: {error_text}")
-                    raise LLMError(f"API error ({response.status_code}): {error_text}")
+                        raise RateLimitError(f"Rate limit exceeded: {error_text}", status_code=429)
+                    raise LLMError(f"API error ({response.status_code}): {error_text}", status_code=response.status_code)
 
                 has_content = False
                 async for line in response.aiter_lines():

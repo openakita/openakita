@@ -152,15 +152,18 @@ export function ChatView({
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [lightbox, setLightbox] = useState<{ url: string; downloadUrl: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  const [securityConfirm, setSecurityConfirm] = useState<{
+  type SecurityConfirmData = {
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string;
     countdown: number;
-  } | null>(null);
+  };
+  const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
+  const securityQueueRef = useRef<SecurityConfirmData[]>([]);
   const securityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const handleSecurityClose = useCallback(() => {
     if (securityTimerRef.current) clearInterval(securityTimerRef.current);
-    setSecurityConfirm(null);
+    const next = securityQueueRef.current.shift();
+    setSecurityConfirm(next ?? null);
   }, []);
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
@@ -1526,7 +1529,10 @@ export function ChatView({
             // Replace the outer pushProgress's timestamp tracking
             void wrappedPush;
 
-            while (!resolved) {
+            const pollStartTime = Date.now();
+            const MAX_POLL_WAIT_MS = 10 * 60 * 1000;
+
+            while (!resolved && (Date.now() - pollStartTime < MAX_POLL_WAIT_MS)) {
               await new Promise(r => setTimeout(r, pollInterval));
               if (resolved) break;
               try {
@@ -1554,6 +1560,18 @@ export function ChatView({
                 pushProgress("⏳ 执行时间较长，组织仍在处理中...");
                 lastProgressAt = Date.now();
               }
+            }
+
+            if (!resolved) {
+              resolved = true;
+              const progressSummary = progressLines.length > 0
+                ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
+                : "";
+              updateOrgMessages((prev) => prev.map(m =>
+                m.id === placeholderId
+                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ⏱️ 命令执行超时（已等待 10 分钟），请稍后手动检查结果。`, streaming: false }
+                  : m
+              ));
             }
 
             onDone();
@@ -2226,7 +2244,7 @@ export function ChatView({
                 pendingApprovalRef.current = event.data as PlanApprovalEvent;
                 break;
               case "security_confirm": {
-                setSecurityConfirm({
+                const newConfirm: SecurityConfirmData = {
                   tool: event.tool,
                   args: event.args,
                   reason: event.reason,
@@ -2234,6 +2252,13 @@ export function ChatView({
                   needsSandbox: event.needs_sandbox,
                   toolId: event.id,
                   countdown: 120,
+                };
+                setSecurityConfirm((prev) => {
+                  if (prev) {
+                    securityQueueRef.current.push(newConfirm);
+                    return prev;
+                  }
+                  return newConfirm;
                 });
                 break;
               }

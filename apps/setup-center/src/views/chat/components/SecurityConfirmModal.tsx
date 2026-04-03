@@ -1,9 +1,23 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { safeFetch } from "../../../providers";
 import { getAccessToken } from "../../../platform/auth";
 import { IS_TAURI } from "../../../platform";
 import { IconShield, IconAlertCircle } from "../../../icons";
+
+const RISK_LABELS: Record<string, string> = {
+  critical: "极高风险",
+  high: "高风险",
+  medium: "中风险",
+  low: "低风险",
+};
+
+function humanizeArgs(tool: string, args: Record<string, unknown>): string {
+  if (tool === "run_shell" && args.command) return `即将执行命令：${args.command}`;
+  if ((tool === "write_file" || tool === "edit_file") && args.path) return `即将修改文件：${args.path}`;
+  if (tool === "delete_file" && args.path) return `即将删除文件：${args.path}`;
+  return JSON.stringify(args, null, 2);
+}
 
 export function SecurityConfirmModal({
   data, apiBase, onClose, timerRef, setData,
@@ -16,6 +30,7 @@ export function SecurityConfirmModal({
 }) {
   const { t } = useTranslation();
   const pausedRef = useRef(false);
+  const [postError, setPostError] = useState<string | null>(null);
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -26,7 +41,7 @@ export function SecurityConfirmModal({
         if (prev.countdown <= 1) {
           clearInterval(timerRef.current!);
           timerRef.current = null;
-          handleDecision("allow");
+          handleDecision("deny");
           return null;
         }
         return { ...prev, countdown: prev.countdown - 1 };
@@ -39,6 +54,7 @@ export function SecurityConfirmModal({
 
   const handleDecision = useCallback(async (decision: "allow" | "deny" | "sandbox") => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    setPostError(null);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (!IS_TAURI) {
@@ -50,10 +66,11 @@ export function SecurityConfirmModal({
         headers,
         body: JSON.stringify({ tool_call_id: data.toolId, decision }),
       });
+      onClose();
     } catch (err) {
       console.error("[SecurityConfirm] decision failed:", err);
+      setPostError("网络请求失败，请重试");
     }
-    onClose();
   }, [apiBase, data.toolId, onClose, timerRef]);
 
   const riskColors: Record<string, string> = {
@@ -84,7 +101,7 @@ export function SecurityConfirmModal({
           <div>
             <div style={{ fontWeight: 700, fontSize: 16 }}>{t("chat.securityConfirmTitle", "安全确认")}</div>
             <div style={{ fontSize: 12, opacity: 0.6 }}>
-              {t("chat.securityRiskLevel", "风险等级")}: <span style={{ color: riskColor, fontWeight: 700, textTransform: "uppercase" }}>{data.riskLevel}</span>
+              {t("chat.securityRiskLevel", "风险等级")}: <span style={{ color: riskColor, fontWeight: 700 }}>{RISK_LABELS[data.riskLevel] || data.riskLevel}</span>
             </div>
           </div>
         </div>
@@ -99,9 +116,15 @@ export function SecurityConfirmModal({
         <div style={{ fontSize: 13, marginBottom: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("chat.securityTool", "工具")}: <code>{data.tool}</code></div>
           <pre style={{ margin: 0, fontSize: 11, maxHeight: 120, overflow: "auto", padding: "8px 10px", borderRadius: 8, background: "var(--panel2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-            {JSON.stringify(data.args, null, 2)}
+            {humanizeArgs(data.tool, data.args)}
           </pre>
         </div>
+
+        {postError && (
+          <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 8, padding: "6px 10px", background: "#ef444411", borderRadius: 6 }}>
+            {postError}
+          </div>
+        )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <button
@@ -112,7 +135,7 @@ export function SecurityConfirmModal({
               fontSize: 13, fontWeight: 600,
             }}
           >
-            {t("chat.securityDeny", "拒绝")}
+            {t("chat.securityDeny", "拒绝")} ({data.countdown}s)
           </button>
           {data.needsSandbox && (
             <button
@@ -134,7 +157,7 @@ export function SecurityConfirmModal({
               fontSize: 13, fontWeight: 700,
             }}
           >
-            {t("chat.securityAllow", "允许")} ({data.countdown}s)
+            {t("chat.securityAllow", "允许")}
           </button>
         </div>
       </div>

@@ -12,11 +12,13 @@ Bash 沙箱: 命令执行权限控制
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import logging
 import os
 import re
 import shlex
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -117,6 +119,20 @@ class CommandSandbox:
 
         return SandboxVerdict(allowed=True)
 
+    def check_command_zh(self, command: str) -> SandboxVerdict:
+        """check_command 的中文化封装，将英文 reason 翻译为用户可见中文。"""
+        verdict = self.check_command(command)
+        if not verdict.allowed and verdict.reason:
+            if "deny rule" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason=f"命令被安全规则禁止: {command.split()[0] if command.split() else command}")
+            elif "dangerous pattern" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason="检测到危险命令模式，已拦截")
+            elif "denied directory" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason="命令涉及受保护的系统目录，禁止访问")
+            elif "not in allowed list" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason=f"命令 '{command.split()[0] if command.split() else command}' 不在允许列表中")
+        return verdict
+
     def _check_dir_access(self, command: str) -> str:
         """检查命令中引用的路径是否在允许范围内。"""
         try:
@@ -137,3 +153,94 @@ class CommandSandbox:
                     return f"Path '{abs_path}' is in denied directory: {denied}"
 
         return ""
+
+
+# ---------------------------------------------------------------------------
+# P1-1: SandboxExecutor — subprocess 隔离执行
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SandboxResult:
+    """沙箱执行结果"""
+    stdout: str
+    stderr: str
+    returncode: int
+    backend: str = "subprocess"
+
+
+class SandboxExecutor:
+    """轻量沙箱执行器 — 基于 subprocess 的基础隔离。
+
+    未来可扩展为 Docker/seatbelt/landlock 后端。
+    """
+
+    def __init__(self, sandbox: CommandSandbox | None = None) -> None:
+        self._sandbox = sandbox or CommandSandbox()
+
+    async def execute(
+        self,
+        command: str,
+        *,
+        cwd: str | None = None,
+        timeout: float = 120,
+    ) -> SandboxResult:
+        """在沙箱中异步执行命令。"""
+        verdict = self._sandbox.check_command(command)
+        if not verdict.allowed:
+            return SandboxResult(
+                stdout="",
+                stderr=f"沙箱拒绝执行: {verdict.reason}",
+                returncode=-1,
+                backend="sandbox_denied",
+            )
+
+        effective_timeout = min(
+            timeout,
+            self._sandbox._policy.max_execution_time,
+        )
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=effective_timeout,
+            )
+            return SandboxResult(
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                returncode=proc.returncode or 0,
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return SandboxResult(
+                stdout="",
+                stderr=f"命令执行超时 ({effective_timeout}s)，已强制终止",
+                returncode=-2,
+                backend="timeout",
+            )
+        except Exception as e:
+            return SandboxResult(
+                stdout="",
+                stderr=f"沙箱执行异常: {e}",
+                returncode=-3,
+                backend="error",
+            )
+
+
+_global_sandbox_executor: SandboxExecutor | None = None
+
+
+def get_sandbox_executor() -> SandboxExecutor:
+    """获取全局沙箱执行器单例。"""
+    global _global_sandbox_executor
+    if _global_sandbox_executor is None:
+        _global_sandbox_executor = SandboxExecutor()
+    return _global_sandbox_executor

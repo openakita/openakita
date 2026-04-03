@@ -154,7 +154,10 @@ class TaskQueue:
         fut = self._results.get(task_id)
         if fut is None:
             raise KeyError(f"Unknown task: {task_id}")
-        return await asyncio.wait_for(fut, timeout=timeout)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._results.pop(task_id, None)
 
     async def _worker_loop(self) -> None:
         """Main worker loop: picks tasks from queue and executes them."""
@@ -211,8 +214,6 @@ class TaskQueue:
                 fut.set_exception(e)
             self._total_failed += 1
             logger.error(f"[TaskQueue] Task {task.task_id} failed: {e}")
-        finally:
-            self._results.pop(task.task_id, None)
 
     def get_stats(self) -> dict:
         """Get queue statistics."""

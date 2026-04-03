@@ -50,7 +50,7 @@ MCP (Model Context Protocol) 是独立进程的外部工具服务，通过 JSON-
 |------|-------|-----------|--------|
 | **提供工具 (tools)** | - | YES | YES |
 | **提供 IM 通道** | - | - | YES |
-| **提供记忆后端** | - | - | YES (注册接口已就绪，MemoryManager 接线规划中) |
+| **提供记忆后端** | - | - | YES (replace 模式自动接管 MemoryManager) |
 | **提供 LLM provider** | - | - | YES |
 | **提供 RAG 检索源** | - | - | YES |
 | **提供 API 路由** | - | - | YES |

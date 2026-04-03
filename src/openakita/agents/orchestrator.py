@@ -12,10 +12,13 @@ import json
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from openakita.agents.task_queue import TaskQueue
 
 if TYPE_CHECKING:
     from openakita.channels import MessageGateway
@@ -84,6 +87,28 @@ class AgentHealth:
         return self.total_latency_ms / max(self.successful, 1)
 
 
+@dataclass
+class DelegationResult:
+    """Structured result from a sub-agent delegation."""
+
+    agent_id: str
+    profile_id: str
+    text: str
+    tools_used: list[str] = field(default_factory=list)
+    artifacts: list[dict] = field(default_factory=list)
+    elapsed_s: float = 0.0
+    exit_reason: str = "completed"  # "completed" | "max_turns" | "timeout" | "error" | "cancelled"
+
+    def to_tool_response(self) -> str:
+        """Serialize for tool response, preserving backward compatibility."""
+        parts = [self.text]
+        if self.artifacts:
+            parts.append(
+                f"\n__ARTIFACT_RECEIPTS__{json.dumps(self.artifacts)}__ARTIFACT_RECEIPTS__"
+            )
+        return "".join(parts)
+
+
 class AgentMailbox:
     """Per-agent async message queue."""
 
@@ -99,6 +124,21 @@ class AgentMailbox:
             return await asyncio.wait_for(self._queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
             return None
+
+    async def drain_all(self) -> list[dict]:
+        """Drain all pending messages from the mailbox."""
+        messages: list[dict] = []
+        while not self._queue.empty():
+            try:
+                msg = self._queue.get_nowait()
+                messages.append(msg)
+            except asyncio.QueueEmpty:
+                break
+        return messages
+
+    @property
+    def size(self) -> int:
+        return self._queue.qsize()
 
     @property
     def pending(self) -> int:
@@ -116,10 +156,15 @@ class AgentOrchestrator:
     - Track agent health metrics
     """
 
+    _DEFAULT_MAX_CONCURRENT_AGENTS = 5
+
     def __init__(self) -> None:
         self._mailboxes: dict[str, AgentMailbox] = {}
         self._health: dict[str, AgentHealth] = {}
         self._active_tasks: dict[str, list[asyncio.Task]] = {}
+
+        # Priority task queue for future delegate-via-queue migration
+        self._task_queue = TaskQueue(max_concurrent=self._DEFAULT_MAX_CONCURRENT_AGENTS)
 
         # Lazy-initialised dependencies
         self._profile_store = None  # ProfileStore
@@ -142,6 +187,11 @@ class AgentOrchestrator:
     def set_gateway(self, gateway: MessageGateway | None) -> None:
         """Inject the MessageGateway reference (set after both are created)."""
         self._gateway = gateway
+
+    @property
+    def task_queue(self) -> TaskQueue:
+        """Expose the TaskQueue for external access (e.g. API stats, future enqueue)."""
+        return self._task_queue
 
     # ------------------------------------------------------------------
     # Lazy dependency bootstrap
@@ -484,7 +534,26 @@ class AgentOrchestrator:
         if profile is None:
             return f"⚠️ 无法找到 Agent Profile: {agent_profile_id}"
 
+        # Per-profile timeout override
+        if getattr(profile, "timeout_seconds", None) is not None:
+            hard_timeout = float(profile.timeout_seconds)
+            logger.debug(
+                f"[Orchestrator] Using profile timeout_seconds={profile.timeout_seconds} "
+                f"for {agent_profile_id}"
+            )
+
         agent = await self._pool.get_or_create(session.id, profile)
+
+        # Per-profile max_turns override → propagated to reasoning engine
+        _max_turns_override: int | None = getattr(profile, "max_turns", None)
+        if _max_turns_override is not None:
+            re = getattr(agent, "reasoning_engine", None)
+            if re is not None:
+                re._max_iterations_override = _max_turns_override
+                logger.debug(
+                    f"[Orchestrator] Set max_iterations_override={_max_turns_override} "
+                    f"for {agent_profile_id}"
+                )
 
         if isolated_browser and hasattr(agent, "browser_manager"):
             from openakita.tools.browser import PlaywrightTools, BrowserUseRunner
@@ -502,7 +571,7 @@ class AgentOrchestrator:
         last_fingerprint: tuple[int, str, int] = (-1, "", 0)
         last_progress_time = start
 
-        state_key = f"{session.chat_id}:{agent_profile_id}"
+        state_key = f"{session.chat_id}:{agent_profile_id}:{uuid.uuid4().hex[:8]}"
         existing_state = self._sub_agent_states.get(state_key, {})
         self._sub_agent_states[state_key] = {
             **existing_state,
@@ -752,7 +821,27 @@ class AgentOrchestrator:
         CAN use delegation tools (delegate_to_agent, spawn_agent, etc.).
         """
         agent._is_sub_agent_call = is_sub_agent
+
+        # Coordinator mode: if the agent's profile has role="coordinator"
+        # and the feature is enabled, override the reasoning engine's mode
+        # so it uses COORDINATOR_MODE_RULESET for tool filtering.
+        _coordinator_applied = False
+        try:
+            from openakita.config import settings as _cfg
+            _profile = getattr(agent, "_agent_profile", None)
+            if (
+                _profile
+                and getattr(_profile, "role", "worker") == "coordinator"
+                and getattr(_cfg, "coordinator_mode_enabled", False)
+                and hasattr(agent, "reasoning_engine")
+            ):
+                agent.reasoning_engine._forced_mode = "coordinator"
+                _coordinator_applied = True
+        except Exception:
+            pass
+
         _start = time.time()
+        exit_reason = "completed"
         try:
             session_messages = session.context.get_messages()
             result = await agent.chat_with_session(
@@ -768,11 +857,33 @@ class AgentOrchestrator:
             except Exception as e:
                 logger.warning(f"[Orchestrator] Failed to persist sub-agent record: {e}")
 
+            # Detect exit reason from reasoning engine
+            re_engine = getattr(agent, "reasoning_engine", None)
+            if re_engine:
+                _last_reason = getattr(re_engine, "_last_exit_reason", "normal")
+                if _last_reason == "max_iterations":
+                    exit_reason = "max_turns"
+                elif _last_reason != "normal":
+                    exit_reason = _last_reason
+
+            # Collect tools used from agent state
+            tools_used: list[str] = []
+            try:
+                _state = getattr(agent, "agent_state", None)
+                if _state:
+                    _task = _state.get_task_for_session(session.id)
+                    if _task is None:
+                        _task = _state.current_task
+                    if _task and _task.tools_executed:
+                        tools_used = list(dict.fromkeys(_task.tools_executed))
+            except Exception:
+                pass
+
             # Forward artifact delivery receipts from sub-agent so the parent
             # SSE stream can emit artifact events to the frontend.
+            artifacts: list[dict] = []
             try:
-                re = getattr(agent, "reasoning_engine", None)
-                receipts = getattr(re, "_last_delivery_receipts", None) if re else None
+                receipts = getattr(re_engine, "_last_delivery_receipts", None) if re_engine else None
                 if receipts:
                     delivered = [
                         r for r in receipts
@@ -781,13 +892,7 @@ class AgentOrchestrator:
                         and r.get("file_url")
                     ]
                     if delivered:
-                        import json as _json
-                        _payload = _json.dumps(delivered, ensure_ascii=False)
-                        result += "\n\n__ARTIFACT_RECEIPTS__\n" + _payload
-                        logger.info(
-                            f"[Orchestrator] Forwarding {len(delivered)} artifact receipts "
-                            f"from sub-agent to parent SSE stream"
-                        )
+                        artifacts = delivered
                     else:
                         logger.debug(
                             f"[Orchestrator] Sub-agent had {len(receipts)} receipts "
@@ -796,9 +901,22 @@ class AgentOrchestrator:
             except Exception as e:
                 logger.warning(f"[Orchestrator] Failed to forward artifact receipts: {e}")
 
-            return result
+            profile = getattr(agent, "_agent_profile", None)
+            delegation_result = DelegationResult(
+                agent_id=getattr(profile, "id", "unknown"),
+                profile_id=getattr(profile, "id", "unknown"),
+                text=result or "",
+                tools_used=tools_used,
+                artifacts=artifacts,
+                elapsed_s=round(time.time() - _start, 2),
+                exit_reason=exit_reason,
+            )
+            return delegation_result.to_tool_response()
         finally:
             agent._is_sub_agent_call = False
+            if _coordinator_applied and hasattr(agent, "reasoning_engine"):
+                agent.reasoning_engine._forced_mode = None
+            _cleanup_sub_agent_resources(agent, session)
 
     # ------------------------------------------------------------------
     # Sub-agent state persistence
@@ -908,7 +1026,7 @@ class AgentOrchestrator:
 
         # Pre-register sub-agent state immediately so frontend polling
         # can pick it up before _run_with_progress_timeout starts
-        state_key = f"{session.chat_id}:{to_agent}"
+        state_key = f"{session.chat_id}:{to_agent}:{uuid.uuid4().hex[:8]}"
         profile_name = to_agent
         profile_icon = "🤖"
         if self._profile_store:
@@ -1050,14 +1168,15 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Start background tasks (pool reaper, etc.)."""
+        """Start background tasks (pool reaper, task queue, etc.)."""
         self._ensure_deps()
         self._load_sub_states()
         await self._pool.start()
-        logger.info("[Orchestrator] Started")
+        await self._task_queue.start()
+        logger.info("[Orchestrator] Started (task_queue max_concurrent=%d)", self._task_queue._max_concurrent)
 
     async def shutdown(self) -> None:
-        """Clean shutdown: cancel active tasks, release pool, persist states."""
+        """Clean shutdown: cancel active tasks, stop task queue, release pool, persist states."""
         for tasks in self._active_tasks.values():
             for task in tasks:
                 if not task.done():
@@ -1066,10 +1185,43 @@ class AgentOrchestrator:
 
         self._persist_sub_states()
 
+        await self._task_queue.stop()
+
         if self._pool:
             await self._pool.stop()
 
         logger.info("[Orchestrator] Shutdown complete")
+
+
+def _cleanup_sub_agent_resources(agent: Any, session: Any) -> None:
+    """Clean up resources after a sub-agent finishes.
+
+    Each step is wrapped individually so one failure doesn't block the rest.
+    """
+    sid = getattr(session, "id", None)
+
+    # 1. Clean todo state for this session
+    try:
+        from openakita.tools.handlers.todo_state import cleanup_session
+        if sid:
+            cleanup_session(sid)
+    except Exception as e:
+        logger.debug(f"[Orchestrator] Sub-agent cleanup: todo_state failed: {e}")
+
+    # 2. Clear transient attributes on the agent instance
+    try:
+        for attr in ("_current_session", "_sub_agent_records_cache"):
+            if hasattr(agent, attr):
+                try:
+                    delattr(agent, attr)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"[Orchestrator] Sub-agent cleanup: attr clear failed: {e}")
+
+    logger.debug(
+        "[Orchestrator] Sub-agent resource cleanup done for session %s", sid
+    )
 
 
 def _extract_file_paths_from_text(text: str) -> list[str]:

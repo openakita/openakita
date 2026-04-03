@@ -421,8 +421,9 @@ class SkillParser:
 
         # Name length (soft recommendation; hard limit is 128 in _validate_name)
         if len(meta.name) > 64:
-            errors.append(
-                f"Skill name '{meta.name[:30]}...' exceeds recommended 64 characters ({len(meta.name)})"
+            logger.warning(
+                "Skill name '%s...' exceeds recommended 64 characters (%d)",
+                meta.name[:30], len(meta.name),
             )
 
         # Directory name vs expected
@@ -465,10 +466,10 @@ class SkillParser:
         # Config schema basic validation
         for item in (meta.config or []):
             if isinstance(item, dict):
-                if "name" not in item:
-                    errors.append(f"Config item missing 'name': {item}")
+                if "key" not in item:
+                    errors.append(f"Config item missing 'key': {item}")
                 if "type" in item and item["type"] not in ("string", "number", "boolean", "select"):
-                    errors.append(f"Config item '{item.get('name', '?')}' has unknown type: {item['type']}")
+                    errors.append(f"Config item '{item.get('key', '?')}' has unknown type: {item['type']}")
 
         return errors
 

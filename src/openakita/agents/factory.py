@@ -251,6 +251,8 @@ class AgentFactory:
                 if t["name"] not in specified or t["name"] in ESSENTIAL_TOOL_NAMES
             ]
 
+        agent._tools.sort(key=lambda t: t["name"])
+
         from ..tools.catalog import ToolCatalog
         agent.tool_catalog = ToolCatalog(agent._tools)
         logger.info(

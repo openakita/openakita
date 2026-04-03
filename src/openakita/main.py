@@ -2184,32 +2184,139 @@ def serve(
 @app.command(name="plugin-validate")
 def plugin_validate(
     path: str = typer.Argument(".", help="插件目录路径（含 plugin.json）"),
+    fix: bool = typer.Option(False, "--fix", help="自动修正可修复的问题"),
 ):
-    """校验插件 manifest 是否有效（Pydantic 校验 + 权限检查）"""
-    from .plugins.manifest import ManifestError, parse_manifest
+    """校验插件 manifest 是否有效（Pydantic 校验 + 权限检查 + 入口文件检查 + config schema 校验）"""
+    from .plugins.manifest import ALL_PERMISSIONS, ManifestError, parse_manifest
 
     plugin_dir = Path(path).resolve()
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    # --- 1. 目录检查 ---
     if not plugin_dir.is_dir():
-        typer.echo(f"❌ 路径不存在或不是目录: {plugin_dir}", err=True)
+        console.print(f"[bold red]✗[/bold red] 路径不存在或不是目录: {plugin_dir}")
         raise typer.Exit(1)
 
+    manifest_file = plugin_dir / "plugin.json"
+    if not manifest_file.is_file():
+        console.print(f"[bold red]✗[/bold red] 未找到 plugin.json: {manifest_file}")
+        raise typer.Exit(1)
+
+    # --- 2. Manifest 解析（Pydantic 校验）---
     try:
         manifest = parse_manifest(plugin_dir)
     except ManifestError as e:
-        typer.echo(f"❌ 校验失败: {e}", err=True)
+        console.print(f"[bold red]✗[/bold red] Manifest 校验失败:")
+        for line in str(e).split("\n"):
+            console.print(f"  {line}")
         raise typer.Exit(1)
 
-    typer.echo(f"✅ 插件校验通过")
-    typer.echo(f"   ID:      {manifest.id}")
-    typer.echo(f"   名称:    {manifest.name}")
-    typer.echo(f"   版本:    {manifest.version}")
-    typer.echo(f"   类型:    {manifest.plugin_type}")
-    typer.echo(f"   入口:    {manifest.entry}")
-    typer.echo(f"   权限级别: {manifest.max_permission_level}")
+    # --- 3. 入口文件检查 ---
+    entry_path = plugin_dir / manifest.entry
+    if not entry_path.is_file():
+        errors.append(f"入口文件不存在: {manifest.entry}")
+
+    # --- 4. 权限检查 ---
+    unknown_perms = [p for p in manifest.permissions if p not in ALL_PERMISSIONS]
+    if unknown_perms:
+        warnings.append(f"未知权限: {', '.join(unknown_perms)}")
+
+    # --- 5. config_schema.json 校验 ---
+    schema_file = plugin_dir / "config_schema.json"
+    schema_data: dict | None = None
+    if schema_file.is_file():
+        try:
+            raw_schema = json.loads(schema_file.read_text(encoding="utf-8"))
+            if not isinstance(raw_schema, dict):
+                errors.append("config_schema.json 不是有效的 JSON 对象")
+            else:
+                schema_data = raw_schema
+                if "type" not in schema_data:
+                    warnings.append("config_schema.json 缺少 'type' 字段（建议设为 'object'）")
+        except json.JSONDecodeError as e:
+            errors.append(f"config_schema.json JSON 解析失败: {e}")
+
+        config_file = plugin_dir / "config.json"
+        if config_file.is_file() and schema_data is not None:
+            try:
+                from jsonschema import ValidationError as JsonSchemaError
+                from jsonschema import validate
+
+                config_data = json.loads(config_file.read_text(encoding="utf-8"))
+                validate(instance=config_data, schema=schema_data)
+            except JsonSchemaError as ve:
+                errors.append(f"config.json 不符合 schema: {ve.message}")
+            except ImportError:
+                warnings.append("jsonschema 未安装，跳过 config.json 校验")
+            except Exception as ve:
+                warnings.append(f"config.json 校验异常: {ve}")
+
+    # --- 6. README 检查 ---
+    readme_candidates = ["README.md", "readme.md", "README.txt", "README"]
+    has_readme = any((plugin_dir / f).is_file() for f in readme_candidates)
+    if not has_readme:
+        warnings.append("缺少 README.md（建议添加使用说明）")
+
+    # --- 7. icon 检查 ---
+    if manifest.icon:
+        icon_path = plugin_dir / manifest.icon
+        if not icon_path.is_file():
+            warnings.append(f"icon 文件不存在: {manifest.icon}")
+    else:
+        warnings.append("未设置 icon（建议添加插件图标）")
+
+    # --- 8. pip 依赖可用性检查 ---
+    pip_deps = manifest.requires.get("pip", [])
+    if isinstance(pip_deps, str):
+        pip_deps = [pip_deps] if pip_deps.strip() else []
+    if pip_deps:
+        import importlib as _imp
+
+        for dep in pip_deps:
+            pkg_name = dep.split(">=")[0].split("==")[0].split("<")[0].split(">")[0].strip()
+            pkg_import = pkg_name.replace("-", "_")
+            try:
+                _imp.import_module(pkg_import)
+            except ImportError:
+                warnings.append(f"pip 依赖 '{pkg_name}' 当前不可用（安装后会自动解决）")
+
+    # --- 输出结果 ---
+    table = Table(title="插件校验报告", show_header=True, header_style="bold cyan")
+    table.add_column("属性", style="bold")
+    table.add_column("值")
+    table.add_row("ID", manifest.id)
+    table.add_row("名称", manifest.name)
+    table.add_row("版本", manifest.version)
+    table.add_row("类型", manifest.plugin_type)
+    table.add_row("入口", manifest.entry)
+    table.add_row("权限级别", manifest.max_permission_level)
     if manifest.permissions:
-        typer.echo(f"   权限:    {', '.join(manifest.permissions)}")
+        table.add_row("权限", ", ".join(manifest.permissions))
     if manifest.depends:
-        typer.echo(f"   依赖:    {', '.join(manifest.depends)}")
+        table.add_row("依赖", ", ".join(manifest.depends))
+    if manifest.description:
+        table.add_row("描述", manifest.description)
+    if manifest.author:
+        table.add_row("作者", manifest.author)
+    console.print(table)
+
+    if warnings:
+        console.print()
+        for w in warnings:
+            console.print(f"  [yellow]⚠[/yellow] {w}")
+
+    if errors:
+        console.print()
+        for e in errors:
+            console.print(f"  [bold red]✗[/bold red] {e}")
+        console.print(f"\n[bold red]校验失败[/bold red]（{len(errors)} 个错误，{len(warnings)} 个警告）")
+        raise typer.Exit(1)
+
+    if warnings:
+        console.print(f"\n[bold green]✓ 校验通过[/bold green]（{len(warnings)} 个警告）")
+    else:
+        console.print(f"\n[bold green]✓ 校验通过，一切正常！[/bold green]")
 
 
 @app.command(name="run-mcp-module", hidden=True)

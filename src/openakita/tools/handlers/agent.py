@@ -635,32 +635,38 @@ class AgentToolHandler:
 
     # ─── send_agent_message ───
     async def _send_message(self, params: dict[str, Any]) -> str:
-        """Send a message to another active agent via mailbox."""
+        """Send a message to another active agent via orchestrator mailbox."""
         target = params.get("target", "").strip()
         message = params.get("message", "").strip()
         msg_type = params.get("message_type", "text")
         if not target or not message:
             return "send_agent_message requires 'target' and 'message' parameters."
 
-        pool = getattr(self.agent, "_agent_pool", None)
-        if not pool:
-            return "No active agents to send messages to."
+        orchestrator = self._get_orchestrator()
+        if orchestrator is None:
+            return "❌ Orchestrator not available — cannot deliver messages"
 
-        delivered = []
-        for inst_id, inst in pool.items():
-            name = getattr(inst, "name", inst_id)
-            if target == "*" or name == target or inst_id == target:
-                mailbox = getattr(inst, "_mailbox", None)
-                if mailbox is None:
-                    inst._mailbox = []
-                    mailbox = inst._mailbox
-                mailbox.append({
-                    "from": getattr(self.agent, "name", "orchestrator"),
-                    "type": msg_type,
-                    "message": message,
-                    "timestamp": time.time(),
-                })
+        msg_payload = {
+            "from": getattr(self.agent, "name", "orchestrator"),
+            "type": msg_type,
+            "message": message,
+            "timestamp": time.time(),
+        }
+
+        if target == "*":
+            pool = getattr(self.agent, "_agent_pool", None)
+            if not pool:
+                return "No active agents to send messages to."
+            delivered = []
+            for inst_id, inst in pool.items():
+                name = getattr(inst, "name", inst_id)
+                mailbox = orchestrator.get_mailbox(inst_id)
+                await mailbox.send(msg_payload)
                 delivered.append(name)
+        else:
+            mailbox = orchestrator.get_mailbox(target)
+            await mailbox.send(msg_payload)
+            delivered = [target]
 
         if not delivered:
             return f"No active agent found with name '{target}'."

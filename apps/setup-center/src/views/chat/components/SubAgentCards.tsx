@@ -168,12 +168,13 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                 </div>
               )}
               <div className="sacToolList">
-                {task.tools_executed.length === 0 && (
+                {(task.tools_executed ?? []).length === 0 && (
                   <div className="sacToolItem sacToolWaiting">…</div>
                 )}
-                {(isExpanded ? task.tools_executed : task.tools_executed.slice(-3)).map((tool, idx) => {
-                  const actualIdx = isExpanded || task.tools_executed.length <= 3 ? idx : task.tools_executed.length - 3 + idx;
-                  const isCurrent = actualIdx === task.tools_executed.length - 1 && (task.status === "running" || task.status === "starting");
+                {(isExpanded ? (task.tools_executed ?? []) : (task.tools_executed ?? []).slice(-3)).map((tool, idx) => {
+                  const tools = task.tools_executed ?? [];
+                  const actualIdx = isExpanded || tools.length <= 3 ? idx : tools.length - 3 + idx;
+                  const isCurrent = actualIdx === tools.length - 1 && (task.status === "running" || task.status === "starting");
                   return (
                     <div key={`${tool}-${actualIdx}`} className={`sacToolItem ${isCurrent ? "sacToolCurrent" : ""}`}>
                       <span className="sacToolArrow">{isCurrent ? "▸" : "▹"}</span>
@@ -182,9 +183,9 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                     </div>
                   );
                 })}
-                {!isExpanded && task.tools_executed.length > 3 && (
+                {!isExpanded && (task.tools_executed ?? []).length > 3 && (
                   <div className="sacToolItem" style={{ opacity: 0.5, fontSize: 11 }}>
-                    ... {task.tools_executed.length - 3} {t("chat.more", "更多")}
+                    ... {(task.tools_executed ?? []).length - 3} {t("chat.more", "更多")}
                   </div>
                 )}
               </div>

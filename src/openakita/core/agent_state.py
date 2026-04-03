@@ -61,7 +61,7 @@ class TaskStatus(Enum):
 
 # 合法的状态转换表
 _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.IDLE: {TaskStatus.COMPILING, TaskStatus.REASONING},
+    TaskStatus.IDLE: {TaskStatus.COMPILING, TaskStatus.REASONING, TaskStatus.CANCELLED},
     TaskStatus.COMPILING: {TaskStatus.REASONING, TaskStatus.CANCELLED, TaskStatus.FAILED},
     TaskStatus.REASONING: {
         TaskStatus.ACTING,
@@ -91,10 +91,10 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.REASONING,
         TaskStatus.CANCELLED,
     },
-    TaskStatus.MODEL_SWITCHING: {TaskStatus.REASONING, TaskStatus.FAILED},
+    TaskStatus.MODEL_SWITCHING: {TaskStatus.REASONING, TaskStatus.FAILED, TaskStatus.CANCELLED},
     TaskStatus.WAITING_USER: {TaskStatus.REASONING, TaskStatus.IDLE, TaskStatus.CANCELLED},
-    TaskStatus.COMPLETED: {TaskStatus.IDLE},
-    TaskStatus.FAILED: {TaskStatus.IDLE},
+    TaskStatus.COMPLETED: {TaskStatus.IDLE, TaskStatus.CANCELLED},
+    TaskStatus.FAILED: {TaskStatus.IDLE, TaskStatus.CANCELLED},
     TaskStatus.CANCELLED: {TaskStatus.IDLE},
 }
 
@@ -183,8 +183,14 @@ class TaskState:
         self.cancelled = True
         self.cancel_reason = reason
         _safe_event_set(self.cancel_event)
-        if self.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.IDLE):
-            self.status = TaskStatus.CANCELLED
+        if self.status != TaskStatus.CANCELLED:
+            try:
+                self.transition(TaskStatus.CANCELLED)
+            except ValueError:
+                logger.warning(
+                    f"[State] cancel() transition from {prev_status} not allowed, forcing CANCELLED"
+                )
+                self.status = TaskStatus.CANCELLED
         logger.info(
             f"[State] Task {self.task_id[:8]} cancel(): "
             f"prev_status={prev_status}, new_status={self.status.value}, "

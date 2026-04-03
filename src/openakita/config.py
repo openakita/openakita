@@ -362,6 +362,10 @@ class Settings(BaseSettings):
         default=False,
         description="多Agent模式 (Beta)，开启后支持多Agent协作、专用Agent、IM多Bot等",
     )
+    coordinator_mode_enabled: bool = Field(
+        default=False,
+        description="协调者模式 (CC-3)：启用后，role=coordinator 的 Agent 仅能委派/规划，不能直接执行文件/命令操作",
+    )
 
     # IM 多 Bot 配置（多Agent模式下支持同一通道类型多个Bot实例）
     im_bots: list[dict] = Field(default_factory=list)

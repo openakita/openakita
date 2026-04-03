@@ -28,6 +28,13 @@ from .agent_state import TaskState
 
 logger = logging.getLogger(__name__)
 
+
+class ToolSkipped(Exception):
+    """用户主动跳过当前工具执行（非错误，仅中断单步）。"""
+    def __init__(self, reason: str = "用户请求跳过"):
+        self.reason = reason
+        super().__init__(reason)
+
 # ========== 通用截断守卫常量 ==========
 MAX_TOOL_RESULT_CHARS = 16000  # 通用截断阈值 (~8000 tokens)
 OVERFLOW_MARKER = "[OUTPUT_TRUNCATED]"  # 截断标记，已含此标记的不二次截断
@@ -251,11 +258,12 @@ class ToolExecutor:
         tool_name: str,
     ) -> str:
         """
-        执行工具协程，同时监听 state.cancel_event 和硬超时。
-        如果用户取消或超时，取消工具协程并返回错误信息。
+        执行工具协程，同时监听 cancel_event / skip_event / 硬超时 三路竞速。
 
-        hard_timeout=0 表示不设硬超时（委派类工具由 Orchestrator 的进度感知
-        idle-timeout 负责，不需要 ToolExecutor 层的固定超时）。
+        - cancel_event 触发 → 返回中断错误（终止整个任务）
+        - skip_event 触发 → 抛出 ToolSkipped（仅跳过当前工具）
+        - 硬超时 → 返回超时错误
+        - hard_timeout=0 表示不设硬超时
         """
         tool_task = asyncio.ensure_future(coro)
 
@@ -263,18 +271,23 @@ class ToolExecutor:
         if state and hasattr(state, "cancel_event") and state.cancel_event:
             cancel_future = asyncio.ensure_future(state.cancel_event.wait())
 
+        skip_future: asyncio.Future | None = None
+        if state and hasattr(state, "skip_event") and state.skip_event:
+            skip_future = asyncio.ensure_future(state.skip_event.wait())
+
         hard_timeout = self._LONG_RUNNING_TOOLS.get(tool_name, self._TOOL_HARD_TIMEOUT)
 
         timeout_task: asyncio.Future | None = None
         if hard_timeout > 0:
             timeout_task = asyncio.ensure_future(asyncio.sleep(hard_timeout))
 
-
         wait_set: set[asyncio.Future] = {tool_task}
         if timeout_task is not None:
             wait_set.add(timeout_task)
         if cancel_future:
             wait_set.add(cancel_future)
+        if skip_future:
+            wait_set.add(skip_future)
 
         try:
             done, pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
@@ -282,7 +295,19 @@ class ToolExecutor:
             if tool_task in done:
                 return tool_task.result()
 
-            # 工具未完成 —— 是取消还是超时？
+            # skip_event 先于 cancel 检查（skip 只中断当前步骤，不终止任务）
+            if skip_future and skip_future in done:
+                tool_task.cancel()
+                try:
+                    await tool_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                skip_reason = getattr(state, "skip_reason", "") or "用户请求跳过"
+                if state and hasattr(state, "clear_skip"):
+                    state.clear_skip()
+                logger.info(f"[ToolExecutor] Tool '{tool_name}' skipped: {skip_reason}")
+                raise ToolSkipped(skip_reason)
+
             reason = ""
             if cancel_future and cancel_future in done:
                 reason = "用户请求取消任务"
@@ -307,12 +332,13 @@ class ToolExecutor:
                         await t
                     except (asyncio.CancelledError, Exception):
                         pass
-            if cancel_future and not cancel_future.done():
-                cancel_future.cancel()
-                try:
-                    await cancel_future
-                except (asyncio.CancelledError, Exception):
-                    pass
+            for f in [cancel_future, skip_future]:
+                if f and not f.done():
+                    f.cancel()
+                    try:
+                        await f
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
     async def execute_tool(
         self,
@@ -412,6 +438,9 @@ class ToolExecutor:
                 span.set_attribute("error_type", e.error_type.value)
                 span.set_attribute("error_message", e.message)
                 return e.to_tool_result()
+
+            except ToolSkipped:
+                raise
 
             except Exception as e:
                 # 将通用异常分类为结构化 ToolError
@@ -702,6 +731,26 @@ class ToolExecutor:
                     except Exception:
                         pass
 
+            except ToolSkipped as e:
+                skip_reason = e.reason or "用户请求跳过"
+                result_str = f"[用户跳过了此步骤: {skip_reason}]"
+                logger.info(f"[SkipStep] Tool {tool_name} skipped: {skip_reason}")
+                elapsed = time.time() - t0
+                if use_parallel_safe_monitor and task_monitor:
+                    task_monitor.record_tool_call(tool_name, tool_input, elapsed, True)
+                elif (not parallel_enabled) and task_monitor:
+                    task_monitor.end_tool_call(result_str, success=True)
+                return (
+                    idx,
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": result_str,
+                    },
+                    tool_name,
+                    None,
+                )
+
             except Exception as e:
                 success = False
                 tool_error = classify_error(e, tool_name=tool_name)
@@ -852,60 +901,23 @@ class ToolExecutor:
         return None
 
     def _check_permission(self, tool_name: str, tool_input: dict) -> str | None:
-        """Runtime permission check — enforce path-level restrictions.
+        """模式级权限检查 — Plan/Ask 模式下拦截不允许的工具。
 
-        In Plan/Ask mode, ALL tools are checked against the permission
-        ruleset. If the tool or target path is denied, returns a DeniedError
-        message for the LLM to learn from (same pattern as OpenCode).
+        使用 P2 统一权限入口 check_permission()。
 
         Returns:
-            Error message string if denied, or None if allowed.
+            中文拒绝消息字符串，或 None（允许执行）。
         """
         if self._current_mode == "agent":
             return None
 
-        from .permission import (
-            EDIT_TOOLS,
-            evaluate,
-            _tool_to_permission,
-            PLAN_MODE_RULESET,
-            ASK_MODE_RULESET,
-        )
+        from .permission import check_permission
 
-        if self._current_mode == "plan":
-            ruleset = PLAN_MODE_RULESET
-        elif self._current_mode == "ask":
-            ruleset = ASK_MODE_RULESET
-        else:
-            return None
-
-        permission = _tool_to_permission(tool_name)
-
-        if tool_name in EDIT_TOOLS:
-            file_path = tool_input.get("path", tool_input.get("file_path", ""))
-            if not file_path:
-                file_path = tool_input.get("target", "*")
-            pattern = str(file_path)
-        else:
-            pattern = "*"
-
-        rule = evaluate(permission, pattern, ruleset)
-        if rule.action == "deny":
+        decision = check_permission(tool_name, tool_input, mode=self._current_mode)
+        if decision.behavior == "deny":
             logger.warning(
-                f"[Permission] DENIED {tool_name} (perm={permission}) on {pattern!r} "
-                f"in {self._current_mode} mode"
+                f"[Permission] DENIED {tool_name} in {self._current_mode} mode: "
+                f"{decision.reason_detail}"
             )
-            if tool_name in EDIT_TOOLS:
-                hint = (
-                    "In Plan mode, you can only write to data/plans/*.md files. "
-                    "Use create_plan_file to create a plan document instead."
-                    if self._current_mode == "plan"
-                    else "Ask mode is read-only. No write operations are allowed."
-                )
-            else:
-                hint = f"Tool '{tool_name}' is not available in {self._current_mode} mode."
-            return (
-                f"Permission denied: cannot use {tool_name} "
-                f"in {self._current_mode} mode. {hint}"
-            )
+            return decision.reason
         return None

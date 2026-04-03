@@ -559,7 +559,7 @@ class TaskExecutor:
             result = await agent.execute_task_from_message(prompt)
             if isinstance(result, str):
                 return result
-            return result.data if result.success else result.error
+            return result.data if result.success else (result.error or "Unknown error")
         # 降级到普通 chat
         elif hasattr(agent, "chat"):
             return await agent.chat(prompt)

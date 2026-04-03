@@ -24,6 +24,7 @@ class PluginErrorCode(str, Enum):
     ZIP_BOMB = "ZIP_BOMB"
     ZIP_INVALID = "ZIP_INVALID"
     CONFIG_INVALID = "CONFIG_INVALID"
+    INVALID_ID = "INVALID_ID"
     MANAGER_UNAVAILABLE = "MANAGER_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -130,6 +131,12 @@ _MESSAGES: dict[PluginErrorCode, dict[str, str]] = {
         "en": "Invalid plugin configuration file",
         "guidance_zh": "重置配置或手动修复 config.json",
         "guidance_en": "Reset configuration or manually fix config.json",
+    },
+    PluginErrorCode.INVALID_ID: {
+        "zh": "无效的插件 ID",
+        "en": "Invalid plugin ID",
+        "guidance_zh": "插件 ID 只能包含小写字母、数字、连字符和下划线",
+        "guidance_en": "Plugin ID may only contain lowercase letters, digits, hyphens, and underscores",
     },
     PluginErrorCode.MANAGER_UNAVAILABLE: {
         "zh": "插件管理器暂不可用",

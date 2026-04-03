@@ -85,6 +85,8 @@ async def _retry_request(
                 raise
     if last_resp is not None:
         return last_resp
+    if last_exc is None:
+        raise RuntimeError("All retry attempts exhausted")
     raise last_exc  # type: ignore[misc]
 
 

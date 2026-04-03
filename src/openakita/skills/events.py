@@ -49,6 +49,19 @@ def register_on_change(callback: Callable[[str], None]) -> None:
         _on_change_callbacks.append(callback)
 
 
+def unregister_on_change(callback: Callable[[str], None]) -> bool:
+    """Remove a previously registered on-change callback.
+
+    Returns:
+        True if the callback was found and removed, False otherwise.
+    """
+    try:
+        _on_change_callbacks.remove(callback)
+        return True
+    except ValueError:
+        return False
+
+
 def notify_skills_changed(action: str | SkillEvent = SkillEvent.RELOAD) -> int:
     """Fire all registered callbacks to signal a skill-set mutation.
 

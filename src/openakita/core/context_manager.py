@@ -148,13 +148,19 @@ class ContextManager:
         elif isinstance(content, list):
             for item in content:
                 if isinstance(item, dict):
-                    text = item.get("text", "") or item.get("content", "")
-                    if isinstance(text, str) and text:
-                        tokens += self.estimate_tokens(text)
+                    block_type = item.get("type", "")
+                    if block_type in ("image", "image_url"):
+                        tokens += self._IMAGE_TOKEN_ESTIMATE
+                    elif block_type in ("video", "video_url"):
+                        tokens += self._VIDEO_TOKEN_ESTIMATE
                     else:
-                        tokens += self.estimate_tokens(
-                            json.dumps(item, ensure_ascii=False, default=str)
-                        )
+                        text = item.get("text", "") or item.get("content", "")
+                        if isinstance(text, str) and text:
+                            tokens += self.estimate_tokens(text)
+                        else:
+                            tokens += self.estimate_tokens(
+                                json.dumps(item, ensure_ascii=False, default=str)
+                            )
                 elif isinstance(item, str):
                     tokens += self.estimate_tokens(item)
         tokens += 10  # 每条消息的结构开销

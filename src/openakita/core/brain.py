@@ -80,12 +80,6 @@ class Brain:
     - 提供向后兼容的 Anthropic Message 格式接口
     """
 
-    # Compiler 熔断器 —— 类级共享，一个实例发现 compiler 坏了，全局立刻跳过
-    _compiler_fail_count: int = 0
-    _compiler_circuit_open: bool = False
-    _compiler_circuit_open_at: float = 0.0
-    _compiler_auth_failed: bool = False
-
     def __init__(
         self,
         api_key: str | None = None,
@@ -93,6 +87,12 @@ class Brain:
         model: str | None = None,
         max_tokens: int | None = None,
     ):
+        # Compiler 熔断器 —— 实例级，避免跨实例共享状态
+        self._compiler_fail_count: int = 0
+        self._compiler_circuit_open: bool = False
+        self._compiler_circuit_open_at: float = 0.0
+        self._compiler_auth_failed: bool = False
+
         # max_tokens=0 表示"使用合理默认值"：
         # - 对 OpenAI 兼容 API：使用端点配置值或兜底 16384（部分 API 如 NVIDIA NIM 默认极低）
         # - 对 Anthropic API：使用端点配置值或兜底 16384（该 API 强制要求此参数）
@@ -179,31 +179,31 @@ class Brain:
         """Check if the compiler client is usable (not circuit-broken)."""
         if not self._compiler_client:
             return False
-        if not Brain._compiler_circuit_open:
+        if not self._compiler_circuit_open:
             return True
         import time
-        elapsed = time.monotonic() - Brain._compiler_circuit_open_at
+        elapsed = time.monotonic() - self._compiler_circuit_open_at
         reset_s = (
             self._COMPILER_AUTH_CIRCUIT_RESET_S
-            if Brain._compiler_auth_failed
+            if self._compiler_auth_failed
             else self._COMPILER_CIRCUIT_RESET_S
         )
         if elapsed >= reset_s:
-            Brain._compiler_circuit_open = False
-            Brain._compiler_fail_count = 0
-            Brain._compiler_auth_failed = False
+            self._compiler_circuit_open = False
+            self._compiler_fail_count = 0
+            self._compiler_auth_failed = False
             logger.info("[Brain] Compiler circuit breaker reset, will retry compiler endpoint")
             return True
         return False
 
     def _compiler_on_success(self) -> None:
-        Brain._compiler_fail_count = 0
-        if Brain._compiler_circuit_open:
-            Brain._compiler_circuit_open = False
+        self._compiler_fail_count = 0
+        if self._compiler_circuit_open:
+            self._compiler_circuit_open = False
             logger.info("[Brain] Compiler circuit breaker closed (success)")
 
     def _compiler_on_failure(self, error_str: str = "") -> None:
-        Brain._compiler_fail_count += 1
+        self._compiler_fail_count += 1
 
         _is_auth = any(
             kw in error_str.lower()
@@ -215,9 +215,9 @@ class Brain:
 
         if _is_auth:
             import time
-            Brain._compiler_auth_failed = True
-            Brain._compiler_circuit_open = True
-            Brain._compiler_circuit_open_at = time.monotonic()
+            self._compiler_auth_failed = True
+            self._compiler_circuit_open = True
+            self._compiler_circuit_open_at = time.monotonic()
             logger.error(
                 f"[Brain] Compiler circuit breaker OPEN (auth failure), "
                 f"skipping compiler for {self._COMPILER_AUTH_CIRCUIT_RESET_S}s. "
@@ -226,15 +226,15 @@ class Brain:
             return
 
         if (
-            not Brain._compiler_circuit_open
-            and Brain._compiler_fail_count >= self._COMPILER_FAIL_THRESHOLD
+            not self._compiler_circuit_open
+            and self._compiler_fail_count >= self._COMPILER_FAIL_THRESHOLD
         ):
             import time
-            Brain._compiler_circuit_open = True
-            Brain._compiler_circuit_open_at = time.monotonic()
+            self._compiler_circuit_open = True
+            self._compiler_circuit_open_at = time.monotonic()
             logger.warning(
                 f"[Brain] Compiler circuit breaker OPEN after "
-                f"{Brain._compiler_fail_count} consecutive failures, "
+                f"{self._compiler_fail_count} consecutive failures, "
                 f"skipping compiler for {self._COMPILER_CIRCUIT_RESET_S}s"
             )
 
@@ -253,11 +253,11 @@ class Brain:
             else:
                 self._compiler_client = None
                 logger.info("Compiler endpoints cleared (none configured)")
-            # 重载配置后重置类级熔断器，允许用户修复 API key 后恢复
-            Brain._compiler_circuit_open = False
-            Brain._compiler_fail_count = 0
-            Brain._compiler_auth_failed = False
-            Brain._compiler_circuit_open_at = 0.0
+            # 重载配置后重置熔断器，允许用户修复 API key 后恢复
+            self._compiler_circuit_open = False
+            self._compiler_fail_count = 0
+            self._compiler_auth_failed = False
+            self._compiler_circuit_open_at = 0.0
             return True
         except Exception as e:
             logger.warning(f"Failed to reload compiler client: {e}")

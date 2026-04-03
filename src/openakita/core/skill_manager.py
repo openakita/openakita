@@ -99,8 +99,8 @@ class SkillManager:
                 if isinstance(al, list):
                     external_allowlist = {str(x).strip() for x in al if str(x).strip()}
             effective = self._loader.compute_effective_allowlist(external_allowlist)
-            from openakita.core.agent import _collect_preset_referenced_skills
-            agent_skills = _collect_preset_referenced_skills()
+            from openakita.skills.preset_utils import collect_preset_referenced_skills
+            agent_skills = collect_preset_referenced_skills()
             removed = self._loader.prune_external_by_allowlist(
                 effective, agent_referenced_skills=agent_skills,
             )
