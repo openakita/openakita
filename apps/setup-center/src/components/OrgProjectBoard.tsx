@@ -421,9 +421,19 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
         /* ── Stats row ── */
         .opb-stats-row {
-          display: flex; align-items: center; gap: 6px; padding: 6px 16px;
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 8px 12px; padding: 6px 16px; flex-wrap: wrap;
           border-bottom: 1px solid var(--line); flex-shrink: 0; font-size: 12px;
           background: color-mix(in srgb, var(--panel2, var(--card-bg)) 82%, transparent);
+        }
+        .opb-stats-summary {
+          flex: 1 1 360px; min-width: 0;
+          display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        }
+        .opb-stats-actions {
+          flex: 0 1 auto;
+          display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+          justify-content: flex-end;
         }
         .opb-stat-chip {
           display: inline-flex; align-items: center; gap: 4px;
@@ -431,7 +441,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           background: color-mix(in srgb, var(--bg-subtle) 78%, var(--card-bg) 22%);
         }
         .opb-progress-track {
-          flex: 1; height: 8px; border-radius: 999px;
+          flex: 1 1 140px; min-width: 120px; height: 8px; border-radius: 999px;
           background: color-mix(in srgb, var(--bg-subtle) 75%, var(--line) 25%);
           overflow: hidden; display: flex; margin: 0 4px;
           border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
@@ -519,6 +529,59 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         .opb-kanban-card:hover {
           border-color: color-mix(in srgb, var(--primary) 24%, var(--line));
           box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+        }
+        .opb-kanban-card__title {
+          font-size: 13px; font-weight: 600; color: var(--text);
+          line-height: 1.35; margin-bottom: 6px;
+          word-break: break-word;
+        }
+        .opb-kanban-card__footer {
+          display: flex; align-items: flex-start; justify-content: space-between;
+          gap: 8px; flex-wrap: wrap;
+        }
+        .opb-kanban-card__owner {
+          min-width: 0; flex: 1 1 96px;
+          display: flex; align-items: center; gap: 4px;
+        }
+        .opb-kanban-card__owner-label {
+          min-width: 0; font-size: 10px; color: var(--muted);
+          line-height: 1.35; word-break: break-word;
+        }
+        .opb-kanban-card__actions {
+          display: flex; gap: 4px; flex-wrap: wrap;
+          justify-content: flex-end; margin-left: auto;
+        }
+
+        @media (max-width: 900px) {
+          .opb-stats-actions {
+            width: 100%;
+            justify-content: flex-start;
+          }
+        }
+
+        @media (max-width: 720px) {
+          .opb-stats-row {
+            padding-inline: 12px;
+          }
+          .opb-stats-summary {
+            flex-basis: 100%;
+          }
+          .opb-progress-track {
+            flex-basis: 100%;
+            margin-inline: 0;
+          }
+          .opb-kanban {
+            padding-inline: 12px;
+          }
+          .opb-kanban-card__footer {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .opb-kanban-card__actions {
+            width: 100%;
+            margin-left: 0;
+            justify-content: flex-start;
+          }
         }
 
         /* ── Empty state ── */
@@ -660,53 +723,56 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       {/* ── Stats row ── */}
       {selectedProject && (
         <div className="opb-stats-row">
-          {projectStats.total > 0 ? (<>
-            <span className="opb-stat-chip">
-              共 <strong>{projectStats.total}</strong>
-            </span>
-            {projectStats.inProgress > 0 && (
-              <span className="opb-stat-chip" style={{ color: "#3b82f6" }}>
-                <span className="opb-status-dot" style={{ background: "#3b82f6", width: 6, height: 6 }} />
-                进行中 {projectStats.inProgress}
+          <div className="opb-stats-summary">
+            {projectStats.total > 0 ? (<>
+              <span className="opb-stat-chip">
+                共 <strong>{projectStats.total}</strong>
               </span>
-            )}
-            {projectStats.done > 0 && (
-              <span className="opb-stat-chip" style={{ color: "#22c55e" }}>
-                <span className="opb-status-dot" style={{ background: "#22c55e", width: 6, height: 6 }} />
-                已完成 {projectStats.done}
-              </span>
-            )}
-            {projectStats.blocked > 0 && (
-              <span className="opb-stat-chip" style={{ color: "#ef4444" }}>
-                <span className="opb-status-dot" style={{ background: "#ef4444", width: 6, height: 6 }} />
-                异常 {projectStats.blocked}
-              </span>
-            )}
+              {projectStats.inProgress > 0 && (
+                <span className="opb-stat-chip" style={{ color: "#3b82f6" }}>
+                  <span className="opb-status-dot" style={{ background: "#3b82f6", width: 6, height: 6 }} />
+                  进行中 {projectStats.inProgress}
+                </span>
+              )}
+              {projectStats.done > 0 && (
+                <span className="opb-stat-chip" style={{ color: "#22c55e" }}>
+                  <span className="opb-status-dot" style={{ background: "#22c55e", width: 6, height: 6 }} />
+                  已完成 {projectStats.done}
+                </span>
+              )}
+              {projectStats.blocked > 0 && (
+                <span className="opb-stat-chip" style={{ color: "#ef4444" }}>
+                  <span className="opb-status-dot" style={{ background: "#ef4444", width: 6, height: 6 }} />
+                  异常 {projectStats.blocked}
+                </span>
+              )}
 
-            <div className="opb-progress-track">
-              {projectStats.done > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
-              {projectStats.delivered > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
-              {projectStats.inProgress > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
-            </div>
-            <span style={{ fontSize: 11, fontWeight: 600, minWidth: 32, textAlign: "right" }}>{projectStats.pct}%</span>
-          </>) : (
-            <span style={{ color: "var(--muted)", fontSize: 12 }}>暂无任务</span>
-          )}
+              <div className="opb-progress-track">
+                {projectStats.done > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
+                {projectStats.delivered > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
+                {projectStats.inProgress > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, minWidth: 32, textAlign: "right" }}>{projectStats.pct}%</span>
+            </>) : (
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>暂无任务</span>
+            )}
+          </div>
 
-          <div style={{ flex: 1 }} />
-          <ToggleGroup type="single" variant="outline" value={viewTab}
-            onValueChange={v => { if (v) setViewTab(v as "gantt" | "kanban"); }}
-            className="h-8">
-            <ToggleGroupItem value="gantt" className={`text-xs px-3 h-7 ${viewTab === "gantt" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
-              任务列表
-            </ToggleGroupItem>
-            <ToggleGroupItem value="kanban" className={`text-xs px-3 h-7 ${viewTab === "kanban" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
-              看板
-            </ToggleGroupItem>
-          </ToggleGroup>
-          <Button size="sm" className="h-7 text-xs" onClick={() => setShowNewTask(true)}>
-            + 新任务
-          </Button>
+          <div className="opb-stats-actions">
+            <ToggleGroup type="single" variant="outline" value={viewTab}
+              onValueChange={v => { if (v) setViewTab(v as "gantt" | "kanban"); }}
+              className="h-8">
+              <ToggleGroupItem value="gantt" className={`text-xs px-3 h-7 ${viewTab === "gantt" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+                任务列表
+              </ToggleGroupItem>
+              <ToggleGroupItem value="kanban" className={`text-xs px-3 h-7 ${viewTab === "kanban" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+                看板
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <Button size="sm" className="h-7 text-xs" onClick={() => setShowNewTask(true)}>
+              + 新任务
+            </Button>
+          </div>
         </div>
       )}
 
@@ -1118,13 +1184,13 @@ function KanbanView({
                 const assignee = task.assignee_node_id ? nodeMap.get(task.assignee_node_id) : null;
                 return (
                   <div key={task.id} className="opb-kanban-card" onClick={() => onTaskClick(task)}>
-                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: "var(--text)" }}>{task.title}</div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <div className="opb-kanban-card__title">{task.title}</div>
+                    <div className="opb-kanban-card__footer">
+                      <div className="opb-kanban-card__owner">
                         <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={16} />
-                        <span style={{ fontSize: 10, color: "var(--muted)" }}>{assignee ? (assignee.role_title || assignee.id) : "未分配"}</span>
+                        <span className="opb-kanban-card__owner-label">{assignee ? (assignee.role_title || assignee.id) : "未分配"}</span>
                       </div>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
+                      <div className="opb-kanban-card__actions" onClick={e => e.stopPropagation()}>
                         {col.key === "todo" && (
                           <button data-slot="opb" className="opb-act opb-act--primary"
                             onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
