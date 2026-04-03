@@ -3,8 +3,9 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException, Request
+from typing import Literal
 
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,23 @@ def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:
             logger.info(f"[Agents API] Cleared _bot_default_agent on {cleared} sessions for {channel_name}")
     except Exception as e:
         logger.warning(f"[Agents API] Failed to invalidate bot agent sessions: {e}")
+
+
+def _invalidate_profile_agents(request: Request, profile_id: str) -> None:
+    """Drop pooled Agent instances for *profile_id* so edits apply next turn."""
+    for pool_attr in ("agent_pool", "orchestrator"):
+        obj = getattr(request.app.state, pool_attr, None)
+        if obj is None:
+            continue
+        pool = getattr(obj, "_pool", obj)
+        if hasattr(pool, "invalidate_profile"):
+            try:
+                pool.invalidate_profile(profile_id)
+            except Exception as e:
+                logger.warning(
+                    f"[Agents API] Failed to invalidate profile pool "
+                    f"({pool_attr}, profile={profile_id}): {e}"
+                )
 
 
 # ─── Pydantic models ─────────────────────────────────────────────────────
@@ -83,6 +101,9 @@ class ProfileCreateRequest(BaseModel):
     custom_prompt: str = Field("", max_length=5000)
     category: str = Field("", max_length=30)
     preferred_endpoint: str | None = Field(None, max_length=200)
+    identity_mode: Literal["shared", "custom"] = "shared"
+    memory_mode: Literal["shared", "isolated"] = "shared"
+    memory_inherit_global: bool = True
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -101,6 +122,9 @@ class ProfileUpdateRequest(BaseModel):
     custom_prompt: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=30)
     preferred_endpoint: str | None = Field(None, max_length=200)
+    identity_mode: Literal["shared", "custom"] | None = None
+    memory_mode: Literal["shared", "isolated"] | None = None
+    memory_inherit_global: bool | None = None
 
 
 class ProfileVisibilityRequest(BaseModel):
@@ -413,6 +437,9 @@ async def create_agent_profile(body: ProfileCreateRequest):
         color=body.color,
         category=body.category,
         preferred_endpoint=body.preferred_endpoint,
+        identity_mode=body.identity_mode,
+        memory_mode=body.memory_mode,
+        memory_inherit_global=body.memory_inherit_global,
         created_by="user",
     )
 
@@ -422,7 +449,7 @@ async def create_agent_profile(body: ProfileCreateRequest):
 
 
 @router.put("/api/agents/profiles/{profile_id}")
-async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest):
+async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, request: Request):
     """Update a custom agent profile (system profiles have restricted updates)."""
     from openakita.agents.profile import get_profile_store
     from openakita.config import settings
@@ -445,6 +472,7 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest):
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
+    _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Updated profile: {profile_id}")
     return {"status": "ok", "profile": updated.to_dict()}
 
@@ -473,7 +501,7 @@ async def delete_agent_profile(profile_id: str):
 
 
 @router.post("/api/agents/profiles/{profile_id}/reset")
-async def reset_agent_profile(profile_id: str):
+async def reset_agent_profile(profile_id: str, request: Request):
     """Reset a system agent profile to its factory defaults."""
     from openakita.agents.presets import get_preset_by_id
     from openakita.agents.profile import get_profile_store
@@ -501,6 +529,7 @@ async def reset_agent_profile(profile_id: str):
         store._cache[profile_id] = profile
         store._persist(profile)
 
+    _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Reset profile to defaults: {profile_id}")
     result = store.get(profile_id)
     return {"status": "ok", "profile": result.to_dict() if result else {}}
@@ -648,7 +677,7 @@ async def get_profile_memory_stats(profile_id: str):
 
 
 @router.delete("/api/agents/profiles/{profile_id}/data")
-async def delete_profile_data(profile_id: str):
+async def delete_profile_data(profile_id: str, request: Request):
     """Delete the profile-specific data directory (identity + memory)."""
     import shutil
 
@@ -663,8 +692,16 @@ async def delete_profile_data(profile_id: str):
     if profile_dir.is_dir():
         shutil.rmtree(profile_dir, ignore_errors=True)
 
-    store.update(profile_id, {"identity_mode": "shared", "memory_mode": "shared"})
+    store.update(
+        profile_id,
+        {
+            "identity_mode": "shared",
+            "memory_mode": "shared",
+            "memory_inherit_global": True,
+        },
+    )
 
+    _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Deleted profile data dir for {profile_id}")
     return {"status": "ok"}
 

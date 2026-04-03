@@ -146,6 +146,17 @@ class TestAgentProfile:
         p = AgentProfile.from_dict(data)
         assert p.preferred_endpoint is None
 
+    def test_isolation_fields_roundtrip(self):
+        original = _make_profile(
+            identity_mode="custom",
+            memory_mode="isolated",
+            memory_inherit_global=False,
+        )
+        restored = AgentProfile.from_dict(original.to_dict())
+        assert restored.identity_mode == "custom"
+        assert restored.memory_mode == "isolated"
+        assert restored.memory_inherit_global is False
+
 
 # ================================================================
 # ProfileStore Tests
@@ -200,6 +211,27 @@ class TestProfileStore:
         assert updated.preferred_endpoint == "my-endpoint"
         updated2 = store.update("test-agent", {"preferred_endpoint": None})
         assert updated2.preferred_endpoint is None
+
+    def test_update_isolation_fields_persist(self, store: ProfileStore, tmp_path: Path):
+        store.save(_make_profile())
+        updated = store.update(
+            "test-agent",
+            {
+                "identity_mode": "custom",
+                "memory_mode": "isolated",
+                "memory_inherit_global": False,
+            },
+        )
+        assert updated.identity_mode == "custom"
+        assert updated.memory_mode == "isolated"
+        assert updated.memory_inherit_global is False
+
+        reloaded_store = ProfileStore(tmp_path / "agents")
+        reloaded = reloaded_store.get("test-agent")
+        assert reloaded is not None
+        assert reloaded.identity_mode == "custom"
+        assert reloaded.memory_mode == "isolated"
+        assert reloaded.memory_inherit_global is False
 
     def test_update_system_preferred_endpoint_marks_customized(self, store: ProfileStore):
         sys_profile = _make_profile("sys", "System", agent_type=AgentType.SYSTEM)
@@ -523,7 +555,7 @@ class TestAgentInstancePool:
         profile = _make_profile("agent-a", "Agent A")
         agent = await pool.get_or_create("session-1", profile)
         assert agent is not None
-        mock_factory.create.assert_awaited_once_with(profile)
+        mock_factory.create.assert_awaited_once_with(profile, parent_brain=None)
 
     @pytest.mark.asyncio
     async def test_get_or_create_reuses_existing(self, pool, mock_factory):
@@ -613,6 +645,27 @@ class TestAgentInstancePool:
         pool._pool["s2::a1"] = _PoolEntry(MagicMock(), "a1", "s2")
         entries = pool.get_all_for_session("s1")
         assert len(entries) == 2
+
+    def test_invalidate_profile_removes_matching_entries(self, pool):
+        from openakita.agents.factory import _PoolEntry
+
+        agent_a1 = MagicMock()
+        agent_a1.shutdown = AsyncMock()
+        agent_a2 = MagicMock()
+        agent_a2.shutdown = AsyncMock()
+        agent_b = MagicMock()
+        agent_b.shutdown = AsyncMock()
+
+        pool._pool["s1::agent-a"] = _PoolEntry(agent_a1, "agent-a", "s1")
+        pool._pool["s2::agent-a"] = _PoolEntry(agent_a2, "agent-a", "s2")
+        pool._pool["s1::agent-b"] = _PoolEntry(agent_b, "agent-b", "s1")
+
+        removed = pool.invalidate_profile("agent-a")
+
+        assert removed == 2
+        assert "s1::agent-a" not in pool._pool
+        assert "s2::agent-a" not in pool._pool
+        assert "s1::agent-b" in pool._pool
 
 
 # ================================================================

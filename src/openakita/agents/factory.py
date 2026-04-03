@@ -472,6 +472,19 @@ class AgentInstancePool:
     def _make_key(session_id: str, profile_id: str) -> str:
         return f"{session_id}::{profile_id}"
 
+    @staticmethod
+    def _schedule_shutdown(agent: Any) -> None:
+        if not hasattr(agent, "shutdown"):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        try:
+            loop.create_task(agent.shutdown())
+        except Exception:
+            pass
+
     async def start(self) -> None:
         self._reaper_task = asyncio.create_task(self._reap_loop())
         logger.info("AgentInstancePool reaper started")
@@ -490,6 +503,31 @@ class AgentInstancePool:
         """全局技能变更通知 — 递增版本号使池中已有 Agent 在下次使用时重建。"""
         self._skills_version += 1
         logger.info(f"Pool skills version bumped to {self._skills_version}")
+
+    def invalidate_profile(self, profile_id: str) -> int:
+        """Drop all pooled Agent instances bound to *profile_id*."""
+        to_remove = [
+            key for key, entry in self._pool.items() if entry.profile_id == profile_id
+        ]
+        removed = 0
+        for key in to_remove:
+            entry = self._pool.pop(key, None)
+            if entry is None:
+                continue
+            removed += 1
+            self._schedule_shutdown(entry.agent)
+
+        stale_locks = [k for k in self._create_locks if k not in self._pool]
+        for key in stale_locks:
+            lock = self._create_locks[key]
+            if not lock.locked():
+                self._create_locks.pop(key, None)
+
+        if removed:
+            logger.info(
+                f"Pool invalidated profile={profile_id} across {removed} session(s)"
+            )
+        return removed
 
     async def get_or_create(
         self, session_id: str, profile: AgentProfile,
@@ -516,11 +554,7 @@ class AgentInstancePool:
                 f"recreating: session={session_id}, profile={profile.id}"
             )
             self._pool.pop(key, None)
-            try:
-                if hasattr(entry.agent, "shutdown"):
-                    asyncio.ensure_future(entry.agent.shutdown())
-            except Exception:
-                pass
+            self._schedule_shutdown(entry.agent)
 
         if key not in self._create_locks:
             self._create_locks[key] = asyncio.Lock()
@@ -667,8 +701,7 @@ class AgentInstancePool:
                 f"idle={entry.idle_seconds:.0f}s"
             )
             try:
-                if hasattr(entry.agent, 'shutdown'):
-                    asyncio.ensure_future(entry.agent.shutdown())
+                self._schedule_shutdown(entry.agent)
             except Exception:
                 pass
 
