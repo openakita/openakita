@@ -3,7 +3,7 @@
  * Full-screen layout with project selector, timeline progress, and task modals.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Pencil, X } from "lucide-react";
+import { Check, CornerUpLeft, Pencil, X } from "lucide-react";
 
 import { safeFetch } from "../providers";
 import { OrgAvatar } from "./OrgAvatars";
@@ -19,7 +19,7 @@ import {
 } from "./ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
 import { Button } from "./ui/button";
-import { Card, CardContent } from "./ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Label } from "./ui/label";
@@ -53,6 +53,12 @@ interface Project {
   tasks: ProjectTask[];
   created_at: string;
   updated_at: string;
+}
+
+interface PendingTaskDelete {
+  projectId: string;
+  taskId: string;
+  taskTitle: string;
 }
 
 interface OrgProjectBoardProps {
@@ -102,6 +108,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const [subtasksExpanded, setSubtasksExpanded] = useState(true);
   const [viewTab, setViewTab] = useState<"gantt" | "kanban">("gantt");
   const [projectPendingDelete, setProjectPendingDelete] = useState<Project | null>(null);
+  const [taskPendingDelete, setTaskPendingDelete] = useState<PendingTaskDelete | null>(null);
   const [projectStripWidth, setProjectStripWidth] = useState<number | null>(null);
   const [projectScrollbarSize, setProjectScrollbarSize] = useState(0);
   const projectRailRef = useRef<HTMLDivElement | null>(null);
@@ -267,6 +274,14 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
     } catch { /* ignore */ }
   };
 
+  const requestTaskDelete = (projectId: string, task: ProjectTask) => {
+    setTaskPendingDelete({
+      projectId,
+      taskId: task.id,
+      taskTitle: task.title || task.id,
+    });
+  };
+
   const dispatchTask = async (projectId: string, taskId: string) => {
     setDispatchingTaskId(taskId);
     try {
@@ -303,15 +318,16 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       <style>{`
         .opb-root {
           height: 100%; display: flex; flex-direction: column;
-          overflow: hidden; background: var(--bg-app);
+          overflow: hidden; background: var(--panel, var(--bg-app));
           font-size: 13px; color: var(--text);
+          font-family: inherit; line-height: 1.45; letter-spacing: normal;
         }
 
         /* ── Header ── */
         .opb-project-rail {
           display: flex; align-items: stretch; gap: 10px;
           padding: 12px 16px; border-bottom: 1px solid var(--line);
-          flex-shrink: 0;
+          flex-shrink: 0; background: var(--panel2, var(--card-bg));
         }
         .opb-project-strip {
           min-width: 0; overflow-x: auto; scrollbar-width: thin;
@@ -324,26 +340,27 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           min-width: 220px; max-width: 260px; cursor: pointer;
           min-height: 92px; height: 100%;
           border: 1px solid var(--line); background: var(--card-bg, var(--bg-app));
-          transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+          transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
           position: relative; overflow: hidden;
-          flex: 0 0 auto;
+          flex: 0 0 auto; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
         .opb-project-card:hover {
-          border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
-          box-shadow: 0 4px 14px rgba(59,130,246,0.08);
-          transform: translateY(-1px);
+          border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
+          background: color-mix(in srgb, var(--card-bg) 96%, var(--primary) 4%);
+          box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
         }
         .opb-project-card--selected {
           border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
-          box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent), 0 6px 18px rgba(59,130,246,0.12);
+          background: color-mix(in srgb, var(--card-bg) 93%, var(--primary) 7%);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent), 0 1px 3px rgba(37, 99, 235, 0.08);
         }
         .opb-project-card__title {
-          font-size: 13px; font-weight: 600; color: var(--text);
+          font-size: 15px; font-weight: 600; color: var(--text);
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .opb-project-card__desc {
-          font-size: 11px; color: var(--muted);
-          line-height: 1.4;
+          font-size: 12px; color: var(--muted);
+          line-height: 1.45;
           display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
         }
         .opb-project-card__meta {
@@ -363,15 +380,14 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         .opb-project-card--selected .opb-project-card__actions {
           opacity: 1; pointer-events: auto; transform: scale(1);
         }
-        .opb-project-card__delete {
-        }
         .opb-project-add-card {
           min-width: 132px; max-width: 132px; cursor: pointer;
           min-height: 92px; height: 100%;
-          border: 1px dashed var(--line); background: var(--bg-subtle, rgba(100,116,139,0.04));
+          border: 1px dashed color-mix(in srgb, var(--line) 90%, transparent);
+          background: color-mix(in srgb, var(--card-bg) 70%, var(--bg-subtle) 30%);
           color: var(--muted);
           transition: border-color .15s ease, color .15s ease, background .15s ease;
-          flex: 0 0 auto;
+          flex: 0 0 auto; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
         }
         .opb-project-add-card:hover {
           border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
@@ -387,18 +403,20 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         .opb-stats-row {
           display: flex; align-items: center; gap: 6px; padding: 6px 16px;
           border-bottom: 1px solid var(--line); flex-shrink: 0; font-size: 12px;
+          background: color-mix(in srgb, var(--panel2, var(--card-bg)) 82%, transparent);
         }
         .opb-stat-chip {
           display: inline-flex; align-items: center; gap: 4px;
           padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500;
-          background: var(--bg-subtle, rgba(100,116,139,0.08));
+          background: color-mix(in srgb, var(--bg-subtle) 78%, var(--card-bg) 22%);
         }
         .opb-progress-track {
-          flex: 1; height: 6px; border-radius: 3px;
-          background: var(--line, rgba(51,65,85,0.2));
+          flex: 1; height: 8px; border-radius: 999px;
+          background: color-mix(in srgb, var(--bg-subtle) 75%, var(--line) 25%);
           overflow: hidden; display: flex; margin: 0 4px;
+          border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
         }
-        .opb-progress-fill { height: 100%; }
+        .opb-progress-fill { height: 100%; border-radius: 999px; }
 
         /* ── Status badges ── */
         .opb-status-dot {
@@ -407,7 +425,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         }
         .opb-status-badge {
           display: inline-flex; align-items: center; gap: 4px;
-          padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500;
+          padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
           white-space: nowrap;
         }
 
@@ -416,7 +434,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           display: inline-flex; align-items: center; gap: 3px;
           padding: 2px 8px; border: none; border-radius: 4px;
           font-size: 10px; cursor: pointer; font-weight: 500;
-          background: transparent; color: var(--muted);
+          background: transparent; color: var(--muted); font-family: inherit;
         }
         .opb-act:hover { background: var(--bg-subtle, rgba(100,116,139,0.1)); }
         .opb-act--primary { background: #3b82f6; color: #fff; }
@@ -431,24 +449,34 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         .opb-act--ghost:hover { background: rgba(59,130,246,0.2); }
 
         /* ── Gantt ── */
-        .opb-gantt { flex: 1; overflow: auto; padding: 0; }
+        .opb-gantt {
+          flex: 1; overflow: auto; padding: 12px 16px 16px;
+          background: color-mix(in srgb, var(--panel) 88%, var(--bg-app) 12%);
+        }
         .opb-gantt-row {
           display: flex; flex-direction: column; gap: 6px;
-          padding: 10px 16px; border-bottom: 1px solid var(--line, rgba(51,65,85,0.1));
-          cursor: pointer;
+          padding: 12px 14px; cursor: pointer; margin-bottom: 10px;
+          border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+          border-radius: 14px; background: var(--card-bg);
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
-        .opb-gantt-row:hover { background: rgba(59,130,246,0.04); }
+        .opb-gantt-row:hover {
+          background: color-mix(in srgb, var(--card-bg) 92%, var(--primary) 8%);
+          border-color: color-mix(in srgb, var(--primary) 18%, var(--line));
+        }
 
         /* ── Kanban ── */
         .opb-kanban {
           flex: 1; display: flex; gap: 10px; padding: 12px 16px;
           overflow-x: auto; overflow-y: hidden;
+          background: color-mix(in srgb, var(--panel) 88%, var(--bg-app) 12%);
         }
         .opb-kanban-col {
           flex: 1 1 170px; min-width: 170px; max-width: 260px;
           display: flex; flex-direction: column;
-          background: var(--bg-subtle, rgba(100,116,139,0.06));
-          border-radius: 10px; overflow: hidden;
+          background: color-mix(in srgb, var(--card-bg) 65%, var(--bg-subtle) 35%);
+          border-radius: 14px; overflow: hidden;
+          border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
         }
         .opb-kanban-col-header {
           padding: 8px 10px; display: flex; align-items: center; gap: 6px;
@@ -464,12 +492,13 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         }
         .opb-kanban-card {
           padding: 8px 10px; border-radius: 8px;
-          background: var(--bg-app); border: 1px solid var(--line, rgba(100,116,139,0.15));
+          background: var(--card-bg); border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
           cursor: pointer;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
         .opb-kanban-card:hover {
-          border-color: #93c5fd;
-          box-shadow: 0 1px 4px rgba(59,130,246,0.1);
+          border-color: color-mix(in srgb, var(--primary) 24%, var(--line));
+          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
         }
 
         /* ── Empty state ── */
@@ -589,10 +618,6 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       {/* ── Stats row ── */}
       {selectedProject && (
         <div className="opb-stats-row">
-          <Badge variant="secondary" className="text-[10px] font-normal gap-1">
-            {PROJECT_STATUS_LABEL[selectedProject.status] || selectedProject.status}
-          </Badge>
-
           {projectStats.total > 0 ? (<>
             <span className="opb-stat-chip">
               共 <strong>{projectStats.total}</strong>
@@ -652,7 +677,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             onTaskClick={openTaskDetail}
             onStatusChange={(tid, st) => updateTaskStatus(selectedProject.id, tid, st)}
             onDispatch={(tid) => dispatchTask(selectedProject.id, tid)}
-            onDelete={(tid) => deleteTask(selectedProject.id, tid)}
+            onDelete={(task) => requestTaskDelete(selectedProject.id, task)}
             dispatchingTaskId={dispatchingTaskId}
           />
         ) : (
@@ -662,7 +687,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             onTaskClick={openTaskDetail}
             onStatusChange={(tid, st) => updateTaskStatus(selectedProject.id, tid, st)}
             onDispatch={(tid) => dispatchTask(selectedProject.id, tid)}
-            onDelete={(tid) => deleteTask(selectedProject.id, tid)}
+            onDelete={(task) => requestTaskDelete(selectedProject.id, task)}
             dispatchingTaskId={dispatchingTaskId}
           />
         )
@@ -796,6 +821,31 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={!!taskPendingDelete} onOpenChange={(open) => { if (!open) setTaskPendingDelete(null); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除任务？</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-wrap">
+              {taskPendingDelete ? `确定删除任务「${taskPendingDelete.taskTitle}」？\n此操作不可恢复。` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (taskPendingDelete) {
+                  deleteTask(taskPendingDelete.projectId, taskPendingDelete.taskId);
+                }
+                setTaskPendingDelete(null);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* ── Task Detail Panel ── */}
       {selectedTask && (
         <div className="opb-detail-overlay" onClick={closeTaskDetail}>
@@ -835,7 +885,7 @@ function GanttView({
   onTaskClick: (t: ProjectTask) => void;
   onStatusChange: (tid: string, status: string) => void;
   onDispatch: (tid: string) => void;
-  onDelete: (tid: string) => void;
+  onDelete: (task: ProjectTask) => void;
   dispatchingTaskId: string | null;
 }) {
   const sorted = useMemo(() =>
@@ -867,16 +917,6 @@ function GanttView({
     const days = Math.max(3, Math.ceil((latest - earliest) / 86400000));
     return { start: new Date(earliest), end: new Date(latest), days };
   }, [tasks]);
-
-  const fmtDay = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
-  const dayMarkers = useMemo(() => {
-    const markers: Date[] = [];
-    const step = Math.max(1, Math.floor(timeRange.days / 8));
-    for (let i = 0; i <= timeRange.days; i += step) {
-      markers.push(new Date(timeRange.start.getTime() + i * 86400000));
-    }
-    return markers;
-  }, [timeRange]);
 
   const getBarStyle = (task: ProjectTask) => {
     const rangeMs = timeRange.end.getTime() - timeRange.start.getTime();
@@ -919,7 +959,7 @@ function GanttView({
                     </div>
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 1 }}>
                       {assignee ? (assignee.role_title || assignee.id) : "未分配"}
-                      <span style={{ marginLeft: 6, fontFamily: "monospace", opacity: 0.7 }}>#{task.id.slice(0, 8)}</span>
+                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, opacity: 0.68 }}>#{task.id.slice(0, 8)}</span>
                     </div>
                   </div>
                   <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
@@ -931,14 +971,25 @@ function GanttView({
                         </button>
                       )}
                       {task.status === "in_progress" && (<>
-                        <button data-slot="opb" className="opb-act opb-act--danger"
-                          onClick={() => onStatusChange(task.id, "blocked")} title="中止">中止</button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => onStatusChange(task.id, "blocked")}
+                          title="中止"
+                        >
+                          中止
+                        </Button>
                       </>)}
                       {task.status === "delivered" && (<>
-                        <button data-slot="opb" className="opb-act opb-act--success"
-                          onClick={() => onStatusChange(task.id, "accepted")}>✓ 验收</button>
-                        <button data-slot="opb" className="opb-act opb-act--danger-fill"
-                          onClick={() => onStatusChange(task.id, "rejected")}>✗ 打回</button>
+                        <Button size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")}>
+                          <Check />
+                          验收
+                        </Button>
+                        <Button variant="destructive" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "rejected")}>
+                          <CornerUpLeft />
+                          打回
+                        </Button>
                       </>)}
                       {(task.status === "rejected" || task.status === "blocked") && (
                         <button data-slot="opb" className="opb-act opb-act--ghost"
@@ -947,7 +998,7 @@ function GanttView({
                         </button>
                       )}
                       <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}
+                        onClick={() => onDelete(task)}
                         title="删除任务">删除</Button>
                     </div>
                   </div>
@@ -957,22 +1008,32 @@ function GanttView({
                     {task.description}
                   </div>
                 )}
-                <div style={{ position: "relative", height: 16, paddingLeft: 32 }}>
-                  <div style={{ position: "relative", height: "100%", background: "var(--line, rgba(51,65,85,0.12)", borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ position: "absolute", inset: 0, display: "flex", justifyContent: "space-between", pointerEvents: "none" }}>
-                      {dayMarkers.map((_, i) => (
-                        <div key={i} style={{ width: 1, height: "100%", background: "rgba(51,65,85,0.08)" }} />
-                      ))}
-                    </div>
+                <div style={{ position: "relative", height: 12, paddingLeft: 32, marginTop: 2 }}>
+                  <div style={{
+                    position: "relative",
+                    height: "100%",
+                    background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                    borderRadius: 999,
+                    overflow: "hidden",
+                    border: "1px solid color-mix(in srgb, var(--line) 82%, transparent)",
+                  }}>
                     <div style={{
-                      position: "absolute", top: 2, bottom: 2,
-                      left: barStyle.left, width: barStyle.width,
-                      borderRadius: 3, background: meta.color + "30",
-                      border: `1px solid ${meta.color}40`,
+                      position: "absolute",
+                      top: 1,
+                      bottom: 1,
+                      left: barStyle.left,
+                      width: barStyle.width,
+                      borderRadius: 999,
+                      background: `linear-gradient(90deg, ${meta.color}33, ${meta.color}20)`,
+                      border: `1px solid ${meta.color}35`,
                     }}>
                       <div style={{
-                        position: "absolute", left: 0, top: 0, bottom: 0,
-                        width: `${pct}%`, background: meta.color, opacity: 0.6, borderRadius: 2,
+                        position: "absolute", left: 1, top: 1, bottom: 1,
+                        width: `calc(${pct}% - 2px)`,
+                        minWidth: pct > 0 ? 6 : 0,
+                        background: `linear-gradient(90deg, ${meta.color}, ${meta.color}cc)`,
+                        borderRadius: 999,
+                        boxShadow: `0 0 0 1px ${meta.color}22 inset`,
                       }} />
                     </div>
                   </div>
@@ -996,7 +1057,7 @@ function KanbanView({
   onTaskClick: (t: ProjectTask) => void;
   onStatusChange: (tid: string, status: string) => void;
   onDispatch: (tid: string) => void;
-  onDelete: (tid: string) => void;
+  onDelete: (task: ProjectTask) => void;
   dispatchingTaskId: string | null;
 }) {
   return (
@@ -1015,7 +1076,7 @@ function KanbanView({
                 const assignee = task.assignee_node_id ? nodeMap.get(task.assignee_node_id) : null;
                 return (
                   <div key={task.id} className="opb-kanban-card" onClick={() => onTaskClick(task)}>
-                    <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 12 }}>{task.title}</div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: "var(--text)" }}>{task.title}</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={16} />
@@ -1029,14 +1090,24 @@ function KanbanView({
                           </button>
                         )}
                         {col.key === "in_progress" && (<>
-                          <button data-slot="opb" className="opb-act opb-act--danger"
-                            onClick={() => onStatusChange(task.id, "blocked")}>中止</button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => onStatusChange(task.id, "blocked")}
+                          >
+                            中止
+                          </Button>
                         </>)}
                         {col.key === "delivered" && (<>
-                          <button data-slot="opb" className="opb-act opb-act--success"
-                            onClick={() => onStatusChange(task.id, "accepted")}>✓</button>
-                          <button data-slot="opb" className="opb-act opb-act--danger-fill"
-                            onClick={() => onStatusChange(task.id, "rejected")}>✗</button>
+                          <Button size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")} title="验收">
+                            <Check />
+                            验收
+                          </Button>
+                          <Button variant="destructive" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "rejected")} title="打回">
+                            <CornerUpLeft />
+                            打回
+                          </Button>
                         </>)}
                         {(col.key === "rejected" || col.key === "blocked") && (
                           <button data-slot="opb" className="opb-act opb-act--ghost"
@@ -1045,12 +1116,24 @@ function KanbanView({
                           </button>
                         )}
                         <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}>删除</Button>
+                          onClick={() => onDelete(task)}>删除</Button>
                       </div>
                     </div>
                     {(task.progress_pct ?? 0) > 0 && (task.progress_pct ?? 0) < 100 && (
-                      <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
-                        <div style={{ height: "100%", borderRadius: 2, background: col.color, width: `${task.progress_pct}%` }} />
+                      <div style={{
+                        marginTop: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                        overflow: "hidden",
+                        border: "1px solid color-mix(in srgb, var(--line) 82%, transparent)",
+                      }}>
+                        <div style={{
+                          height: "100%",
+                          borderRadius: 999,
+                          background: `linear-gradient(90deg, ${col.color}, ${col.color}cc)`,
+                          width: `${task.progress_pct}%`,
+                        }} />
                       </div>
                     )}
                   </div>
@@ -1078,121 +1161,183 @@ function TaskDetailContent({
   const delegatedBy = task.delegated_by ? nodeMap.get(task.delegated_by) : null;
   const fmt = (s: string | null | undefined) => s ? new Date(s).toLocaleString("zh-CN") : "-";
   const meta = STATUS_META[task.status] || { label: task.status, color: "#64748b" };
+  const progress = Math.min(100, Math.max(0, task.progress_pct ?? 0));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
+    <div className="flex flex-col gap-3 text-xs">
       {(task.ancestors?.length ?? 0) > 0 && (
-        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+        <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+          <span>父任务:</span>
           {(task.ancestors || []).map((a: any, i: number) => (
-            <span key={a.id}>
-              {i > 0 && " / "}
-              <button data-slot="opb" type="button" onClick={() => onAncestorClick(a)}
-                style={{ background: "none", border: "none", color: "var(--primary)", cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+            <span key={a.id} className="inline-flex items-center gap-1">
+              {i > 0 && <span className="text-muted-foreground/60">/</span>}
+              <Button variant="link" size="xs" className="h-auto px-0 text-xs text-primary" onClick={() => onAncestorClick(a)}>
                 {a.title || a.id}
-              </button>
+              </Button>
             </span>
           ))}
         </div>
       )}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "monospace" }}>#{task.id}</span>
-        <span className="opb-status-badge" style={{ background: meta.color + "18", color: meta.color }}>
-          <span className="opb-status-dot" style={{ background: meta.color }} />
-          {meta.label}
-        </span>
-      </div>
+      <Card className="gap-0 py-0">
+        <CardHeader className="gap-3 px-4 pt-4 pb-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="font-normal text-[10px] text-muted-foreground">
+              #{task.id}
+            </Badge>
+            <Badge variant="secondary" className="gap-1 border-0" style={{ background: meta.color + "18", color: meta.color }}>
+              <span className="opb-status-dot" style={{ background: meta.color }} />
+              {meta.label}
+            </Badge>
+          </div>
+          <CardTitle className="text-xl leading-tight">{task.title}</CardTitle>
+          {task.description ? (
+            <CardDescription className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground">
+              {task.description}
+            </CardDescription>
+          ) : null}
+        </CardHeader>
+        <CardContent className="space-y-4 px-4 py-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">进度</span>
+              <span className="font-semibold">{progress}%</span>
+            </div>
+            <div
+              className="h-2.5 overflow-hidden rounded-full border"
+              style={{
+                background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                borderColor: "color-mix(in srgb, var(--line) 82%, transparent)",
+              }}
+            >
+              <div
+                className="h-full rounded-full transition-[width]"
+                style={{
+                  width: `${progress}%`,
+                  background: `linear-gradient(90deg, ${meta.color}, ${meta.color}cc)`,
+                }}
+              />
+            </div>
+          </div>
 
-      <div>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{task.title}</div>
-        {task.description && <div style={{ color: "var(--muted)", fontSize: 11, whiteSpace: "pre-wrap" }}>{task.description}</div>}
-      </div>
-
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
-          <span>进度</span><span style={{ fontWeight: 600 }}>{task.progress_pct ?? 0}%</span>
-        </div>
-        <div style={{ height: 6, borderRadius: 3, background: "var(--line)", overflow: "hidden" }}>
-          <div style={{ height: "100%", borderRadius: 3, background: meta.color, width: `${Math.min(100, task.progress_pct ?? 0)}%`, transition: "width 0.3s" }} />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-        {assignee && <div><span style={{ color: "var(--muted)" }}>执行人: </span><span>{assignee.role_title || assignee.id}</span></div>}
-        {delegatedBy && <div><span style={{ color: "var(--muted)" }}>委派者: </span><span>{delegatedBy.role_title || delegatedBy.id}</span></div>}
-        <div><span style={{ color: "var(--muted)" }}>创建时间: </span><span>{fmt(task.created_at)}</span></div>
-      </div>
+          <div className="grid gap-2 text-xs sm:grid-cols-2">
+            {assignee && (
+              <div className="rounded-lg border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">执行人</div>
+                <div className="mt-1 font-medium">{assignee.role_title || assignee.id}</div>
+              </div>
+            )}
+            {delegatedBy && (
+              <div className="rounded-lg border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">委派者</div>
+                <div className="mt-1 font-medium">{delegatedBy.role_title || delegatedBy.id}</div>
+              </div>
+            )}
+            <div className="rounded-lg border px-3 py-2 sm:col-span-2">
+              <div className="text-[11px] text-muted-foreground">创建时间</div>
+              <div className="mt-1 font-medium">{fmt(task.created_at)}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {(task.plan_steps?.length ?? 0) > 0 && (
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>计划步骤</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-4 pt-4 pb-0">
+            <CardTitle className="text-base">计划步骤</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 px-4 py-4">
             {(task.plan_steps || []).map((s: any, i: number) => {
               const st = s.status || "pending";
-              const icon = st === "completed" ? "✓" : st === "in_progress" ? "→" : "○";
-              const c = st === "completed" ? "#22c55e" : st === "in_progress" ? "#3b82f6" : "var(--muted)";
+              const label = st === "completed" ? "已完成" : st === "in_progress" ? "进行中" : "待处理";
+              const c = st === "completed" ? "#22c55e" : st === "in_progress" ? "#3b82f6" : "#94a3b8";
               return (
-                <div key={s.id || i} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11 }}>
-                  <span style={{ color: c, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
-                  <span>{s.description || s.title || `步骤 ${i + 1}`}</span>
+                <div key={s.id || i} className="flex items-start gap-3 rounded-lg border px-3 py-2">
+                  <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c }} />
+                  <div className="min-w-0 flex-1 text-sm leading-5">{s.description || s.title || `步骤 ${i + 1}`}</div>
+                  <Badge variant="outline" className="text-[10px]" style={{ color: c }}>
+                    {label}
+                  </Badge>
                 </div>
               );
             })}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {(task.subtasks?.length ?? 0) > 0 && (
-        <div>
-          <button data-slot="opb" type="button" onClick={() => setSubtasksExpanded(!subtasksExpanded)}
-            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text)", padding: 0 }}>
-            {subtasksExpanded ? "▼" : "▶"} 子任务 ({task.subtasks.length})
-          </button>
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-4 pt-4 pb-0">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base">子任务</CardTitle>
+              <Button variant="ghost" size="xs" className="text-xs text-muted-foreground" onClick={() => setSubtasksExpanded(!subtasksExpanded)}>
+                {subtasksExpanded ? "收起" : "展开"} {task.subtasks.length}
+              </Button>
+            </div>
+          </CardHeader>
           {subtasksExpanded && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <CardContent className="space-y-2 px-4 py-4">
               {(task.subtasks || []).map((st: any) => {
                 const sm = STATUS_META[st.status] || { label: st.status, color: "#64748b" };
+                const subProgress = Math.min(100, Math.max(0, st.progress_pct ?? 0));
                 return (
-                  <div key={st.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, rgba(30,41,59,0.3))" }}>
-                    <div style={{ fontWeight: 500, marginBottom: 4 }}>{st.title}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10 }}>
-                      <span className="opb-status-badge" style={{ background: sm.color + "18", color: sm.color, fontSize: 10, padding: "1px 6px" }}>
+                  <div key={st.id} className="space-y-2 rounded-lg border px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 text-sm font-medium">{st.title}</div>
+                      <Badge variant="secondary" style={{ background: sm.color + "18", color: sm.color }}>
                         {sm.label}
-                      </span>
-                      <span style={{ color: "var(--muted)" }}>{(st.progress_pct ?? 0)}%</span>
+                      </Badge>
                     </div>
-                    {(st.progress_pct ?? 0) > 0 && (st.progress_pct ?? 0) < 100 && (
-                      <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
-                        <div style={{ height: "100%", borderRadius: 2, background: sm.color, width: `${st.progress_pct}%` }} />
-                      </div>
-                    )}
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>进度</span>
+                      <span>{subProgress}%</span>
+                    </div>
+                    <div
+                      className="h-2 overflow-hidden rounded-full border"
+                      style={{
+                        background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                        borderColor: "color-mix(in srgb, var(--line) 82%, transparent)",
+                      }}
+                    >
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${subProgress}%`,
+                          background: `linear-gradient(90deg, ${sm.color}, ${sm.color}cc)`,
+                        }}
+                      />
+                    </div>
                   </div>
                 );
               })}
-            </div>
+            </CardContent>
           )}
-        </div>
+        </Card>
       )}
 
-      <div>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>执行时间线</div>
+      <Card className="gap-0 py-0">
+        <CardHeader className="px-4 pt-4 pb-0">
+          <CardTitle className="text-base">执行时间线</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 py-4">
         {timeline.length === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无事件</div>
+          <div className="text-xs text-muted-foreground">暂无事件</div>
         ) : (
-          <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div className="flex max-h-[240px] flex-col gap-2 overflow-y-auto pr-1">
             {timeline.map((ev: any, i: number) => (
-              <div key={i} style={{ padding: "4px 8px", borderRadius: 4, background: "var(--bg-subtle, rgba(30,41,59,0.3))", fontSize: 11 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 500 }}>{ev.event || "event"}</span>
-                  <span style={{ color: "var(--muted)", fontSize: 10 }}>{ev.ts ? new Date(ev.ts).toLocaleString("zh-CN") : ""}</span>
+              <div key={i} className="rounded-lg border px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">{ev.event || "event"}</div>
+                  <div className="text-[11px] text-muted-foreground">{ev.ts ? new Date(ev.ts).toLocaleString("zh-CN") : ""}</div>
                 </div>
-                {ev.actor && <div style={{ fontSize: 10, color: "var(--muted)" }}>by {ev.actor}</div>}
-                {ev.detail && <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{String(ev.detail)}</div>}
+                {ev.actor && <div className="mt-1 text-[11px] text-muted-foreground">by {ev.actor}</div>}
+                {ev.detail && <div className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{String(ev.detail)}</div>}
               </div>
             ))}
           </div>
         )}
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
