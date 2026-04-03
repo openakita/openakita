@@ -2239,11 +2239,14 @@ class LLMClient:
             return
 
         name_to_priority = {ep.name: ep.priority for ep in self._endpoints}
-        for ep_data in config_data.get("endpoints", []):
+        ep_list = config_data.get("endpoints", [])
+        for ep_data in ep_list:
             name = ep_data.get("name")
             if name in name_to_priority:
                 ep_data["priority"] = name_to_priority[name]
 
+        ep_list.sort(key=lambda e: (int(e.get("priority", 999)), e.get("name", "")))
+        config_data["endpoints"] = ep_list
         safe_json_write(self._config_path, config_data)
 
     async def close(self):
