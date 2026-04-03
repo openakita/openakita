@@ -1063,10 +1063,18 @@ class ContextManager:
         if not messages:
             return messages
 
+        # Collect all tool_call_ids that have a tool-result message
         answered_ids: set[str] = set()
+        # Collect all tool_call_ids declared by assistant messages
+        declared_ids: set[str] = set()
+
         for msg in messages:
             if msg.get("role") == "tool" and msg.get("tool_call_id"):
                 answered_ids.add(msg["tool_call_id"])
+            elif msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    if tc.get("id"):
+                        declared_ids.add(tc["id"])
 
         result: list[dict] = []
         skip_ids: set[str] = set()
@@ -1094,6 +1102,14 @@ class ContextManager:
                 if tc_id in skip_ids:
                     if dropped is not None:
                         dropped.append(msg)
+                    continue
+                if tc_id and tc_id not in declared_ids:
+                    if dropped is not None:
+                        dropped.append(msg)
+                    logger.warning(
+                        "[HardTruncate] Dropped orphaned tool message "
+                        f"(no assistant declares tool_call_id={tc_id[:20]})"
+                    )
                     continue
                 result.append(msg)
             else:

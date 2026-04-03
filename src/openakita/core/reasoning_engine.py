@@ -2811,9 +2811,14 @@ class ReasoningEngine:
             return messages
 
         answered_tool_ids: set[str] = set()
+        declared_tool_ids: set[str] = set()
         for msg in messages:
             if msg.get("role") == "tool" and msg.get("tool_call_id"):
                 answered_tool_ids.add(msg["tool_call_id"])
+            elif msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    if tc.get("id"):
+                        declared_tool_ids.add(tc["id"])
 
         result: list[dict] = []
         skip_tool_call_ids: set[str] = set()
@@ -2833,6 +2838,8 @@ class ReasoningEngine:
             elif role == "tool":
                 tc_id = msg.get("tool_call_id", "")
                 if tc_id in skip_tool_call_ids:
+                    continue
+                if tc_id and tc_id not in declared_tool_ids:
                     continue
                 result.append(msg)
             else:
@@ -3852,6 +3859,8 @@ class ReasoningEngine:
         new_messages = (
             system_msgs + added_back + [truncation_notice] + recent
         )
+        new_messages = ContextManager._sanitize_tool_pairs(new_messages)
+
         working_messages.clear()
         working_messages.extend(new_messages)
 
@@ -3905,6 +3914,42 @@ class ReasoningEngine:
         # ── 方案 A+B: 结构性错误快速熔断 ──
         if isinstance(error, AllEndpointsFailedError) and error.is_structural:
             already_stripped = getattr(state, '_structural_content_stripped', False)
+
+            # 方案 A0: tool_calls / tool 配对修复
+            # HardTruncate 或 _force_hard_truncate 可能拆散 tool 配对，
+            # 导致 "tool_calls must be followed by tool messages" 等 400 错误。
+            # 独立于 already_stripped，只执行一次。
+            if not getattr(state, '_tool_pairs_sanitized', False):
+                _err_lower = str(error).lower()
+                _tool_pair_patterns = [
+                    "must be followed by tool",
+                    "must be a response to a preceding message with",
+                    "tool result's tool id",
+                    "insufficient tool messages",
+                ]
+                if any(p in _err_lower for p in _tool_pair_patterns):
+                    from .context_manager import ContextManager
+                    before_count = len(working_messages)
+                    sanitized = ContextManager._sanitize_tool_pairs(
+                        working_messages
+                    )
+                    state._tool_pairs_sanitized = True
+                    if len(sanitized) != before_count:
+                        logger.warning(
+                            "[ReAct] Tool pairing structural error detected. "
+                            "Sanitized %d → %d messages and retrying.",
+                            before_count, len(sanitized),
+                        )
+                        working_messages.clear()
+                        working_messages.extend(sanitized)
+                        llm_client = getattr(
+                            self._brain, "_llm_client", None
+                        )
+                        if llm_client:
+                            llm_client.reset_all_cooldowns(
+                                include_structural=True
+                            )
+                        return "retry"
 
             if not already_stripped:
                 stripped_messages, did_strip = self._strip_heavy_content(working_messages)
