@@ -4,6 +4,37 @@ Organization setup tool — create and manage organizations through natural lang
 Only injected when settings.multi_agent_enabled is True, alongside AGENT_TOOLS.
 """
 
+_EDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "source": {
+            "type": "string",
+            "description": "起点节点的 role_title 或 node_id",
+        },
+        "target": {
+            "type": "string",
+            "description": "终点节点的 role_title 或 node_id",
+        },
+        "edge_type": {
+            "type": "string",
+            "enum": ["collaborate", "escalate", "consult"],
+            "description": (
+                "连线类型（不含 hierarchy，层级关系请用节点的 parent_role_title）："
+                "collaborate=协作, escalate=上报, consult=咨询"
+            ),
+        },
+        "label": {
+            "type": "string",
+            "description": "连线标签（如 '需求沟通'、'数据传递'）",
+        },
+        "bidirectional": {
+            "type": "boolean",
+            "description": "是否双向通信（默认 true）",
+        },
+    },
+    "required": ["source", "target", "edge_type"],
+}
+
 _NODE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -79,14 +110,24 @@ ORG_SETUP_TOOLS = [
             "5. **create** — 用户确认后正式创建\n\n"
             "## 修改流程\n\n"
             "1. **list_orgs** — 列出现有组织，确定要修改的目标\n"
-            "2. **get_org** — 获取完整结构（节点 ID、Agent、工具等）\n"
-            "3. **理解用户修改意图** — 确认要增删改哪些节点\n"
+            "2. **get_org** — 获取完整结构（节点 ID、Agent、工具、连线等）\n"
+            "3. **理解用户修改意图** — 确认要增删改哪些节点或连线\n"
             "4. **向用户描述变更方案** — 先用文本说明，让用户确认\n"
             "5. **update_org** — 提交增量修改（保留现有节点 ID）\n\n"
+            "## 连线类型\n\n"
+            "组织支持 4 种连线关系：\n"
+            "- **hierarchy** — 层级（上下级），通过节点的 parent_role_title 自动创建\n"
+            "- **collaborate** — 协作，子节点之间的横向协作关系\n"
+            "- **escalate** — 上报，跨层级的问题上报通道\n"
+            "- **consult** — 咨询，向特定节点请求专业意见\n\n"
+            "层级关系由 parent_role_title 管理；"
+            "其他三种关系通过 edges（创建时）或 add_edges（修改时）添加。\n\n"
             "## 关键注意事项\n"
             "- 修改时**必须保留现有节点 ID**，因为 ID 关联了任务、记忆、身份文件\n"
             "- update_org 是**增量更新**：只传要改的字段，未提及的节点原样保留\n"
             "- 删除节点用 remove_nodes 参数，会同时清理关联边\n"
+            "- 删除连线用 remove_edges 参数（传 edge ID，从 get_org 获取）\n"
+            "- remove_edges 仅可删除非层级连线；层级关系请通过修改 parent_role_title\n"
             "- 信息不足时**主动询问**，不要猜测用户意图"
         ),
         "input_schema": {
@@ -132,6 +173,15 @@ ORG_SETUP_TOOLS = [
                     "items": _NODE_SCHEMA,
                     "description": "节点列表（create/preview 时必填）",
                 },
+                "edges": {
+                    "type": "array",
+                    "items": _EDGE_SCHEMA,
+                    "description": (
+                        "非层级连线列表（create/preview 时可选）。"
+                        "用于定义子节点之间的协作/上报/咨询关系。"
+                        "层级关系不需要在此指定，由节点的 parent_role_title 自动生成"
+                    ),
+                },
                 "template_id": {
                     "type": "string",
                     "description": "模板 ID（create_from_template 时必填）",
@@ -152,6 +202,24 @@ ORG_SETUP_TOOLS = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "要删除的节点 ID 或 role_title 列表（update_org 时使用）",
+                },
+                "add_edges": {
+                    "type": "array",
+                    "items": _EDGE_SCHEMA,
+                    "description": (
+                        "要添加的非层级连线（update_org 时使用）。"
+                        "source/target 可用 node_id 或 role_title。"
+                        "仅支持 collaborate/escalate/consult 类型"
+                    ),
+                },
+                "remove_edges": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "要删除的连线 edge ID 列表（update_org 时使用，"
+                        "从 get_org 返回的连线列表中获取 ID）。"
+                        "仅可删除非层级连线"
+                    ),
                 },
                 "update_fields": {
                     "type": "object",
@@ -177,7 +245,7 @@ ORG_SETUP_TOOLS = [
             {
                 "scenario": "查看组织结构",
                 "params": {"action": "get_org", "org_id": "org_xxx"},
-                "expected": "返回组织完整结构：节点列表、层级关系、元数据",
+                "expected": "返回组织完整结构：节点列表、连线关系（含 edge ID）、元数据",
             },
             {
                 "scenario": "修改组织：给电商团队加一个数据分析师",
@@ -220,6 +288,22 @@ ORG_SETUP_TOOLS = [
                     "remove_nodes": ["客服主管"],
                 },
                 "expected": "删除节点并清理关联边",
+            },
+            {
+                "scenario": "修改组织：在子节点之间添加协作连线",
+                "params": {
+                    "action": "update_org",
+                    "org_id": "org_xxx",
+                    "add_edges": [
+                        {
+                            "source": "数据分析师",
+                            "target": "风控专员",
+                            "edge_type": "collaborate",
+                            "label": "数据共享",
+                        }
+                    ],
+                },
+                "expected": "在两个子节点之间建立协作连线",
             },
             {
                 "scenario": "删除组织",
