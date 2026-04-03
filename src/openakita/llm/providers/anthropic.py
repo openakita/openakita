@@ -67,17 +67,16 @@ class AnthropicProvider(LLMProvider):
         return f"{b}/messages" if b.endswith("/v1") else f"{b}/v1/messages"
 
     def _is_local_endpoint(self) -> bool:
-        """检查是否为本地端点"""
+        """检查是否为本地/局域网端点
+
+        覆盖 loopback + RFC 1918 私有地址 + link-local，与 proxy_utils._is_private_host 对齐。
+        """
+        from .proxy_utils import should_bypass_proxy
+
         url = self.base_url.lower()
-        return any(
-            host in url
-            for host in (
-                "localhost",
-                "127.0.0.1",
-                "0.0.0.0",
-                "[::1]",
-            )
-        )
+        if any(host in url for host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")):
+            return True
+        return should_bypass_proxy(self.base_url)
 
     def _get_validated_api_key(self) -> str:
         """获取并验证 API Key，空 key 时提前抛出有意义的错误而非让 API 返回模糊 401。"""

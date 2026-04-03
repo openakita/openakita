@@ -9,7 +9,7 @@
 """
 
 from ..capabilities import infer_capabilities
-from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
+from .base import ModelInfo, ProviderInfo, ProviderRegistry, create_registry_client
 
 # 预置模型列表（国内/国际共用）
 _PRESET_MODELS = [
@@ -44,14 +44,14 @@ class _DashScopeBase(ProviderRegistry):
         2. 从预置能力表查找每个模型的能力
         3. 如果预置表没有该模型，使用智能推断
         """
-        client = get_registry_client()
         try:
-            resp = await client.get(
-                f"{self.info.default_base_url}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            async with create_registry_client(self.info.default_base_url) as client:
+                resp = await client.get(
+                    f"{self.info.default_base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
             models: list[ModelInfo] = []
             seen: set[str] = set()

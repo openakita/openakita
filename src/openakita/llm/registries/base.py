@@ -9,21 +9,23 @@ from dataclasses import dataclass, field
 
 import httpx
 
-_shared_registry_client: httpx.AsyncClient | None = None
+from ..providers.proxy_utils import get_httpx_client_kwargs
 
 
-def get_registry_client() -> httpx.AsyncClient:
-    """获取 registry 共享 httpx 客户端（连接池复用，避免每次请求新建/销毁）。"""
-    global _shared_registry_client
-    if _shared_registry_client is None or _shared_registry_client.is_closed:
-        _shared_registry_client = httpx.AsyncClient(
-            timeout=30,
-            limits=httpx.Limits(
-                max_connections=30,
-                max_keepalive_connections=10,
-            ),
-        )
-    return _shared_registry_client
+def create_registry_client(target_url: str = "") -> httpx.AsyncClient:
+    """按目标 URL 创建 registry httpx 客户端，自动处理代理旁路。
+
+    云端服务商（OpenAI/Anthropic 等）自动走代理；
+    内网端点（172.x.x.x 等 RFC 1918 地址）自动直连。
+    与 bridge.py 使用同一套 proxy 决策逻辑。
+
+    用法::
+
+        async with create_registry_client(self.info.default_base_url) as client:
+            resp = await client.get(url, ...)
+    """
+    kwargs = get_httpx_client_kwargs(timeout=30, target_url=target_url)
+    return httpx.AsyncClient(**kwargs)
 
 
 @dataclass
