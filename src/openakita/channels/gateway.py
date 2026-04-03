@@ -3020,8 +3020,7 @@ class MessageGateway:
             if _tool_summary:
                 _msg_meta["tool_summary"] = _tool_summary
             session.add_message(role="assistant", content=response_text, **_msg_meta)
-            self.session_manager.mark_dirty()
-            self.session_manager.flush()
+            self.session_manager.persist()
             _notify_im_event(
                 "im:new_message",
                 {
