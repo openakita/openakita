@@ -380,11 +380,7 @@ class TaskExecutor:
         try:
             if task.metadata.get("notify_on_complete", True):
                 status = "✅ 任务完成" if success else "❌ 任务失败"
-                notification = f"""{status}: {task.name}
-
-结果:
-{message}
-"""
+                notification = f"{status}: {task.name}\n\n{message}"
             else:
                 if not success:
                     notification = f"❌ {task.name} 执行失败:\n{message}"
@@ -939,9 +935,11 @@ class TaskExecutor:
         if task.channel_id and task.chat_id:
             context_parts.append("")
             if suppress_send_to_chat:
-                # 禁止发消息，由系统统一处理
                 context_parts.append(
-                    "注意: 不要尝试通过工具发送文本消息；系统会自动发送结果通知。请直接返回执行结果。"
+                    "重要: 不要通过工具发送文本消息。"
+                    "你的最终回复文本将被系统直接投递给用户，所以必须包含完整的执行结果和详细内容。"
+                    "不要只说「已完成」或「任务完成」——用户看到的就是你返回的文字，"
+                    "请把关键数据、结论、操作记录等全部写在最终回复中。"
                 )
             else:
                 context_parts.append(
