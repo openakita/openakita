@@ -3065,6 +3065,52 @@ export function OrgEditorView({
               padding: 0; background: none;
             }
 
+            /* ── Blackboard entry markdown ── */
+            .bb-entry-content {
+              font-size: 12px; line-height: 1.7; word-break: break-word;
+              color: var(--text, #e2e8f0);
+            }
+            .bb-entry-content p { margin: 0 0 4px; }
+            .bb-entry-content p:last-child { margin-bottom: 0; }
+            .bb-entry-content h1, .bb-entry-content h2, .bb-entry-content h3,
+            .bb-entry-content h4, .bb-entry-content h5, .bb-entry-content h6 {
+              margin: 6px 0 3px; font-size: 12px; font-weight: 700;
+              color: var(--text, #f1f5f9);
+            }
+            .bb-entry-content h1 { font-size: 14px; }
+            .bb-entry-content h2 { font-size: 13px; }
+            .bb-entry-content ul, .bb-entry-content ol {
+              margin: 2px 0; padding-left: 1.4em;
+            }
+            .bb-entry-content li { margin: 1px 0; }
+            .bb-entry-content li::marker { color: var(--muted, #64748b); }
+            .bb-entry-content strong { font-weight: 600; }
+            .bb-entry-content em { font-style: italic; }
+            .bb-entry-content code {
+              font-size: 11px; padding: 1px 4px; border-radius: 3px;
+              background: var(--hover-bg, rgba(100,100,100,0.15));
+              font-family: "SF Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+            }
+            .bb-entry-content pre {
+              margin: 4px 0; padding: 8px 10px; border-radius: 6px;
+              background: var(--hover-bg, rgba(0,0,0,0.2)); overflow-x: auto;
+              font-size: 11px;
+            }
+            .bb-entry-content pre code { padding: 0; background: none; }
+            .bb-entry-content blockquote {
+              margin: 4px 0; padding: 2px 0 2px 10px;
+              border-left: 3px solid var(--primary, #6366f1);
+              color: var(--muted, #94a3b8);
+            }
+            .bb-entry-content table { border-collapse: collapse; margin: 4px 0; font-size: 11px; width: 100%; }
+            .bb-entry-content th, .bb-entry-content td {
+              padding: 3px 8px; border: 1px solid var(--line, rgba(51,65,85,0.5));
+              text-align: left;
+            }
+            .bb-entry-content th { font-weight: 600; background: var(--hover-bg, rgba(100,100,100,0.1)); }
+            .bb-entry-content hr { border: none; border-top: 1px solid var(--line, rgba(51,65,85,0.5)); margin: 6px 0; }
+            .bb-entry-content a { color: var(--primary, #6366f1); text-decoration: underline; }
+
             /* ── Modal dialog ── */
             .org-modal-overlay {
               position: fixed; inset: 0; z-index: 10000;
@@ -3610,36 +3656,54 @@ export function OrgEditorView({
                   <div className="card" style={{ padding: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>黑板最新动态</div>
                     <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                      {orgStats.recent_blackboard.map((bb: any, i: number) => (
-                        <div key={i} style={{
-                          padding: "5px 0", borderBottom: "1px solid var(--line)", fontSize: 11,
-                        }}>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <span style={{
-                              fontSize: 9, padding: "1px 4px", borderRadius: 3,
-                              background: bb.memory_type === "decision" ? "#ede9fe" : bb.memory_type === "progress" ? "#dcfce7" : "#f0f9ff",
-                              color: bb.memory_type === "decision" ? "#7c3aed" : bb.memory_type === "progress" ? "#16a34a" : "#2563eb",
-                              fontWeight: 500,
-                            }}>
-                              {bb.memory_type}
-                            </span>
-                            <span style={{ fontSize: 10, color: "#9ca3af" }}>{bb.source_node}</span>
-                            <span style={{ fontSize: 10, color: "#d4d4d8", marginLeft: "auto" }}>
-                              {fmtTime(bb.timestamp)}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: 10, color: "#374151", marginTop: 2, lineHeight: 1.4 }}>
-                            {bb.content}
-                          </div>
-                          {Array.isArray(bb.tags) && bb.tags.length > 0 && (
-                            <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
-                              {bb.tags.map((t: string) => (
-                                <span key={t} style={{ fontSize: 8, padding: "0 3px", borderRadius: 2, background: "#f3f4f6", color: "#6b7280" }}>#{t}</span>
-                              ))}
+                      {orgStats.recent_blackboard.map((bb: any, i: number) => {
+                        const bbTypeColors: Record<string, string> = {
+                          fact: "#3b82f6", decision: "#8b5cf6", lesson: "#10b981",
+                          progress: "#6366f1", todo: "#ef4444",
+                        };
+                        const bbTypeLabels: Record<string, string> = {
+                          fact: "事实", decision: "决策", lesson: "经验",
+                          progress: "进展", todo: "待办",
+                        };
+                        const tc = bbTypeColors[bb.memory_type] || "#6b7280";
+                        return (
+                          <div key={i} style={{
+                            padding: "5px 0", borderBottom: "1px solid var(--line)", fontSize: 11,
+                          }}>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                              <span style={{
+                                fontSize: 11, padding: "1px 5px", borderRadius: 3,
+                                background: tc + "20", color: tc, fontWeight: 600,
+                              }}>
+                                {bbTypeLabels[bb.memory_type] || bb.memory_type}
+                              </span>
+                              <span style={{ fontSize: 11, color: "var(--muted)" }}>{(() => { const nd = nodes.find(n => n.id === bb.source_node); return (nd?.data as any)?.role_title || bb.source_node; })()}</span>
+                              <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>
+                                {fmtTime(bb.timestamp)}
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            <div className="bb-entry-content" style={{ marginTop: 3 }}>
+                              {mdModules ? (
+                                <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+                                  {bb.content}
+                                </mdModules.ReactMarkdown>
+                              ) : (
+                                <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{bb.content}</pre>
+                              )}
+                            </div>
+                            {Array.isArray(bb.tags) && bb.tags.length > 0 && (
+                              <div style={{ display: "flex", gap: 3, marginTop: 3, flexWrap: "wrap" }}>
+                                {bb.tags.map((t: string) => (
+                                  <span key={t} style={{
+                                    fontSize: 11, padding: "0 5px", borderRadius: 3,
+                                    background: "var(--hover-bg, rgba(100,100,100,0.1))", color: "var(--muted)",
+                                  }}>#{t}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -4933,8 +4997,14 @@ export function OrgEditorView({
                           ×
                         </button>
                       </div>
-                      <div style={{ lineHeight: 1.5, wordBreak: "break-word" }}>
-                        {entry.content}
+                      <div className="bb-entry-content">
+                        {mdModules ? (
+                          <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+                            {entry.content}
+                          </mdModules.ReactMarkdown>
+                        ) : (
+                          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content}</pre>
+                        )}
                       </div>
                       {Array.isArray(entry.tags) && entry.tags.length > 0 && (
                         <div style={{ marginTop: 3, display: "flex", gap: 3, flexWrap: "wrap" }}>
