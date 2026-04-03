@@ -35,24 +35,33 @@ class OrgToolHandler:
     def __init__(self, runtime: OrgRuntime) -> None:
         self._runtime = runtime
 
+    _INT_DEFAULTS: dict[str, int] = {
+        "priority": 0,
+        "bandwidth_limit": 60,
+        "limit": 10,
+        "max_rounds": 3,
+        "interval_s": 60,
+        "progress_pct": 0,
+    }
+    _FLOAT_DEFAULTS: dict[str, float] = {
+        "importance": 0.5,
+    }
+
     @staticmethod
     def _coerce_types(args: dict) -> dict:
         """Ensure LLM-provided arguments have correct Python types."""
-        if "priority" in args:
-            try:
-                args["priority"] = int(args["priority"])
-            except (ValueError, TypeError):
-                args["priority"] = 0
-        if "bandwidth_limit" in args:
-            try:
-                args["bandwidth_limit"] = int(args["bandwidth_limit"])
-            except (ValueError, TypeError):
-                args["bandwidth_limit"] = 60
-        if "importance" in args:
-            try:
-                args["importance"] = float(args["importance"])
-            except (ValueError, TypeError):
-                args["importance"] = 0.5
+        for key, default in OrgToolHandler._INT_DEFAULTS.items():
+            if key in args:
+                try:
+                    args[key] = int(args[key])
+                except (ValueError, TypeError):
+                    args[key] = default
+        for key, default in OrgToolHandler._FLOAT_DEFAULTS.items():
+            if key in args:
+                try:
+                    args[key] = float(args[key])
+                except (ValueError, TypeError):
+                    args[key] = default
         if "tags" in args and isinstance(args["tags"], str):
             import json as _json
             try:
