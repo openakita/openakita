@@ -151,8 +151,11 @@ class SessionManager:
                 if not newer and not session.context.messages and db_turns:
                     newer = db_turns
                 for t in newer:
+                    content = t.get("content", "")
+                    if not content:
+                        continue
                     ts = t.get("timestamp", "")
-                    msg = {"role": t["role"], "content": t.get("content", "")}
+                    msg = {"role": t["role"], "content": content}
                     if ts:
                         msg["timestamp"] = ts
                     with session.context._msg_lock:

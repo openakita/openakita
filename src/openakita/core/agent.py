@@ -3698,13 +3698,20 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             f"tool_calls={len(_all_tool_calls)}, tool_results={len(_all_tool_results)}, "
             f"trace_iterations={len(_trace)}"
         )
-        outbound_attachments = self._extract_outbound_attachments(_all_tool_calls, _all_tool_results)
-        self.memory_manager.record_turn(
-            "assistant", response_text,
-            tool_calls=_all_tool_calls,
-            tool_results=_all_tool_results,
-            attachments=outbound_attachments or None,
-        )
+        if response_text:
+            outbound_attachments = self._extract_outbound_attachments(
+                _all_tool_calls, _all_tool_results
+            )
+            self.memory_manager.record_turn(
+                "assistant", response_text,
+                tool_calls=_all_tool_calls,
+                tool_results=_all_tool_results,
+                attachments=outbound_attachments or None,
+            )
+        else:
+            logger.warning(
+                f"[Session:{session_id}] Skipping record_turn for empty assistant response"
+            )
         try:
             logger.info(f"[Session:{session_id}] Agent: {response_text}")
         except (UnicodeEncodeError, OSError):
