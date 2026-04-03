@@ -61,8 +61,9 @@ _NODE_SCHEMA = {
         "agent_profile_id": {
             "type": "string",
             "description": (
-                "关联的系统 Agent ID（非常重要！决定节点的专业能力。"
-                "从 get_resources 返回的 agents 列表中选择最合适的）"
+                "关联的 Agent Profile ID（可选）。"
+                "从 get_resources 返回的 agents/custom_agents 列表中选择，"
+                "或留空并用 custom_prompt 直接定义全新角色"
             ),
         },
         "parent_role_title": {
@@ -79,7 +80,10 @@ _NODE_SCHEMA = {
         },
         "custom_prompt": {
             "type": "string",
-            "description": "自定义提示词（可选，用于精细控制节点行为）",
+            "description": (
+                "自定义提示词。可独立使用（不设 agent_profile_id）来创建全新角色，"
+                "也可与 agent_profile_id 配合使用来追加指令"
+            ),
         },
     },
     "required": ["role_title"],
@@ -103,9 +107,10 @@ ORG_SETUP_TOOLS = [
         "detail": (
             "通过自然语言创建和管理组织编排架构。\n\n"
             "## 创建流程\n\n"
-            "1. **get_resources** — 获取可用 Agent、模板、工具类目\n"
+            "1. **get_resources** — 获取可用 Agent（预设+用户自建）、模板、工具类目\n"
             "2. **向用户了解需求** — 信息不足时主动询问\n"
-            "3. **为每个节点匹配系统 Agent**（agent_profile_id）— 最重要的配置\n"
+            "3. **为每个节点配置角色** — 选择现有 Agent（agent_profile_id），"
+            "或用 custom_prompt 直接定义全新角色\n"
             "4. **preview** — 展示草案给用户确认\n"
             "5. **create** — 用户确认后正式创建\n\n"
             "## 修改流程\n\n"

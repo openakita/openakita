@@ -64,6 +64,7 @@ class OrgSetupHandler:
     def _get_resources(self) -> str:
         result: dict[str, Any] = {}
 
+        preset_ids: set[str] = set()
         try:
             from ...agents.presets import SYSTEM_PRESETS
             agents = []
@@ -77,10 +78,30 @@ class OrgSetupHandler:
                     "category": getattr(p, "category", "general"),
                     "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
                 })
+                preset_ids.add(p.id)
             result["agents"] = agents
         except Exception as e:
             logger.warning(f"[OrgSetup] Failed to load agent presets: {e}")
             result["agents"] = []
+
+        try:
+            from ...agents.profile import get_profile_store
+            store = get_profile_store()
+            custom_agents = []
+            for p in store.list_all(include_ephemeral=False, include_hidden=False):
+                if p.id in preset_ids or p.is_system:
+                    continue
+                custom_agents.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "description": p.description or "",
+                    "category": "custom",
+                    "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
+                })
+            if custom_agents:
+                result["custom_agents"] = custom_agents
+        except Exception as e:
+            logger.warning(f"[OrgSetup] Failed to load custom profiles: {e}")
 
         try:
             manager = self._get_org_manager()
@@ -101,10 +122,14 @@ class OrgSetupHandler:
             result["tool_categories"] = {}
 
         result["usage_hint"] = (
-            "请根据以上信息为用户设计组织架构。"
-            "为每个节点选择最合适的 agent（agent_profile_id），"
-            "并配置合适的工具类目（external_tools）。"
-            "信息不足时请向用户询问。"
+            "请根据以上信息为用户设计组织架构。\n"
+            "为每个节点指定角色，有以下方式（按推荐顺序）：\n"
+            "1. 从 agents 或 custom_agents 中选择合适的 agent_profile_id\n"
+            "2. 直接填写 custom_prompt 创建全新角色（无需 agent_profile_id）\n"
+            "   — 适用于没有现成 Agent 匹配的场景\n"
+            "3. 同时设置 agent_profile_id 和 custom_prompt，"
+            "以预设 Agent 为基础并追加自定义指令\n"
+            "配置合适的工具类目（external_tools）。信息不足时请向用户询问。"
         )
 
         return json.dumps(result, ensure_ascii=False, indent=2)
@@ -829,6 +854,13 @@ class OrgSetupHandler:
             for p in SYSTEM_PRESETS:
                 if p.id == agent_id:
                     return f"{p.name} ({p.id})"
+        except Exception:
+            pass
+        try:
+            from ...agents.profile import get_profile_store
+            profile = get_profile_store().get(agent_id)
+            if profile:
+                return f"{profile.name} ({agent_id})"
         except Exception:
             pass
         return agent_id
