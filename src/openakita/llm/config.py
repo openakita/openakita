@@ -220,20 +220,34 @@ def _ensure_workspace_env_loaded(config_path: Path) -> None:
 
 
 def get_default_config_path() -> Path:
-    """获取默认配置文件路径
+    """获取默认配置文件路径（唯一权威入口）
 
-    搜索顺序：
-    1. 环境变量 LLM_ENDPOINTS_CONFIG
-    2. CWD 及其父级（最多 3 层）下的 data/llm_endpoints.json
-    3. 包文件所在目录向上（最多 5 层）下的 data/llm_endpoints.json
-    4. 兜底返回 CWD/data/llm_endpoints.json（即使不存在）
+    v1.25.x 单工作区架构下，所有配置读写都应通过此函数获取路径，
+    确保 LLMClient / EndpointManager / Config API 操作同一文件。
+
+    解析顺序：
+    1. 环境变量 LLM_ENDPOINTS_CONFIG（Tauri 桌面端设置）
+    2. settings.project_root / data / llm_endpoints.json（运行时权威路径）
+    3. CWD 向上搜索（settings 不可用时的降级，如 CLI 早期初始化）
+    4. 包目录向上搜索（editable install 开发场景）
+    5. 兜底 CWD/data/llm_endpoints.json
     """
-    # 1) 环境变量优先
+    # 1) 环境变量优先（Tauri 桌面端通过此变量指定工作区配置）
     env_path = os.environ.get("LLM_ENDPOINTS_CONFIG")
     if env_path:
         return Path(env_path)
 
-    # 2) 从 CWD 向上搜索（pip install 场景：openakita init 在 CWD 创建 data/）
+    # 2) settings.project_root — 运行时唯一权威路径
+    #    无条件返回（不做 exists() 探测），因为单工作区下文件就应该在这里
+    try:
+        from openakita.config import settings
+        return Path(settings.project_root) / "data" / "llm_endpoints.json"
+    except Exception:
+        pass
+
+    # ── 以下仅在 settings 不可用时执行（CLI 早期 / 模块级初始化）──
+
+    # 3) 从 CWD 向上搜索（pip install 场景：openakita init 在 CWD 创建 data/）
     cwd = Path.cwd()
     current = cwd
     for _ in range(3):
@@ -245,7 +259,7 @@ def get_default_config_path() -> Path:
             break
         current = parent
 
-    # 3) 从包文件向上搜索（开发 / editable install 场景）
+    # 4) 从包文件向上搜索（开发 / editable install 场景）
     current = Path(__file__).parent
     for _ in range(5):
         config_path = current / "data" / "llm_endpoints.json"
@@ -253,7 +267,7 @@ def get_default_config_path() -> Path:
             return config_path
         current = current.parent
 
-    # 4) 兜底：返回 CWD 下的默认位置（让调用方统一处理不存在的情况）
+    # 5) 兜底
     return cwd / "data" / "llm_endpoints.json"
 
 

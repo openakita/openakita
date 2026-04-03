@@ -44,8 +44,8 @@ def _read_endpoints_safe(ep_path: Path) -> dict | None:
 def _endpoints_config_path() -> Path:
     """Return the canonical llm_endpoints.json path.
 
-    Uses the same resolution logic as LLMClient so the Config API
-    reads/writes the SAME file that the LLM runtime actually loads.
+    Delegates to ``get_default_config_path()`` — the single source of truth
+    for config path resolution across LLMClient, EndpointManager, and this API.
     """
     try:
         from openakita.llm.config import get_default_config_path
@@ -411,7 +411,7 @@ def _get_endpoint_manager():
     root = _project_root()
     _mgr = getattr(_get_endpoint_manager, "_instance", None)
     if _mgr is None or _mgr._ws_dir != root:
-        _mgr = EndpointManager(root)
+        _mgr = EndpointManager(root, config_path=_endpoints_config_path())
         _get_endpoint_manager._instance = _mgr
     return _mgr
 
@@ -566,6 +566,9 @@ def _trigger_reload(request: Request) -> bool:
     if llm_client is None:
         return False
     try:
+        canonical = _endpoints_config_path()
+        if llm_client._config_path is not None and llm_client._config_path != canonical:
+            llm_client._config_path = canonical
         llm_client.reload()
         if brain and hasattr(brain, "reload_compiler_client"):
             brain.reload_compiler_client()
