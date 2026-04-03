@@ -9,7 +9,7 @@ Base URL: https://ark.cn-beijing.volces.com/api/v3
 """
 
 from ..capabilities import infer_capabilities
-from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
+from .base import ModelInfo, ProviderInfo, ProviderRegistry, create_registry_client
 
 
 class VolcEngineRegistry(ProviderRegistry):
@@ -32,14 +32,14 @@ class VolcEngineRegistry(ProviderRegistry):
         火山方舟兼容 OpenAI /models 接口。
         如果 API 调用失败，返回预置的常用模型列表。
         """
-        client = get_registry_client()
         try:
-            resp = await client.get(
-                f"{self.info.default_base_url}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            async with create_registry_client(self.info.default_base_url) as client:
+                resp = await client.get(
+                    f"{self.info.default_base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
             models: list[ModelInfo] = []
             seen: set[str] = set()

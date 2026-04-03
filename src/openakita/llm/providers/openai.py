@@ -580,17 +580,16 @@ class OpenAIProvider(LLMProvider):
             yield event
 
     def _is_local_endpoint(self) -> bool:
-        """检查是否为本地端点（Ollama/LM Studio 等）"""
+        """检查是否为本地/局域网端点（Ollama/LM Studio/vLLM 等）
+
+        覆盖 loopback + RFC 1918 私有地址 + link-local，与 proxy_utils._is_private_host 对齐。
+        """
+        from .proxy_utils import should_bypass_proxy
+
         url = self.base_url.lower()
-        return any(
-            host in url
-            for host in (
-                "localhost",
-                "127.0.0.1",
-                "0.0.0.0",
-                "[::1]",
-            )
-        )
+        if any(host in url for host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")):
+            return True
+        return should_bypass_proxy(self.base_url)
 
     def _get_auth(self) -> _BearerAuth:
         """获取认证信息（通过 httpx Auth 机制，确保重定向时不丢失凭据）"""

@@ -7,7 +7,7 @@
 """
 
 from ..capabilities import infer_capabilities
-from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
+from .base import ModelInfo, ProviderInfo, ProviderRegistry, create_registry_client
 
 # 预置模型列表（国内/国际共用）
 _PRESET_MODELS = [
@@ -28,14 +28,14 @@ class _SiliconFlowBase(ProviderRegistry):
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         """获取硅基流动模型列表"""
-        client = get_registry_client()
         try:
-            resp = await client.get(
-                f"{self.info.default_base_url}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            async with create_registry_client(self.info.default_base_url) as client:
+                resp = await client.get(
+                    f"{self.info.default_base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
             models = []
             for m in data.get("data", []):
