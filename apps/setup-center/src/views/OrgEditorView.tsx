@@ -29,6 +29,7 @@ import {
   MarkerType,
   Panel,
   type OnConnect,
+  type ConnectionLineComponentProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -616,6 +617,25 @@ function detectOverlap(nodes: Node[]): boolean {
   return false;
 }
 
+// ── Custom Connection Line (visible dashed line from handle to cursor) ──
+
+function OrgConnectionLine({ fromX, fromY, toX, toY }: ConnectionLineComponentProps) {
+  return (
+    <g>
+      <circle cx={fromX} cy={fromY} r={5} fill="var(--primary, #6366f1)" />
+      <path
+        d={`M${fromX},${fromY} C ${fromX},${(fromY + toY) / 2} ${toX},${(fromY + toY) / 2} ${toX},${toY}`}
+        fill="none"
+        stroke="var(--primary, #6366f1)"
+        strokeWidth={2.5}
+        strokeDasharray="8 4"
+        strokeLinecap="round"
+      />
+      <circle cx={toX} cy={toY} r={4} fill="var(--primary, #6366f1)" opacity={0.6} />
+    </g>
+  );
+}
+
 // ── Custom Node Component ──
 
 const STATUS_LABELS: Record<string, string> = {
@@ -679,7 +699,14 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         zIndex: hovered ? 10000 : "auto",
       }}
     >
-      <Handle type="target" position={Position.Top} style={{ background: "var(--primary)", width: 8, height: 8 }} />
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="org-handle"
+        isConnectable
+        title="目标连接点：点击或拖拽到这里完成连线"
+        aria-label="目标连接点"
+      />
 
       {/* Department color strip */}
       <div style={{
@@ -875,7 +902,14 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         document.body,
       )}
 
-      <Handle type="source" position={Position.Bottom} style={{ background: "var(--primary)", width: 8, height: 8 }} />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="org-handle"
+        isConnectable
+        title="源连接点：从这里点击或拖拽开始连线"
+        aria-label="源连接点"
+      />
     </div>
   );
 }
@@ -921,7 +955,7 @@ export function OrgEditorView({
   const [nodeMessages, setNodeMessages] = useState<any[]>([]);
   const [nodeThinking, setNodeThinking] = useState<any[]>([]);
   const [orgStats, setOrgStats] = useState<any>(null);
-  const [expandedThinkingIdx, setExpandedThinkingIdx] = useState<number | null>(null);
+  const [expandedThinkingIdx, setExpandedThinkingIdx] = useState<number | string | null>(null);
   const [nodeTasks, setNodeTasks] = useState<{ assigned: any[]; delegated: any[] } | null>(null);
   const [nodeActivePlan, setNodeActivePlan] = useState<any>(null);
   const [nodeTasksLoading, setNodeTasksLoading] = useState(false);
@@ -958,6 +992,7 @@ export function OrgEditorView({
     window.addEventListener("scroll", dismiss, true);
     return () => { window.removeEventListener("click", dismiss); window.removeEventListener("scroll", dismiss, true); };
   }, [contextMenu]);
+
   const [edgeAnimations, setEdgeAnimations] = useState<Record<string, { color: string; ts: number }>>({});
   const [edgeFlowCounts, setEdgeFlowCounts] = useState<Record<string, number>>({});
 
@@ -2433,12 +2468,14 @@ export function OrgEditorView({
               }}
               nodeTypes={nodeTypes}
               connectOnClick
+              connectionLineComponent={OrgConnectionLine}
+              connectionLineContainerStyle={{ zIndex: 20000, overflow: "visible" }}
               connectionLineStyle={{ stroke: "var(--primary)", strokeWidth: 2, strokeDasharray: "6 3" }}
               fitView
               snapToGrid
               snapGrid={[20, 20]}
               nodesDraggable={!layoutLocked}
-              nodesConnectable={!layoutLocked}
+              nodesConnectable
               defaultEdgeOptions={{
                 type: "default",
                 style: { strokeWidth: 2 },
@@ -2460,7 +2497,7 @@ export function OrgEditorView({
                   <button
                     className={`org-cvs-btn${!layoutLocked ? " org-cvs-btn--active" : ""}`}
                     onClick={() => setLayoutLocked((v) => !v)}
-                    title={layoutLocked ? "解锁拖拽与连线" : "锁定布局，防止误操作"}
+                    title={layoutLocked ? "解锁拖拽" : "锁定布局，防止误拖拽"}
                   >
                     <IconSitemap size={13} /> {layoutLocked ? "拖拽关" : "拖拽开"}
                   </button>
@@ -2488,6 +2525,9 @@ export function OrgEditorView({
                       {e.label}
                     </span>
                   ))}
+                </div>
+                <div className="org-connect-hint">
+                  连线方式：拖拽或点击节点上下圆点
                 </div>
               </Panel>
               {saveStatus !== "idle" && (
@@ -2905,6 +2945,55 @@ export function OrgEditorView({
             .org-cvs-btn--danger { color: #ef4444; }
             .org-cvs-btn--danger:hover { background: rgba(239,68,68,0.15); }
 
+            /* ── Enhanced connection handles ── */
+            .org-handle.react-flow__handle {
+              pointer-events: all !important;
+              width: 11px !important;
+              height: 11px !important;
+              min-width: 11px !important;
+              min-height: 11px !important;
+              background: var(--primary, #6366f1) !important;
+              border: 2px solid var(--card-bg, #fff) !important;
+              border-radius: 50% !important;
+              opacity: 0.72;
+              z-index: 10 !important;
+              box-shadow: 0 0 0 2px rgba(99,102,241,0.14), 0 0 6px rgba(99,102,241,0.18);
+              transition: width 0.2s, height 0.2s, opacity 0.2s, box-shadow 0.2s, background 0.2s;
+              cursor: crosshair !important;
+            }
+            .react-flow__node:hover .org-handle,
+            .react-flow__node.selected .org-handle {
+              width: 14px !important;
+              height: 14px !important;
+              min-width: 14px !important;
+              min-height: 14px !important;
+              opacity: 1;
+              border-color: transparent !important;
+              box-shadow: 0 0 0 3px rgba(99,102,241,0.3), 0 0 10px rgba(99,102,241,0.42);
+              animation: org-handle-pulse 2s ease-in-out infinite;
+            }
+            .react-flow__node:hover .org-handle:hover,
+            .react-flow__node.selected .org-handle:hover {
+              width: 16px !important;
+              height: 16px !important;
+              min-width: 16px !important;
+              min-height: 16px !important;
+              background: #818cf8 !important;
+              box-shadow: 0 0 0 4px rgba(99,102,241,0.35), 0 0 16px rgba(99,102,241,0.6);
+              animation: none;
+            }
+            @keyframes org-handle-pulse {
+              0%, 100% { box-shadow: 0 0 0 3px rgba(99,102,241,0.3); }
+              50% { box-shadow: 0 0 0 6px rgba(99,102,241,0.15), 0 0 12px rgba(99,102,241,0.3); }
+            }
+            .react-flow__handle.connecting,
+            .react-flow__handle.connectingfrom {
+              background: #818cf8 !important;
+              width: 14px !important;
+              height: 14px !important;
+              pointer-events: all !important;
+            }
+
             .org-edge-legend {
               display: flex; align-items: center; gap: 8px;
               margin-top: 4px; padding: 3px 8px;
@@ -2921,6 +3010,17 @@ export function OrgEditorView({
             .org-edge-legend-line {
               display: inline-block; width: 16px; height: 2px;
               border-radius: 1px; flex-shrink: 0;
+            }
+            .org-connect-hint {
+              margin-top: 4px;
+              padding: 4px 8px;
+              border-radius: 6px;
+              border: 1px dashed color-mix(in srgb, var(--primary, #6366f1) 30%, transparent);
+              background: color-mix(in srgb, var(--primary, #6366f1) 7%, transparent);
+              color: var(--muted, #94a3b8);
+              font-size: 10px;
+              line-height: 1.4;
+              width: fit-content;
             }
 
             .org-tb-stats {
@@ -3319,51 +3419,65 @@ export function OrgEditorView({
                   <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                     最近活动
                     {nodeEvents.length > 0 && (
-                      <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 400, marginLeft: 4 }}>
+                      <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 4 }}>
                         ({nodeEvents.length})
                       </span>
                     )}
                   </div>
                   {nodeEvents.length === 0 ? (
-                    <div style={{ fontSize: 11, color: "#9ca3af" }}>暂无活动记录</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无活动记录</div>
                   ) : (
                     <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                      {nodeEvents.slice(0, 15).map((evt: any, i: number) => (
-                        <div key={evt.event_id || i} style={{
-                          padding: "4px 0",
-                          borderBottom: "1px solid var(--line)",
-                          fontSize: 11,
-                        }}>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <span style={{
-                              width: 6,
-                              height: 6,
-                              borderRadius: "50%",
-                              background: evt.event_type?.includes("fail") || evt.event_type?.includes("error")
-                                ? "var(--danger)"
-                                : evt.event_type?.includes("complete")
-                                ? "var(--ok)"
-                                : "var(--primary)",
-                              flexShrink: 0,
-                            }} />
-                            <span style={{ fontWeight: 500 }}>
-                              {evt.event_type?.replace(/_/g, " ")}
-                            </span>
-                            <span style={{ color: "#9ca3af", fontSize: 10, marginLeft: "auto" }}>
-                              {fmtTime(evt.timestamp)}
-                            </span>
-                          </div>
-                          {evt.data && Object.keys(evt.data).length > 0 && (
-                            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, marginLeft: 12 }}>
-                              {Object.entries(evt.data).slice(0, 3).map(([k, v]) => (
-                                <span key={k} style={{ marginRight: 8 }}>
-                                  {k}: {String(v).slice(0, 60)}
-                                </span>
-                              ))}
+                      {nodeEvents.slice(0, 15).map((evt: any, i: number) => {
+                        const dataEntries = Object.entries(evt.data || {});
+                        const isEvtExpanded = expandedThinkingIdx === `evt-${i}`;
+                        const fullText = dataEntries.map(([k, v]) => `**${k}**: ${String(v)}`).join("\n\n");
+                        return (
+                          <div key={evt.event_id || i}
+                            onClick={() => setExpandedThinkingIdx(isEvtExpanded ? null : `evt-${i}`)}
+                            style={{
+                              padding: "4px 0",
+                              borderBottom: "1px solid var(--line)",
+                              fontSize: 11, cursor: "pointer",
+                              background: isEvtExpanded ? "var(--bg-subtle, transparent)" : undefined,
+                            }}>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                              <span style={{
+                                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                                background: evt.event_type?.includes("fail") || evt.event_type?.includes("error")
+                                  ? "var(--danger)"
+                                  : evt.event_type?.includes("complete")
+                                  ? "var(--ok)"
+                                  : "var(--primary)",
+                              }} />
+                              <span style={{ fontWeight: 500 }}>
+                                {evt.event_type?.replace(/_/g, " ")}
+                              </span>
+                              <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>
+                                {fmtTime(evt.timestamp)}
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            {fullText && (
+                              <div className="bb-entry-content" style={{
+                                marginTop: 2, marginLeft: 12, fontSize: 10,
+                                maxHeight: isEvtExpanded ? "none" : 48,
+                                overflow: isEvtExpanded ? "visible" : "hidden",
+                              }}>
+                                {mdModules ? (
+                                  <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+                                    {fullText}
+                                  </mdModules.ReactMarkdown>
+                                ) : <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{fullText}</pre>}
+                              </div>
+                            )}
+                            {!isEvtExpanded && fullText.length > 80 && (
+                              <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>
+                                点击展开全文
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -3373,13 +3487,13 @@ export function OrgEditorView({
                   <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                     思维链
                     {nodeThinking.length > 0 && (
-                      <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 400, marginLeft: 4 }}>
+                      <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 4 }}>
                         ({nodeThinking.length})
                       </span>
                     )}
                   </div>
                   {nodeThinking.length === 0 ? (
-                    <div style={{ fontSize: 11, color: "#9ca3af" }}>暂无思维链记录</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无思维链记录</div>
                   ) : (
                     <div style={{ maxHeight: 400, overflowY: "auto" }}>
                       {nodeThinking.slice(0, 30).map((item: any, i: number) => {
@@ -3406,8 +3520,8 @@ export function OrgEditorView({
                               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                                 <span style={{
                                   fontSize: 10, padding: "1px 5px", borderRadius: 3,
-                                  background: isOut ? "#dbeafe" : "#fef3c7",
-                                  color: isOut ? "#1d4ed8" : "#92400e",
+                                  background: isOut ? "rgba(59,130,246,0.12)" : "rgba(245,158,11,0.12)",
+                                  color: isOut ? "#3b82f6" : "#f59e0b",
                                   fontWeight: 500,
                                 }}>
                                   {isOut ? `→ ${item.peer}` : `← ${item.peer}`}
@@ -3421,22 +3535,28 @@ export function OrgEditorView({
                                     {item.msg_type.replace(/_/g, " ")}
                                   </span>
                                 )}
-                                <span style={{ color: "#9ca3af", fontSize: 10, marginLeft: "auto" }}>
+                                <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>
                                   {tsLocal}
                                 </span>
                               </div>
-                              <div style={{
-                                marginTop: 3, fontSize: 11, color: "#374151",
-                                whiteSpace: "pre-wrap", wordBreak: "break-word",
+                              <div className="bb-entry-content" style={{
+                                marginTop: 3, fontSize: 11,
                                 maxHeight: isExpanded ? "none" : 60,
                                 overflow: isExpanded ? "visible" : "hidden",
-                                lineHeight: 1.4,
                               }}>
-                                {isExpanded
-                                  ? (item.content || "")
-                                  : (item.content || "").length > 150
-                                    ? (item.content || "").slice(0, 150) + "…"
-                                    : item.content}
+                                {mdModules ? (
+                                  <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+                                    {isExpanded
+                                      ? (item.content || "")
+                                      : (item.content || "").length > 150
+                                        ? (item.content || "").slice(0, 150) + "…"
+                                        : (item.content || "")}
+                                  </mdModules.ReactMarkdown>
+                                ) : (
+                                  <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>
+                                    {isExpanded ? (item.content || "") : (item.content || "").length > 150 ? (item.content || "").slice(0, 150) + "…" : (item.content || "")}
+                                  </pre>
+                                )}
                               </div>
                               {!isExpanded && (item.content || "").length > 150 && (
                                 <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2 }}>
@@ -3472,19 +3592,23 @@ export function OrgEditorView({
                                 }}>
                                   {isToolCall ? "⚙ " : ""}{evtType.replace(/_/g, " ")}
                                 </span>
-                                <span style={{ color: "#9ca3af", fontSize: 10, marginLeft: "auto" }}>
+                                <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>
                                   {tsLocal}
                                 </span>
                               </div>
-                              {item.data && Object.keys(item.data).length > 0 && (
-                                <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, marginLeft: 12 }}>
-                                  {Object.entries(item.data).slice(0, isExpanded ? 20 : 3).map(([k, v]) => (
-                                    <div key={k} style={{ marginBottom: 1 }}>
-                                      <span style={{ fontWeight: 500 }}>{k}</span>: {isExpanded ? String(v) : String(v).slice(0, 80)}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                              {item.data && Object.keys(item.data).length > 0 && (() => {
+                                const entries = Object.entries(item.data).slice(0, isExpanded ? 20 : 3);
+                                const mdText = entries.map(([k, v]) => `**${k}**: ${isExpanded ? String(v) : String(v).slice(0, 120)}`).join("\n\n");
+                                return (
+                                  <div className="bb-entry-content" style={{ fontSize: 10, marginTop: 2, marginLeft: 12 }}>
+                                    {mdModules ? (
+                                      <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+                                        {mdText}
+                                      </mdModules.ReactMarkdown>
+                                    ) : <span style={{ color: "var(--muted)" }}>{mdText}</span>}
+                                  </div>
+                                );
+                              })()}
                               {!isExpanded && item.data && Object.keys(item.data).length > 3 && (
                                 <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>
                                   点击查看全部 {Object.keys(item.data).length} 个字段
