@@ -95,8 +95,21 @@ class SessionManager:
         logger.info("SessionManager started")
 
     def mark_dirty(self) -> None:
-        """标记会话数据已修改，需要保存"""
+        """标记会话数据已修改，等待防抖保存（最多 _save_delay_seconds）。
+
+        适用于非关键状态变更（元数据、配置切换等）。
+        关键消息（对话内容）应使用 persist()。
+        """
         self._dirty = True
+
+    def persist(self) -> None:
+        """标记脏 + 立即持久化（用于对话消息等关键数据）。#374
+
+        统一的"确保写盘"语义，供所有通道（Desktop / IM）在
+        assistant 回复完成后调用。调用方无需关心 mark_dirty + flush 细节。
+        """
+        self._dirty = False
+        self._save_sessions()
 
     def _dispatch_hook_fire_and_forget(self, hook_name: str, **kwargs) -> None:
         """Dispatch a plugin hook from sync context (best-effort, non-blocking)."""
@@ -122,7 +135,10 @@ class SessionManager:
             logger.warning("Plugin hook task failed: %s", exc)
 
     def flush(self) -> None:
-        """立即保存所有待写入的会话（绕过防抖延迟）"""
+        """立即保存所有待写入的会话（绕过防抖延迟）。
+
+        低级 API，优先使用 persist()。
+        """
         if self._dirty:
             self._dirty = False
             self._save_sessions()
@@ -133,6 +149,10 @@ class SessionManager:
 
     def backfill_sessions_from_store(self) -> int:
         """用 turn_loader 回填所有 session 中可能缺失的消息（崩溃恢复）。
+
+        对比 sessions.json 和 SQLite conversation_turns 表，
+        将 SQLite 中比 sessions.json 更新的消息回填到 session 上下文中。
+        保留原始时间戳以保证消息顺序正确。
 
         Returns:
             回填的总 turn 数
@@ -156,10 +176,15 @@ class SessionManager:
                 if not newer and not session.context.messages and db_turns:
                     newer = db_turns
                 for t in newer:
-                    session.context.add_message(
-                        role=t["role"],
-                        content=t.get("content", ""),
-                    )
+                    ts = t.get("timestamp", "")
+                    msg = {"role": t["role"], "content": t.get("content", "")}
+                    if ts:
+                        msg["timestamp"] = ts
+                    with session.context._msg_lock:
+                        last = session.context.messages[-1] if session.context.messages else None
+                        if last and last.get("role") == msg["role"] and last.get("content") == msg["content"]:
+                            continue
+                        session.context.messages.append(msg)
                 if newer:
                     total_backfilled += len(newer)
                     logger.info(
@@ -485,11 +510,28 @@ class SessionManager:
                 logger.error(f"Error in save loop: {e}")
 
     def _load_sessions(self) -> None:
-        """从文件加载会话，主文件失败时自动回退到 .bak 备份。"""
+        """从文件加载会话，主文件失败时自动回退到 .tmp / .bak 备份。"""
         sessions_file = self.storage_path / "sessions.json"
         backup_file = self.storage_path / "sessions.json.bak"
+        temp_file = self.storage_path / "sessions.json.tmp"
 
         data = self._try_load_sessions_file(sessions_file)
+
+        if data is None and temp_file.exists():
+            logger.warning(
+                "Main sessions.json failed or missing, recovering from .tmp "
+                "(likely crash during atomic save)"
+            )
+            data = self._try_load_sessions_file(temp_file)
+            if data is not None:
+                try:
+                    if sessions_file.exists():
+                        sessions_file.unlink()
+                    temp_file.rename(sessions_file)
+                    logger.info("Recovered sessions.json from .tmp successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to promote .tmp to sessions.json: {e}")
+
         if data is None and backup_file.exists():
             logger.warning("Main sessions.json failed or missing, trying .bak backup")
             data = self._try_load_sessions_file(backup_file)

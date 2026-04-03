@@ -288,7 +288,7 @@ def _schedule_background_save(
                     meta["artifacts"] = bg_artifacts
                 session.add_message("assistant", bg_reply, **meta)
                 if session_manager:
-                    session_manager.mark_dirty()
+                    session_manager.persist()
                 logger.info(
                     "[Chat API] Background save: %d chars (conv=%s)",
                     len(bg_reply),
@@ -710,7 +710,7 @@ async def _stream_chat(
                     _msg_meta["ask_user"] = _ask_user_data
                 session.add_message("assistant", assistant_text_to_save, **_msg_meta)
                 if session_manager:
-                    session_manager.mark_dirty()
+                    session_manager.persist()
             except Exception as e:
                 logger.error(
                     f"[Chat API] Failed to save assistant message to session: {e}", exc_info=True
@@ -818,7 +818,7 @@ async def _stream_chat(
                         _deferred_meta["artifacts"] = _collected_artifacts
                     session.add_message("assistant", _deferred_text, **_deferred_meta)
                     if session_manager:
-                        session_manager.mark_dirty()
+                        session_manager.persist()
                     logger.info(
                         f"[Chat API] Deferred save: {len(_deferred_text)} chars "
                         f"(client_disconnected={_client_disconnected})"

@@ -631,7 +631,7 @@ def _setup_session_backfill(agent_or_master):
         _mm = _actual_agent.memory_manager
         if hasattr(_mm, "store") and _session_manager is not None:
             _session_manager.set_turn_loader(
-                lambda safe_id: _mm.store.get_recent_turns(safe_id, limit=50)
+                lambda safe_id: _mm.store.get_recent_turns(safe_id, limit=200)
             )
             backfilled = _session_manager.backfill_sessions_from_store()
             if backfilled:
