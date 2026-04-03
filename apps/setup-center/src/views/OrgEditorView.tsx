@@ -64,6 +64,8 @@ import { OrgDashboard } from "../components/OrgDashboard";
 import { OrgProjectBoard } from "../components/OrgProjectBoard";
 import { ZoomIn, ZoomOut, Maximize, X as XIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input as ShadInput } from "../components/ui/input";
 import { Label as ShadLabel } from "../components/ui/label";
 import { Slider } from "../components/ui/slider";
@@ -3284,6 +3286,7 @@ export function OrgEditorView({
             maxWidth: isMobile ? 360 : 300,
             borderLeft: isMobile ? "none" : "1px solid var(--line)",
             overflowY: "auto",
+            scrollbarGutter: "stable",
             background: "var(--bg-app)",
             position: isMobile ? "absolute" : "relative",
             right: 0,
@@ -3322,30 +3325,30 @@ export function OrgEditorView({
             </div>
           </div>
 
-          {/* Tabs - simplified 4 tabs */}
-          <div style={{ display: "flex", borderBottom: "1px solid var(--line)" }}>
-            {(["overview", "identity", "capabilities", "tasks"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setPropsTab(tab as any)}
-                style={{
-                  flex: 1,
-                  minWidth: 44,
-                  padding: "8px 4px",
-                  fontSize: 11,
-                  fontWeight: propsTab === tab ? 600 : 400,
-                  color: propsTab === tab ? "var(--primary)" : "var(--muted)",
-                  background: "transparent",
-                  border: "none",
-                  borderBottomWidth: 2,
-                  borderBottomStyle: "solid",
-                  borderBottomColor: propsTab === tab ? "var(--primary)" : "transparent",
-                  cursor: "pointer",
-                }}
-              >
-                {tab === "overview" ? "概览" : tab === "identity" ? "身份" : tab === "capabilities" ? "能力" : "任务"}
-              </button>
-            ))}
+          {/* Tabs */}
+          <div style={{ padding: "10px 12px 0", borderBottom: "1px solid var(--line)" }}>
+            <ToggleGroup
+              type="single"
+              value={propsTab}
+              onValueChange={(v) => { if (v) setPropsTab(v as typeof propsTab); }}
+              variant="outline"
+              size="sm"
+              spacing={0}
+              className="grid w-full grid-cols-4"
+            >
+              <ToggleGroupItem value="overview" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                概览
+              </ToggleGroupItem>
+              <ToggleGroupItem value="identity" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                身份
+              </ToggleGroupItem>
+              <ToggleGroupItem value="capabilities" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                能力
+              </ToggleGroupItem>
+              <ToggleGroupItem value="tasks" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                任务
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
 
           <div style={{ padding: 12 }}>
@@ -4222,23 +4225,18 @@ export function OrgEditorView({
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
                 {/* ── Section 1: 执行工具类目 ── */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8,
-                  background: "var(--card-bg, #fff)", overflow: "hidden",
-                }}>
-                  <div style={{
-                    padding: "8px 10px", borderBottom: "1px solid var(--line)",
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                  }}>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600 }}>执行工具</div>
-                      <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
+                <Card className="gap-0 overflow-hidden py-0">
+                  <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
+                    <div className="min-w-0">
+                      <CardTitle className="text-sm">执行工具</CardTitle>
+                      <CardDescription className="mt-1 text-[11px]">
                         未选择时只能使用组织协作工具
-                      </div>
+                      </CardDescription>
                     </div>
-                    <button
-                      className="btnSmall"
-                      style={{ fontSize: 10, padding: "2px 8px", flexShrink: 0 }}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-[11px]"
                       onClick={() => {
                         const title = (selectedNode.role_title || "").toLowerCase();
                         let preset: string[] = ["research", "memory"];
@@ -4257,74 +4255,64 @@ export function OrgEditorView({
                       title="根据岗位角色自动推荐工具"
                     >
                       自动推荐
-                    </button>
+                    </Button>
                   </div>
-                  <div style={{ padding: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                  <CardContent className="grid grid-cols-2 gap-2 px-3 py-3">
                     {[
-                      { key: "research", label: "搜索", icon: "◎" },
-                      { key: "planning", label: "计划", icon: "▪" },
-                      { key: "filesystem", label: "文件/命令", icon: "▣" },
-                      { key: "memory", label: "记忆", icon: "◈" },
-                      { key: "browser", label: "浏览器", icon: "◌" },
-                      { key: "communication", label: "通信", icon: "▸" },
+                      { key: "research", label: "搜索" },
+                      { key: "planning", label: "计划" },
+                      { key: "filesystem", label: "文件/命令" },
+                      { key: "memory", label: "记忆" },
+                      { key: "browser", label: "浏览器" },
+                      { key: "communication", label: "通信" },
                     ].map((cat) => {
                       const checked = (selectedNode.external_tools || []).includes(cat.key);
                       return (
                         <label
                           key={cat.key}
+                          className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
                           style={{
-                            display: "flex", alignItems: "center", gap: 6,
-                            padding: "5px 8px", borderRadius: 6, cursor: "pointer",
-                            fontSize: 11,
-                            background: checked ? "rgba(14,165,233,0.1)" : "transparent",
-                            transition: "background 0.15s",
+                            borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                            background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
                           }}
                         >
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={checked}
-                            onChange={() => {
+                            onCheckedChange={() => {
                               const cur = selectedNode.external_tools || [];
                               const next = checked
                                 ? cur.filter((s: string) => s !== cat.key)
                                 : [...cur, cat.key];
                               updateNodeData("external_tools", next);
                             }}
-                            style={{ accentColor: "var(--primary)", flexShrink: 0, width: 14, height: 14 }}
                           />
-                          <span>{cat.icon} {cat.label}</span>
+                          <span className="truncate">{cat.label}</span>
                         </label>
                       );
                     })}
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
 
                 {/* ── Section 2: MCP 服务器 ── */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8,
-                  background: "var(--card-bg, #fff)", overflow: "hidden",
-                }}>
-                  <div style={{
-                    padding: "8px 10px", borderBottom: "1px solid var(--line)",
-                  }}>
-                    <div style={{ fontSize: 12, fontWeight: 600 }}>MCP 服务器</div>
-                    <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
+                <Card className="gap-0 overflow-hidden py-0">
+                  <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
+                    <CardTitle className="text-sm">MCP 服务器</CardTitle>
+                    <CardDescription className="text-[11px]">
                       节点可调用的外部服务接口
-                    </div>
-                  </div>
+                    </CardDescription>
+                  </CardHeader>
                   {availableMcpServers.length > 3 && (
-                    <div style={{ padding: "4px 6px 0" }}>
-                      <input
-                        className="input"
+                    <CardContent className="px-3 pt-3 pb-0">
+                      <ShadInput
                         placeholder="搜索服务器..."
                         value={mcpSearch}
                         onChange={(e) => setMcpSearch(e.target.value)}
-                        style={{ fontSize: 11, width: "100%", padding: "4px 8px" }}
+                        className="h-8 text-xs"
                       />
-                    </div>
+                    </CardContent>
                   )}
                   {availableMcpServers.length > 0 ? (
-                    <div style={{ padding: 4, maxHeight: 150, overflowY: "auto" }}>
+                    <CardContent className="max-h-[150px] space-y-2 overflow-y-auto px-3 py-3">
                       {availableMcpServers
                         .filter((srv) => !mcpSearch || srv.name.toLowerCase().includes(mcpSearch.toLowerCase()))
                         .map((srv) => {
@@ -4332,77 +4320,67 @@ export function OrgEditorView({
                         return (
                           <label
                             key={srv.name}
+                            className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
                             style={{
-                              display: "flex", alignItems: "center", gap: 6,
-                              padding: "5px 8px", borderRadius: 6, cursor: "pointer",
-                              fontSize: 11,
-                              background: checked ? "rgba(14,165,233,0.1)" : "transparent",
-                              transition: "background 0.15s",
+                              borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                              background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
                             }}
                           >
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               checked={checked}
-                              onChange={() => {
+                              onCheckedChange={() => {
                                 const next = checked
                                   ? selectedNode.mcp_servers.filter((s: string) => s !== srv.name)
                                   : [...selectedNode.mcp_servers, srv.name];
                                 updateNodeData("mcp_servers", next);
                               }}
-                              style={{ accentColor: "var(--primary)", flexShrink: 0, width: 14, height: 14 }}
                             />
-                            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
                               {srv.name}
                             </span>
-                            <span style={{
+                            <Badge style={{
                               fontSize: 9, padding: "1px 5px", borderRadius: 3, flexShrink: 0,
                               background: srv.status === "connected" ? "#dcfce7" : "#f3f4f6",
                               color: srv.status === "connected" ? "#166534" : "#9ca3af",
                             }}>
                               {srv.status === "connected" ? "在线" : "离线"}
-                            </span>
+                            </Badge>
                           </label>
                         );
                       })}
-                    </div>
+                    </CardContent>
                   ) : (
-                    <div style={{ fontSize: 10, color: "var(--muted)", padding: "10px" }}>
+                    <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
                       暂无可用服务器
-                    </div>
+                    </CardContent>
                   )}
                   {selectedNode.mcp_servers.length > 0 && (
-                    <div style={{ fontSize: 9, color: "var(--muted)", padding: "2px 10px 6px", borderTop: "1px solid var(--line)" }}>
+                    <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
                       已选 {selectedNode.mcp_servers.length} 个
                     </div>
                   )}
-                </div>
+                </Card>
 
                 {/* ── Section 3: 技能 ── */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8,
-                  background: "var(--card-bg, #fff)", overflow: "hidden",
-                }}>
-                  <div style={{
-                    padding: "8px 10px", borderBottom: "1px solid var(--line)",
-                  }}>
-                    <div style={{ fontSize: 12, fontWeight: 600 }}>技能</div>
-                    <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
+                <Card className="gap-0 overflow-hidden py-0">
+                  <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
+                    <CardTitle className="text-sm">技能</CardTitle>
+                    <CardDescription className="text-[11px]">
                       已安装的专业技能包
-                    </div>
-                  </div>
+                    </CardDescription>
+                  </CardHeader>
                   {availableSkills.length > 3 && (
-                    <div style={{ padding: "4px 6px 0" }}>
-                      <input
-                        className="input"
+                    <CardContent className="px-3 pt-3 pb-0">
+                      <ShadInput
                         placeholder="搜索技能..."
                         value={skillSearch}
                         onChange={(e) => setSkillSearch(e.target.value)}
-                        style={{ fontSize: 11, width: "100%", padding: "4px 8px" }}
+                        className="h-8 text-xs"
                       />
-                    </div>
+                    </CardContent>
                   )}
                   {availableSkills.length > 0 ? (
-                    <div style={{ padding: 4, maxHeight: 150, overflowY: "auto" }}>
+                    <CardContent className="max-h-[150px] space-y-2 overflow-y-auto px-3 py-3">
                       {availableSkills
                         .filter((skill) => {
                           if (!skillSearch) return true;
@@ -4429,31 +4407,28 @@ export function OrgEditorView({
                         return (
                           <label
                             key={skill.name}
+                            className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
                             style={{
-                              display: "flex", alignItems: "flex-start", gap: 6,
-                              padding: "5px 8px", borderRadius: 6, cursor: "pointer",
-                              fontSize: 11,
-                              background: checked ? "rgba(14,165,233,0.1)" : "transparent",
-                              transition: "background 0.15s",
+                              borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                              background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
                             }}
                           >
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               checked={checked}
-                              onChange={() => {
+                              onCheckedChange={() => {
                                 const next = checked
                                   ? selectedNode.skills.filter((s: string) => s !== skill.name)
                                   : [...selectedNode.skills, skill.name];
                                 updateNodeData("skills", next);
                               }}
-                              style={{ accentColor: "var(--primary)", flexShrink: 0, width: 14, height: 14, marginTop: 2 }}
+                              className="mt-0.5"
                             />
-                            <div style={{ flex: 1, overflow: "hidden" }}>
-                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <div className="min-w-0 flex-1 overflow-hidden">
+                              <div className="overflow-hidden text-ellipsis whitespace-nowrap">
                                 {displayName}
                               </div>
                               {displayDesc && (
-                                <div style={{ fontSize: 9, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-muted-foreground">
                                   {displayDesc}
                                 </div>
                               )}
@@ -4461,18 +4436,18 @@ export function OrgEditorView({
                           </label>
                         );
                       })}
-                    </div>
+                    </CardContent>
                   ) : (
-                    <div style={{ fontSize: 10, color: "var(--muted)", padding: "10px" }}>
+                    <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
                       暂无可用技能
-                    </div>
+                    </CardContent>
                   )}
                   {selectedNode.skills.length > 0 && (
-                    <div style={{ fontSize: 9, color: "var(--muted)", padding: "2px 10px 6px", borderTop: "1px solid var(--line)" }}>
+                    <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
                       已选 {selectedNode.skills.length} 个
                     </div>
                   )}
-                </div>
+                </Card>
 
                 {/* ── 需要启用 MCP 工具类目提示 ── */}
                 {selectedNode.mcp_servers.length > 0 && !(selectedNode.external_tools || []).includes("mcp") && (
@@ -4482,16 +4457,17 @@ export function OrgEditorView({
                     lineHeight: 1.5,
                   }}>
                     已选择 MCP 服务器但未启用"搜索"等工具类目中的 MCP 调用能力。
-                    <button
-                      className="btnSmall"
-                      style={{ fontSize: 10, marginLeft: 4, padding: "1px 6px", verticalAlign: "middle" }}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="ml-1 h-6 px-2 text-[10px] align-middle"
                       onClick={() => {
                         const cur = selectedNode.external_tools || [];
                         if (!cur.includes("mcp")) updateNodeData("external_tools", [...cur, "mcp"]);
                       }}
                     >
                       一键启用
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -4500,153 +4476,137 @@ export function OrgEditorView({
             {propsTab === "capabilities" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {/* Performance section */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px",
-                  background: "var(--card-bg, #fff)",
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>
-                    性能限制
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <Card className="gap-0 py-0">
+                  <CardHeader className="px-4 py-3">
+                    <CardTitle className="text-sm">性能限制</CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-2 gap-3 px-4 pb-4">
                     <div>
-                      <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>并行任务数</div>
-                      <input
-                        className="input"
+                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">并行任务数</ShadLabel>
+                      <ShadInput
                         type="number"
                         min={1}
                         value={selectedNode.max_concurrent_tasks}
                         onChange={(e) => updateNodeData("max_concurrent_tasks", parseInt(e.target.value) || 1)}
-                        style={{ fontSize: 12, width: "100%" }}
+                        className="h-8 text-xs"
                       />
                     </div>
                     <div>
-                      <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>超时 (秒)</div>
-                      <input
-                        className="input"
+                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">超时 (秒)</ShadLabel>
+                      <ShadInput
                         type="number"
                         min={30}
                         value={selectedNode.timeout_s}
                         onChange={(e) => updateNodeData("timeout_s", parseInt(e.target.value) || 300)}
-                        style={{ fontSize: 12, width: "100%" }}
+                        className="h-8 text-xs"
                       />
                     </div>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
 
                 {/* Auto-clone section */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px",
-                  background: "var(--card-bg, #fff)",
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                      自动分身
+                <Card className="gap-0 py-0">
+                  <div className="flex items-start justify-between gap-3 px-4 py-3">
+                    <div className="min-w-0">
+                      <CardTitle className="text-sm">自动分身</CardTitle>
+                      <CardDescription className="mt-1 text-[11px] leading-5">
+                        任务堆积超过阈值时自动创建分身处理。
+                      </CardDescription>
                     </div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
+                    <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                      <ShadLabel className="cursor-pointer text-[11px] text-muted-foreground" htmlFor="auto-clone-enabled">启用</ShadLabel>
+                      <Switch
+                        id="auto-clone-enabled"
                         checked={selectedNode.auto_clone_enabled || false}
-                        onChange={(e) => updateNodeData("auto_clone_enabled", e.target.checked)}
+                        onCheckedChange={(checked) => updateNodeData("auto_clone_enabled", checked)}
                       />
-                      <span style={{ fontSize: 10, color: "var(--muted)" }}>启用</span>
-                    </label>
+                    </div>
                   </div>
+                  <CardContent className="space-y-3 px-4 pb-4">
                   {selectedNode.auto_clone_enabled && (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <div>
-                        <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>触发阈值（待处理数）</div>
-                        <input
-                          className="input"
+                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">触发阈值（待处理数）</ShadLabel>
+                        <ShadInput
                           type="number"
                           min={2}
                           value={selectedNode.auto_clone_threshold || 3}
                           onChange={(e) => updateNodeData("auto_clone_threshold", parseInt(e.target.value) || 3)}
-                          style={{ fontSize: 12, width: "100%" }}
+                          className="h-8 text-xs"
                         />
                       </div>
                       <div>
-                        <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>最大分身数</div>
-                        <input
-                          className="input"
+                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">最大分身数</ShadLabel>
+                        <ShadInput
                           type="number"
                           min={1}
                           max={5}
                           value={selectedNode.auto_clone_max || 3}
                           onChange={(e) => updateNodeData("auto_clone_max", parseInt(e.target.value) || 3)}
-                          style={{ fontSize: 12, width: "100%" }}
+                          className="h-8 text-xs"
                         />
                       </div>
                     </div>
                   )}
-                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6, lineHeight: 1.5 }}>
+                  <div className="text-[11px] leading-5 text-muted-foreground">
                     任务堆积超过阈值时自动创建分身处理。分身共享岗位记忆，同一任务链由同一分身完成。空闲分身在心跳时自动回收。
                   </div>
-                </div>
+                  </CardContent>
+                </Card>
 
                 {/* Permissions section */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8,
-                  background: "var(--card-bg, #fff)", overflow: "hidden",
-                }}>
-                  <div style={{
-                    padding: "8px 10px", borderBottom: "1px solid var(--line)",
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                  }}>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600 }}>权限控制</div>
-                      <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
-                        控制节点在组织内的行为权限
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ padding: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                <Card className="gap-0 overflow-hidden py-0">
+                  <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
+                    <CardTitle className="text-sm">权限控制</CardTitle>
+                    <CardDescription className="text-[11px]">
+                      控制节点在组织内的行为权限
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-2 gap-2 px-3 py-3">
                     {([
-                      { key: "can_delegate", label: "委派任务", icon: "↗" },
-                      { key: "can_escalate", label: "上报问题", icon: "⬆" },
-                      { key: "can_request_scaling", label: "申请扩编", icon: "⊕" },
-                      { key: "ephemeral", label: "临时节点", icon: "◔" },
-                    ] as const).map(({ key, label, icon }) => {
+                      { key: "can_delegate", label: "委派任务" },
+                      { key: "can_escalate", label: "上报问题" },
+                      { key: "can_request_scaling", label: "申请扩编" },
+                      { key: "ephemeral", label: "临时节点" },
+                    ] as const).map(({ key, label }) => {
                       const checked = !!selectedNode[key];
                       return (
                         <label
                           key={key}
+                          className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
                           style={{
-                            display: "flex", alignItems: "center", gap: 6,
-                            padding: "5px 8px", borderRadius: 6, cursor: "pointer",
-                            fontSize: 11,
-                            background: checked ? "rgba(14,165,233,0.1)" : "transparent",
-                            transition: "background 0.15s",
+                            borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                            background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
                           }}
                         >
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={checked}
-                            onChange={(e) => updateNodeData(key, e.target.checked)}
-                            style={{ accentColor: "var(--primary)", flexShrink: 0, width: 14, height: 14 }}
+                            onCheckedChange={(value) => updateNodeData(key, value === true)}
                           />
-                          <span>{icon} {label}</span>
+                          <span>{label}</span>
                         </label>
                       );
                     })}
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
 
                 {/* LLM endpoint */}
-                <div style={{
-                  border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px",
-                  background: "var(--card-bg, #fff)",
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
-                    LLM 端点偏好
-                  </div>
-                  <input
-                    className="input"
-                    value={selectedNode.preferred_endpoint || ""}
-                    onChange={(e) => updateNodeData("preferred_endpoint", e.target.value || null)}
-                    placeholder="留空使用默认端点"
-                    style={{ fontSize: 12, width: "100%" }}
-                  />
-                </div>
+                <Card className="gap-0 py-0">
+                  <CardHeader className="px-4 py-3">
+                    <CardTitle className="text-sm">LLM 端点偏好</CardTitle>
+                    <CardDescription className="text-[11px]">
+                      留空时使用默认端点
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4">
+                    <ShadInput
+                      value={selectedNode.preferred_endpoint || ""}
+                      onChange={(e) => updateNodeData("preferred_endpoint", e.target.value || null)}
+                      placeholder="留空使用默认端点"
+                      className="h-8 text-xs"
+                    />
+                  </CardContent>
+                </Card>
               </div>
             )}
 
@@ -4684,6 +4644,7 @@ export function OrgEditorView({
             width: isMobile ? "85%" : 280,
             maxWidth: isMobile ? 360 : 280,
             flexShrink: 0,
+            scrollbarGutter: "stable",
             padding: 16,
             position: isMobile ? "absolute" : "relative",
             zIndex: isMobile ? 50 : "auto",
@@ -4806,6 +4767,7 @@ export function OrgEditorView({
             width: 300,
             borderLeft: "1px solid var(--line)",
             overflowY: "auto",
+            scrollbarGutter: "stable",
             background: "var(--bg-app)",
             flexShrink: 0,
             padding: 12,
