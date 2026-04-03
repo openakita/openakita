@@ -219,9 +219,6 @@ risks_or_ambiguities:
 ```"""
 
 
-from ..skills.preset_utils import collect_preset_referenced_skills as _collect_preset_referenced_skills  # noqa: E402
-
-
 class Agent:
     """
     OpenAkita 主类
@@ -1311,36 +1308,8 @@ class Agent:
         - skills/ (项目级别)
         - .cursor/skills/ (Cursor 兼容)
         """
-        # 从所有标准目录加载
-        loaded = self.skill_loader.load_all(settings.project_root)
-        logger.info(f"Loaded {loaded} skills from standard directories")
-
-        # 外部技能启用/禁用（系统技能永远启用）
-        # 配置文件：<workspace>/data/skills.json
-        # - 存在且有 external_allowlist => 使用用户显式选择
-        # - 不存在 => 应用 DEFAULT_DISABLED_SKILLS 默认禁用列表
-        try:
-            cfg_path = settings.project_root / "data" / "skills.json"
-            external_allowlist: set[str] | None = None
-            if cfg_path.exists():
-                raw = cfg_path.read_text(encoding="utf-8")
-                cfg = json.loads(raw) if raw.strip() else {}
-                al = cfg.get("external_allowlist", None)
-                if isinstance(al, list):
-                    external_allowlist = {str(x).strip() for x in al if str(x).strip()}
-            effective = self.skill_loader.compute_effective_allowlist(external_allowlist)
-            agent_skills = _collect_preset_referenced_skills()
-            removed = self.skill_loader.prune_external_by_allowlist(
-                effective, agent_referenced_skills=agent_skills,
-            )
-            if removed:
-                logger.info(f"External skills filtered: {removed} disabled")
-        except Exception as e:
-            logger.warning(f"Failed to apply skills allowlist: {e}")
-
-        # 生成技能清单 (用于系统提示)
-        self._skill_catalog_text = self.skill_catalog.generate_catalog()
-        logger.info(f"Generated skill catalog with {self.skill_catalog.skill_count} skills")
+        await self.skill_manager.load_installed_skills()
+        self._skill_catalog_text = self.skill_manager.catalog_text
 
         # 更新工具列表，添加技能工具
         self._update_skill_tools()

@@ -16,6 +16,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..core.capabilities import (
+    CapabilityDescriptor,
+    CapabilityKind,
+    CapabilityOrigin,
+    CapabilityVisibility,
+    build_capability_id,
+    build_namespace,
+)
 from openakita.utils.atomic_io import atomic_json_write
 
 logger = logging.getLogger(__name__)
@@ -169,10 +177,58 @@ class AgentProfile:
         """按语言返回显示名称，找不到则回退到 name"""
         return self.name_i18n.get(lang, self.name)
 
+    @property
+    def origin(self) -> CapabilityOrigin:
+        if self.is_system:
+            return CapabilityOrigin.SYSTEM
+        if self.ephemeral:
+            return CapabilityOrigin.RUNTIME
+        return CapabilityOrigin.USER
+
+    @property
+    def namespace(self) -> str:
+        return build_namespace(self.origin)
+
+    @property
+    def definition_id(self) -> str:
+        return build_capability_id(
+            CapabilityKind.AGENT_DEFINITION,
+            self.id,
+            origin=self.origin,
+        )
+
+    def to_capability_descriptor(self) -> CapabilityDescriptor:
+        return CapabilityDescriptor(
+            id=self.definition_id,
+            kind=CapabilityKind.AGENT_DEFINITION,
+            origin=self.origin,
+            namespace=self.namespace,
+            display_name=self.name,
+            description=self.description,
+            version="1",
+            visibility=CapabilityVisibility.HIDDEN if self.hidden else CapabilityVisibility.PUBLIC,
+            permission_profile=self.role,
+            i18n={
+                "name": dict(self.name_i18n),
+                "description": dict(self.description_i18n),
+            },
+            metadata={
+                "profile_id": self.id,
+                "role": self.role,
+                "ephemeral": self.ephemeral,
+                "skills_mode": self.skills_mode.value,
+                "tools_mode": self.tools_mode,
+                "plugins_mode": self.plugins_mode,
+            },
+        )
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["type"] = self.type.value
         d["skills_mode"] = self.skills_mode.value
+        d["origin"] = self.origin.value
+        d["namespace"] = self.namespace
+        d["definition_id"] = self.definition_id
         return d
 
     @classmethod

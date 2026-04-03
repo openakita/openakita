@@ -67,6 +67,7 @@ async def clear_chat(request: Request):
         user_id="desktop_user",
     )
     if cleared:
+        _cleanup_chat_runtime_state(request, conversation_id)
         return {"ok": True}
 
     # Fallback: search by Session.id (handles wrapped IDs from API clients)
@@ -74,12 +75,51 @@ async def clear_chat(request: Request):
     if session:
         session.context.clear_messages()
         session_manager.mark_dirty()
+        _cleanup_chat_runtime_state(request, conversation_id)
         return {"ok": True}
 
     return JSONResponse(
         status_code=404,
         content={"ok": False, "error": "session not found"},
     )
+
+
+def _cleanup_chat_runtime_state(request: Request, conversation_id: str) -> None:
+    """Clear runtime state that should not survive /api/chat/clear."""
+    try:
+        from ...core.policy import get_policy_engine
+
+        get_policy_engine().cleanup_session(conversation_id)
+    except Exception:
+        pass
+
+    try:
+        from ...tools.handlers.plan import clear_session_todo_state
+
+        clear_session_todo_state(conversation_id)
+    except Exception:
+        pass
+
+    try:
+        orchestrators = []
+
+        app_orchestrator = getattr(request.app.state, "orchestrator", None)
+        if app_orchestrator is not None:
+            orchestrators.append(app_orchestrator)
+
+        try:
+            from openakita.main import _orchestrator as global_orchestrator
+
+            if global_orchestrator is not None and global_orchestrator not in orchestrators:
+                orchestrators.append(global_orchestrator)
+        except Exception:
+            pass
+
+        for orchestrator in orchestrators:
+            if hasattr(orchestrator, "purge_session_states"):
+                orchestrator.purge_session_states(conversation_id)
+    except Exception:
+        pass
 
 
 async def _broadcast_chat_event(event: str, data: dict) -> None:
@@ -310,7 +350,9 @@ async def _stream_chat(
                 )
             except (UnicodeEncodeError, OSError):
                 pass
-        payload = {"type": event_type, **(data or {})}
+        from ...events import normalize_stream_event
+
+        payload = normalize_stream_event({"type": event_type, **(data or {})})
         if event_type == "text_delta" and data and "content" in data:
             chunk = data["content"]
             _reply_chars += len(chunk)

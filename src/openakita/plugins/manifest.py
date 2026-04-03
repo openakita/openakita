@@ -10,6 +10,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
+from ..core.capabilities import (
+    CapabilityDescriptor,
+    CapabilityKind,
+    CapabilityOrigin,
+    CapabilityVisibility,
+    build_capability_id,
+    build_namespace,
+)
+
 logger = logging.getLogger(__name__)
 
 REQUIRED_FIELDS = {"id", "name", "version", "type"}
@@ -75,6 +84,10 @@ class PluginManifest(BaseModel):
     category: str = ""
     tags: list[str] = Field(default_factory=list)
     icon: str = ""
+    display_name_zh: str = ""
+    display_name_en: str = ""
+    description_i18n: dict[str, str] = Field(default_factory=dict)
+    review_status: str = "unreviewed"
     load_timeout: float = 10.0
     hook_timeout: float = 5.0
     retrieve_timeout: float = 3.0
@@ -138,6 +151,54 @@ class PluginManifest(BaseModel):
         if self.advanced_permissions:
             return "advanced"
         return "basic"
+
+    @property
+    def origin(self) -> str:
+        return CapabilityOrigin.PLUGIN.value
+
+    @property
+    def namespace(self) -> str:
+        return build_namespace(CapabilityOrigin.PLUGIN, plugin_id=self.id)
+
+    @property
+    def capability_id(self) -> str:
+        return build_capability_id(
+            CapabilityKind.PLUGIN,
+            self.id,
+            origin=CapabilityOrigin.PLUGIN,
+            plugin_id=self.id,
+        )
+
+    @property
+    def permission_profile(self) -> str:
+        return self.max_permission_level
+
+    def to_capability_descriptor(self) -> CapabilityDescriptor:
+        return CapabilityDescriptor(
+            id=self.capability_id,
+            kind=CapabilityKind.PLUGIN,
+            origin=CapabilityOrigin.PLUGIN,
+            namespace=self.namespace,
+            display_name=self.name,
+            description=self.description,
+            version=self.version,
+            visibility=CapabilityVisibility.PUBLIC,
+            permission_profile=self.permission_profile,
+            i18n={
+                "name": {
+                    "zh": self.display_name_zh or self.name,
+                    "en": self.display_name_en or self.name,
+                },
+                "description": dict(self.description_i18n),
+            },
+            metadata={
+                "plugin_type": self.plugin_type,
+                "permissions": list(self.permissions),
+                "review_status": self.review_status,
+                "category": self.category,
+                "tags": list(self.tags),
+            },
+        )
 
 
 class ManifestError(Exception):

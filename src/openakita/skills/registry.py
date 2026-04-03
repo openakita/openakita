@@ -10,6 +10,15 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
+from ..core.capabilities import (
+    CapabilityDescriptor,
+    CapabilityKind,
+    CapabilityOrigin,
+    CapabilityVisibility,
+    build_capability_id,
+    build_namespace,
+)
+
 if TYPE_CHECKING:
     from .parser import ParsedSkill
 
@@ -41,6 +50,23 @@ def _infer_trust_level(skill: "ParsedSkill", source_url: str | None) -> str:
         if host in url_lower:
             return "marketplace"
     return "remote"
+
+
+def _infer_origin(
+    skill: "ParsedSkill",
+    source_url: str | None,
+    plugin_source: str | None,
+) -> CapabilityOrigin:
+    if plugin_source:
+        return CapabilityOrigin.PLUGIN
+    if getattr(skill.metadata, "system", False):
+        return CapabilityOrigin.SYSTEM
+    trust_level = _infer_trust_level(skill, source_url)
+    if trust_level == "marketplace":
+        return CapabilityOrigin.MARKETPLACE
+    if trust_level == "remote":
+        return CapabilityOrigin.REMOTE
+    return CapabilityOrigin.PROJECT
 
 
 @dataclass
@@ -90,6 +116,13 @@ class SkillEntry:
 
     # 插件来源标识（如 "plugin:translate-skill"），非插件技能为 None
     plugin_source: str | None = None
+
+    # 统一 capability 元数据
+    origin: str = CapabilityOrigin.PROJECT.value
+    namespace: str = CapabilityOrigin.PROJECT.value
+    visibility: str = CapabilityVisibility.PUBLIC.value
+    permission_profile: str = ""
+    capability_id: str = ""
 
     # 国际化（由 agents/openai.yaml i18n 字段注入，兼容旧的 .openakita-i18n.json）
     name_i18n: dict[str, str] = field(default_factory=dict)
@@ -155,7 +188,11 @@ class SkillEntry:
 
     @classmethod
     def from_parsed_skill(
-        cls, skill: "ParsedSkill", skill_id: str | None = None,
+        cls,
+        skill: "ParsedSkill",
+        skill_id: str | None = None,
+        *,
+        plugin_source: str | None = None,
     ) -> "SkillEntry":
         """从 ParsedSkill 创建条目
 
@@ -177,9 +214,13 @@ class SkillEntry:
 
         # F12: determine trust level
         trust_level = _infer_trust_level(skill, source_url)
+        origin = _infer_origin(skill, source_url, plugin_source)
+        effective_skill_id = skill_id or meta.name
+        namespace = build_namespace(origin, plugin_id=plugin_source or "")
+        permission_profile = "trusted" if trust_level in ("builtin", "local", "marketplace") else "restricted"
 
         return cls(
-            skill_id=skill_id or meta.name,
+            skill_id=effective_skill_id,
             name=meta.name,
             description=meta.description,
             version=meta.version,
@@ -208,6 +249,17 @@ class SkillEntry:
             trust_level=trust_level,
             skill_path=str(skill.path),
             source_url=source_url,
+            plugin_source=plugin_source,
+            origin=origin.value,
+            namespace=namespace,
+            visibility=CapabilityVisibility.PUBLIC.value,
+            permission_profile=permission_profile,
+            capability_id=build_capability_id(
+                CapabilityKind.SKILL,
+                effective_skill_id,
+                origin=origin,
+                plugin_id=plugin_source or "",
+            ),
             name_i18n=dict(meta.name_i18n),
             description_i18n=dict(meta.description_i18n),
             _parsed_skill=skill,
@@ -218,6 +270,37 @@ class SkillEntry:
         if self._parsed_skill:
             return self._parsed_skill.body
         return None
+
+    def to_capability_descriptor(self) -> CapabilityDescriptor:
+        return CapabilityDescriptor(
+            id=self.capability_id
+            or build_capability_id(
+                CapabilityKind.SKILL,
+                self.skill_id,
+                origin=self.origin,
+                plugin_id=self.plugin_source or "",
+            ),
+            kind=CapabilityKind.SKILL,
+            origin=CapabilityOrigin(self.origin),
+            namespace=self.namespace,
+            display_name=self.name,
+            description=self.description,
+            version=self.version or "",
+            visibility=CapabilityVisibility(self.visibility),
+            permission_profile=self.permission_profile,
+            source_ref=self.source_url or self.skill_path or "",
+            i18n={
+                "name": dict(self.name_i18n),
+                "description": dict(self.description_i18n),
+            },
+            metadata={
+                "system": self.system,
+                "tool_name": self.tool_name or "",
+                "handler": self.handler or "",
+                "trust_level": self.trust_level,
+                "plugin_source": self.plugin_source or "",
+            },
+        )
 
     def to_tool_schema(self) -> dict:
         """
@@ -293,21 +376,34 @@ class SkillRegistry:
         matches = [e for e in self._skills.values() if e.name == key]
         if len(matches) > 1:
             logger.warning(
-                "Ambiguous skill name '%s' matches %d entries: %s — returning first",
+                "Ambiguous skill name '%s' matches %d entries: %s — refusing fuzzy resolution",
                 key, len(matches), [m.skill_id for m in matches],
             )
+            return None
         return matches[0] if matches else None
 
     def _resolve_id(self, key: str) -> str | None:
         """将 key 解析为实际的 skill_id。"""
         if key in self._skills:
             return key
-        for sid, e in self._skills.items():
-            if e.name == key:
-                return sid
+        matches = [sid for sid, e in self._skills.items() if e.name == key]
+        if len(matches) > 1:
+            logger.warning(
+                "Ambiguous skill name '%s' matches %d entries: %s — refusing fuzzy resolution",
+                key, len(matches), matches,
+            )
+            return None
+        if matches:
+            return matches[0]
         return None
 
-    def register(self, skill: "ParsedSkill", skill_id: str | None = None) -> None:
+    def register(
+        self,
+        skill: "ParsedSkill",
+        skill_id: str | None = None,
+        *,
+        plugin_source: str | None = None,
+    ) -> None:
         """
         注册技能
 
@@ -315,7 +411,11 @@ class SkillRegistry:
             skill: 解析后的技能对象
             skill_id: 唯一标识（通常为目录名）。未提供时回退到 metadata.name。
         """
-        entry = SkillEntry.from_parsed_skill(skill, skill_id=skill_id)
+        entry = SkillEntry.from_parsed_skill(
+            skill,
+            skill_id=skill_id,
+            plugin_source=plugin_source,
+        )
 
         if entry.skill_id in self._skills:
             logger.debug(f"Skill '{entry.skill_id}' already registered, overwriting")
@@ -387,6 +487,9 @@ class SkillRegistry:
         return [
             {
                 "skill_id": skill.skill_id,
+                "capability_id": skill.capability_id,
+                "namespace": skill.namespace,
+                "origin": skill.origin,
                 "name": skill.name,
                 "description": skill.description,
                 "auto_invoke": not skill.disable_model_invocation,
@@ -567,6 +670,12 @@ class SkillRegistry:
     def __bool__(self) -> bool:
         """确保空 registry 不被误判为 falsy"""
         return True
+
+    def items(self):
+        return self._skills.items()
+
+    def pop(self, key: str, default=None):
+        return self._skills.pop(key, default)
 
 
 # 全局注册中心

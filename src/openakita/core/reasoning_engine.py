@@ -1199,7 +1199,9 @@ class ReasoningEngine:
                 if _allowed_tool_names is not None:
                     _guarded_calls = []
                     for tc in decision.tool_calls:
-                        _tc_name = tc.get("name", "")
+                        _tc_name = self._tool_executor.canonicalize_tool_name(
+                            tc.get("name", "")
+                        )
                         _tc_id = tc.get("id", "")
                         _tc_input = tc.get("input", tc.get("arguments", {}))
                         _block_reason = _should_block_tool(
@@ -1420,7 +1422,9 @@ class ReasoningEngine:
 
                 # === IM 进度: 描述即将执行的工具 ===
                 for tc in (decision.tool_calls or []):
-                    _tc_name = tc.get("name", "unknown")
+                    _tc_name = self._tool_executor.canonicalize_tool_name(
+                        tc.get("name", "unknown")
+                    )
                     _tc_args = tc.get("input", tc.get("arguments", {}))
                     await _emit_progress(f"🔧 {self._describe_tool_call(_tc_name, _tc_args)}")
 
@@ -1429,7 +1433,7 @@ class ReasoningEngine:
                 _rate_limited_by_id: dict[str, dict] = {}
                 _calls_to_execute = []
                 for tc in _all_tool_calls:
-                    _tc_name = tc.get("name", "")
+                    _tc_name = self._tool_executor.canonicalize_tool_name(tc.get("name", ""))
                     _tool_call_counter[_tc_name] = _tool_call_counter.get(_tc_name, 0) + 1
                     if _tool_call_counter[_tc_name] > _MAX_SAME_TOOL_PER_TASK:
                         logger.warning(
@@ -2457,7 +2461,9 @@ class ReasoningEngine:
                         # 先执行非 ask_user 工具
                         tool_results_for_msg: list[dict] = []
                         for tc in other_tool_calls:
-                            t_name = tc.get("name", "unknown")
+                            t_name = self._tool_executor.canonicalize_tool_name(
+                                tc.get("name", "unknown")
+                            )
                             t_args = tc.get("input", tc.get("arguments", {}))
                             t_id = tc.get("id", str(uuid.uuid4()))
                             # Runtime mode guard
@@ -2511,9 +2517,10 @@ class ReasoningEngine:
                             else:
                                 _tool_is_error = False
                                 try:
-                                    r = await self._tool_executor.execute_tool(
+                                    r = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=t_name,
                                         tool_input=t_args if isinstance(t_args, dict) else {},
+                                        policy_result=_pr,
                                         session_id=conversation_id,
                                     )
                                     r = str(r) if r else ""
@@ -2606,7 +2613,9 @@ class ReasoningEngine:
                             _stream_cancelled = True
                             break
 
-                        tool_name = tc.get("name", "unknown")
+                        tool_name = self._tool_executor.canonicalize_tool_name(
+                            tc.get("name", "unknown")
+                        )
                         tool_args = tc.get("input", tc.get("arguments", {}))
                         tool_id = tc.get("id", str(uuid.uuid4()))
 
@@ -2722,9 +2731,10 @@ class ReasoningEngine:
                         # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
                         try:
                             tool_exec_task = asyncio.create_task(
-                                self._tool_executor.execute_tool(
+                                self._tool_executor.execute_tool_with_policy(
                                     tool_name=tool_name,
                                     tool_input=tool_args if isinstance(tool_args, dict) else {},
+                                    policy_result=_pr,
                                     session_id=conversation_id,
                                 )
                             )

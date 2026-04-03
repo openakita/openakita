@@ -74,16 +74,20 @@ class OnceTrigger(Trigger):
 
     def __init__(self, run_at: datetime):
         self.run_at = run_at
+        self._fired = False
 
     def get_next_run_time(self, last_run: datetime | None = None) -> datetime | None:
-        if last_run is not None:
+        if last_run is not None or self._fired:
             return None
         return self.run_at
 
     def should_run(self, last_run: datetime | None = None) -> bool:
-        if last_run is not None:
+        if last_run is not None or self._fired:
             return False
         return datetime.now() >= self.run_at
+
+    def mark_fired(self) -> None:
+        self._fired = True
 
     @classmethod
     def from_config(cls, config: dict) -> "OnceTrigger":

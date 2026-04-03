@@ -195,7 +195,7 @@ class AgentFactory:
             return
 
         registry = agent.skill_registry
-        all_skills = [skill.name for skill in registry.list_all(include_disabled=True)]
+        all_skills = [skill.skill_id for skill in registry.list_all(include_disabled=True)]
 
         removed = 0
         if profile.skills_mode == SkillsMode.INCLUSIVE:
@@ -502,7 +502,10 @@ class AgentInstancePool:
                     parent_brain = v.agent.brain
                     break
 
-            agent = await self._factory.create(profile, parent_brain=parent_brain)
+            if parent_brain is None:
+                agent = await self._factory.create(profile)
+            else:
+                agent = await self._factory.create(profile, parent_brain=parent_brain)
             new_entry = _PoolEntry(agent, profile.id, session_id, current_version)
             self._pool[key] = new_entry
 
@@ -608,7 +611,7 @@ class AgentInstancePool:
             if entry.idle_seconds <= self._idle_timeout:
                 continue
             astate = getattr(entry.agent, "agent_state", None)
-            if astate and getattr(astate, "has_active_task", False):
+            if astate is not None and getattr(astate, "has_active_task", False) is True:
                 continue
             to_remove.append(key)
         for key in to_remove:

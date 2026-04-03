@@ -2034,7 +2034,9 @@ export function ChatView({
                 currentContent = event.content ?? "";
                 break;
               case "tool_call_start": {
-                if (event.tool === "delegate_to_agent" && event.args?.agent_id) {
+                const toolName = event.tool_name || event.tool;
+                const callId = event.call_id || event.id;
+                if (toolName === "delegate_to_agent" && event.args?.agent_id) {
                   const targetId = String(event.args.agent_id);
                   updateSubAgents((prev) => {
                     const exists = prev.find((s) => s.agentId === targetId);
@@ -2042,7 +2044,7 @@ export function ChatView({
                     return [...prev, { agentId: targetId, status: "delegating" as const, reason: String(event.args.reason || ""), startTime: Date.now() }];
                   }, undefined);
                 }
-                if (event.tool === "delegate_parallel" && Array.isArray(event.args?.tasks)) {
+                if (toolName === "delegate_parallel" && Array.isArray(event.args?.tasks)) {
                   updateSubAgents((prev) => {
                     let updated = [...prev];
                     for (const task of event.args.tasks as Array<{ agent_id?: string; reason?: string }>) {
@@ -2058,7 +2060,7 @@ export function ChatView({
                     return updated;
                   }, undefined);
                 }
-                if (event.tool === "spawn_agent") {
+                if (toolName === "spawn_agent") {
                   const targetId = String(event.args?.inherit_from || event.args?.agent_id || `spawn_${Date.now()}`);
                   updateSubAgents((prev) => {
                     const exists = prev.find((s) => s.agentId === targetId);
@@ -2066,7 +2068,7 @@ export function ChatView({
                     return [...prev, { agentId: targetId, status: "delegating" as const, reason: String(event.args?.task || event.args?.reason || ""), startTime: Date.now() }];
                   }, undefined);
                 }
-                if (event.tool === "create_agent" && event.args?.name) {
+                if (toolName === "create_agent" && event.args?.name) {
                   const targetId = String(event.args.name);
                   updateSubAgents((prev) => {
                     const exists = prev.find((s) => s.agentId === targetId);
@@ -2076,10 +2078,10 @@ export function ChatView({
                 }
 
                 // Per-session polling for sub-agent progress
-                const _isAgentTool = event.tool === "delegate_to_agent" || event.tool === "delegate_parallel" || event.tool === "spawn_agent" || event.tool === "create_agent";
+                const _isAgentTool = toolName === "delegate_to_agent" || toolName === "delegate_parallel" || toolName === "spawn_agent" || toolName === "create_agent";
                 if (_isAgentTool) {
                   logger.info("Chat", "Agent tool detected in SSE", {
-                    tool: event.tool, args: JSON.stringify(event.args || {}).slice(0, 200),
+                    tool: toolName, args: JSON.stringify(event.args || {}).slice(0, 200),
                     multiAgentEnabled: String(multiAgentEnabled),
                     activeConv: activeConvIdRef.current, thisConv: thisConvId,
                     subAgentsCount: sctx.activeSubAgents.length,
@@ -2117,23 +2119,25 @@ export function ChatView({
                   sctx.pollingTimer = setInterval(doFetch, 2000);
                 }
 
-                currentToolCalls = [...currentToolCalls, { tool: event.tool, args: event.args, status: "running", id: event.id }];
-                const _tcId = event.id || genId();
-                const _desc = formatToolDescription(event.tool, event.args);
-                const newTc: ChainToolCall = { toolId: _tcId, tool: event.tool, args: event.args, status: "running", description: _desc };
+                currentToolCalls = [...currentToolCalls, { tool: toolName, args: event.args, status: "running", id: callId }];
+                const _tcId = callId || genId();
+                const _desc = formatToolDescription(toolName, event.args);
+                const newTc: ChainToolCall = { toolId: _tcId, tool: toolName, args: event.args, status: "running", description: _desc };
                 if (currentChainGroup) {
                   const grp: ChainGroup = currentChainGroup;
                   currentChainGroup = {
                     ...grp,
                     toolCalls: [...grp.toolCalls, newTc],
-                    entries: [...grp.entries, { kind: "tool_start" as const, toolId: _tcId, tool: event.tool, args: event.args, description: _desc, status: "running" }],
+                    entries: [...grp.entries, { kind: "tool_start" as const, toolId: _tcId, tool: toolName, args: event.args, description: _desc, status: "running" }],
                   };
                   chainGroups = chainGroups.map((g, i) => i === chainGroups.length - 1 ? currentChainGroup! : g);
                 }
                 break;
               }
               case "tool_call_end": {
-                const _isAgentToolEnd = event.tool === "delegate_to_agent" || event.tool === "delegate_parallel" || event.tool === "spawn_agent" || event.tool === "create_agent";
+                const toolName = event.tool_name || event.tool;
+                const callId = event.call_id || event.id;
+                const _isAgentToolEnd = toolName === "delegate_to_agent" || toolName === "delegate_parallel" || toolName === "spawn_agent" || toolName === "create_agent";
                 if (_isAgentToolEnd) {
                   const isErr = event.is_error === true || (event.result || "").startsWith("❌");
                   updateSubAgents((prev) => prev.map((s) =>
@@ -2165,7 +2169,7 @@ export function ChatView({
                     .catch(() => {});
                 }
                 // Refresh profiles when a new agent is created
-                if (event.tool === "create_agent" && !(event.is_error || (event.result || "").startsWith("❌"))) {
+                if (toolName === "create_agent" && !(event.is_error || (event.result || "").startsWith("❌"))) {
                   safeFetch(`${apiBase}/api/agents/profiles`)
                     .then((r) => r.json())
                     .then((data) => { if (data?.profiles) setAgentProfiles(data.profiles); })
@@ -2174,8 +2178,8 @@ export function ChatView({
                 let matched = false;
                 currentToolCalls = currentToolCalls.map((tc) => {
                   if (matched) return tc;
-                  const idMatch = event.id && tc.id && tc.id === event.id;
-                  const nameMatch = !event.id && tc.tool === event.tool && tc.status === "running";
+                  const idMatch = callId && tc.id && tc.id === callId;
+                  const nameMatch = !callId && tc.tool === toolName && tc.status === "running";
                   if (idMatch || nameMatch) { matched = true; return { ...tc, result: event.result, status: "done" as const }; }
                   return tc;
                 });
@@ -2188,8 +2192,8 @@ export function ChatView({
                     ...grp,
                     toolCalls: grp.toolCalls.map((tc: ChainToolCall) => {
                       if (chainMatched) return tc;
-                      const idMatch = event.id && tc.toolId === event.id;
-                      const nameMatch = !event.id && tc.tool === event.tool && tc.status === "running";
+                      const idMatch = callId && tc.toolId === callId;
+                      const nameMatch = !callId && tc.tool === toolName && tc.status === "running";
                       if (idMatch || nameMatch) { chainMatched = true; return { ...tc, status: endStatus as ChainToolCall["status"], result: event.result }; }
                       return tc;
                     }),
@@ -2197,13 +2201,13 @@ export function ChatView({
                     entries: [
                       ...grp.entries.map(e => {
                         if (e.kind === "tool_start" && (!e.status || e.status === "running")) {
-                          const eIdMatch = event.id && e.toolId === event.id;
-                          const eNameMatch = !event.id && e.tool === event.tool;
+                          const eIdMatch = callId && e.toolId === callId;
+                          const eNameMatch = !callId && e.tool === toolName;
                           if (eIdMatch || eNameMatch) return { ...e, status: endStatus };
                         }
                         return e;
                       }),
-                      { kind: "tool_end" as const, toolId: event.id || "", tool: event.tool, result: event.result, status: endStatus },
+                      { kind: "tool_end" as const, toolId: callId || "", tool: toolName, result: event.result, status: endStatus },
                     ],
                   };
                   chainGroups = chainGroups.map((g, i) => i === chainGroups.length - 1 ? currentChainGroup! : g);
@@ -2221,8 +2225,9 @@ export function ChatView({
               case "todo_step_updated":
                 if (currentPlan) {
                   const newSteps: ChatTodoStep[] = currentPlan.steps.map((s) => {
-                    const matched = event.stepId
-                      ? s.id === event.stepId
+                    const stepId = event.step_id || event.stepId;
+                    const matched = stepId
+                      ? s.id === stepId
                       : event.stepIdx != null && currentPlan!.steps.indexOf(s) === event.stepIdx;
                     return matched ? { ...s, status: event.status as ChatTodoStep["status"] } : s;
                   });
@@ -2245,12 +2250,12 @@ export function ChatView({
                 break;
               case "security_confirm": {
                 const newConfirm: SecurityConfirmData = {
-                  tool: event.tool,
+                  tool: event.tool_name || event.tool,
                   args: event.args,
                   reason: event.reason,
                   riskLevel: event.risk_level,
                   needsSandbox: event.needs_sandbox,
-                  toolId: event.id,
+                  toolId: event.confirm_id || event.call_id || event.id,
                   countdown: 120,
                 };
                 setSecurityConfirm((prev) => {
@@ -2260,6 +2265,24 @@ export function ChatView({
                   }
                   return newConfirm;
                 });
+                break;
+              }
+              case "sub_agent_state": {
+                const agentId = String(event.agent_id || event.agentId || "");
+                if (!agentId) break;
+                updateSubAgents((prev) => {
+                  const exists = prev.find((s) => s.agentId === agentId);
+                  const nextState = {
+                    agentId,
+                    status: (event.status || "running") as typeof prev[number]["status"],
+                    reason: String(event.reason || ""),
+                    startTime: Date.now(),
+                  };
+                  if (exists) {
+                    return prev.map((s) => s.agentId === agentId ? { ...s, ...nextState } : s);
+                  }
+                  return [...prev, nextState];
+                }, undefined);
                 break;
               }
               case "ask_user": {

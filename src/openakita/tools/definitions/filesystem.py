@@ -14,8 +14,6 @@ File System 工具定义
 Description 质量对齐 Cursor Agent Mode — 所有行为约束前置到 description。
 """
 
-import platform
-
 FILESYSTEM_TOOLS = [
     {
         "name": "run_shell",
@@ -424,6 +422,3 @@ FILESYSTEM_TOOLS = [
         },
     },
 ]
-
-if platform.system() == "Windows":
-    FILESYSTEM_TOOLS = [t for t in FILESYSTEM_TOOLS if t["name"] != "run_shell"]

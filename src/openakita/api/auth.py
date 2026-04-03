@@ -9,7 +9,6 @@ Storage: data/web_access.json
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
@@ -22,6 +21,8 @@ from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+
+from ..core.auth.tokens import TokenClaims, decode_jwt, encode_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -44,53 +45,6 @@ AUTH_EXEMPT_PATHS = frozenset({
     "/api/logs/frontend",
 })
 AUTH_EXEMPT_PREFIXES = ("/web/", "/web", "/ws/", "/docs", "/openapi.json", "/redoc", "/user-docs")
-
-# ---------------------------------------------------------------------------
-# Helpers: base64url encoding (JWT-compatible, no padding)
-# ---------------------------------------------------------------------------
-
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _b64url_decode(s: str) -> bytes:
-    padding = 4 - len(s) % 4
-    if padding != 4:
-        s += "=" * padding
-    return base64.urlsafe_b64decode(s)
-
-
-# ---------------------------------------------------------------------------
-# Minimal JWT (HS256, stdlib only — no PyJWT dependency)
-# ---------------------------------------------------------------------------
-
-def _jwt_encode(payload: dict[str, Any], secret: str) -> str:
-    header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
-    payload_b64 = _b64url_encode(json.dumps(payload).encode())
-    msg = f"{header}.{payload_b64}".encode()
-    sig = _b64url_encode(hmac.new(secret.encode(), msg, hashlib.sha256).digest())
-    return f"{header}.{payload_b64}.{sig}"
-
-
-def _jwt_decode(token: str, secret: str) -> dict[str, Any] | None:
-    """Decode and verify a JWT. Returns None on any failure."""
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-        header_b64, payload_b64, sig_b64 = parts
-        msg = f"{header_b64}.{payload_b64}".encode()
-        expected_sig = hmac.new(secret.encode(), msg, hashlib.sha256).digest()
-        actual_sig = _b64url_decode(sig_b64)
-        if not hmac.compare_digest(expected_sig, actual_sig):
-            return None
-        payload = json.loads(_b64url_decode(payload_b64))
-        if payload.get("exp", 0) < time.time():
-            return None
-        return payload
-    except Exception:
-        return None
-
 
 # ---------------------------------------------------------------------------
 # Password hashing (scrypt, stdlib)
@@ -237,30 +191,27 @@ class WebAccessConfig:
         self._save()
 
     def create_access_token(self) -> str:
-        return _jwt_encode(
-            {
-                "type": "access",
-                "ver": self.token_version,
-                "iat": int(time.time()),
-                "exp": int(time.time()) + ACCESS_TOKEN_TTL,
-            },
-            self.jwt_secret,
+        claims = TokenClaims(
+            token_type="access",
+            subject="desktop_user",
+            expires_in=ACCESS_TOKEN_TTL,
+            version=self.token_version,
+            scope=["web:access"],
         )
+        return encode_jwt(claims.to_payload(), self.jwt_secret)
 
     def create_refresh_token(self) -> str:
-        return _jwt_encode(
-            {
-                "type": "refresh",
-                "ver": self.token_version,
-                "jti": secrets.token_hex(16),
-                "iat": int(time.time()),
-                "exp": int(time.time()) + REFRESH_TOKEN_TTL,
-            },
-            self.jwt_secret,
+        claims = TokenClaims(
+            token_type="refresh",
+            subject="desktop_user",
+            expires_in=REFRESH_TOKEN_TTL,
+            version=self.token_version,
+            scope=["web:refresh"],
         )
+        return encode_jwt(claims.to_payload(), self.jwt_secret)
 
     def validate_access_token(self, token: str) -> bool:
-        payload = _jwt_decode(token, self.jwt_secret)
+        payload = decode_jwt(token, self.jwt_secret)
         if not payload:
             return False
         if payload.get("type") != "access":
@@ -270,7 +221,7 @@ class WebAccessConfig:
         return True
 
     def validate_refresh_token(self, token: str) -> dict[str, Any] | None:
-        payload = _jwt_decode(token, self.jwt_secret)
+        payload = decode_jwt(token, self.jwt_secret)
         if not payload:
             return None
         if payload.get("type") != "refresh":

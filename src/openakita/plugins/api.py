@@ -322,7 +322,18 @@ class PluginAPI:
         channel_registry = self._host.get("channel_registry")
         if channel_registry is not None:
             try:
-                channel_registry(type_name, factory, owner=f"plugin:{self._plugin_id}")
+                import inspect
+
+                owner = f"plugin:{self._plugin_id}"
+                try:
+                    params = inspect.signature(channel_registry).parameters
+                except (TypeError, ValueError):
+                    params = {}
+
+                if "owner" in params:
+                    channel_registry(type_name, factory, owner=owner)
+                else:
+                    channel_registry(type_name, factory)
                 self._registered_channels.append(type_name)
                 self.log(f"Registered channel type: {type_name}")
             except Exception as e:

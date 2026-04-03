@@ -5,6 +5,8 @@
  * This file is the frontend Single Source of Truth for event type strings.
  */
 
+export const STREAM_PROTOCOL_VERSION = 1;
+
 export const StreamEventType = {
   // ── Lifecycle ──
   HEARTBEAT: "heartbeat",
@@ -38,10 +40,12 @@ export const StreamEventType = {
   TODO_STEP_UPDATED: "todo_step_updated",
   TODO_COMPLETED: "todo_completed",
   TODO_CANCELLED: "todo_cancelled",
+  PLAN_READY_FOR_APPROVAL: "plan_ready_for_approval",
 
   // ── Agent orchestration ──
   AGENT_HANDOFF: "agent_handoff",
   USER_INSERT: "user_insert",
+  SUB_AGENT_STATE: "sub_agent_state",
 
   // ── UI enrichment (injected by API layer) ──
   ARTIFACT: "artifact",

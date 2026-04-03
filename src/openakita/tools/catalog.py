@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # 使用 sorted tuple 而非 set，确保迭代顺序稳定（prompt cache 友好）
 HIGH_FREQ_TOOLS = tuple(sorted({
     "run_shell", "read_file", "write_file", "edit_file",
-    "list_directory", "ask_user", "grep", "glob",
+    "list_directory", "ask_user", "glob",
     "web_search", "web_fetch", "delete_file", "read_lints",
     "semantic_search",
 }))

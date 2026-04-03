@@ -317,7 +317,7 @@ class WeWorkWsConfig:
     max_reconnect_attempts: int = -1
     reconnect_base_delay: float = 1.0
     reconnect_max_delay: float = 30.0
-    reply_ack_timeout: float = 15.0
+    reply_ack_timeout: float = 5.0
     max_reply_queue_size: int = 100
 
     def __post_init__(self) -> None:
@@ -1192,7 +1192,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             "stream": {
                 "id": stream_id,
                 "finish": False,
-                "content": "<think>等待模型响应 1s</think>",
+                "content": "思考中...",
             },
         }
         try:
@@ -1236,7 +1236,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 if count >= MAX_INTERMEDIATE_STREAM_MSGS:
                     logger.debug(f"[thinking] Stream {stream_id[:8]} hit intermediate limit, stopping counter")
                     break
-                content = f"<think>等待模型响应 {seconds}s</think>"
+                content = "思考中..."
                 body: dict = {
                     "msgtype": "stream",
                     "stream": {"id": stream_id, "finish": False, "content": content},
@@ -1713,6 +1713,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         self._cancel_thinking_task(req_id)
 
         pre_stream_id = self._pre_streams.pop(req_id, None)
+        legacy_msg_items = self._pending_image_items.pop(req_id, [])
 
         # If a pre-created stream has expired (>5.5 min since last send),
         # skip stream protocol entirely and use response_url fallback.
@@ -1738,6 +1739,28 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._enqueue_pending_reply(req_id, text, message)
                 raise RuntimeError("WeWorkWS: stream expired and fallback failed")
 
+        # Legacy compatibility: if a thinking pre-stream exists and the reply
+        # must carry msg_item payloads, close the old stream and start a fresh one.
+        if pre_stream_id and legacy_msg_items:
+            try:
+                await self._send_reply_with_ack(
+                    req_id,
+                    {
+                        "msgtype": "stream",
+                        "stream": {
+                            "id": pre_stream_id,
+                            "finish": True,
+                            "content": "",
+                        },
+                    },
+                    CMD_RESPONSE,
+                )
+            except Exception as e:
+                logger.debug(f"[stream_reply] Failed to close pre-stream cleanly: {e}")
+            self._stream_msg_count.pop(pre_stream_id, None)
+            self._last_stream_sent.pop(pre_stream_id, None)
+            pre_stream_id = None
+
         stream_id = pre_stream_id or secrets.token_hex(16)
 
         # D3: normalize think tags before sending
@@ -1760,9 +1783,6 @@ class WeWorkWsAdapter(ChannelAdapter):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to upload image {media.local_path}: {e}")
-
-        # Legacy msg_item fallback (drain but don't use — deprecated by protocol)
-        self._pending_image_items.pop(req_id, None)
 
         # Split text into chunks
         chunks = []
@@ -1805,6 +1825,8 @@ class WeWorkWsAdapter(ChannelAdapter):
                         "content": chunk_text,
                     },
                 }
+                if is_last and legacy_msg_items:
+                    body["stream"]["msg_item"] = legacy_msg_items
                 try:
                     await self._send_reply_with_ack(req_id, body, CMD_RESPONSE)
                     if not is_last:
@@ -2077,21 +2099,11 @@ class WeWorkWsAdapter(ChannelAdapter):
             return local_path
 
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
-        """Upload temporary media via WebSocket chunked upload protocol.
-
-        Returns a MediaFile with file_id set to the media_id from the server.
-        The media_id is valid for 3 days.
-        """
-        media_id = await self._ws_upload_media(path, mime_type)
-        media = MediaFile.create(
-            filename=path.name,
-            mime_type=mime_type,
-            file_id=media_id,
-            size=path.stat().st_size,
+        """Public generic upload is not exposed for this adapter."""
+        raise NotImplementedError(
+            "WeWorkWsAdapter does not expose generic upload_media; "
+            "use send_image/send_file/send_voice/send_video instead."
         )
-        media.status = MediaStatus.READY
-        media.local_path = str(path)
-        return media
 
     async def _ws_upload_media(self, path: Path, mime_type: str) -> str:
         """Low-level WebSocket chunked upload: init -> chunks -> finish -> media_id."""

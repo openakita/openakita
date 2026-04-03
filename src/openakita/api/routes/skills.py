@@ -222,6 +222,11 @@ async def list_skills(request: Request):
 
         skills.append({
             "skill_id": sid,
+            "capability_id": getattr(skill, "capability_id", ""),
+            "namespace": getattr(skill, "namespace", ""),
+            "origin": getattr(skill, "origin", "project"),
+            "visibility": getattr(skill, "visibility", "public"),
+            "permission_profile": getattr(skill, "permission_profile", ""),
             "name": skill.name,
             "description": skill.description,
             "name_i18n": skill.name_i18n or None,

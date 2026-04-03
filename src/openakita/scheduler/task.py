@@ -29,6 +29,23 @@ class TaskType(Enum):
     TASK = "task"  # 复杂任务（需要 LLM 执行，会发送开始/结束通知）
 
 
+class TaskSource(Enum):
+    """任务来源，用于区分聊天生成、插件生成和系统内置任务。"""
+
+    MANUAL = "manual"
+    CHAT = "chat"
+    PLUGIN = "plugin"
+    SYSTEM = "system"
+    IMPORT = "import"
+
+
+class TaskDurability(Enum):
+    """任务持久化级别。当前调度器默认都是持久化任务。"""
+
+    PERSISTENT = "persistent"
+    SESSION = "session"
+
+
 class TaskStatus(Enum):
     """任务状态"""
 
@@ -158,6 +175,10 @@ class ScheduledTask:
 
     # 多 Agent 配置（单 Agent 模式下始终为 "default"，无功能影响）
     agent_profile_id: str = "default"
+
+    # 领域边界
+    task_source: TaskSource = TaskSource.MANUAL
+    durability: TaskDurability = TaskDurability.PERSISTENT
 
     # 状态
     enabled: bool = True
@@ -292,7 +313,12 @@ class ScheduledTask:
 
     # 合法状态转换表：当前状态 → 允许的目标状态集合
     _VALID_TRANSITIONS: ClassVar[dict[TaskStatus, set[TaskStatus]]] = {
-        TaskStatus.PENDING: {TaskStatus.SCHEDULED, TaskStatus.CANCELLED, TaskStatus.DISABLED},
+        TaskStatus.PENDING: {
+            TaskStatus.SCHEDULED,
+            TaskStatus.RUNNING,
+            TaskStatus.CANCELLED,
+            TaskStatus.DISABLED,
+        },
         TaskStatus.SCHEDULED: {
             TaskStatus.RUNNING, TaskStatus.DISABLED, TaskStatus.CANCELLED,
             TaskStatus.COMPLETED, TaskStatus.MISSED,
@@ -438,6 +464,8 @@ class ScheduledTask:
             "chat_id": self.chat_id,
             "user_id": self.user_id,
             "agent_profile_id": self.agent_profile_id,
+            "task_source": self.task_source.value,
+            "durability": self.durability.value,
             "enabled": self.enabled,
             "status": self.status.value,
             "deletable": self.deletable,
@@ -490,6 +518,16 @@ class ScheduledTask:
             task_type = TaskType.TASK
 
         try:
+            task_source = TaskSource(data.get("task_source", "manual"))
+        except ValueError:
+            task_source = TaskSource.MANUAL
+
+        try:
+            durability = TaskDurability(data.get("durability", "persistent"))
+        except ValueError:
+            durability = TaskDurability.PERSISTENT
+
+        try:
             status = TaskStatus(data.get("status", "pending"))
         except ValueError:
             status = TaskStatus.PENDING
@@ -517,6 +555,8 @@ class ScheduledTask:
             chat_id=data.get("chat_id"),
             user_id=data.get("user_id"),
             agent_profile_id=data.get("agent_profile_id", "default"),
+            task_source=task_source,
+            durability=durability,
             enabled=data.get("enabled", True),
             status=status,
             deletable=data.get("deletable", True),

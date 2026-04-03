@@ -94,6 +94,7 @@ class PlanHandler:
         cid = self._get_conversation_id()
         if cid:
             if plan is not None:
+                plan["conversation_id"] = cid
                 self._todos_by_session[cid] = plan
             else:
                 self._todos_by_session.pop(cid, None)
@@ -103,7 +104,16 @@ class PlanHandler:
     def get_plan_for(self, conversation_id: str) -> dict | None:
         """按 conversation_id 获取 Todo（不依赖 agent state，供外部调用）"""
         if conversation_id:
-            return self._todos_by_session.get(conversation_id)
+            plan = self._todos_by_session.get(conversation_id)
+            if plan is not None:
+                return plan
+            stored = self._store.get(conversation_id)
+            if stored is not None and stored.get("status") == "in_progress":
+                self._todos_by_session[conversation_id] = stored
+                register_plan_handler(conversation_id, self)
+                register_active_todo(conversation_id, stored.get("id", ""))
+                return stored
+            return None
         return self.current_todo
 
     def finalize_plan(self, plan: dict, session_id: str, action: str = "auto_close") -> None:
@@ -239,6 +249,7 @@ class PlanHandler:
 
         _new_plan = {
             "id": plan_id,
+            "plan_type": "todo",
             "task_summary": params.get("task_summary", ""),
             "steps": steps,
             "status": "in_progress",
@@ -586,6 +597,7 @@ class PlanHandler:
 
         _new_plan = {
             "id": plan_id,
+            "plan_type": "plan_file",
             "task_summary": name,
             "steps": steps,
             "status": "in_progress",
@@ -884,7 +896,7 @@ completed_at: {plan.get("completed_at") or ""}
                 try:
                     for s in self.agent.skill_registry.list_all():
                         if getattr(s, "system", False) and getattr(s, "tool_name", None) == tool:
-                            skills = [s.name]
+                            skills = [s.skill_id]
                             break
                 except Exception:
                     pass

@@ -245,6 +245,11 @@ def force_close_plan(session_id: str) -> bool:
         handler._todos_by_session.pop(session_id, None)
         if handler.current_todo and handler._get_conversation_id() == session_id:
             handler.current_todo = None
+        try:
+            handler._store.remove(session_id)
+            handler._store.save()
+        except Exception:
+            pass
         had_state = True
     if had_state:
         logger.warning(f"[Plan] Force-closed all plan state for session {session_id}")

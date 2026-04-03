@@ -162,6 +162,7 @@ class AgentOrchestrator:
         self._mailboxes: dict[str, AgentMailbox] = {}
         self._health: dict[str, AgentHealth] = {}
         self._active_tasks: dict[str, list[asyncio.Task]] = {}
+        self._cancelled_sessions: set[str] = set()
 
         # Priority task queue for future delegate-via-queue migration
         self._task_queue = TaskQueue(max_concurrent=self._DEFAULT_MAX_CONCURRENT_AGENTS)
@@ -341,6 +342,7 @@ class AgentOrchestrator:
         try:
             return await task
         finally:
+            self._cancelled_sessions.discard(sid)
             tasks = self._active_tasks.get(sid, [])
             if task in tasks:
                 tasks.remove(task)
@@ -455,8 +457,11 @@ class AgentOrchestrator:
                 if self._gateway else None
             )
             _user_cancelled = (
-                _main_agent is not None
-                and getattr(_main_agent, "_task_cancelled", False)
+                session.id in self._cancelled_sessions
+                or (
+                    _main_agent is not None
+                    and getattr(_main_agent, "_task_cancelled", False)
+                )
             )
 
             if _user_cancelled:
@@ -571,13 +576,14 @@ class AgentOrchestrator:
         last_fingerprint: tuple[int, str, int] = (-1, "", 0)
         last_progress_time = start
 
-        state_key = f"{session.chat_id}:{agent_profile_id}:{uuid.uuid4().hex[:8]}"
+        state_key = f"{session.id}:{agent_profile_id}:{uuid.uuid4().hex[:8]}"
         existing_state = self._sub_agent_states.get(state_key, {})
         self._sub_agent_states[state_key] = {
             **existing_state,
             "agent_id": agent_profile_id,
             "profile_id": profile.id,
-            "session_id": session.chat_id,
+            "session_id": session.id,
+            "chat_id": getattr(session, "chat_id", session.id),
             "status": "starting",
             "iteration": 0,
             "tools_executed": [],
@@ -716,7 +722,11 @@ class AgentOrchestrator:
             from openakita.api.routes.websocket import broadcast_event
 
             parts = key.split(":", 1)
-            session_id = parts[0] if parts else key
+            session_id = (
+                state_entry.get("session_id")
+                if state_entry and state_entry.get("session_id")
+                else (parts[0] if parts else key)
+            )
             payload: dict[str, Any] = {
                 "session_id": session_id,
                 "status": status,
@@ -725,6 +735,7 @@ class AgentOrchestrator:
                 payload["agent_id"] = state_entry.get("agent_id", "")
                 payload["name"] = state_entry.get("name", "")
                 payload["elapsed_s"] = state_entry.get("elapsed_s", 0)
+                payload["chat_id"] = state_entry.get("chat_id", "")
 
             asyncio.ensure_future(broadcast_event("agents:sub_state", payload))
         except Exception:
@@ -767,8 +778,7 @@ class AgentOrchestrator:
         """
         result = []
         for key, state in list(self._sub_agent_states.items()):
-            sid_part = key.split(":")[0] if ":" in key else key
-            if sid_part == session_id:
+            if self._session_state_matches(session_id, key, state):
                 entry = dict(state)
                 profile_id = entry.get("profile_id", "")
                 if self._profile_store:
@@ -784,6 +794,27 @@ class AgentOrchestrator:
                     entry.setdefault("icon", "🤖")
                 result.append(entry)
         return result
+
+    @staticmethod
+    def _session_state_matches(query_id: str, key: str, state: dict | None = None) -> bool:
+        if not query_id:
+            return False
+
+        state = state or {}
+        candidates = {
+            key.split(":", 1)[0] if ":" in key else key,
+            str(state.get("session_id", "") or ""),
+            str(state.get("chat_id", "") or ""),
+        }
+        candidates.discard("")
+
+        if query_id in candidates:
+            return True
+
+        for candidate in candidates:
+            if candidate.startswith(f"cli_{query_id}_") or candidate.startswith(f"{query_id}_"):
+                return True
+        return False
 
     @staticmethod
     def _get_progress_fingerprint(
@@ -1026,7 +1057,7 @@ class AgentOrchestrator:
 
         # Pre-register sub-agent state immediately so frontend polling
         # can pick it up before _run_with_progress_timeout starts
-        state_key = f"{session.chat_id}:{to_agent}:{uuid.uuid4().hex[:8]}"
+        state_key = f"{session.id}:{to_agent}:{uuid.uuid4().hex[:8]}"
         profile_name = to_agent
         profile_icon = "🤖"
         if self._profile_store:
@@ -1037,7 +1068,8 @@ class AgentOrchestrator:
         self._sub_agent_states[state_key] = {
             "agent_id": to_agent,
             "profile_id": to_agent,
-            "session_id": session.chat_id,
+            "session_id": session.id,
+            "chat_id": getattr(session, "chat_id", session.id),
             "name": profile_name,
             "icon": profile_icon,
             "status": "starting",
@@ -1103,6 +1135,8 @@ class AgentOrchestrator:
             if not task.done():
                 task.cancel()
                 cancelled = True
+        if cancelled:
+            self._cancelled_sessions.add(session_id)
         self.purge_session_states(session_id)
         return cancelled
 
@@ -1116,8 +1150,7 @@ class AgentOrchestrator:
         """
         to_remove: list[str] = []
         for key in self._sub_agent_states:
-            sid_part = key.split(":")[0] if ":" in key else key
-            if sid_part == session_id:
+            if self._session_state_matches(session_id, key, self._sub_agent_states.get(key)):
                 to_remove.append(key)
 
         for key in to_remove:

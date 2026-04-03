@@ -69,19 +69,20 @@ export type StreamEvent =
   | { type: "chain_text"; content: string }
   | { type: "text_delta"; content: string }
   | { type: "text_replace"; content: string }
-  | { type: "tool_call_start"; tool: string; args: Record<string, unknown>; id?: string }
-  | { type: "tool_call_end"; tool: string; result: string; id?: string; is_error?: boolean; skipped?: boolean }
+  | { type: "tool_call_start"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; protocol_version?: number }
+  | { type: "tool_call_end"; tool: string; tool_name?: string; result: string; id?: string; call_id?: string; is_error?: boolean; skipped?: boolean; protocol_version?: number }
   | { type: "todo_created"; plan: ChatTodo; restored?: boolean }
-  | { type: "todo_step_updated"; stepId?: string; stepIdx?: number; status: string }
+  | { type: "todo_step_updated"; stepId?: string; step_id?: string; stepIdx?: number; status: string; protocol_version?: number }
   | { type: "todo_completed" }
   | { type: "todo_cancelled" }
-  | { type: "plan_ready_for_approval"; data: { conversation_id: string; summary: string; plan_id: string; plan_file: string } }
+  | { type: "plan_ready_for_approval"; data: { conversation_id: string; summary: string; plan_id: string; plan_file: string }; conversation_id?: string; plan_id?: string; plan_file?: string; protocol_version?: number }
   | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
   | { type: "user_insert"; content: string }
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "agent_handoff"; from_agent: string; to_agent: string; reason?: string }
+  | { type: "sub_agent_state"; agent_id?: string; agentId?: string; session_id?: string; sessionId?: string; status?: string; reason?: string; protocol_version?: number }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
-  | { type: "security_confirm"; tool: string; args: Record<string, unknown>; id?: string; reason: string; risk_level: string; needs_sandbox: boolean }
+  | { type: "security_confirm"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; confirm_id?: string; reason: string; risk_level: string; needs_sandbox: boolean; protocol_version?: number }
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "error"; message: string }
   | { type: "done"; reason?: string; usage?: { input_tokens: number; output_tokens: number; total_tokens?: number; context_tokens?: number; context_limit?: number } };

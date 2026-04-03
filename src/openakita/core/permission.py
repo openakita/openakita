@@ -17,6 +17,20 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+_FAIL_CLOSED_TOOL_PREFIXES = (
+    "run_",
+    "delete_",
+    "edit_",
+    "write_",
+    "rename_",
+    "delegate_",
+    "spawn_",
+    "create_agent",
+    "call_mcp_",
+    "browser_",
+    "desktop_",
+)
+
 # Tools whose permission maps to the "edit" permission category
 EDIT_TOOLS = frozenset({
     "write_file", "edit_file", "replace_in_file",
@@ -212,6 +226,12 @@ class PermissionDecision:
     decision_chain: list = field(default_factory=list)
 
 
+def _should_fail_closed(tool_name: str) -> bool:
+    if tool_name in EDIT_TOOLS:
+        return True
+    return tool_name.startswith(_FAIL_CLOSED_TOOL_PREFIXES)
+
+
 def check_permission(
     tool_name: str,
     tool_input: dict,
@@ -230,38 +250,11 @@ def check_permission(
     chain: list[dict] = []
 
     # Step 1: 模式规则
-    if mode in ("plan", "ask", "coordinator"):
-        ruleset = (
-            PLAN_MODE_RULESET if mode == "plan"
-            else COORDINATOR_MODE_RULESET if mode == "coordinator"
-            else ASK_MODE_RULESET
-        )
-        permission = _tool_to_permission(tool_name)
-
-        if tool_name in EDIT_TOOLS:
-            file_path = tool_input.get("path", tool_input.get("file_path", ""))
-            pattern = str(file_path) if file_path else "*"
-        else:
-            pattern = "*"
-
-        rule = evaluate(permission, pattern, ruleset)
-        chain.append({"layer": "mode_ruleset", "mode": mode, "action": rule.action})
-
-        if rule.action == "deny":
-            mode_label = _MODE_LABELS.get(mode, mode)
-            if tool_name in EDIT_TOOLS and mode == "plan":
-                reason = f"当前处于{mode_label}模式，只能编辑 data/plans/ 下的计划文件。如需执行其他操作，请建议用户切换到执行模式。"
-            elif mode == "ask":
-                reason = f"当前处于{mode_label}模式，只能查看和搜索，不能修改文件或执行命令。"
-            else:
-                reason = f"工具 {tool_name} 在当前{mode_label}模式下不可用。"
-            return PermissionDecision(
-                behavior="deny",
-                reason=reason,
-                reason_detail=f"mode={mode}, rule={rule}",
-                policy_name="ModeRuleset",
-                decision_chain=chain,
-            )
+    mode_decision = check_mode_permission(tool_name, tool_input, mode=mode)
+    if mode_decision is not None:
+        chain.extend(mode_decision.decision_chain)
+        if mode_decision.behavior == "deny":
+            return mode_decision
 
     # Step 2: PolicyEngine（仅 agent 模式 / mode 规则放行后）
     try:
@@ -282,15 +275,70 @@ def check_permission(
             decision_chain=chain,
         )
     except Exception as e:
-        # Fail-open: 策略引擎不可用时放行（降级模式，避免阻塞全部工具）
         chain.append({"layer": "policy_engine", "error": str(e)})
-        logger.warning(f"[Permission] PolicyEngine unavailable, fail-open: {e}")
+        if _should_fail_closed(tool_name):
+            logger.error(f"[Permission] PolicyEngine unavailable, fail-closed for {tool_name}: {e}")
+            return PermissionDecision(
+                behavior="deny",
+                reason="安全策略暂时不可用，已阻止高风险操作，请稍后重试。",
+                reason_detail=f"PolicyEngine not available for risky tool: {e}",
+                policy_name="PolicyEngineUnavailable",
+                decision_chain=chain,
+            )
+        logger.warning(f"[Permission] PolicyEngine unavailable, fail-open for safe read path: {e}")
         return PermissionDecision(
             behavior="allow",
             reason="",
             reason_detail=f"PolicyEngine not available: {e}",
             decision_chain=chain,
         )
+
+
+def check_mode_permission(
+    tool_name: str,
+    tool_input: dict,
+    mode: str = "agent",
+) -> PermissionDecision | None:
+    """Only evaluate plan/ask/coordinator mode restrictions, without PolicyEngine."""
+    if mode not in ("plan", "ask", "coordinator"):
+        return None
+
+    ruleset = (
+        PLAN_MODE_RULESET if mode == "plan"
+        else COORDINATOR_MODE_RULESET if mode == "coordinator"
+        else ASK_MODE_RULESET
+    )
+    permission = _tool_to_permission(tool_name)
+
+    if tool_name in EDIT_TOOLS:
+        file_path = tool_input.get("path", tool_input.get("file_path", ""))
+        pattern = str(file_path) if file_path else "*"
+    else:
+        pattern = "*"
+
+    rule = evaluate(permission, pattern, ruleset)
+    chain = [{"layer": "mode_ruleset", "mode": mode, "action": rule.action}]
+    if rule.action != "deny":
+        return PermissionDecision(
+            behavior="allow",
+            policy_name="ModeRuleset",
+            decision_chain=chain,
+        )
+
+    mode_label = _MODE_LABELS.get(mode, mode)
+    if tool_name in EDIT_TOOLS and mode == "plan":
+        reason = f"当前处于{mode_label}模式，只能编辑 data/plans/ 下的计划文件。如需执行其他操作，请建议用户切换到执行模式。"
+    elif mode == "ask":
+        reason = f"当前处于{mode_label}模式，只能查看和搜索，不能修改文件或执行命令。"
+    else:
+        reason = f"工具 {tool_name} 在当前{mode_label}模式下不可用。"
+    return PermissionDecision(
+        behavior="deny",
+        reason=reason,
+        reason_detail=f"mode={mode}, rule={rule}",
+        policy_name="ModeRuleset",
+        decision_chain=chain,
+    )
 
 
 # ==================== Preset Rulesets ====================

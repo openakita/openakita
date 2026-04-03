@@ -184,6 +184,18 @@ class ToolExecutor:
         except Exception:
             return None
 
+    def _canonicalize_tool_name(self, tool_name: str) -> str:
+        canonical = self._TOOL_ALIASES.get(tool_name)
+        if canonical is None and "-" in tool_name:
+            canonical = self._TOOL_ALIASES.get(tool_name.replace("-", "_"))
+        if canonical:
+            logger.info(f"[ToolExecutor] Alias corrected: '{tool_name}' -> '{canonical}'")
+            return canonical
+        return tool_name
+
+    def canonicalize_tool_name(self, tool_name: str) -> str:
+        return self._canonicalize_tool_name(tool_name)
+
     def _suggest_similar_tool(self, tool_name: str) -> str:
         """为未知工具名生成带相似推荐的错误信息。"""
         all_tools = self._handler_registry.list_tools()
@@ -361,16 +373,27 @@ class ToolExecutor:
         Returns:
             工具执行结果字符串
         """
+        tool_name = self._canonicalize_tool_name(tool_name)
         if isinstance(tool_input, dict):
             tool_input = normalize_tool_input(tool_name, tool_input)
 
-        canonical = self._TOOL_ALIASES.get(tool_name)
-        if canonical is None and "-" in tool_name:
-            canonical = self._TOOL_ALIASES.get(tool_name.replace("-", "_"))
-        if canonical:
-            logger.info(f"[ToolExecutor] Alias corrected: '{tool_name}' -> '{canonical}'")
-            tool_name = canonical
+        todo_block = self._check_todo_required(tool_name, session_id)
+        if todo_block:
+            return todo_block
 
+        # Runtime permission check: enforce path-level restrictions
+        perm_block = self._check_permission(tool_name, tool_input)
+        if perm_block:
+            return perm_block
+
+        return await self._execute_tool_impl(tool_name, tool_input)
+
+    async def _execute_tool_impl(
+        self,
+        tool_name: str,
+        tool_input: dict,
+    ) -> str:
+        """Execute a tool after todo / permission gates have been handled."""
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ★ 拦截 JSON 解析失败的工具调用（参数被 API 截断）
@@ -384,15 +407,6 @@ class ToolExecutor:
                 f"{err_msg[:200]}"
             )
             return err_msg
-
-        todo_block = self._check_todo_required(tool_name, session_id)
-        if todo_block:
-            return todo_block
-
-        # Runtime permission check: enforce path-level restrictions
-        perm_block = self._check_permission(tool_name, tool_input)
-        if perm_block:
-            return perm_block
 
         # 导入日志缓存
         from ..logging import get_session_log_buffer
@@ -450,6 +464,64 @@ class ToolExecutor:
                 span.set_attribute("error_message", str(e))
                 return tool_error.to_tool_result()
 
+    async def execute_tool_with_policy(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        policy_result: Any,
+        *,
+        session_id: str | None = None,
+    ) -> str:
+        """Execute an already policy-checked tool, applying sandbox/checkpoint hooks."""
+        tool_name = self._canonicalize_tool_name(tool_name)
+        if isinstance(tool_input, dict):
+            tool_input = normalize_tool_input(tool_name, tool_input)
+
+        todo_block = self._check_todo_required(tool_name, session_id)
+        if todo_block:
+            return todo_block
+
+        perm_block = self._check_permission(tool_name, tool_input)
+        if perm_block:
+            return perm_block
+
+        if getattr(policy_result, "metadata", {}).get("needs_checkpoint"):
+            try:
+                from .checkpoint import get_checkpoint_manager
+
+                path = tool_input.get("path", "") or tool_input.get("file_path", "")
+                if path:
+                    get_checkpoint_manager().create_checkpoint(
+                        file_paths=[path],
+                        tool_name=tool_name,
+                        description=f"Auto-snapshot before {tool_name}",
+                    )
+            except Exception as e:
+                logger.debug(f"[Checkpoint] Failed: {e}")
+
+        if (
+            tool_name in ("run_shell", "run_powershell")
+            and getattr(policy_result, "metadata", {}).get("needs_sandbox")
+        ):
+            from .sandbox import get_sandbox_executor
+
+            sandbox = get_sandbox_executor()
+            command = tool_input.get("command", "")
+            cwd = tool_input.get("cwd")
+            timeout = tool_input.get("timeout", 60)
+            sb_result = await sandbox.execute(command, cwd=cwd, timeout=float(timeout))
+            sandbox_output = (
+                f"[沙箱执行 backend={sb_result.backend}]\n"
+                f"Exit code: {sb_result.returncode}\n"
+            )
+            if sb_result.stdout:
+                sandbox_output += f"stdout:\n{sb_result.stdout}\n"
+            if sb_result.stderr:
+                sandbox_output += f"stderr:\n{sb_result.stderr}\n"
+            return sandbox_output
+
+        return await self._execute_tool_impl(tool_name, tool_input)
+
     async def execute_batch(
         self,
         tool_calls: list[dict],
@@ -494,9 +566,12 @@ class ToolExecutor:
         session_id = state.session_id if state else None
 
         async def _run_one(tc: dict, idx: int) -> tuple[int, dict, str | None, list | None]:
-            tool_name = tc.get("name", "")
+            tool_name = self._canonicalize_tool_name(tc.get("name", ""))
             tool_input = tc.get("input") or {}
             tool_use_id = tc.get("id", "")
+
+            if isinstance(tool_input, dict):
+                tool_input = normalize_tool_input(tool_name, tool_input)
 
             # 检查取消
             if state and state.cancelled:
@@ -506,6 +581,20 @@ class ToolExecutor:
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
                         "content": "[任务已被用户停止]",
+                        "is_error": True,
+                    },
+                    None,
+                    None,
+                )
+
+            perm_block = self._check_permission(tool_name, tool_input)
+            if perm_block:
+                return (
+                    idx,
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": perm_block,
                         "is_error": True,
                     },
                     None,
@@ -592,70 +681,6 @@ class ToolExecutor:
                         None,
                     )
 
-            # L4: Checkpoint — create snapshot if needed
-            if policy_result.metadata.get("needs_checkpoint"):
-                try:
-                    from .checkpoint import get_checkpoint_manager
-                    path = tool_input.get("path", "") or tool_input.get("file_path", "")
-                    if path:
-                        cp_id = get_checkpoint_manager().create_checkpoint(
-                            file_paths=[path],
-                            tool_name=tool_name,
-                            description=f"Auto-snapshot before {tool_name}",
-                        )
-                        if cp_id:
-                            logger.debug(f"[Checkpoint] Created {cp_id} for {path}")
-                except Exception as e:
-                    logger.debug(f"[Checkpoint] Failed: {e}")
-
-            # L6: Sandbox execution for HIGH-risk shell commands
-            if (
-                tool_name == "run_shell"
-                and policy_result.metadata.get("needs_sandbox")
-            ):
-                try:
-                    from .sandbox import get_sandbox_executor
-                    sandbox = get_sandbox_executor()
-                    command = tool_input.get("command", "")
-                    cwd = tool_input.get("cwd")
-                    timeout = tool_input.get("timeout", 60)
-                    sb_result = await sandbox.execute(
-                        command, cwd=cwd, timeout=float(timeout)
-                    )
-                    sandbox_output = (
-                        f"[沙箱执行 backend={sb_result.backend}]\n"
-                        f"Exit code: {sb_result.returncode}\n"
-                    )
-                    if sb_result.stdout:
-                        sandbox_output += f"stdout:\n{sb_result.stdout}\n"
-                    if sb_result.stderr:
-                        sandbox_output += f"stderr:\n{sb_result.stderr}\n"
-
-                    policy_engine._on_allow(tool_name)
-                    return (
-                        idx,
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": sandbox_output,
-                        },
-                        tool_name,
-                        None,
-                    )
-                except Exception as e:
-                    logger.warning(f"[Sandbox] Execution failed: {e}")
-                    return (
-                        idx,
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": f"⚠️ 沙箱执行失败: {e}",
-                            "is_error": True,
-                        },
-                        None,
-                        None,
-                    )
-
             handler_name = self.get_handler_name(tool_name)
             handler_lock = self._handler_locks.get(handler_name) if handler_name else None
 
@@ -677,13 +702,23 @@ class ToolExecutor:
                     if handler_lock:
                         async with handler_lock:
                             result = await self._execute_with_cancel(
-                                self.execute_tool(tool_name, tool_input, session_id=session_id),
+                                self.execute_tool_with_policy(
+                                    tool_name,
+                                    tool_input,
+                                    policy_result,
+                                    session_id=session_id,
+                                ),
                                 state,
                                 tool_name,
                             )
                     else:
                         result = await self._execute_with_cancel(
-                            self.execute_tool(tool_name, tool_input, session_id=session_id),
+                            self.execute_tool_with_policy(
+                                tool_name,
+                                tool_input,
+                                policy_result,
+                                session_id=session_id,
+                            ),
                             state,
                             tool_name,
                         )
@@ -903,7 +938,7 @@ class ToolExecutor:
     def _check_permission(self, tool_name: str, tool_input: dict) -> str | None:
         """模式级权限检查 — Plan/Ask 模式下拦截不允许的工具。
 
-        使用 P2 统一权限入口 check_permission()。
+        这里只做 mode gate；PolicyEngine 由外层统一调用，避免重复审计。
 
         Returns:
             中文拒绝消息字符串，或 None（允许执行）。
@@ -911,9 +946,11 @@ class ToolExecutor:
         if self._current_mode == "agent":
             return None
 
-        from .permission import check_permission
+        from .permission import check_mode_permission
 
-        decision = check_permission(tool_name, tool_input, mode=self._current_mode)
+        decision = check_mode_permission(tool_name, tool_input, mode=self._current_mode)
+        if decision is None:
+            return None
         if decision.behavior == "deny":
             logger.warning(
                 f"[Permission] DENIED {tool_name} in {self._current_mode} mode: "

@@ -21,6 +21,22 @@ from .state import PluginState
 logger = logging.getLogger(__name__)
 
 UNLOAD_TIMEOUT = 5.0
+_ALLOWED_HOST_REFS = frozenset({
+    "api_app",
+    "brain",
+    "channel_registry",
+    "external_retrieval_sources",
+    "gateway",
+    "mcp_client",
+    "memory_backends",
+    "memory_manager",
+    "search_backends",
+    "skill_catalog",
+    "skill_loader",
+    "tool_catalog",
+    "tool_definitions",
+    "tool_registry",
+})
 
 
 class PluginManager:
@@ -41,7 +57,7 @@ class PluginManager:
     ) -> None:
         self._plugins_dir = plugins_dir
         self._state_path = state_path or (plugins_dir.parent / "plugin_state.json")
-        self._host_refs = host_refs or {}
+        self._host_refs = self._filter_host_refs(host_refs or {})
 
         self._state = PluginState.load(self._state_path)
         self._error_tracker = PluginErrorTracker()
@@ -50,6 +66,15 @@ class PluginManager:
 
         self._loaded: dict[str, _LoadedPlugin] = {}
         self._failed: dict[str, str] = {}
+
+    @staticmethod
+    def _filter_host_refs(host_refs: dict[str, Any]) -> dict[str, Any]:
+        """Expose only the host references that plugins are expected to use."""
+        filtered = {k: v for k, v in host_refs.items() if k in _ALLOWED_HOST_REFS}
+        dropped = sorted(set(host_refs) - set(filtered))
+        if dropped:
+            logger.debug("PluginManager filtered host_refs: %s", dropped)
+        return filtered
 
     # --- Properties ---
 
@@ -340,7 +365,7 @@ class PluginManager:
             return
 
         if hasattr(skill_loader, "load_skill"):
-            skill_loader.load_skill(skill_path.parent)
+            skill_loader.load_skill(skill_path.parent, plugin_source=f"plugin:{manifest.id}")
             api.log(f"Skill loaded from {skill_path.parent}")
         elif hasattr(skill_loader, "load_from_directory"):
             skill_loader.load_from_directory(skill_path.parent)
@@ -375,7 +400,7 @@ class PluginManager:
 
         try:
             if hasattr(skill_loader, "load_skill"):
-                skill_loader.load_skill(skill_path.parent)
+                skill_loader.load_skill(skill_path.parent, plugin_source=f"plugin:{manifest.id}")
             elif hasattr(skill_loader, "load_from_directory"):
                 skill_loader.load_from_directory(skill_path.parent)
             else:
@@ -613,12 +638,16 @@ class PluginManager:
             granted = list(lp.api._granted_permissions)
             result.append({
                 "id": lp.manifest.id,
+                "capability_id": lp.manifest.capability_id,
+                "namespace": lp.manifest.namespace,
+                "origin": lp.manifest.origin,
                 "name": lp.manifest.name,
                 "version": lp.manifest.version,
                 "type": lp.manifest.plugin_type,
                 "category": lp.manifest.category,
                 "permissions": lp.manifest.permissions,
                 "permission_level": lp.manifest.max_permission_level,
+                "review_status": lp.manifest.review_status,
                 "granted_permissions": granted,
                 "pending_permissions": pending,
             })

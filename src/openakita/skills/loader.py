@@ -295,7 +295,12 @@ class SkillLoader:
             return True
         return _CURRENT_PLATFORM in supported_os
 
-    def load_skill(self, skill_dir: Path) -> ParsedSkill | None:
+    def load_skill(
+        self,
+        skill_dir: Path,
+        *,
+        plugin_source: str | None = None,
+    ) -> ParsedSkill | None:
         """
         加载单个技能
 
@@ -330,7 +335,7 @@ class SkillLoader:
             sid = skill_dir.name
 
             # 注册到 registry
-            self.registry.register(skill, skill_id=sid)
+            self.registry.register(skill, skill_id=sid, plugin_source=plugin_source)
             self._loaded_skills[sid] = skill
 
             logger.info(f"Loaded skill: {sid} (name={skill.metadata.name})")

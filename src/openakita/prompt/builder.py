@@ -304,10 +304,13 @@ def build_system_prompt(
         from ..config import settings as _settings
         if _settings.multi_agent_enabled and not is_sub_agent and mode == "agent":
             delegation_preamble = (
-                "## 协作原则\n\n"
-                "你拥有一支专业 Agent 团队。以下情况应考虑委派：\n"
+                "## 协作优先原则\n\n"
+                "你拥有一支专业 Agent 团队。在多 Agent 模式下，"
+                "**此原则优先于**“尽量自己解决”这类单兵执行倾向。\n\n"
+                "应优先考虑使用 `delegate_to_agent`、`delegate_parallel` 等协作工具：\n"
                 "- 任务需要特定领域专业能力且你的团队中有对应的专业 Agent\n"
-                "- 任务需要并行处理多个独立子任务\n\n"
+                "- 任务需要并行处理多个独立子任务\n"
+                "- 你已经识别出清晰的子任务边界，委派能明显提高质量或速度\n\n"
                 "以下情况应自己处理，**不要委派**：\n"
                 "- 知识问答、架构讨论、方案分析、计算推理等纯对话任务\n"
                 "- 用户明确要你亲自回答的任务\n"
