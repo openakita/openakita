@@ -928,15 +928,21 @@ async def read_permission_mode():
     try:
         from openakita.core.policy import get_policy_engine
         pe = get_policy_engine()
-        return {"mode": pe._frontend_mode}
-    except Exception:
+        mode = getattr(pe, "_frontend_mode", "smart")
+        return {"mode": mode}
+    except Exception as e:
+        logger.debug(f"[Config API] permission-mode read fallback: {e}")
         return {"mode": "smart"}
 
 
+class _PermissionModeBody(BaseModel):
+    mode: str = "smart"
+
+
 @router.post("/api/config/permission-mode")
-async def write_permission_mode(body: dict):
+async def write_permission_mode(body: _PermissionModeBody):
     """设置安全模式（P3-3: 前端安全模式与后端联动）。"""
-    mode = body.get("mode", "smart")
+    mode = body.mode
     if mode not in ("cautious", "smart", "trust"):
         return {"status": "error", "message": f"无效的安全模式: {mode}"}
     try:
@@ -945,13 +951,12 @@ async def write_permission_mode(body: dict):
         pe._frontend_mode = mode
         if mode == "trust":
             pe._config.confirmation.auto_confirm = True
-        elif mode == "cautious":
-            pe._config.confirmation.auto_confirm = False
         else:
             pe._config.confirmation.auto_confirm = False
         logger.info(f"[Config API] Permission mode set to: {mode}")
         return {"status": "ok", "mode": mode}
     except Exception as e:
+        logger.warning(f"[Config API] permission-mode write error: {e}")
         return {"status": "error", "message": str(e)}
 
 

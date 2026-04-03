@@ -318,7 +318,7 @@ class SkillRegistry:
         entry = SkillEntry.from_parsed_skill(skill, skill_id=skill_id)
 
         if entry.skill_id in self._skills:
-            logger.warning(f"Skill '{entry.skill_id}' already registered, overwriting")
+            logger.debug(f"Skill '{entry.skill_id}' already registered, overwriting")
 
         self._skills[entry.skill_id] = entry
         logger.info(f"Registered skill: {entry.skill_id} (name={entry.name})")

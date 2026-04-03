@@ -397,7 +397,7 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     if tool_name in ("delete_file", "rename_file"):
         return OpType.DELETE
     if tool_name in (
-        "run_shell", "call_mcp_tool",
+        "run_shell", "run_powershell", "call_mcp_tool",
         "browser_navigate", "browser_use", "browser_click", "browser_type",
         "desktop_click", "desktop_type",
     ):
@@ -473,6 +473,12 @@ class PolicyEngine:
             tool_policies=[
                 ToolPolicyRule(
                     tool_name="run_shell",
+                    require_confirmation=False,
+                    dangerous_patterns=[],
+                    blocked_patterns=[],
+                ),
+                ToolPolicyRule(
+                    tool_name="run_powershell",
                     require_confirmation=False,
                     dangerous_patterns=[],
                     blocked_patterns=[],
@@ -634,7 +640,7 @@ class PolicyEngine:
             metadata may contain:
               - zone: Zone
               - op_type: OpType
-              - risk_level: RiskLevel (for run_shell)
+              - risk_level: RiskLevel (for run_shell / run_powershell)
               - needs_checkpoint: bool
               - needs_sandbox: bool
         """
@@ -667,9 +673,20 @@ class PolicyEngine:
             return sp_result
 
         # F7: Skill-granted temporary allowlist — bypasses L1/L3 and legacy
-        # policies but NOT death switch or self-protection
+        # policies but NOT death switch, self-protection, or zone DELETE/CONFIRM.
         if self._is_skill_allowed(tool_name):
-            self._on_allow(tool_name)
+            # Even skill-allowed tools must respect zone DELETE CONFIRM
+            op = _tool_to_optype(tool_name, params)
+            if op in (OpType.DELETE, OpType.RECURSIVE_DELETE):
+                zone_result = self._check_zone_policy(tool_name, params)
+                if zone_result:
+                    return zone_result
+            # Shell commands still need risk check even when skill-allowed
+            if tool_name in ("run_shell", "run_powershell"):
+                shell_result = self._check_shell_command(tool_name, params)
+                if shell_result and shell_result.decision == PolicyDecision.DENY:
+                    return shell_result
+            self._on_allow(tool_name, params)
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
                 reason="技能临时授权放行",
@@ -682,7 +699,7 @@ class PolicyEngine:
             return legacy_result
 
         # L3: Shell command risk classification
-        if tool_name == "run_shell":
+        if tool_name in ("run_shell", "run_powershell"):
             shell_result = self._check_shell_command(tool_name, params)
             if shell_result:
                 return shell_result
@@ -961,7 +978,7 @@ class PolicyEngine:
             return None
 
         write_tools = {"write_file", "edit_file", "delete_file"}
-        if tool_name == "run_shell":
+        if tool_name in ("run_shell", "run_powershell"):
             command = str(params.get("command", ""))
             risk = self.classify_shell_risk(command)
             if risk in (RiskLevel.HIGH, RiskLevel.CRITICAL):
