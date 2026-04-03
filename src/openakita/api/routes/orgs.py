@@ -1522,6 +1522,7 @@ async def get_org_stats(request: Request, org_id: str):
     per_node: list[dict] = []
     anomalies: list[dict] = []
     agent_cache = getattr(rt, "_agent_cache", None) or {}
+    node_busy_since = getattr(rt, "_node_busy_since", {}) or {}
     store = _get_project_store(request, org_id)
     for n in org.nodes:
         cache_key = f"{org_id}:{n.id}"
@@ -1534,6 +1535,18 @@ async def get_org_stats(request: Request, org_id: str):
                     idle_secs = now_mono - last
             except Exception:
                 pass
+
+        running_since_s: float | None = None
+        active_task_count = 0
+        busy_key = f"{org_id}:{n.id}"
+        if n.status.value == "busy":
+            bs = node_busy_since.get(busy_key)
+            if bs and bs > 0:
+                running_since_s = now_mono - bs
+            active_task_count = rt._node_active_count(org_id, n.id)
+            if active_task_count > 0:
+                idle_secs = 0
+
         node_pending = messenger.get_pending_count(n.id) if messenger else 0
 
         assigned = store.all_tasks(assignee=n.id)
@@ -1569,6 +1582,8 @@ async def get_org_stats(request: Request, org_id: str):
             "external_tools": external_tools,
             "is_clone": n.is_clone,
             "frozen": n.frozen_by is not None,
+            "running_since": round(running_since_s) if running_since_s is not None else None,
+            "active_task_count": active_task_count,
         }
         per_node.append(entry)
 
@@ -1582,14 +1597,15 @@ async def get_org_stats(request: Request, org_id: str):
                 }
             )
         elif n.status.value == "busy" and idle_secs is not None and idle_secs > 600:
-            anomalies.append(
-                {
-                    "node_id": n.id,
-                    "role_title": n.role_title,
-                    "type": "stuck",
-                    "message": f"节点标记为忙碌但已 {round(idle_secs / 60)} 分钟无活动",
-                }
-            )
+            if active_task_count == 0:
+                anomalies.append(
+                    {
+                        "node_id": n.id,
+                        "role_title": n.role_title,
+                        "type": "stuck",
+                        "message": f"节点标记为忙碌但已 {round(idle_secs / 60)} 分钟无活动",
+                    }
+                )
         elif (
             n.status.value == "idle"
             and idle_secs is not None

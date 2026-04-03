@@ -2532,28 +2532,28 @@ export function OrgEditorView({
               const recentTasks: any[] = orgStats.recent_tasks || [];
               const anomalies: any[] = orgStats.anomalies || [];
               const nodeLabel = (id: string) => {
+                if (!id) return "";
                 const nd = nodes.find(n => n.id === id);
-                return (nd?.data as any)?.role_title || id?.slice(0, 6) || id || "?";
+                return (nd?.data as any)?.role_title || id?.slice(0, 6) || "";
               };
-              const typeIcon: Record<string, string> = {
-                task_delegated: "📤", task_delivered: "📦", task_accepted: "✅",
-                task_rejected: "↩️", task_timeout: "⏰",
-                task_completed: "✓", node_activated: "▶",
+              const typeMeta: Record<string, { icon: string; label: string; cls: string }> = {
+                task_delegated:  { icon: "↗", label: "分配任务",   cls: "feed-delegated" },
+                task_delivered:  { icon: "↙", label: "交付成果",   cls: "feed-delivered" },
+                task_accepted:   { icon: "✓", label: "验收通过",   cls: "feed-accepted" },
+                task_rejected:   { icon: "✗", label: "打回",       cls: "feed-rejected" },
+                task_timeout:    { icon: "⏱", label: "超时",       cls: "feed-timeout" },
+                task_completed:  { icon: "✓", label: "节点执行完成", cls: "feed-completed" },
+                node_activated:  { icon: "▶", label: "开始执行",    cls: "feed-activated" },
               };
-              const typeLabel: Record<string, string> = {
-                task_delegated: "分配任务", task_delivered: "交付成果",
-                task_accepted: "验收通过", task_rejected: "打回",
-                task_timeout: "超时",
-                task_completed: "节点执行完成", node_activated: "开始执行",
-              };
+              const defaultMeta = { icon: "•", label: "", cls: "" };
 
-              const busyLines: { key: string; node: string; text: string; pct: number; color: string }[] = [];
+              const busyLines: { key: string; node: string; text: string; pct: number }[] = [];
               for (const n of perNode) {
                 if (n.status !== "busy" && !n.current_task_title) continue;
                 const pp = n.plan_progress || {};
                 const pct = pp.total > 0 ? Math.round((pp.completed / pp.total) * 100) : -1;
                 const taskDesc = n.current_task_title || (n.current_task ? String(n.current_task).slice(0, 50) : "执行中…");
-                busyLines.push({ key: n.id, node: n.role_title || nodeLabel(n.id), text: taskDesc, pct, color: "#3b82f6" });
+                busyLines.push({ key: n.id, node: n.role_title || nodeLabel(n.id), text: taskDesc, pct });
               }
 
               if (busyLines.length === 0 && recentTasks.length === 0 && anomalies.length === 0) return null;
@@ -2561,10 +2561,10 @@ export function OrgEditorView({
               return (
                 <div className="org-live-feed">
                   {busyLines.map(b => (
-                    <div key={b.key} className="org-feed-item org-feed-busy" onClick={() => {
+                    <div key={b.key} className="org-feed-item org-feed-busy" title={b.text} onClick={() => {
                       setSelectedNodeId(b.key); setSelectedEdgeId(null); setShowRightPanel(true); setPropsTab("tasks");
                     }}>
-                      <span className="org-feed-dot" style={{ background: b.color, animation: "orgDotPulse 1.5s ease-in-out infinite" }} />
+                      <span className="org-feed-dot" />
                       <span className="org-feed-who">{b.node}</span>
                       <span className="org-feed-text">{b.text}</span>
                       {b.pct >= 0 && (
@@ -2578,28 +2578,28 @@ export function OrgEditorView({
                   {recentTasks.slice(0, 6).map((t: any, i: number) => {
                     const ts = t.t ? new Date(typeof t.t === "number" && t.t < 1e12 ? t.t * 1000 : t.t) : null;
                     const timeStr = ts ? `${String(ts.getHours()).padStart(2, "0")}:${String(ts.getMinutes()).padStart(2, "0")}` : "";
-                    const icon = typeIcon[t.type] || "📋";
-                    const label = typeLabel[t.type] || t.type;
-                    const statusCls = t.status === "accepted" || t.status === "completed"
-                      ? "org-feed-ok"
-                      : t.status === "rejected" ? "org-feed-err" : "";
+                    const meta = typeMeta[t.type] || defaultMeta;
+                    const fromLabel = nodeLabel(t.from);
+                    const toLabel = nodeLabel(t.to);
                     return (
-                      <div key={`rt-${i}`} className={`org-feed-item ${statusCls}`}>
+                      <div key={`rt-${i}`} className={`org-feed-item ${meta.cls}`} title={t.task || ""}>
                         <span className="org-feed-time">{timeStr}</span>
-                        <span className="org-feed-icon">{icon}</span>
-                        <span className="org-feed-who">{nodeLabel(t.from)}</span>
-                        <span className="org-feed-arrow">→</span>
-                        <span className="org-feed-who">{nodeLabel(t.to)}</span>
-                        <span className="org-feed-label">{label}</span>
-                        {t.task && <span className="org-feed-text">{t.task.slice(0, 40)}{t.task.length > 40 ? "…" : ""}</span>}
+                        <span className={`org-feed-icon ${meta.cls}`}>{meta.icon}</span>
+                        <span className="org-feed-who">{fromLabel}</span>
+                        {toLabel && <>
+                          <span className="org-feed-arrow">→</span>
+                          <span className="org-feed-who">{toLabel}</span>
+                        </>}
+                        <span className={`org-feed-label ${meta.cls}`}>{meta.label || t.type}</span>
+                        {t.task && <span className="org-feed-text">{t.task}</span>}
                       </div>
                     );
                   })}
                   {anomalies.map((a: any, i: number) => (
-                    <div key={`an-${i}`} className="org-feed-item org-feed-warn">
-                      <span className="org-feed-icon">⚠</span>
-                      <span className="org-feed-who" style={{ color: "#f59e0b" }}>{a.role_title || nodeLabel(a.node_id)}</span>
-                      <span className="org-feed-text" style={{ color: "#f59e0b" }}>{String(a.message).slice(0, 50)}</span>
+                    <div key={`an-${i}`} className="org-feed-item feed-warn" title={String(a.message)}>
+                      <span className="org-feed-icon feed-warn">!</span>
+                      <span className="org-feed-who">{a.role_title || nodeLabel(a.node_id)}</span>
+                      <span className="org-feed-text">{String(a.message)}</span>
                     </div>
                   ))}
                 </div>
@@ -2867,52 +2867,111 @@ export function OrgEditorView({
             /* ── Canvas bottom live activity feed ── */
             .org-live-feed {
               position: absolute; bottom: 0; left: 0; right: 0;
-              z-index: 5; max-height: 140px; overflow-y: auto;
-              background: linear-gradient(to top, var(--bg-app, rgba(15,23,42,0.97)) 75%, transparent);
-              padding: 10px 14px 6px;
+              z-index: 5; max-height: 160px; overflow-y: auto;
+              background: linear-gradient(to top, var(--bg-app, rgba(15,23,42,0.97)) 80%, transparent);
+              padding: 12px 16px 8px;
               scrollbar-width: thin;
             }
             .org-feed-item {
-              display: flex; align-items: center; gap: 6px;
-              padding: 3px 0; font-size: 11px; color: var(--text, #cbd5e1);
-              line-height: 1.4; white-space: nowrap;
-              border-bottom: 1px solid rgba(51,65,85,0.15);
+              display: flex; align-items: center; gap: 7px;
+              padding: 4px 0; font-size: 12px; color: var(--text, #cbd5e1);
+              line-height: 1.5; white-space: nowrap; cursor: pointer;
+              border-bottom: 1px solid rgba(51,65,85,0.12);
             }
             .org-feed-item:last-child { border-bottom: none; }
-            .org-feed-busy { cursor: pointer; }
+            .org-feed-item:hover .org-feed-text { color: var(--text, #e2e8f0); }
+
             .org-feed-busy:hover .org-feed-who { color: var(--primary, #6366f1); }
-            .org-feed-ok { }
-            .org-feed-err .org-feed-label { color: #ef4444; }
-            .org-feed-warn { color: #f59e0b; }
+
             .org-feed-dot {
-              width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+              width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+              background: #3b82f6;
+              animation: orgDotPulse 1.5s ease-in-out infinite;
             }
+
             .org-feed-time {
-              font-size: 10px; color: var(--muted, #64748b); font-family: monospace;
-              flex-shrink: 0; min-width: 36px;
+              font-size: 11px; color: var(--muted, #64748b); font-family: monospace;
+              flex-shrink: 0; min-width: 38px; letter-spacing: 0.3px;
             }
-            .org-feed-icon { flex-shrink: 0; font-size: 12px; }
+
+            .org-feed-icon {
+              flex-shrink: 0; width: 18px; height: 18px;
+              display: inline-flex; align-items: center; justify-content: center;
+              border-radius: 4px; font-size: 11px; font-weight: 700;
+              font-style: normal; font-family: system-ui, sans-serif;
+              background: rgba(99,102,241,0.12); color: var(--primary, #818cf8);
+            }
+            .org-feed-icon.feed-completed,
+            .org-feed-icon.feed-accepted {
+              background: rgba(34,197,94,0.12); color: #22c55e;
+            }
+            .org-feed-icon.feed-activated {
+              background: rgba(59,130,246,0.12); color: #3b82f6;
+            }
+            .org-feed-icon.feed-rejected {
+              background: rgba(239,68,68,0.12); color: #ef4444;
+            }
+            .org-feed-icon.feed-timeout {
+              background: rgba(245,158,11,0.12); color: #f59e0b;
+            }
+            .org-feed-icon.feed-delegated {
+              background: rgba(99,102,241,0.12); color: #818cf8;
+            }
+            .org-feed-icon.feed-delivered {
+              background: rgba(6,182,212,0.12); color: #06b6d4;
+            }
+            .org-feed-icon.feed-warn {
+              background: rgba(245,158,11,0.15); color: #f59e0b;
+            }
+
             .org-feed-who {
               font-weight: 600; color: var(--text); flex-shrink: 0;
               max-width: 100px; overflow: hidden; text-overflow: ellipsis;
-              transition: color 0.15s;
+              transition: color 0.15s; font-size: 12px;
             }
-            .org-feed-arrow { color: var(--muted, #64748b); flex-shrink: 0; font-size: 10px; }
+
+            .org-feed-arrow {
+              color: var(--muted, #64748b); flex-shrink: 0;
+              font-size: 11px; opacity: 0.6;
+            }
+
             .org-feed-label {
-              font-size: 10px; padding: 1px 5px; border-radius: 3px;
-              background: rgba(99,102,241,0.12); color: var(--primary, #818cf8);
-              flex-shrink: 0;
+              font-size: 11px; padding: 1px 6px; border-radius: 4px;
+              flex-shrink: 0; font-weight: 500;
+              background: rgba(99,102,241,0.10); color: var(--primary, #818cf8);
             }
+            .org-feed-label.feed-completed,
+            .org-feed-label.feed-accepted {
+              background: rgba(34,197,94,0.10); color: #22c55e;
+            }
+            .org-feed-label.feed-activated {
+              background: rgba(59,130,246,0.10); color: #3b82f6;
+            }
+            .org-feed-label.feed-rejected {
+              background: rgba(239,68,68,0.10); color: #ef4444;
+            }
+            .org-feed-label.feed-timeout {
+              background: rgba(245,158,11,0.10); color: #f59e0b;
+            }
+            .org-feed-label.feed-delivered {
+              background: rgba(6,182,212,0.10); color: #06b6d4;
+            }
+
+            .feed-warn .org-feed-who { color: #f59e0b; }
+            .feed-warn .org-feed-text { color: #f59e0b; }
+
             .org-feed-text {
-              color: var(--muted, #94a3b8); font-size: 10px;
+              color: var(--muted, #94a3b8); font-size: 11px;
               overflow: hidden; text-overflow: ellipsis; min-width: 0;
+              flex: 1;
             }
+
             .org-feed-progress {
               display: inline-flex; align-items: center; gap: 4px;
               flex-shrink: 0;
             }
             .org-feed-bar {
-              width: 48px; height: 3px; border-radius: 2px;
+              width: 48px; height: 4px; border-radius: 2px;
               background: rgba(51,65,85,0.3); overflow: hidden;
             }
             .org-feed-bar-fill {
@@ -2920,7 +2979,7 @@ export function OrgEditorView({
               background: #3b82f6; transition: width 0.3s ease;
             }
             .org-feed-pct {
-              font-size: 9px; color: var(--muted); font-weight: 600;
+              font-size: 10px; color: var(--muted); font-weight: 600;
             }
 
             /* ── Modal dialog ── */
