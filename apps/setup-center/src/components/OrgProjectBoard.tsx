@@ -2,19 +2,30 @@
  * Project management board — Gantt timeline + kanban columns.
  * Full-screen layout with project selector, timeline progress, and task modals.
  */
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Pencil, X } from "lucide-react";
 
 import { safeFetch } from "../providers";
 import { OrgAvatar } from "./OrgAvatars";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
 import { Button } from "./ui/button";
+import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Label } from "./ui/label";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
 interface ProjectTask {
   id: string;
@@ -76,6 +87,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const [loading, setLoading] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDesc, setNewProjectDesc] = useState("");
   const [newProjectType, setNewProjectType] = useState("temporary");
@@ -89,6 +101,13 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const [taskDetailLoading, setTaskDetailLoading] = useState(false);
   const [subtasksExpanded, setSubtasksExpanded] = useState(true);
   const [viewTab, setViewTab] = useState<"gantt" | "kanban">("gantt");
+  const [projectPendingDelete, setProjectPendingDelete] = useState<Project | null>(null);
+  const [projectStripWidth, setProjectStripWidth] = useState<number | null>(null);
+  const [projectScrollbarSize, setProjectScrollbarSize] = useState(0);
+  const projectRailRef = useRef<HTMLDivElement | null>(null);
+  const projectStripRef = useRef<HTMLDivElement | null>(null);
+  const projectTrackRef = useRef<HTMLDivElement | null>(null);
+  const projectAddRef = useRef<HTMLDivElement | null>(null);
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -127,7 +146,11 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
-        if (!selectedProjectId && data.length > 0) setSelectedProjectId(data[0].id);
+        if (data.length === 0) {
+          setSelectedProjectId(null);
+        } else if (!selectedProjectId || !data.some((p: Project) => p.id === selectedProjectId)) {
+          setSelectedProjectId(data[0].id);
+        }
       }
     } catch { /* ignore */ }
     setLoading(false);
@@ -135,15 +158,72 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
-  const createProject = async () => {
+  useEffect(() => {
+    const rail = projectRailRef.current;
+    const strip = projectStripRef.current;
+    const track = projectTrackRef.current;
+    const add = projectAddRef.current;
+    if (!rail || !strip || !track || !add) {
+      setProjectStripWidth(null);
+      return;
+    }
+
+    const gap = 10;
+    const measureLayout = () => {
+      const available = Math.max(160, rail.clientWidth - add.offsetWidth - gap);
+      const content = track.scrollWidth;
+      setProjectStripWidth(Math.min(content, available));
+      setProjectScrollbarSize(Math.max(0, strip.offsetHeight - strip.clientHeight));
+    };
+
+    measureLayout();
+    const observer = new ResizeObserver(measureLayout);
+    observer.observe(rail);
+    observer.observe(strip);
+    observer.observe(track);
+    observer.observe(add);
+    window.addEventListener("resize", measureLayout);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measureLayout);
+    };
+  }, [projects]);
+
+  const resetProjectForm = () => {
+    setNewProjectName("");
+    setNewProjectDesc("");
+    setNewProjectType("temporary");
+    setEditingProject(null);
+  };
+
+  const openEditProject = (project: Project) => {
+    setEditingProject(project);
+    setNewProjectName(project.name || "");
+    setNewProjectDesc(project.description || "");
+    setNewProjectType(project.project_type || "temporary");
+    setShowNewProject(true);
+  };
+
+  const submitProject = async () => {
     if (!newProjectName.trim()) return;
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects`, {
-        method: "POST",
+      await safeFetch(
+        editingProject
+          ? `${apiBaseUrl}/api/orgs/${orgId}/projects/${editingProject.id}`
+          : `${apiBaseUrl}/api/orgs/${orgId}/projects`,
+        {
+        method: editingProject ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newProjectName, description: newProjectDesc, project_type: newProjectType, status: "active" }),
+        body: JSON.stringify({
+          name: newProjectName,
+          description: newProjectDesc,
+          project_type: newProjectType,
+          status: editingProject?.status ?? "active",
+        }),
       });
-      setNewProjectName(""); setNewProjectDesc(""); setShowNewProject(false);
+      resetProjectForm();
+      setShowNewProject(false);
       fetchProjects();
     } catch { /* ignore */ }
   };
@@ -228,12 +308,80 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         }
 
         /* ── Header ── */
-        .opb-toolbar {
-          display: flex; align-items: center; gap: 8px;
-          padding: 8px 16px; border-bottom: 1px solid var(--line);
+        .opb-project-rail {
+          display: flex; align-items: stretch; gap: 10px;
+          padding: 12px 16px; border-bottom: 1px solid var(--line);
           flex-shrink: 0;
         }
-        .opb-proj-selector { flex-shrink: 0; min-width: 180px; max-width: 280px; }
+        .opb-project-strip {
+          min-width: 0; overflow-x: auto; scrollbar-width: thin;
+          scrollbar-gutter: stable;
+        }
+        .opb-project-track {
+          display: flex; gap: 10px; align-items: stretch; width: max-content;
+        }
+        .opb-project-card {
+          min-width: 220px; max-width: 260px; cursor: pointer;
+          min-height: 92px; height: 100%;
+          border: 1px solid var(--line); background: var(--card-bg, var(--bg-app));
+          transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+          position: relative; overflow: hidden;
+          flex: 0 0 auto;
+        }
+        .opb-project-card:hover {
+          border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+          box-shadow: 0 4px 14px rgba(59,130,246,0.08);
+          transform: translateY(-1px);
+        }
+        .opb-project-card--selected {
+          border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+          box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent), 0 6px 18px rgba(59,130,246,0.12);
+        }
+        .opb-project-card__title {
+          font-size: 13px; font-weight: 600; color: var(--text);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .opb-project-card__desc {
+          font-size: 11px; color: var(--muted);
+          line-height: 1.4;
+          display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+        }
+        .opb-project-card__meta {
+          display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        }
+        .opb-project-card__actions {
+          position: absolute; top: 8px; right: 8px; z-index: 2;
+          display: flex; gap: 4px;
+          opacity: 0; pointer-events: none; transform: scale(0.92);
+          transition: opacity .15s ease, transform .15s ease;
+        }
+        .opb-project-card__edit,
+        .opb-project-card__delete {
+          pointer-events: auto;
+        }
+        .opb-project-card:hover .opb-project-card__actions,
+        .opb-project-card--selected .opb-project-card__actions {
+          opacity: 1; pointer-events: auto; transform: scale(1);
+        }
+        .opb-project-card__delete {
+        }
+        .opb-project-add-card {
+          min-width: 132px; max-width: 132px; cursor: pointer;
+          min-height: 92px; height: 100%;
+          border: 1px dashed var(--line); background: var(--bg-subtle, rgba(100,116,139,0.04));
+          color: var(--muted);
+          transition: border-color .15s ease, color .15s ease, background .15s ease;
+          flex: 0 0 auto;
+        }
+        .opb-project-add-card:hover {
+          border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+          color: var(--primary);
+          background: color-mix(in srgb, var(--primary) 6%, var(--bg-app));
+        }
+        .opb-project-add-slot {
+          flex: 0 0 auto;
+          display: flex; align-items: stretch;
+        }
 
         /* ── Stats row ── */
         .opb-stats-row {
@@ -344,67 +492,99 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         }
       `}</style>
 
-      {/* ── Toolbar ── */}
-      <div className="opb-toolbar">
-        {projects.length > 0 ? (
-          <div className="opb-proj-selector">
-            <Select value={selectedProjectId || ""} onValueChange={setSelectedProjectId}>
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder="选择项目" />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map(p => (
-                  <SelectItem key={p.id} value={p.id}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <span className="opb-status-dot" style={{ background: PROJECT_STATUS_COLOR[p.status] || "#3b82f6" }} />
-                      {p.name}
-                      <span style={{ fontSize: 10, color: "var(--muted)" }}>
-                        {PROJECT_TYPE_LABEL[p.project_type] || p.project_type}
-                      </span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {projects.length > 0 && (
+        <div ref={projectRailRef} className="opb-project-rail">
+          <div
+            ref={projectStripRef}
+            className="opb-project-strip"
+            style={{ width: projectStripWidth ? `${projectStripWidth}px` : undefined }}
+            onWheel={(e) => {
+              const el = e.currentTarget;
+              if (el.scrollWidth <= el.clientWidth) return;
+              if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+              e.preventDefault();
+              el.scrollLeft += e.deltaY;
+            }}
+          >
+            <div ref={projectTrackRef} className="opb-project-track">
+              {projects.map((project) => {
+                const total = project.tasks.length;
+                const done = project.tasks.filter((t) => t.status === "accepted").length;
+                const selected = project.id === selectedProjectId;
+                return (
+                  <Card
+                    key={project.id}
+                    className={`opb-project-card py-0 ${selected ? "opb-project-card--selected" : ""}`}
+                    onClick={() => setSelectedProjectId(project.id)}
+                  >
+                    <div className="opb-project-card__actions">
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="opb-project-card__edit text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditProject(project);
+                        }}
+                        title={`编辑项目 ${project.name}`}
+                        aria-label={`编辑项目 ${project.name}`}
+                      >
+                        <Pencil />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="opb-project-card__delete text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setProjectPendingDelete(project);
+                        }}
+                        title={`删除项目 ${project.name}`}
+                        aria-label={`删除项目 ${project.name}`}
+                      >
+                        <X />
+                      </Button>
+                    </div>
+                    <CardContent className="space-y-2 px-3 py-3">
+                      <div className="opb-project-card__meta">
+                        <Badge variant="secondary" className="text-[10px] font-normal gap-1">
+                          <span className="opb-status-dot" style={{ background: PROJECT_STATUS_COLOR[project.status] || "#3b82f6" }} />
+                          {PROJECT_STATUS_LABEL[project.status] || project.status}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px] font-normal">
+                          {PROJECT_TYPE_LABEL[project.project_type] || project.project_type}
+                        </Badge>
+                      </div>
+                      <div className="opb-project-card__title">{project.name}</div>
+                      <div className="opb-project-card__desc">{project.description || "暂无项目描述"}</div>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>任务 {total}</span>
+                        <span>完成 {done}</span>
+                        <span>{total > 0 ? Math.round((done / total) * 100) : 0}%</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
-        ) : null}
-
-        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setShowNewProject(true)}>
-          + 新项目
-        </Button>
-
-        {selectedProject && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">⋯</Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem className="text-xs text-destructive" onClick={() => {
-                if (confirm(`确定删除项目「${selectedProject.name}」？此操作不可恢复。`)) {
-                  deleteProject(selectedProject.id);
-                }
-              }}>
-                删除项目
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        {selectedProject && (
-          <ToggleGroup type="single" variant="outline" value={viewTab}
-            onValueChange={v => { if (v) setViewTab(v as "gantt" | "kanban"); }}
-            className="h-8">
-            <ToggleGroupItem value="gantt" className={`text-xs px-3 h-7 ${viewTab === "gantt" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
-              甘特图
-            </ToggleGroupItem>
-            <ToggleGroupItem value="kanban" className={`text-xs px-3 h-7 ${viewTab === "kanban" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
-              看板
-            </ToggleGroupItem>
-          </ToggleGroup>
-        )}
-      </div>
+          <div
+            ref={projectAddRef}
+            className="opb-project-add-slot"
+            style={{ paddingBottom: projectScrollbarSize ? `${projectScrollbarSize}px` : undefined }}
+          >
+            <Card className="opb-project-add-card py-0" onClick={() => {
+              resetProjectForm();
+              setShowNewProject(true);
+            }}>
+              <CardContent className="flex h-full flex-col items-center justify-center gap-2 px-3 py-3 text-center">
+                <span className="text-lg leading-none">+</span>
+                <span className="text-xs font-medium">新项目</span>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
 
       {/* ── Stats row ── */}
       {selectedProject && (
@@ -447,6 +627,16 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           )}
 
           <div style={{ flex: 1 }} />
+          <ToggleGroup type="single" variant="outline" value={viewTab}
+            onValueChange={v => { if (v) setViewTab(v as "gantt" | "kanban"); }}
+            className="h-8">
+            <ToggleGroupItem value="gantt" className={`text-xs px-3 h-7 ${viewTab === "gantt" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+              任务列表
+            </ToggleGroupItem>
+            <ToggleGroupItem value="kanban" className={`text-xs px-3 h-7 ${viewTab === "kanban" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+              看板
+            </ToggleGroupItem>
+          </ToggleGroup>
           <Button size="sm" className="h-7 text-xs" onClick={() => setShowNewTask(true)}>
             + 新任务
           </Button>
@@ -489,11 +679,16 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       )}
 
       {/* ── New Project Modal ── */}
-      <Dialog open={showNewProject} onOpenChange={setShowNewProject}>
+      <Dialog open={showNewProject} onOpenChange={(open) => {
+        setShowNewProject(open);
+        if (!open) resetProjectForm();
+      }}>
         <DialogContent className="sm:max-w-md" onOpenAutoFocus={e => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle>新建项目</DialogTitle>
-            <DialogDescription className="sr-only">创建一个新的组织项目</DialogDescription>
+            <DialogTitle>{editingProject ? "编辑项目" : "新建项目"}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {editingProject ? "编辑当前组织项目" : "创建一个新的组织项目"}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid grid-cols-3 gap-3">
@@ -501,7 +696,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                 <Label htmlFor="project-name">项目名称 *</Label>
                 <Input id="project-name" placeholder="例如：Q2 产品迭代" value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && createProject()} />
+                  onKeyDown={e => e.key === "Enter" && submitProject()} />
               </div>
               <div className="grid gap-2">
                 <Label>项目类型</Label>
@@ -525,8 +720,11 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewProject(false)}>取消</Button>
-            <Button onClick={createProject}>创建</Button>
+            <Button variant="outline" onClick={() => {
+              setShowNewProject(false);
+              resetProjectForm();
+            }}>取消</Button>
+            <Button onClick={submitProject}>{editingProject ? "保存" : "创建"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -572,6 +770,31 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!projectPendingDelete} onOpenChange={(open) => { if (!open) setProjectPendingDelete(null); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除项目？</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-wrap">
+              {projectPendingDelete ? `确定删除项目「${projectPendingDelete.name}」？\n此操作不可恢复，项目下的任务也会一并删除。` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (projectPendingDelete) {
+                  deleteProject(projectPendingDelete.id);
+                }
+                setProjectPendingDelete(null);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── Task Detail Panel ── */}
       {selectedTask && (
@@ -700,7 +923,7 @@ function GanttView({
                     </div>
                   </div>
                   <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                       {task.status === "todo" && (
                         <button data-slot="opb" className="opb-act opb-act--primary"
                           onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
@@ -708,9 +931,8 @@ function GanttView({
                         </button>
                       )}
                       {task.status === "in_progress" && (<>
-                        <span style={{ fontSize: 10, color: "#3b82f6", fontWeight: 500 }}>⏳</span>
                         <button data-slot="opb" className="opb-act opb-act--danger"
-                          onClick={() => onStatusChange(task.id, "blocked")} title="中止">⏹</button>
+                          onClick={() => onStatusChange(task.id, "blocked")} title="中止">中止</button>
                       </>)}
                       {task.status === "delivered" && (<>
                         <button data-slot="opb" className="opb-act opb-act--success"
@@ -724,9 +946,9 @@ function GanttView({
                           {dispatchingTaskId === task.id ? "…" : "重新派发"}
                         </button>
                       )}
-                      <button data-slot="opb" className="opb-act opb-act--danger"
+                      <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}
-                        title="删除任务">🗑</button>
+                        title="删除任务">删除</Button>
                     </div>
                   </div>
                 </div>
@@ -799,7 +1021,7 @@ function KanbanView({
                         <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={16} />
                         <span style={{ fontSize: 10, color: "var(--muted)" }}>{assignee ? (assignee.role_title || assignee.id) : "未分配"}</span>
                       </div>
-                      <div style={{ display: "flex", gap: 2 }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
                         {col.key === "todo" && (
                           <button data-slot="opb" className="opb-act opb-act--primary"
                             onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
@@ -807,9 +1029,8 @@ function KanbanView({
                           </button>
                         )}
                         {col.key === "in_progress" && (<>
-                          <span style={{ fontSize: 9, color: "#3b82f6" }}>⏳</span>
                           <button data-slot="opb" className="opb-act opb-act--danger"
-                            onClick={() => onStatusChange(task.id, "blocked")}>⏹</button>
+                            onClick={() => onStatusChange(task.id, "blocked")}>中止</button>
                         </>)}
                         {col.key === "delivered" && (<>
                           <button data-slot="opb" className="opb-act opb-act--success"
@@ -823,8 +1044,8 @@ function KanbanView({
                             {dispatchingTaskId === task.id ? "…" : "↻"}
                           </button>
                         )}
-                        <button data-slot="opb" className="opb-act opb-act--danger"
-                          onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}>🗑</button>
+                        <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => { if (confirm("确定删除该任务？")) onDelete(task.id); }}>删除</Button>
                       </div>
                     </div>
                     {(task.progress_pct ?? 0) > 0 && (task.progress_pct ?? 0) < 100 && (
