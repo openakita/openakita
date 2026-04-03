@@ -2121,7 +2121,6 @@ export function OrgEditorView({
           }}>
             <div style={{
               flex: 1, minHeight: 0,
-              background: "#fff",
               display: "flex", alignItems: "center", justifyContent: "center",
               padding: 24,
             }}>
