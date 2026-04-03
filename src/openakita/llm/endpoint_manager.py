@@ -135,9 +135,9 @@ class EndpointManager:
     所有对 .env 和 llm_endpoints.json 的写操作都必须经过这里。
     """
 
-    def __init__(self, workspace_dir: Path):
+    def __init__(self, workspace_dir: Path, *, config_path: Path | None = None):
         self._ws_dir = Path(workspace_dir)
-        self._json_path = self._ws_dir / "data" / "llm_endpoints.json"
+        self._json_path = Path(config_path) if config_path else (self._ws_dir / "data" / "llm_endpoints.json")
         self._env_path = self._ws_dir / ".env"
         self._lock = threading.Lock()
 
