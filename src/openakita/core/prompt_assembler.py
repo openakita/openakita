@@ -137,6 +137,8 @@ class PromptAssembler:
         memory_keywords: list[str] | None = None,
         model_display_name: str = "",
         session_context: dict | None = None,
+        mode: str = "agent",
+        model_id: str = "",
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -152,19 +154,16 @@ class PromptAssembler:
             tools_enabled: 是否启用工具（CHAT 轻量路径传 False 跳过 Catalogs 层）
             model_display_name: 当前 LLM 模型显示名称（动态注入）
             session_context: 会话元数据（session_id、通道、类型等）
+            mode: 当前模式 (ask/plan/agent)
+            model_id: 模型标识（用于 per-model 基础 prompt）
 
         Returns:
             编译后的系统提示词
         """
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
-        from ..prompt.compiler import check_compiled_outdated, compile_all
 
         identity_dir = settings.identity_path
-
-        if check_compiled_outdated(identity_dir):
-            logger.info("Compiled identity files outdated, recompiling...")
-            compile_all(identity_dir)
 
         budget_config = (
             BudgetConfig.for_context_window(context_window)
@@ -189,6 +188,8 @@ class PromptAssembler:
             memory_keywords=memory_keywords,
             model_display_name=model_display_name,
             session_context=session_context,
+            mode=mode,
+            model_id=model_id,
         )
 
     def _build_compiled_sync(

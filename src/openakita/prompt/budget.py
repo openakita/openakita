@@ -30,13 +30,13 @@ class BudgetConfig:
     """Token 预算配置"""
 
     # 各部分预算（tokens）
-    identity_budget: int = 3000   # SOUL.md(60%) + agent.core(25%) + user_policies(15%)
+    identity_budget: int = 6000   # SOUL.md(60%) + AGENT.md(25%) + user_policies(15%)
     catalogs_budget: int = 12000  # tools(33%) + skills(55%) + mcp(10%) 全量注入
     user_budget: int = 300        # user.summary + runtime_facts
     memory_budget: int = 2500     # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
 
     # 总预算（作为硬限制）
-    total_budget: int = 18000
+    total_budget: int = 21000
 
     # 裁剪优先级（数字越小越先被裁剪）
     # 高优先级的内容会在预算不足时保留

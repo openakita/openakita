@@ -137,10 +137,19 @@ class ContextManager:
     def _estimate_single_message_tokens(self, msg: dict) -> int:
         """Estimate tokens for a single message with caching by content hash."""
         content = msg.get("content", "")
-        cache_key = id(content) if not isinstance(content, str) else hash(content)
-        cached = self._token_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        if isinstance(content, str):
+            cache_key = hash(content)
+        elif isinstance(content, list):
+            try:
+                cache_key = hash(json.dumps(content, ensure_ascii=False, sort_keys=True, default=str))
+            except (TypeError, ValueError):
+                cache_key = None
+        else:
+            cache_key = None
+        if cache_key is not None:
+            cached = self._token_cache.get(cache_key)
+            if cached is not None:
+                return cached
 
         tokens = 0
         if isinstance(content, str):
@@ -159,7 +168,7 @@ class ContextManager:
                     tokens += self.estimate_tokens(item)
         tokens += 10  # 每条消息的结构开销
 
-        if len(self._token_cache) < 10000:
+        if cache_key is not None and len(self._token_cache) < 10000:
             self._token_cache[cache_key] = tokens
         return tokens
 
@@ -754,28 +763,11 @@ class ContextManager:
                 operation_detail=f"chunk_{i}",
             ))
             try:
+                from ..prompt.compact import format_compact_summary, get_compact_prompt
                 response = await self._cancellable_llm(
                     model=self._brain.model,
                     max_tokens=chunk_target,
-                    system=(
-                        "你是一个对话压缩助手。请将以下对话片段压缩为结构化摘要。\n"
-                        "必须包含以下部分（如有相关内容）：\n"
-                        "1. **对话背景**: 用户的原始目标\n"
-                        "2. **用户需求**: 用户明确提出的要求和指令\n"
-                        "3. **已完成的步骤**: 执行了哪些操作，结果如何（成功/失败/错误信息）\n"
-                        "4. **成功的方法**: 最终验证有效的方案、配置、代码片段（最高优先级保留）\n"
-                        "5. **错误→修复**: 遇到什么错误，通过什么改动修复的\n"
-                        "6. **当前任务进度**: 进行到哪一步了\n"
-                        "7. **待处理的问题**: AI 向用户提出了什么问题，用户是否已回答（保留原文）\n"
-                        "8. **关键配置/数值**: 端口号、路径、密钥、版本号等具体值（必须保留原始数值）\n"
-                        "9. **下一步计划**: 接下来要做什么\n"
-                        "10. **用户设定的行为规则**: 用户明确要求的持久约束"
-                        "（如「每次先做X」「不要Y」「必须先Z」等），必须原文保留，不可省略或模糊化\n\n"
-                        "重要：\n"
-                        "- 保留所有具体数值和配置信息，不要用模糊描述代替具体值\n"
-                        "- 如果某个方案最终成功了，必须完整保留该方案的关键步骤和参数\n"
-                        "- 失败的尝试可以简化为一句话，但成功的方案必须详细保留"
-                    ),
+                    system=get_compact_prompt(),
                     messages=[
                         {
                             "role": "user",
@@ -801,6 +793,7 @@ class ContextManager:
                     logger.warning(f"[Compress] Chunk {i + 1} returned empty summary")
                     max_chars = chunk_target * CHARS_PER_TOKEN
                     return chunk[: max_chars // 2] + "\n...(摘要失败，已截断)...\n" if len(chunk) > max_chars else chunk
+                summary = format_compact_summary(summary)
                 logger.info(
                     f"Chunk {i + 1}/{len(chunks)}: {chunk_tokens} -> "
                     f"~{self.estimate_tokens(summary)} tokens"
@@ -881,7 +874,10 @@ class ContextManager:
         if not summary:
             return list(recent_messages)
 
-        summary_prefix = f"[之前的对话摘要]\n{summary}\n\n---\n"
+        summary_prefix = (
+            f"[之前的对话摘要]\n{summary}\n\n"
+            "请直接从中断处继续，不要确认摘要、不要回顾之前的工作。\n\n---\n"
+        )
         result = list(recent_messages)
 
         if result and result[0].get("role") == "user":

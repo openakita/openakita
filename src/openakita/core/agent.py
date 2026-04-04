@@ -1784,6 +1784,9 @@ class Agent:
             except Exception:
                 pass
 
+        _effective_mode = getattr(self.tool_executor, "_current_mode", "agent")
+        _model_id = getattr(self.brain, "model", "")
+
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description, session_type=session_type, context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
@@ -1791,6 +1794,8 @@ class Agent:
             memory_keywords=_mem_keywords,
             model_display_name=model_display,
             session_context=session_context,
+            mode=_effective_mode,
+            model_id=_model_id,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -3000,7 +3005,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     self._intent_analyzer.analyze(
                         message, session_context=None, has_history=_has_history
                     ),
-                    timeout=15,
+                    timeout=30,
                 )
             except (TimeoutError, Exception) as e:
                 logger.warning(f"[Session:{session_id}] Intent analysis failed/timed out: {e}")

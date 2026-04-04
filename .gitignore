@@ -232,6 +232,9 @@ OPENAKITA_RESEARCH_REPORT.md
 openakita-release.keystore
 ppt_build/
 
+# Claude Code reference materials
+claude_code/
+
 # Cursor commit message drafts
 .commitmsg
 .commitmsg_responses

@@ -30,39 +30,9 @@ logger = logging.getLogger(__name__)
 # =========================================================================
 
 _COMPILE_PROMPTS: dict[str, dict] = {
-    # SOUL.md 不再编译 — 全文直接注入 system prompt，保留哲学基调
-    "agent_core": {
-        "target": "agent_core",
-        "system": "你是一个文本精简专家。",
-        "user": """将以下 AI 行为规范文档精简为核心执行原则。
-
-要求:
-- 保留 Ralph Wiggum 核心循环逻辑和三条铁律
-- 保留任务执行流程（理解→检查→获取→执行→验证→更新）
-- 保留主动行为框架（每轮自检、成长循环、自我修复协议）
-- 保留禁止行为清单
-- 删除配置示例、命令列表、架构说明、代码块等参考信息
-- 输出纯 Markdown，不超过 {max_tokens} tokens
-
-原文:
-{content}""",
-        "max_tokens": 250,
-    },
-    "user": {
-        "target": "user",
-        "system": "你是一个文本精简专家。",
-        "user": """从以下用户档案中提取已知信息。
-
-要求:
-- 只保留有实际内容的字段（跳过"[待学习]"等占位符）
-- 保留用户称呼、技术栈、偏好、工作习惯等已知信息
-- 输出紧凑的列表格式，不超过 {max_tokens} tokens
-- 如果没有任何已知信息，输出空字符串
-
-原文:
-{content}""",
-        "max_tokens": 120,
-    },
+    # SOUL.md — 不编译，全文直接注入 system prompt
+    # AGENT.md — 不编译，builder.py 直接注入 (v3)
+    # USER.md — 不编译，builder.py 运行时清洗 (v3)
     "persona_custom": {
         "target": "persona_custom",
         "system": "你是一个文本精简专家。",
@@ -81,18 +51,20 @@ _COMPILE_PROMPTS: dict[str, dict] = {
 }
 
 _SOURCE_MAP: dict[str, str] = {
-    # SOUL.md 不再编译 — 全文注入
-    "agent_core": "AGENT.md",
-    "user": "USER.md",
+    # SOUL.md — 不编译，全文注入
+    # AGENT.md — 不编译，全文注入 (v3: 改为直接注入)
+    # USER.md — 不编译，builder 运行时清洗 (v3: 改为运行时清洗)
     "persona_custom": "personas/user_custom.md",
 }
 
 _OUTPUT_MAP: dict[str, str] = {
-    # soul.summary.md 不再生成 — SOUL.md 全文注入
-    "agent_core": "agent.core.md",
-    "user": "user.summary.md",
+    # soul.summary.md — 不再生成
+    # agent.core.md — 不再生成 (v3: AGENT.md 直接注入)
+    # user.summary.md — 不再生成 (v3: USER.md 运行时清洗)
     "persona_custom": "persona.custom.md",
 }
+
+_ORPHAN_FILES = ["soul.summary.md", "agent.tooling.md", "agent.core.md", "user.summary.md"]
 
 
 # =========================================================================
@@ -190,8 +162,22 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
             results[target] = output_path
             logger.info(f"[Compiler] Rule compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}")
 
+    _cleanup_orphan_files(runtime_dir)
+
     (runtime_dir / ".compiled_at").write_text(datetime.now().isoformat(), encoding="utf-8")
     return results
+
+
+def _cleanup_orphan_files(runtime_dir: Path) -> None:
+    """清理旧版编译管线遗留的孤儿文件。"""
+    for filename in _ORPHAN_FILES:
+        orphan = runtime_dir / filename
+        if orphan.exists():
+            try:
+                orphan.unlink()
+                logger.info(f"[Compiler] Cleaned up orphan file: {filename}")
+            except Exception:
+                pass
 
 
 # =========================================================================
@@ -361,7 +347,9 @@ def _is_relevant_section(section: str, target: str) -> bool:
 # =========================================================================
 
 _STATIC_FALLBACKS: dict[str, str] = {
-    # SOUL.md 不再需要 fallback — 全文直接注入
+    # NOTE: agent_core 和 agent_tooling 的 fallback 已不再使用
+    # (v3: AGENT.md 改为 builder.py 直接注入，兜底在 builder._BUILT_IN_DEFAULTS 中)
+    # 保留此处仅为向后兼容，不会被新代码路径调用。
     "agent_core": """\
 ## 核心执行原则
 

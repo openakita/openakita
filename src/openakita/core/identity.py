@@ -19,6 +19,8 @@ Identity 模块 - 加载和管理核心文档
 - MEMORY.md: 按需加载 (当前任务部分)
 """
 
+import hashlib
+import json
 import logging
 import re
 from pathlib import Path
@@ -33,6 +35,29 @@ if TYPE_CHECKING:
     from ..tools.mcp_catalog import MCPCatalog
 
 logger = logging.getLogger(__name__)
+
+_HASH_FILE = "runtime/.file_hashes.json"
+_TRACKED_FILES = ["SOUL.md", "AGENT.md", "USER.md"]
+
+
+def _load_hashes(identity_dir: Path) -> dict[str, str]:
+    hash_path = identity_dir / _HASH_FILE
+    if hash_path.exists():
+        try:
+            return json.loads(hash_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_hashes(identity_dir: Path, hashes: dict[str, str]) -> None:
+    hash_path = identity_dir / _HASH_FILE
+    hash_path.parent.mkdir(parents=True, exist_ok=True)
+    hash_path.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+
+
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
 class Identity:
@@ -54,12 +79,14 @@ class Identity:
         self._agent: str | None = None
         self._user: str | None = None
         self._memory: str | None = None
+        self._pending_upgrades: list[dict] = []
 
     def load(self) -> None:
-        """加载所有核心文档"""
-        self._soul = self._load_file(self.soul_path, "SOUL.md")
-        self._agent = self._load_file(self.agent_path, "AGENT.md")
-        self._user = self._load_file(self.user_path, "USER.md")
+        """加载所有核心文档，支持系统升级检测。"""
+        self._pending_upgrades = []
+        self._soul = self._sync_identity_file(self.soul_path, "SOUL.md")
+        self._agent = self._sync_identity_file(self.agent_path, "AGENT.md")
+        self._user = self._sync_identity_file(self.user_path, "USER.md")
         self._memory = self._load_file(self.memory_path, "MEMORY.md")
         logger.info("Identity loaded: SOUL.md, AGENT.md, USER.md, MEMORY.md")
 
@@ -72,17 +99,113 @@ class Identity:
         self.load()
         logger.info("Identity hot-reloaded from disk")
 
+    def get_pending_upgrades(self) -> list[dict]:
+        """获取待用户确认的升级列表（CLI/API 层调用后展示给用户）。"""
+        return self._pending_upgrades
+
+    def apply_upgrade(self, name: str, accept: bool) -> None:
+        """用户决定是否接受某个文件的升级。"""
+        identity_dir = self.soul_path.parent
+        hashes = _load_hashes(identity_dir)
+
+        for item in self._pending_upgrades:
+            if item["name"] == name:
+                path = item["path"]
+                if accept:
+                    content = item["example_path"].read_text(encoding="utf-8")
+                    path.write_text(content, encoding="utf-8")
+                    hashes[item["hash_key"]] = _file_hash(path)
+                    logger.info(f"User accepted upgrade for {name}")
+                else:
+                    hashes[item["hash_key"]] = _file_hash(path)
+                    logger.info(f"User declined upgrade for {name}, recorded current hash")
+                _save_hashes(identity_dir, hashes)
+                break
+
+        self._pending_upgrades = [u for u in self._pending_upgrades if u["name"] != name]
+
+    def _sync_identity_file(self, path: Path, name: str) -> str:
+        """加载 identity 文件，支持系统升级覆盖检测。
+
+        决策矩阵：
+        1. 文件不存在 → 从 .example 创建 + 记录 hash
+        2. 有 hash + hash 匹配 + .example 变了 → 静默覆盖（用户没改过）
+        3. 有 hash + hash 不匹配 → 不覆盖（用户改过）
+        4. 无 hash + .example 有更新 → 加入待提示列表
+        """
+        identity_dir = path.parent
+        example_path = identity_dir / f"{path.name}.example"
+        hashes = _load_hashes(identity_dir)
+        hash_key = path.name
+
+        # 场景 1：文件不存在 → 从 .example 创建
+        if not path.exists():
+            if example_path.exists():
+                content = example_path.read_text(encoding="utf-8")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                hashes[hash_key] = _file_hash(path)
+                _save_hashes(identity_dir, hashes)
+                logger.info(f"Created {name} from template")
+                return content
+            logger.warning(f"{name} not found at {path}")
+            return ""
+
+        try:
+            current_content = path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.error(f"Failed to read {name}: {e}")
+            return ""
+
+        if not example_path.exists():
+            return current_content
+
+        try:
+            current_hash = _file_hash(path)
+            recorded_hash = hashes.get(hash_key)
+            example_hash = _file_hash(example_path)
+        except Exception:
+            return current_content
+
+        # .example 没变或 hash 已记录且匹配
+        if recorded_hash is not None:
+            if current_hash == recorded_hash and example_hash != recorded_hash:
+                # 场景 2：用户没改过 + .example 变了 → 静默覆盖
+                content = example_path.read_text(encoding="utf-8")
+                path.write_text(content, encoding="utf-8")
+                hashes[hash_key] = _file_hash(path)
+                _save_hashes(identity_dir, hashes)
+                logger.info(f"System updated {name} (user had not modified)")
+                return content
+            # 场景 3：用户改过 → 不覆盖
+            return current_content
+        else:
+            # 无 hash 记录（老用户或首次追踪）
+            if current_hash == example_hash:
+                hashes[hash_key] = current_hash
+                _save_hashes(identity_dir, hashes)
+                return current_content
+            else:
+                # 场景 4：不一致 → 加入待提示列表
+                self._pending_upgrades.append({
+                    "name": name,
+                    "path": path,
+                    "example_path": example_path,
+                    "hash_key": hash_key,
+                })
+                hashes[hash_key] = current_hash
+                _save_hashes(identity_dir, hashes)
+                return current_content
+
     def _load_file(self, path: Path, name: str) -> str:
-        """加载单个文件，如果不存在则尝试从模板创建"""
+        """加载单个文件，如果不存在则尝试从模板创建（非追踪文件用）。"""
         try:
             if path.exists():
                 return path.read_text(encoding="utf-8")
 
-            # 尝试从 .example 模板创建
             example_path = path.parent / f"{path.name}.example"
             if example_path.exists():
                 content = example_path.read_text(encoding="utf-8")
-                # 确保父目录存在
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding="utf-8")
                 logger.info(f"Created {name} from template")
