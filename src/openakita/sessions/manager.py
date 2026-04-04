@@ -155,6 +155,7 @@ class SessionManager:
                 newer = [t for t in db_turns if t.get("timestamp", "") > last_ts] if last_ts else []
                 if not newer and not session.context.messages and db_turns:
                     newer = db_turns
+                newer = [t for t in newer if (t.get("content") or "").strip()]
                 for t in newer:
                     session.context.add_message(
                         role=t["role"],

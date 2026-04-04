@@ -38,7 +38,7 @@ from ..types import (
     Usage,
     normalize_base_url,
 )
-from .base import LLMProvider
+from .base import LLMProvider, parse_sse_field
 from .proxy_utils import build_httpx_timeout, get_httpx_transport, get_proxy_config
 
 logger = logging.getLogger(__name__)
@@ -361,8 +361,9 @@ class OpenAIProvider(LLMProvider):
                     if first_line_raw is None:
                         first_line_raw = line
 
-                    if line.startswith("data: "):
-                        data = line[6:]
+                    parsed = parse_sse_field(line)
+                    if parsed is not None and parsed[0] == "data":
+                        data = parsed[1]
                         if data.strip() and data != "[DONE]":
                             try:
                                 event = json.loads(data)
