@@ -30,7 +30,7 @@ class BundleMapper:
         if not path.is_dir():
             return None
 
-        for _ecosystem, detector in [
+        for _, detector in [
             ("openclaw", self._detect_openclaw),
             ("claude", self._detect_claude),
             ("cursor", self._detect_cursor),
@@ -79,7 +79,11 @@ class BundleMapper:
         manifest = path / "openclaw.plugin.json"
 
         if manifest.exists():
-            data = json.loads(manifest.read_text(encoding="utf-8"))
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Cannot parse %s: %s", manifest, e)
+                return None
             info = BundleInfo(ecosystem="openclaw", path=path, manifest=data)
             self._scan_skills(path, info)
             self._scan_mcp(path, info)
@@ -100,18 +104,25 @@ class BundleMapper:
     def _detect_claude(self, path: Path) -> BundleInfo | None:
         plugin_dir = path / ".claude-plugin"
         if plugin_dir.is_dir() and (plugin_dir / "plugin.json").exists():
-            data = json.loads(
-                (plugin_dir / "plugin.json").read_text(encoding="utf-8")
-            )
+            try:
+                data = json.loads(
+                    (plugin_dir / "plugin.json").read_text(encoding="utf-8")
+                )
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Cannot parse %s: %s", plugin_dir / "plugin.json", e)
+                return None
             info = BundleInfo(ecosystem="claude", path=path, manifest=data)
             self._scan_skills(path, info)
             self._scan_commands(path, info)
             self._scan_mcp(path, info)
             settings_path = path / "settings.json"
             if settings_path.exists():
-                info.settings = json.loads(
-                    settings_path.read_text(encoding="utf-8")
-                )
+                try:
+                    info.settings = json.loads(
+                        settings_path.read_text(encoding="utf-8")
+                    )
+                except (json.JSONDecodeError, OSError) as e:
+                    logger.warning("Cannot parse %s: %s", settings_path, e)
             return info
 
         skills_dir = path / "skills"
@@ -127,9 +138,13 @@ class BundleMapper:
     def _detect_cursor(self, path: Path) -> BundleInfo | None:
         plugin_dir = path / ".cursor-plugin"
         if plugin_dir.is_dir() and (plugin_dir / "plugin.json").exists():
-            data = json.loads(
-                (plugin_dir / "plugin.json").read_text(encoding="utf-8")
-            )
+            try:
+                data = json.loads(
+                    (plugin_dir / "plugin.json").read_text(encoding="utf-8")
+                )
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Cannot parse %s: %s", plugin_dir / "plugin.json", e)
+                return None
             info = BundleInfo(ecosystem="cursor", path=path, manifest=data)
             self._scan_skills(path, info)
             self._scan_mcp(path, info)
@@ -159,9 +174,13 @@ class BundleMapper:
     def _detect_codex(self, path: Path) -> BundleInfo | None:
         plugin_dir = path / ".codex-plugin"
         if plugin_dir.is_dir() and (plugin_dir / "plugin.json").exists():
-            data = json.loads(
-                (plugin_dir / "plugin.json").read_text(encoding="utf-8")
-            )
+            try:
+                data = json.loads(
+                    (plugin_dir / "plugin.json").read_text(encoding="utf-8")
+                )
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Cannot parse %s: %s", plugin_dir / "plugin.json", e)
+                return None
             info = BundleInfo(ecosystem="codex", path=path, manifest=data)
             self._scan_skills(path, info)
             self._scan_mcp(path, info)

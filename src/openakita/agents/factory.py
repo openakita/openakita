@@ -13,7 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from .profile import AgentProfile, SkillsMode
+from .profile import AgentProfile, AgentType, SkillsMode
 
 if TYPE_CHECKING:
     from openakita.core.agent import Agent
@@ -135,6 +135,23 @@ class AgentFactory:
         if profile.memory_mode == "isolated":
             self._apply_memory_isolation(agent, profile)
 
+        # ── 权限规则注入 (MA1) ──
+        if profile.permission_rules:
+            try:
+                from ..core.permission import from_config
+                ruleset = from_config(
+                    {r["permission"]: {r.get("pattern", "*"): r["action"]}
+                     for r in profile.permission_rules
+                     if "permission" in r and "action" in r}
+                )
+                if ruleset and hasattr(agent, "_tool_executor"):
+                    agent._tool_executor._extra_permission_rules = ruleset
+                    logger.info(
+                        f"Injected {len(ruleset)} permission rule(s) from profile {profile.id}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to inject permission_rules for {profile.id}: {e}")
+
         if profile.custom_prompt:
             agent._custom_prompt_suffix = profile.custom_prompt
 
@@ -195,7 +212,7 @@ class AgentFactory:
             return
 
         registry = agent.skill_registry
-        all_skills = [skill.name for skill in registry.list_all(include_disabled=True)]
+        all_skills = [skill.skill_id for skill in registry.list_all(include_disabled=True)]
 
         removed = 0
         if profile.skills_mode == SkillsMode.INCLUSIVE:
@@ -250,6 +267,8 @@ class AgentFactory:
                 t for t in agent._tools
                 if t["name"] not in specified or t["name"] in ESSENTIAL_TOOL_NAMES
             ]
+
+        agent._tools.sort(key=lambda t: t["name"])
 
         from ..tools.catalog import ToolCatalog
         agent.tool_catalog = ToolCatalog(agent._tools)
@@ -420,9 +439,11 @@ class AgentInstancePool:
         self,
         factory: AgentFactory | None = None,
         idle_timeout: float = _IDLE_TIMEOUT_SECONDS,
+        profile_store=None,
     ):
         self._factory = factory or AgentFactory()
         self._idle_timeout = idle_timeout
+        self._profile_store = profile_store
         # Key: "{session_id}::{profile_id}"
         self._pool: dict[str, _PoolEntry] = {}
         # Per-composite-key locks for concurrent creation
@@ -495,12 +516,24 @@ class AgentInstancePool:
                 return entry.agent
 
             parent_brain = None
-            for k, v in self._pool.items():
-                if k.startswith(f"{session_id}::") and hasattr(v.agent, "brain"):
-                    parent_brain = v.agent.brain
-                    break
+            session_entries = [
+                e for e in self._pool.values()
+                if e.session_id == session_id and hasattr(e.agent, "brain")
+            ]
+            if session_entries:
+                # Prefer default/system profiles, then earliest created
+                def _sort_key(e: _PoolEntry) -> tuple:
+                    profile = getattr(e.agent, "_agent_profile", None)
+                    is_default = e.profile_id == "default"
+                    is_system = profile is not None and getattr(profile, "type", None) == AgentType.SYSTEM
+                    return (not is_default, not is_system, e.created_at)
+                best = min(session_entries, key=_sort_key)
+                parent_brain = best.agent.brain
 
-            agent = await self._factory.create(profile, parent_brain=parent_brain)
+            if parent_brain is None:
+                agent = await self._factory.create(profile)
+            else:
+                agent = await self._factory.create(profile, parent_brain=parent_brain)
             new_entry = _PoolEntry(agent, profile.id, session_id, current_version)
             self._pool[key] = new_entry
 
@@ -571,16 +604,15 @@ class AgentInstancePool:
             ],
         }
 
-    @staticmethod
-    def _get_shared_profile_store():
-        """Get the orchestrator's ProfileStore to share the _ephemeral dict."""
+    def _get_shared_profile_store(self):
+        """Get the ProfileStore — prefer the injected reference, fallback to module singleton."""
+        if self._profile_store is not None:
+            return self._profile_store
         try:
-            from openakita.main import _orchestrator
-            if _orchestrator and hasattr(_orchestrator, "_profile_store"):
-                return _orchestrator._profile_store
-        except (ImportError, AttributeError):
-            pass
-        return None
+            from openakita.agents.profile import get_profile_store
+            return get_profile_store()
+        except Exception:
+            return None
 
     async def _reap_loop(self) -> None:
         while True:
@@ -606,7 +638,7 @@ class AgentInstancePool:
             if entry.idle_seconds <= self._idle_timeout:
                 continue
             astate = getattr(entry.agent, "agent_state", None)
-            if astate and getattr(astate, "has_active_task", False):
+            if astate is not None and getattr(astate, "has_active_task", False) is True:
                 continue
             to_remove.append(key)
         for key in to_remove:

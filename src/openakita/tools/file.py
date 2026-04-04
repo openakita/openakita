@@ -89,7 +89,9 @@ class FileTool:
         file_path = self._resolve_path(path)
         logger.debug(f"Reading file: {file_path}")
 
-        # 检查是否为二进制文件
+        if file_path.is_dir():
+            raise IsADirectoryError(f"'{file_path}' 是一个目录而非文件")
+
         suffix = file_path.suffix.lower()
         if suffix in self.BINARY_EXTENSIONS:
             # 获取文件大小

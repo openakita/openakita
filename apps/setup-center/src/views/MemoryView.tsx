@@ -12,6 +12,9 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Loader2, RefreshCw, Trash2, Pencil, Check, X, Search, Brain, Ban, List, Network } from "lucide-react";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 
@@ -344,123 +347,112 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
   }
 
   const isGraph = viewMode === "graph";
+  const graphPanelHeight = isMobile ? "max(560px, calc(100vh - 22rem))" : "max(620px, calc(100vh - 18rem))";
 
   return (
-    <div style={{
-      display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16,
-      ...(isGraph ? { height: "100%", overflow: "hidden" } : {}),
-    }}>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
       {/* Stats bar */}
       {stats && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: isMobile
-            ? "repeat(auto-fill, minmax(70px, 1fr))"
-            : `repeat(${2 + Object.keys(stats.by_type).length}, 1fr)`,
-          gap: isMobile ? 6 : 10,
-          alignItems: "stretch",
-        }}>
-          {[
-            { value: stats.total, label: "总记忆数", color: "var(--text)" },
-            { value: stats.avg_score, label: "平均分数", color: "var(--text)" },
-            ...Object.entries(stats.by_type).map(([t, c]) => ({
-              value: c,
-              label: TYPE_LABELS[t] || t,
-              color: TYPE_COLORS[t] || "var(--text)",
-            })),
-          ].map((item, i) => (
-            <div key={i} className="card" style={{
-              margin: 0,
-              padding: isMobile ? "8px 6px" : "10px 12px",
-              textAlign: "center",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: isMobile ? 48 : 56,
-            }}>
-              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: item.color, lineHeight: 1.2 }}>{item.value}</div>
-              <div style={{ fontSize: isMobile ? 10 : 11, color: "var(--muted)", lineHeight: 1.2, marginTop: 2 }}>{item.label}</div>
+        <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm shrink-0">
+          <CardContent className="p-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap md:items-stretch divide-y md:divide-y-0 md:divide-x divide-border/50">
+              {[
+                { value: stats.total, label: "总记忆数", color: "var(--foreground)" },
+                { value: stats.avg_score.toFixed(2), label: "平均分数", color: "var(--foreground)" },
+                ...Object.entries(stats.by_type).map(([t, c]) => ({
+                  value: c,
+                  label: TYPE_LABELS[t] || t,
+                  color: TYPE_COLORS[t] || "var(--foreground)",
+                })),
+              ].map((item, i) => (
+                <div key={i} className="flex flex-1 min-w-[100px] flex-col items-center justify-center p-4">
+                  <div className="text-2xl font-bold tracking-tight" style={{ color: item.color }}>
+                    {item.value}
+                  </div>
+                  <div className="mt-1 text-xs font-medium text-muted-foreground">
+                    {item.label}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder="搜索记忆内容..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && loadMemories()}
-            className="pl-8"
-          />
-        </div>
+      <Card className="gap-0 border-border/80 py-0 shadow-sm shrink-0">
+        <CardContent className="p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-1 flex-wrap items-center gap-2 md:gap-3">
+              <div className="relative flex-1 min-w-[200px] max-w-[320px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                <Input
+                  placeholder="搜索记忆内容..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && loadMemories()}
+                  className="h-9 pl-9 text-sm"
+                />
+              </div>
 
-        <Select value={filterType || "__all__"} onValueChange={v => setFilterType(v === "__all__" ? "" : v)}>
-          <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">全部类型</SelectItem>
-            {Object.entries(TYPE_LABELS).map(([k, v]) => (
-              <SelectItem key={k} value={k}>{v}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+              <Select value={filterType || "__all__"} onValueChange={v => setFilterType(v === "__all__" ? "" : v)}>
+                <SelectTrigger className="h-9 w-[110px] text-sm md:w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">全部类型</SelectItem>
+                  {Object.entries(TYPE_LABELS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-        <Button variant="outline" onClick={loadMemories} disabled={loading}>
-          {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          {!isMobile && " 刷新"}
-        </Button>
+              <Button variant="outline" onClick={loadMemories} disabled={loading} className="h-9 px-3">
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                {!isMobile && <span className="ml-1.5">刷新</span>}
+              </Button>
 
-        {selected.size > 0 && (
-          <Button variant="destructive" onClick={handleBatchDelete}>
-            <Trash2 size={14} /> 删除 {selected.size} 条
-          </Button>
-        )}
+              {reviewing ? (
+                <Button onClick={handleCancelReview} variant="destructive" className="h-9 px-3">
+                  <Ban size={14} className="mr-1.5" /> 取消审查
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleReviewConfirm}
+                  className="h-9 px-3 border-0 bg-gradient-to-br from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-500/20 hover:from-indigo-600 hover:to-purple-600"
+                >
+                  <Brain size={14} className="mr-1.5" />
+                  {isMobile ? "LLM 审查" : "LLM 智能审查"}
+                </Button>
+              )}
+            </div>
 
-        {reviewing ? (
-          <Button
-            onClick={handleCancelReview}
-            variant="destructive"
-          >
-            <Ban size={14} /> 取消审查
-          </Button>
-        ) : (
-          <Button
-            onClick={handleReviewConfirm}
-            className="bg-gradient-to-br from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white border-0"
-          >
-            <Brain size={14} />
-            {isMobile ? "LLM 审查" : "LLM 智能审查"}
-          </Button>
-        )}
+            <div className="flex items-center gap-3">
+              {selected.size > 0 && (
+                <Button variant="destructive" onClick={handleBatchDelete} className="h-9 px-3">
+                  <Trash2 size={14} className="mr-1.5" /> 删除 {selected.size} 条
+                </Button>
+              )}
 
-        {/* View mode toggle */}
-        <div className="flex border rounded-md overflow-hidden ml-auto" style={{ height: 32 }}>
-          <button
-            onClick={() => setViewMode("list")}
-            className="flex items-center gap-1 px-3 text-xs transition-colors"
-            style={{
-              background: viewMode === "list" ? "var(--accent)" : "transparent",
-              color: viewMode === "list" ? "var(--accent-foreground)" : "var(--muted-foreground)",
-            }}
-          >
-            <List size={13} /> 列表
-          </button>
-          <button
-            onClick={() => setViewMode("graph")}
-            className="flex items-center gap-1 px-3 text-xs transition-colors"
-            style={{
-              background: viewMode === "graph" ? "var(--accent)" : "transparent",
-              color: viewMode === "graph" ? "var(--accent-foreground)" : "var(--muted-foreground)",
-            }}
-          >
-            <Network size={13} /> 图谱
-          </button>
-        </div>
-      </div>
+              {/* View mode toggle */}
+              <ToggleGroup
+                type="single"
+                value={viewMode}
+                onValueChange={(v) => { if (v) setViewMode(v as "list" | "graph"); }}
+                variant="outline"
+                className="justify-end"
+              >
+                <ToggleGroupItem value="list" className="h-9 px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                  <List size={14} className="mr-1.5" /> 列表
+                </ToggleGroupItem>
+                <ToggleGroupItem value="graph" className="h-9 px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                  <Network size={14} className="mr-1.5" /> 图谱
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Review progress bar */}
       {reviewing && reviewProgress.status === "running" && (() => {
@@ -543,30 +535,36 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
 
       {/* Graph view */}
       {viewMode === "graph" ? (
-        <div style={{ flex: 1, minHeight: 300, overflow: "hidden" }}>
+        <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
           <Suspense fallback={
-            <div className="flex items-center justify-center h-full">
+            <div className="flex items-center justify-center" style={{ height: graphPanelHeight }}>
               <Loader2 size={24} className="animate-spin text-indigo-500" />
               <span className="ml-2 text-sm text-muted-foreground">加载图谱组件...</span>
             </div>
           }>
-            <MemoryGraph3D apiBaseUrl={API_BASE} searchQuery={searchQuery} />
+            <CardContent className="p-0" style={{ height: graphPanelHeight }}>
+              <MemoryGraph3D apiBaseUrl={API_BASE} searchQuery={searchQuery} />
+            </CardContent>
           </Suspense>
-        </div>
+        </Card>
       ) : null}
 
       {/* Memory list */}
       {viewMode !== "list" ? null : isMobile ? (
         /* ── Mobile: card-based layout ── */
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="flex flex-col gap-3">
           {loading ? (
-            <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-              <Loader2 size={20} className="inline animate-spin mr-2" />加载中...
-            </div>
+            <Card className="shadow-sm">
+              <CardContent className="py-10 text-center text-muted-foreground">
+                <Loader2 size={20} className="inline animate-spin mr-2" />加载中...
+              </CardContent>
+            </Card>
           ) : memories.length === 0 ? (
-            <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-              暂无记忆数据
-            </div>
+            <Card className="shadow-sm">
+              <CardContent className="py-10 text-center text-muted-foreground">
+                暂无记忆数据
+              </CardContent>
+            </Card>
           ) : (
             <>
               <div className="flex items-center gap-2 px-1">
@@ -576,114 +574,104 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                 </label>
               </div>
               {memories.map(m => (
-                <div
+                <Card
                   key={m.id}
-                  className="card"
-                  style={{
-                    margin: 0, padding: "10px 12px",
-                    background: selected.has(m.id) ? "rgba(99,102,241,0.06)" : undefined,
-                    transition: "background 0.15s",
-                  }}
+                  className={`gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-colors ${selected.has(m.id) ? "bg-indigo-500/5 border-indigo-500/20" : ""}`}
                 >
-                  {/* Header row: checkbox + type badge + score + date */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <Checkbox checked={selected.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
-                    <span style={{
-                      display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 500,
-                      whiteSpace: "nowrap",
-                      background: `${TYPE_COLORS[m.type] || "#6b7280"}18`,
-                      color: TYPE_COLORS[m.type] || "#6b7280",
-                      border: `1px solid ${TYPE_COLORS[m.type] || "#6b7280"}30`,
-                    }}>
-                      {TYPE_LABELS[m.type] || m.type}
-                    </span>
-                    <span style={{
-                      fontWeight: 600, fontSize: 12,
-                      color: m.importance_score >= 0.85 ? "#10b981" : m.importance_score >= 0.7 ? "#f59e0b" : "#6b7280",
-                    }}>
-                      {m.importance_score.toFixed(2)}
-                    </span>
-                    <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>
-                      {fmtDate(m.created_at)}
-                    </span>
-                  </div>
+                  <CardContent className="p-4">
+                    {/* Header row: checkbox + type badge + score + date */}
+                    <div className="flex items-center gap-3 mb-3">
+                      <Checkbox checked={selected.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
+                      <Badge variant="outline" style={{
+                        backgroundColor: `${TYPE_COLORS[m.type] || "#6b7280"}18`,
+                        color: TYPE_COLORS[m.type] || "#6b7280",
+                        borderColor: `${TYPE_COLORS[m.type] || "#6b7280"}30`,
+                      }}>
+                        {TYPE_LABELS[m.type] || m.type}
+                      </Badge>
+                      <span className="font-semibold text-xs" style={{
+                        color: m.importance_score >= 0.85 ? "#10b981" : m.importance_score >= 0.7 ? "#f59e0b" : "#6b7280",
+                      }}>
+                        {m.importance_score.toFixed(2)}
+                      </span>
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        {fmtDate(m.created_at)}
+                      </span>
+                    </div>
 
-                  {/* Content */}
-                  {editingId === m.id ? (
-                    <div className="flex flex-col gap-1.5">
-                      <Textarea
-                        value={editContent}
-                        onChange={e => setEditContent(e.target.value)}
-                        rows={3}
-                        className="resize-y text-sm"
-                      />
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] text-muted-foreground">分数:</span>
-                        <Input
-                          type="number" min={0} max={1} step={0.05}
-                          value={editScore}
-                          onChange={e => setEditScore(parseFloat(e.target.value) || 0)}
-                          className="w-[70px] h-7 text-xs"
+                    {/* Content */}
+                    {editingId === m.id ? (
+                      <div className="flex flex-col gap-2">
+                        <Textarea
+                          value={editContent}
+                          onChange={e => setEditContent(e.target.value)}
+                          rows={3}
+                          className="resize-y text-sm"
                         />
-                        <Button variant="ghost" size="icon-sm" className="text-emerald-500 hover:text-emerald-600" onClick={() => handleUpdate(m.id)}>
-                          <Check size={16} />
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">分数:</span>
+                          <Input
+                            type="number" min={0} max={1} step={0.05}
+                            value={editScore}
+                            onChange={e => setEditScore(parseFloat(e.target.value) || 0)}
+                            className="w-[80px] h-8 text-xs"
+                          />
+                          <Button variant="ghost" size="icon-sm" className="text-emerald-500 hover:text-emerald-600" onClick={() => handleUpdate(m.id)}>
+                            <Check size={16} />
+                          </Button>
+                          <Button variant="ghost" size="icon-sm" className="text-destructive hover:text-destructive" onClick={() => setEditingId(null)}>
+                            <X size={16} />
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
+                        {m.content}
+                      </div>
+                    )}
+
+                    {/* Meta: subject + predicate + tags */}
+                    {(m.subject || m.predicate || (m.tags && m.tags.length > 0)) && editingId !== m.id && (
+                      <div className="mt-3 space-y-1.5">
+                        {(m.subject || m.predicate) && (
+                          <div className="text-xs text-muted-foreground">
+                            {m.subject && <span>主体: {m.subject}</span>}
+                            {m.subject && m.predicate && <span> · </span>}
+                            {m.predicate && <span>属性: {m.predicate}</span>}
+                          </div>
+                        )}
+                        {m.tags && m.tags.length > 0 && (
+                          <div className="flex gap-1.5 flex-wrap">
+                            {m.tags.map(tag => (
+                              <Badge key={tag} variant="outline" className="bg-indigo-500/10 text-indigo-500 border-indigo-500/20 text-[10px] px-1.5 py-0">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    {editingId !== m.id && (
+                      <div className="flex gap-2 mt-4 justify-end">
+                        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => startEdit(m)}>
+                          <Pencil size={14} className="mr-1" /> 编辑
                         </Button>
-                        <Button variant="ghost" size="icon-sm" className="text-destructive hover:text-destructive" onClick={() => setEditingId(null)}>
-                          <X size={16} />
+                        <Button variant="outline" size="sm" className="h-8 text-xs text-destructive border-destructive/30 hover:text-destructive hover:bg-destructive/10" onClick={() => handleDelete(m.id)}>
+                          <Trash2 size={14} className="mr-1" /> 删除
                         </Button>
                       </div>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: 13, lineHeight: 1.6, wordBreak: "break-word", whiteSpace: "pre-wrap", color: "var(--text)" }}>
-                      {m.content}
-                    </div>
-                  )}
-
-                  {/* Meta: subject + predicate + tags */}
-                  {(m.subject || m.predicate || (m.tags && m.tags.length > 0)) && editingId !== m.id && (
-                    <div style={{ marginTop: 6 }}>
-                      {(m.subject || m.predicate) && (
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
-                          {m.subject && <span>主体: {m.subject}</span>}
-                          {m.subject && m.predicate && <span> · </span>}
-                          {m.predicate && <span>属性: {m.predicate}</span>}
-                        </div>
-                      )}
-                      {m.tags && m.tags.length > 0 && (
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {m.tags.map(tag => (
-                            <span key={tag} style={{
-                              padding: "1px 6px", borderRadius: 8, fontSize: 10,
-                              background: "rgba(99,102,241,0.1)", color: "#6366f1",
-                              whiteSpace: "nowrap",
-                            }}>
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  {editingId !== m.id && (
-                    <div className="flex gap-2 mt-2 justify-end">
-                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => startEdit(m)}>
-                        <Pencil size={12} /> 编辑
-                      </Button>
-                      <Button variant="outline" size="sm" className="h-7 text-xs text-destructive border-destructive/30 hover:text-destructive hover:bg-destructive/10" onClick={() => handleDelete(m.id)}>
-                        <Trash2 size={12} /> 删除
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </CardContent>
+                </Card>
               ))}
             </>
           )}
         </div>
       ) : (
         /* ── Desktop: table layout ── */
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>
@@ -805,7 +793,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </Card>
       )}
       <AlertDialog open={!!confirmDialog} onOpenChange={open => { if (!open) setConfirmDialog(null); }}>
         <AlertDialogContent>

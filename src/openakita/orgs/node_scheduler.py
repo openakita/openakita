@@ -122,6 +122,9 @@ class OrgNodeScheduler:
                         if wait > 0:
                             await asyncio.sleep(wait)
                     await self._execute_schedule(org_id, node_id, sched)
+                    # 清理自身在 _tasks 中的条目，防止内存泄漏
+                    key = f"{org_id}:{node_id}:{sched.id}"
+                    self._tasks.pop(key, None)
                     break
 
                 await asyncio.sleep(current_interval)
@@ -136,7 +139,14 @@ class OrgNodeScheduler:
 
                 result = await self._execute_schedule(org_id, node_id, sched)
 
-                has_issue = "异常" in str(result) or "错误" in str(result) or "error" in str(result).lower()
+                result_text = str(result.get("result", "")) if isinstance(result, dict) else str(result)
+                keyword_check = "异常" in result_text or "错误" in result_text or "error" in result_text.lower()
+                if isinstance(result, dict) and "error" in result:
+                    has_issue = True
+                elif isinstance(result, dict) and "success" in result:
+                    has_issue = result["success"] is False
+                else:
+                    has_issue = keyword_check
 
                 if has_issue:
                     sched.consecutive_clean = 0

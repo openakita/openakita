@@ -34,6 +34,7 @@ from ..types import (
     TextBlock,
     Usage,
 )
+from .base import parse_sse_field
 from .openai import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -121,10 +122,10 @@ class OpenAIResponsesProvider(OpenAIProvider):
             if response.status_code >= 400:
                 body = (response.text or "")[:500]
                 if response.status_code == 401:
-                    raise AuthenticationError(f"Authentication failed: {body}")
+                    raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {body}")
-                raise LLMError(f"API error ({response.status_code}): {body}")
+                    raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
+                raise LLMError(f"API error ({response.status_code}): {body}", status_code=response.status_code)
 
             from json import JSONDecodeError
             try:
@@ -404,33 +405,36 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     error_body = await response.aread()
                     error_text = error_body.decode(errors="replace")[:500]
                     if response.status_code == 401:
-                        raise AuthenticationError(f"Authentication failed: {error_text}")
+                        raise AuthenticationError(f"Authentication failed: {error_text}", status_code=401)
                     if response.status_code == 429:
-                        raise RateLimitError(f"Rate limit exceeded: {error_text}")
-                    raise LLMError(f"API error ({response.status_code}): {error_text}")
+                        raise RateLimitError(f"Rate limit exceeded: {error_text}", status_code=429)
+                    raise LLMError(f"API error ({response.status_code}): {error_text}", status_code=response.status_code)
 
                 has_content = False
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue
 
-                    if line.startswith("data: "):
-                        data = line[6:]
+                    parsed = parse_sse_field(line)
+                    if parsed is not None and parsed[0] == "data":
+                        data = parsed[1]
                         if data.strip() and data != "[DONE]":
                             try:
                                 event = json.loads(data)
                                 converted = self._convert_stream_event(event)
-                                if converted.get("type") == "error":
-                                    err_msg = converted.get("error", "Unknown stream error")
-                                    self.mark_unhealthy(
-                                        f"Stream error: {err_msg}",
-                                        is_local=self._is_local_endpoint(),
-                                    )
-                                    raise LLMError(
-                                        f"Stream error from '{self.name}': {err_msg}"
-                                    )
-                                has_content = True
-                                yield converted
+                                items = converted if isinstance(converted, list) else [converted]
+                                for item in items:
+                                    if item.get("type") == "error":
+                                        err_msg = item.get("error", "Unknown stream error")
+                                        self.mark_unhealthy(
+                                            f"Stream error: {err_msg}",
+                                            is_local=self._is_local_endpoint(),
+                                        )
+                                        raise LLMError(
+                                            f"Stream error from '{self.name}': {err_msg}"
+                                        )
+                                    has_content = True
+                                    yield item
                             except json.JSONDecodeError:
                                 continue
                     elif line.startswith("event:"):

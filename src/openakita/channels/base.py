@@ -65,6 +65,7 @@ class ChannelAdapter(ABC):
         "get_chat_members": False,
         "get_recent_messages": False,
         "markdown": False,
+        "add_reaction": False,
     }
 
     def __init__(self, *, channel_name: str | None = None, bot_id: str | None = None, agent_profile_id: str = "default"):
@@ -365,6 +366,24 @@ class ChannelAdapter(ABC):
             NotImplementedError: 当前平台不支持发送语音
         """
         raise NotImplementedError(f"{self.channel_name} does not support send_voice")
+
+    async def add_reaction(
+        self,
+        chat_id: str,
+        message_id: str,
+        emoji: str = "👀",
+    ) -> bool:
+        """为消息添加 emoji 表情反应（可选能力）。
+
+        Args:
+            chat_id: 聊天 ID
+            message_id: 目标消息 ID
+            emoji: 表情符号或平台特定标识
+
+        Returns:
+            是否成功
+        """
+        return False
 
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
         """发送正在输入状态"""

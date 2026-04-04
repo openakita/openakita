@@ -2,10 +2,30 @@
  * Project management board — Gantt timeline + kanban columns.
  * Full-screen layout with project selector, timeline progress, and task modals.
  */
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { createPortal } from "react-dom";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Check, CornerUpLeft, Pencil, X } from "lucide-react";
+
 import { safeFetch } from "../providers";
 import { OrgAvatar } from "./OrgAvatars";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Label } from "./ui/label";
+import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Badge } from "./ui/badge";
 
 interface ProjectTask {
   id: string;
@@ -35,6 +55,12 @@ interface Project {
   updated_at: string;
 }
 
+interface PendingTaskDelete {
+  projectId: string;
+  taskId: string;
+  taskTitle: string;
+}
+
 interface OrgProjectBoardProps {
   orgId: string;
   apiBaseUrl: string;
@@ -57,6 +83,9 @@ const PROJECT_TYPE_LABEL: Record<string, string> = { temporary: "临时", perman
 const PROJECT_STATUS_LABEL: Record<string, string> = {
   planning: "规划中", active: "进行中", paused: "暂停", completed: "已完成", archived: "已归档",
 };
+const PROJECT_STATUS_COLOR: Record<string, string> = {
+  planning: "#f59e0b", active: "#3b82f6", paused: "#94a3b8", completed: "#22c55e", archived: "#6b7280",
+};
 
 export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false }: OrgProjectBoardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -64,6 +93,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const [loading, setLoading] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDesc, setNewProjectDesc] = useState("");
   const [newProjectType, setNewProjectType] = useState("temporary");
@@ -77,6 +107,14 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const [taskDetailLoading, setTaskDetailLoading] = useState(false);
   const [subtasksExpanded, setSubtasksExpanded] = useState(true);
   const [viewTab, setViewTab] = useState<"gantt" | "kanban">("gantt");
+  const [projectPendingDelete, setProjectPendingDelete] = useState<Project | null>(null);
+  const [taskPendingDelete, setTaskPendingDelete] = useState<PendingTaskDelete | null>(null);
+  const [projectStripWidth, setProjectStripWidth] = useState<number | null>(null);
+  const [projectScrollbarSize, setProjectScrollbarSize] = useState(0);
+  const projectRailRef = useRef<HTMLDivElement | null>(null);
+  const projectStripRef = useRef<HTMLDivElement | null>(null);
+  const projectTrackRef = useRef<HTMLDivElement | null>(null);
+  const projectAddRef = useRef<HTMLDivElement | null>(null);
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -115,7 +153,11 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
-        if (!selectedProjectId && data.length > 0) setSelectedProjectId(data[0].id);
+        if (data.length === 0) {
+          setSelectedProjectId(null);
+        } else if (!selectedProjectId || !data.some((p: Project) => p.id === selectedProjectId)) {
+          setSelectedProjectId(data[0].id);
+        }
       }
     } catch { /* ignore */ }
     setLoading(false);
@@ -123,15 +165,72 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
-  const createProject = async () => {
+  useEffect(() => {
+    const rail = projectRailRef.current;
+    const strip = projectStripRef.current;
+    const track = projectTrackRef.current;
+    const add = projectAddRef.current;
+    if (!rail || !strip || !track || !add) {
+      setProjectStripWidth(null);
+      return;
+    }
+
+    const gap = 10;
+    const measureLayout = () => {
+      const available = Math.max(160, rail.clientWidth - add.offsetWidth - gap);
+      const content = track.scrollWidth;
+      setProjectStripWidth(Math.min(content, available));
+      setProjectScrollbarSize(Math.max(0, strip.offsetHeight - strip.clientHeight));
+    };
+
+    measureLayout();
+    const observer = new ResizeObserver(measureLayout);
+    observer.observe(rail);
+    observer.observe(strip);
+    observer.observe(track);
+    observer.observe(add);
+    window.addEventListener("resize", measureLayout);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measureLayout);
+    };
+  }, [projects]);
+
+  const resetProjectForm = () => {
+    setNewProjectName("");
+    setNewProjectDesc("");
+    setNewProjectType("temporary");
+    setEditingProject(null);
+  };
+
+  const openEditProject = (project: Project) => {
+    setEditingProject(project);
+    setNewProjectName(project.name || "");
+    setNewProjectDesc(project.description || "");
+    setNewProjectType(project.project_type || "temporary");
+    setShowNewProject(true);
+  };
+
+  const submitProject = async () => {
     if (!newProjectName.trim()) return;
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects`, {
-        method: "POST",
+      await safeFetch(
+        editingProject
+          ? `${apiBaseUrl}/api/orgs/${orgId}/projects/${editingProject.id}`
+          : `${apiBaseUrl}/api/orgs/${orgId}/projects`,
+        {
+        method: editingProject ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newProjectName, description: newProjectDesc, project_type: newProjectType, status: "active" }),
+        body: JSON.stringify({
+          name: newProjectName,
+          description: newProjectDesc,
+          project_type: newProjectType,
+          status: editingProject?.status ?? "active",
+        }),
       });
-      setNewProjectName(""); setNewProjectDesc(""); setShowNewProject(false);
+      resetProjectForm();
+      setShowNewProject(false);
       fetchProjects();
     } catch { /* ignore */ }
   };
@@ -149,6 +248,14 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
     } catch { /* ignore */ }
   };
 
+  const deleteProject = async (projectId: string) => {
+    try {
+      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}`, { method: "DELETE" });
+      if (selectedProjectId === projectId) setSelectedProjectId(null);
+      fetchProjects();
+    } catch { /* ignore */ }
+  };
+
   const updateTaskStatus = async (projectId: string, taskId: string, newStatus: string) => {
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, {
@@ -162,8 +269,17 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const deleteTask = async (projectId: string, taskId: string) => {
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
+      if (selectedTask?.id === taskId) closeTaskDetail();
       fetchProjects();
     } catch { /* ignore */ }
+  };
+
+  const requestTaskDelete = (projectId: string, task: ProjectTask) => {
+    setTaskPendingDelete({
+      projectId,
+      taskId: task.id,
+      taskTitle: task.title || task.id,
+    });
   };
 
   const dispatchTask = async (projectId: string, taskId: string) => {
@@ -179,7 +295,6 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const tasks = selectedProject?.tasks || [];
 
   const projectStats = useMemo(() => {
-    if (!tasks.length) return null;
     const total = tasks.length;
     const done = tasks.filter(t => t.status === "accepted").length;
     const inProgress = tasks.filter(t => t.status === "in_progress").length;
@@ -203,122 +318,195 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       <style>{`
         .opb-root {
           height: 100%; display: flex; flex-direction: column;
-          overflow: hidden; background: var(--bg-app);
-          font-size: 13px; color: var(--text, #e2e8f0);
+          overflow: hidden; background: var(--panel, var(--bg-app));
+          font-size: 13px; color: var(--text);
+          font-family: inherit; line-height: 1.45; letter-spacing: normal;
         }
-        .opb-header {
-          display: flex; align-items: center; gap: 10px;
-          padding: 10px 16px; border-bottom: 1px solid var(--line);
-          flex-shrink: 0;
-        }
-        .opb-proj-btn {
-          display: inline-flex; align-items: center; gap: 6px;
-          padding: 5px 14px; border-radius: 6px; border: none;
-          font-size: 13px; cursor: pointer; white-space: nowrap;
-          transition: all 0.15s;
-        }
-        .opb-proj-btn--active {
-          background: var(--primary, #6366f1); color: #fff !important; font-weight: 600;
-          box-shadow: 0 1px 4px rgba(99,102,241,0.25);
-        }
-        .opb-proj-btn--active:hover {
-          background: #4f46e5; color: #fff !important;
-        }
-        .opb-proj-btn--inactive {
-          background: transparent; color: var(--text, #e2e8f0);
-          border: 1px solid var(--line, rgba(51,65,85,0.4));
-        }
-        .opb-proj-btn--inactive:hover { border-color: var(--primary, #6366f1); color: var(--primary, #6366f1); }
-        .opb-type-tag {
-          font-size: 9px; padding: 1px 5px; border-radius: 3px;
-          background: rgba(255,255,255,0.15); margin-left: 2px;
-        }
-        .opb-view-tabs {
-          display: flex; gap: 0; margin-left: auto;
-        }
-        .opb-view-tab {
-          padding: 4px 14px; border: 1px solid var(--line); cursor: pointer;
-          font-size: 12px; background: transparent; color: var(--muted);
-          transition: all 0.15s;
-        }
-        .opb-view-tab:first-child { border-radius: 6px 0 0 6px; }
-        .opb-view-tab:last-child { border-radius: 0 6px 6px 0; border-left: none; }
-        .opb-view-tab--active {
-          background: var(--primary, #6366f1); color: #fff;
-          border-color: var(--primary, #6366f1); font-weight: 600;
-        }
-        .opb-stats {
-          display: flex; align-items: center; gap: 12px; padding: 8px 16px;
-          border-bottom: 1px solid var(--line); flex-shrink: 0;
-        }
-        .opb-stat-item { display: flex; flex-direction: column; align-items: center; gap: 1px; }
-        .opb-stat-num { font-size: 18px; font-weight: 700; line-height: 1; }
-        .opb-stat-label { font-size: 10px; color: var(--muted); }
-        .opb-progress-bar {
-          flex: 1; height: 8px; border-radius: 4px;
-          background: var(--line, rgba(51,65,85,0.3));
-          overflow: hidden; display: flex;
-        }
-        .opb-progress-seg {
-          height: 100%; transition: width 0.3s ease;
-        }
-        .opb-pct { font-size: 14px; font-weight: 700; min-width: 40px; text-align: right; }
 
-        /* ── Gantt chart ── */
-        .opb-gantt { flex: 1; overflow: auto; padding: 0 16px 16px; }
-        .opb-gantt-table { width: 100%; border-collapse: collapse; }
-        .opb-gantt-table th {
-          text-align: left; font-size: 11px; font-weight: 600;
-          color: var(--muted); padding: 8px 6px;
-          border-bottom: 1px solid var(--line);
-          position: sticky; top: 0; background: var(--bg-app); z-index: 1;
+        /* ── Header ── */
+        .opb-project-rail {
+          display: flex; align-items: stretch; gap: 10px;
+          padding: 12px 16px; border-bottom: 1px solid var(--line);
+          flex-shrink: 0; background: var(--panel2, var(--card-bg));
         }
-        .opb-gantt-table td {
-          padding: 6px; border-bottom: 1px solid var(--line, rgba(51,65,85,0.2));
-          vertical-align: middle; font-size: 12px;
+        .opb-project-strip {
+          min-width: 0; overflow-x: auto; scrollbar-width: thin;
+          scrollbar-gutter: stable;
         }
-        .opb-gantt-row { cursor: pointer; transition: background 0.1s; }
-        .opb-gantt-row:hover { background: rgba(99,102,241,0.06); }
-        .opb-gantt-bar-wrap {
-          position: relative; height: 22px;
-          background: var(--line, rgba(51,65,85,0.15));
-          border-radius: 4px; overflow: hidden; min-width: 60px;
+        .opb-project-track {
+          display: flex; gap: 10px; align-items: stretch; width: max-content;
         }
-        .opb-gantt-bar {
-          position: absolute; left: 0; top: 0; bottom: 0;
-          border-radius: 4px; transition: width 0.3s ease;
+        .opb-project-card {
+          min-width: 220px; max-width: 260px; cursor: pointer;
+          min-height: 82px; height: 100%;
+          border: 1px solid var(--line); background: var(--card-bg, var(--bg-app));
+          transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+          position: relative; overflow: hidden;
+          flex: 0 0 auto; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
-        .opb-gantt-bar-label {
-          position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
-          font-size: 10px; font-weight: 600; color: #fff;
-          text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-          white-space: nowrap;
+        .opb-project-card:hover {
+          border-color: color-mix(in srgb, var(--primary) 28%, var(--line));
+          background: color-mix(in srgb, var(--card-bg) 96%, var(--primary) 4%);
+          box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
         }
+        .opb-project-card--selected {
+          border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+          background: color-mix(in srgb, var(--card-bg) 93%, var(--primary) 7%);
+          box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent), 0 1px 3px rgba(37, 99, 235, 0.08);
+        }
+        .opb-project-card__title {
+          font-size: 14px; font-weight: 600; color: var(--text);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          line-height: 1.25;
+        }
+        .opb-project-card__desc {
+          font-size: 11px; color: var(--muted);
+          line-height: 1.35;
+          display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+        }
+        .opb-project-card__body {
+          display: flex; flex-direction: column; gap: 6px; height: 100%;
+        }
+        .opb-project-card__meta {
+          display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+        }
+        .opb-project-card__summary {
+          display: flex; flex-direction: column; gap: 2px;
+        }
+        .opb-project-card__stats {
+          display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+          font-size: 10px; color: var(--muted);
+        }
+        .opb-project-card__stats strong {
+          display: block; font-size: 12px; line-height: 1.1; color: var(--text); font-weight: 600;
+          margin-top: 2px;
+        }
+        .opb-project-card__progress {
+          height: 5px; border-radius: 999px; overflow: hidden;
+          background: color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%);
+          border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+        }
+        .opb-project-card__actions {
+          position: absolute; top: 6px; right: 6px; z-index: 2;
+          display: flex; gap: 4px;
+          opacity: 0; pointer-events: none; transform: scale(0.92);
+          transition: opacity .15s ease, transform .15s ease;
+        }
+        .opb-project-card__edit,
+        .opb-project-card__delete {
+          pointer-events: auto;
+        }
+        .opb-project-card:hover .opb-project-card__actions,
+        .opb-project-card--selected .opb-project-card__actions {
+          opacity: 1; pointer-events: auto; transform: scale(1);
+        }
+        .opb-project-add-card {
+          min-width: 132px; max-width: 132px; cursor: pointer;
+          min-height: 82px; height: 100%;
+          border: 1px dashed color-mix(in srgb, var(--line) 90%, transparent);
+          background: color-mix(in srgb, var(--card-bg) 70%, var(--bg-subtle) 30%);
+          color: var(--muted);
+          transition: border-color .15s ease, color .15s ease, background .15s ease;
+          flex: 0 0 auto; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+        }
+        .opb-project-add-card:hover {
+          border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+          color: var(--primary);
+          background: color-mix(in srgb, var(--primary) 6%, var(--bg-app));
+        }
+        .opb-project-add-slot {
+          flex: 0 0 auto;
+          display: flex; align-items: stretch;
+        }
+
+        /* ── Stats row ── */
+        .opb-stats-row {
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 8px 12px; padding: 6px 16px; flex-wrap: wrap;
+          border-bottom: 1px solid var(--line); flex-shrink: 0; font-size: 12px;
+          background: color-mix(in srgb, var(--panel2, var(--card-bg)) 82%, transparent);
+        }
+        .opb-stats-summary {
+          flex: 1 1 360px; min-width: 0;
+          display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        }
+        .opb-stats-actions {
+          flex: 0 1 auto;
+          display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .opb-stat-chip {
+          display: inline-flex; align-items: center; gap: 4px;
+          padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500;
+          background: color-mix(in srgb, var(--bg-subtle) 78%, var(--card-bg) 22%);
+        }
+        .opb-progress-track {
+          flex: 1 1 140px; min-width: 120px; height: 8px; border-radius: 999px;
+          background: color-mix(in srgb, var(--bg-subtle) 75%, var(--line) 25%);
+          overflow: hidden; display: flex; margin: 0 4px;
+          border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+        }
+        .opb-progress-fill { height: 100%; border-radius: 999px; }
+
+        /* ── Status badges ── */
         .opb-status-dot {
-          display: inline-block; width: 8px; height: 8px;
+          display: inline-block; width: 7px; height: 7px;
           border-radius: 50%; flex-shrink: 0;
         }
         .opb-status-badge {
           display: inline-flex; align-items: center; gap: 4px;
-          padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500;
+          padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
           white-space: nowrap;
         }
-        .opb-action-btn {
+
+        /* ── Action buttons ── */
+        .opb-act {
+          display: inline-flex; align-items: center; gap: 3px;
           padding: 2px 8px; border: none; border-radius: 4px;
-          font-size: 11px; cursor: pointer; transition: background 0.15s;
-          font-weight: 500;
+          font-size: 10px; cursor: pointer; font-weight: 500;
+          background: transparent; color: var(--muted); font-family: inherit;
+        }
+        .opb-act:hover { background: var(--bg-subtle, rgba(100,116,139,0.1)); }
+        .opb-act--primary { background: #3b82f6; color: #fff; }
+        .opb-act--primary:hover { background: #2563eb; }
+        .opb-act--success { background: #22c55e; color: #fff; }
+        .opb-act--success:hover { background: #16a34a; }
+        .opb-act--danger { color: #ef4444; }
+        .opb-act--danger:hover { background: rgba(239,68,68,0.1); }
+        .opb-act--danger-fill { background: #ef4444; color: #fff; }
+        .opb-act--danger-fill:hover { background: #dc2626; }
+        .opb-act--ghost { background: rgba(59,130,246,0.1); color: #3b82f6; }
+        .opb-act--ghost:hover { background: rgba(59,130,246,0.2); }
+
+        /* ── Gantt ── */
+        .opb-gantt {
+          flex: 1; overflow: auto; padding: 12px 16px 16px;
+          background: color-mix(in srgb, var(--panel) 88%, var(--bg-app) 12%);
+        }
+        .opb-gantt-row {
+          display: flex; flex-direction: column; gap: 6px;
+          padding: 12px 14px; cursor: pointer; margin-bottom: 10px;
+          border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+          border-radius: 14px; background: var(--card-bg);
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        .opb-gantt-row:hover {
+          background: color-mix(in srgb, var(--card-bg) 92%, var(--primary) 8%);
+          border-color: color-mix(in srgb, var(--primary) 18%, var(--line));
         }
 
         /* ── Kanban ── */
         .opb-kanban {
           flex: 1; display: flex; gap: 10px; padding: 12px 16px;
           overflow-x: auto; overflow-y: hidden;
+          background: color-mix(in srgb, var(--panel) 88%, var(--bg-app) 12%);
         }
         .opb-kanban-col {
           flex: 1 1 170px; min-width: 170px; max-width: 260px;
           display: flex; flex-direction: column;
-          background: var(--bg-subtle, rgba(30,41,59,0.3));
-          border-radius: 10px; overflow: hidden;
+          background: color-mix(in srgb, var(--card-bg) 65%, var(--bg-subtle) 35%);
+          border-radius: 14px; overflow: hidden;
+          border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
         }
         .opb-kanban-col-header {
           padding: 8px 10px; display: flex; align-items: center; gap: 6px;
@@ -328,65 +516,82 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           font-size: 10px; color: var(--muted);
           background: var(--bg-app); padding: 1px 6px; border-radius: 8px;
         }
-        .opb-kanban-list { flex: 1; overflow-y: auto; padding: 4px 6px 6px; display: flex; flex-direction: column; gap: 4px; }
+        .opb-kanban-list {
+          flex: 1; overflow-y: auto; padding: 4px 6px 6px;
+          display: flex; flex-direction: column; gap: 4px;
+        }
         .opb-kanban-card {
           padding: 8px 10px; border-radius: 8px;
-          background: var(--bg-app); border: 1px solid var(--line, rgba(51,65,85,0.3));
-          cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;
+          background: var(--card-bg); border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+          cursor: pointer;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
         .opb-kanban-card:hover {
-          border-color: var(--primary, #6366f1);
-          box-shadow: 0 1px 4px rgba(99,102,241,0.15);
+          border-color: color-mix(in srgb, var(--primary) 24%, var(--line));
+          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+        }
+        .opb-kanban-card__title {
+          font-size: 13px; font-weight: 600; color: var(--text);
+          line-height: 1.35; margin-bottom: 6px;
+          word-break: break-word;
+        }
+        .opb-kanban-card__footer {
+          display: flex; align-items: flex-start; justify-content: space-between;
+          gap: 8px; flex-wrap: wrap;
+        }
+        .opb-kanban-card__owner {
+          min-width: 0; flex: 1 1 96px;
+          display: flex; align-items: center; gap: 4px;
+        }
+        .opb-kanban-card__owner-label {
+          min-width: 0; font-size: 10px; color: var(--muted);
+          line-height: 1.35; word-break: break-word;
+        }
+        .opb-kanban-card__actions {
+          display: flex; gap: 4px; flex-wrap: wrap;
+          justify-content: flex-end; margin-left: auto;
         }
 
-        /* ── Modal ── */
-        .opb-modal-overlay {
-          position: fixed; inset: 0; z-index: 10000;
-          background: rgba(0,0,0,0.45); backdrop-filter: blur(3px);
-          display: flex; align-items: center; justify-content: center;
-          animation: opb-fade-in 0.15s ease;
+        @media (max-width: 900px) {
+          .opb-stats-actions {
+            width: 100%;
+            justify-content: flex-start;
+          }
         }
-        @keyframes opb-fade-in { from { opacity: 0; } to { opacity: 1; } }
-        .opb-modal {
-          background: var(--bg-app, #0f172a);
-          border: 1px solid var(--line);
-          border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-          width: 420px; max-width: 90vw;
-          animation: opb-scale-in 0.2s ease;
-        }
-        @keyframes opb-scale-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-        .opb-modal-header {
-          display: flex; justify-content: space-between; align-items: center;
-          padding: 14px 16px 10px; font-weight: 600; font-size: 14px;
-        }
-        .opb-modal-close {
-          background: none; border: none; color: var(--muted); cursor: pointer;
-          padding: 4px; border-radius: 4px; font-size: 16px;
-        }
-        .opb-modal-close:hover { color: var(--text); }
-        .opb-modal-body { padding: 0 16px 12px; }
-        .opb-modal-label {
-          display: block; font-size: 11px; font-weight: 500;
-          color: var(--muted); margin-bottom: 4px; margin-top: 10px;
-        }
-        .opb-modal-label:first-child { margin-top: 0; }
-        .opb-modal-footer {
-          display: flex; justify-content: flex-end; gap: 8px;
-          padding: 10px 16px 14px; border-top: 1px solid var(--line, rgba(51,65,85,0.4));
-        }
-        .opb-modal-btn {
-          height: 32px; padding: 0 16px; border-radius: 6px;
-          border: 1px solid var(--line); background: transparent;
-          color: var(--text); font-size: 12px; cursor: pointer;
-        }
-        .opb-modal-btn:hover { background: rgba(99,102,241,0.1); }
-        .opb-modal-btn--primary {
-          background: var(--primary, #6366f1); color: #fff;
-          border-color: var(--primary, #6366f1);
-        }
-        .opb-modal-btn--primary:hover { background: #4f46e5; }
 
-        /* ── Task detail slide-out ── */
+        @media (max-width: 720px) {
+          .opb-stats-row {
+            padding-inline: 12px;
+          }
+          .opb-stats-summary {
+            flex-basis: 100%;
+          }
+          .opb-progress-track {
+            flex-basis: 100%;
+            margin-inline: 0;
+          }
+          .opb-kanban {
+            padding-inline: 12px;
+          }
+          .opb-kanban-card__footer {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .opb-kanban-card__actions {
+            width: 100%;
+            margin-left: 0;
+            justify-content: flex-start;
+          }
+        }
+
+        /* ── Empty state ── */
+        .opb-empty {
+          flex: 1; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 16px;
+          color: var(--muted);
+        }
+
+        /* ── Detail panel ── */
         .opb-detail-overlay {
           position: absolute; inset: 0; z-index: 100;
           display: flex; background: rgba(0,0,0,0.3);
@@ -399,76 +604,175 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         }
       `}</style>
 
-      {/* ── Header: project selector + view tabs ── */}
-      <div className="opb-header">
-        {projects.map(p => (
-          <button
-            key={p.id}
-            className={`opb-proj-btn ${p.id === selectedProjectId ? "opb-proj-btn--active" : "opb-proj-btn--inactive"}`}
-            onClick={() => setSelectedProjectId(p.id)}
+      {projects.length > 0 && (
+        <div ref={projectRailRef} className="opb-project-rail">
+          <div
+            ref={projectStripRef}
+            className="opb-project-strip"
+            style={{ width: projectStripWidth ? `${projectStripWidth}px` : undefined }}
+            onWheel={(e) => {
+              const el = e.currentTarget;
+              if (el.scrollWidth <= el.clientWidth) return;
+              if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+              e.preventDefault();
+              el.scrollLeft += e.deltaY;
+            }}
           >
-            {p.name}
-            <span className="opb-type-tag">{PROJECT_TYPE_LABEL[p.project_type] || p.project_type}</span>
-          </button>
-        ))}
-        <button
-          className="opb-proj-btn opb-proj-btn--inactive"
-          onClick={() => setShowNewProject(true)}
-          style={{ borderStyle: "dashed" }}
-        >
-          + 新项目
-        </button>
-
-        {selectedProject && (
-          <div className="opb-view-tabs">
-            <button className={`opb-view-tab${viewTab === "gantt" ? " opb-view-tab--active" : ""}`} onClick={() => setViewTab("gantt")}>
-              甘特图
-            </button>
-            <button className={`opb-view-tab${viewTab === "kanban" ? " opb-view-tab--active" : ""}`} onClick={() => setViewTab("kanban")}>
-              看板
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* ── Stats bar ── */}
-      {selectedProject && projectStats && (
-        <div className="opb-stats">
-          <div className="opb-stat-item">
-            <span className="opb-stat-num">{projectStats.total}</span>
-            <span className="opb-stat-label">总任务</span>
-          </div>
-          <div className="opb-stat-item">
-            <span className="opb-stat-num" style={{ color: "#3b82f6" }}>{projectStats.inProgress}</span>
-            <span className="opb-stat-label">进行中</span>
-          </div>
-          <div className="opb-stat-item">
-            <span className="opb-stat-num" style={{ color: "#22c55e" }}>{projectStats.done}</span>
-            <span className="opb-stat-label">已完成</span>
-          </div>
-          {projectStats.blocked > 0 && (
-            <div className="opb-stat-item">
-              <span className="opb-stat-num" style={{ color: "#ef4444" }}>{projectStats.blocked}</span>
-              <span className="opb-stat-label">异常</span>
+            <div ref={projectTrackRef} className="opb-project-track">
+              {projects.map((project) => {
+                const total = project.tasks.length;
+                const done = project.tasks.filter((t) => t.status === "accepted").length;
+                const selected = project.id === selectedProjectId;
+                return (
+                  <Card
+                    key={project.id}
+                    className={`opb-project-card py-0 ${selected ? "opb-project-card--selected" : ""}`}
+                    onClick={() => setSelectedProjectId(project.id)}
+                  >
+                    <div className="opb-project-card__actions">
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="opb-project-card__edit text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditProject(project);
+                        }}
+                        title={`编辑项目 ${project.name}`}
+                        aria-label={`编辑项目 ${project.name}`}
+                      >
+                        <Pencil />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="opb-project-card__delete text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setProjectPendingDelete(project);
+                        }}
+                        title={`删除项目 ${project.name}`}
+                        aria-label={`删除项目 ${project.name}`}
+                      >
+                        <X />
+                      </Button>
+                    </div>
+                    <CardContent className="px-3 py-3">
+                      <div className="opb-project-card__body">
+                        <div className="opb-project-card__meta">
+                          <Badge variant="secondary" className="h-5 gap-1 px-1.5 text-[10px] font-medium">
+                            <span className="opb-status-dot" style={{ background: PROJECT_STATUS_COLOR[project.status] || "#3b82f6" }} />
+                            {PROJECT_STATUS_LABEL[project.status] || project.status}
+                          </Badge>
+                          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
+                            {PROJECT_TYPE_LABEL[project.project_type] || project.project_type}
+                          </Badge>
+                        </div>
+                        <div className="opb-project-card__summary">
+                          <div className="opb-project-card__title">{project.name}</div>
+                          <div className="opb-project-card__desc">{project.description || "暂无项目描述"}</div>
+                        </div>
+                        <div className="opb-project-card__stats">
+                          <div>
+                            任务
+                            <strong>{total}</strong>
+                          </div>
+                          <div>
+                            完成
+                            <strong>{done}</strong>
+                          </div>
+                          <div>
+                            进度
+                            <strong>{total > 0 ? Math.round((done / total) * 100) : 0}%</strong>
+                          </div>
+                        </div>
+                        <div className="opb-project-card__progress">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${total > 0 ? Math.round((done / total) * 100) : 0}%`,
+                              background: "linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 78%, white))",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
-          )}
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, marginLeft: 8 }}>
-            <div className="opb-progress-bar">
-              {projectStats.done > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
-              {projectStats.delivered > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
-              {projectStats.inProgress > 0 && <div className="opb-progress-seg" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
-            </div>
-            <span className="opb-pct">{projectStats.pct}%</span>
           </div>
-
-          <button
-            className="opb-action-btn"
-            style={{ background: "var(--primary, #6366f1)", color: "#fff" }}
-            onClick={() => setShowNewTask(true)}
+          <div
+            ref={projectAddRef}
+            className="opb-project-add-slot"
+            style={{ paddingBottom: projectScrollbarSize ? `${projectScrollbarSize}px` : undefined }}
           >
-            + 新任务
-          </button>
+            <Card className="opb-project-add-card py-0" onClick={() => {
+              resetProjectForm();
+              setShowNewProject(true);
+            }}>
+              <CardContent className="flex h-full flex-col items-center justify-center gap-2 px-3 py-3 text-center">
+                <span className="text-lg leading-none">+</span>
+                <span className="text-xs font-medium">新项目</span>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* ── Stats row ── */}
+      {selectedProject && (
+        <div className="opb-stats-row">
+          <div className="opb-stats-summary">
+            {projectStats.total > 0 ? (<>
+              <span className="opb-stat-chip">
+                共 <strong>{projectStats.total}</strong>
+              </span>
+              {projectStats.inProgress > 0 && (
+                <span className="opb-stat-chip" style={{ color: "#3b82f6" }}>
+                  <span className="opb-status-dot" style={{ background: "#3b82f6", width: 6, height: 6 }} />
+                  进行中 {projectStats.inProgress}
+                </span>
+              )}
+              {projectStats.done > 0 && (
+                <span className="opb-stat-chip" style={{ color: "#22c55e" }}>
+                  <span className="opb-status-dot" style={{ background: "#22c55e", width: 6, height: 6 }} />
+                  已完成 {projectStats.done}
+                </span>
+              )}
+              {projectStats.blocked > 0 && (
+                <span className="opb-stat-chip" style={{ color: "#ef4444" }}>
+                  <span className="opb-status-dot" style={{ background: "#ef4444", width: 6, height: 6 }} />
+                  异常 {projectStats.blocked}
+                </span>
+              )}
+
+              <div className="opb-progress-track">
+                {projectStats.done > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
+                {projectStats.delivered > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
+                {projectStats.inProgress > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, minWidth: 32, textAlign: "right" }}>{projectStats.pct}%</span>
+            </>) : (
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>暂无任务</span>
+            )}
+          </div>
+
+          <div className="opb-stats-actions">
+            <ToggleGroup type="single" variant="outline" value={viewTab}
+              onValueChange={v => { if (v) setViewTab(v as "gantt" | "kanban"); }}
+              className="h-8">
+              <ToggleGroupItem value="gantt" className={`text-xs px-3 h-7 ${viewTab === "gantt" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+                任务列表
+              </ToggleGroupItem>
+              <ToggleGroupItem value="kanban" className={`text-xs px-3 h-7 ${viewTab === "kanban" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+                看板
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <Button size="sm" className="h-7 text-xs" onClick={() => setShowNewTask(true)}>
+              + 新任务
+            </Button>
+          </div>
         </div>
       )}
 
@@ -481,7 +785,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             onTaskClick={openTaskDetail}
             onStatusChange={(tid, st) => updateTaskStatus(selectedProject.id, tid, st)}
             onDispatch={(tid) => dispatchTask(selectedProject.id, tid)}
-            onDelete={(tid) => deleteTask(selectedProject.id, tid)}
+            onDelete={(task) => requestTaskDelete(selectedProject.id, task)}
             dispatchingTaskId={dispatchingTaskId}
           />
         ) : (
@@ -491,99 +795,164 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             onTaskClick={openTaskDetail}
             onStatusChange={(tid, st) => updateTaskStatus(selectedProject.id, tid, st)}
             onDispatch={(tid) => dispatchTask(selectedProject.id, tid)}
-            onDelete={(tid) => deleteTask(selectedProject.id, tid)}
+            onDelete={(task) => requestTaskDelete(selectedProject.id, task)}
             dispatchingTaskId={dispatchingTaskId}
           />
         )
       ) : (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", flexDirection: "column", gap: 12 }}>
-          <span style={{ fontSize: 14 }}>暂无项目</span>
-          <button
-            className="opb-action-btn"
-            style={{ background: "var(--primary, #6366f1)", color: "#fff", padding: "8px 20px", fontSize: 13, borderRadius: 8 }}
-            onClick={() => setShowNewProject(true)}
-          >
-            创建第一个项目
-          </button>
+        <div className="opb-empty">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
+            <path d="M3 3h7l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+            <line x1="12" y1="10" x2="12" y2="14"/><line x1="10" y1="12" x2="14" y2="12"/>
+          </svg>
+          <span style={{ fontSize: 14 }}>还没有项目</span>
+          <span style={{ fontSize: 12 }}>创建一个项目来管理组织的任务和进度</span>
+          <Button onClick={() => setShowNewProject(true)}>创建第一个项目</Button>
         </div>
       )}
 
       {/* ── New Project Modal ── */}
-      {showNewProject && createPortal(
-        <div className="opb-modal-overlay" onClick={() => setShowNewProject(false)}>
-          <div className="opb-modal" onClick={e => e.stopPropagation()}>
-            <div className="opb-modal-header">
-              <span>新建项目</span>
-              <button className="opb-modal-close" onClick={() => setShowNewProject(false)}>×</button>
-            </div>
-            <div className="opb-modal-body">
-              <label className="opb-modal-label">项目名称 *</label>
-              <input className="input" placeholder="例如：Q2 产品迭代" value={newProjectName}
-                onChange={e => setNewProjectName(e.target.value)}
-                style={{ width: "100%", fontSize: 13 }} autoFocus
-                onKeyDown={e => e.key === "Enter" && createProject()} />
-              <label className="opb-modal-label">项目描述</label>
-              <textarea className="input" placeholder="项目目标和范围..."
-                value={newProjectDesc} onChange={e => setNewProjectDesc(e.target.value)}
-                style={{ width: "100%", fontSize: 12, minHeight: 60, resize: "vertical" }} />
-              <label className="opb-modal-label">项目类型</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                {(["temporary", "permanent"] as const).map(t => (
-                  <button key={t}
-                    className="opb-action-btn"
-                    style={{
-                      background: newProjectType === t ? "var(--primary, #6366f1)" : "transparent",
-                      color: newProjectType === t ? "#fff" : "var(--text)",
-                      border: `1px solid ${newProjectType === t ? "var(--primary)" : "var(--line)"}`,
-                      padding: "4px 14px",
-                    }}
-                    onClick={() => setNewProjectType(t)}
-                  >{PROJECT_TYPE_LABEL[t]}</button>
-                ))}
+      <Dialog open={showNewProject} onOpenChange={(open) => {
+        setShowNewProject(open);
+        if (!open) resetProjectForm();
+      }}>
+        <DialogContent className="sm:max-w-md" onOpenAutoFocus={e => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>{editingProject ? "编辑项目" : "新建项目"}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {editingProject ? "编辑当前组织项目" : "创建一个新的组织项目"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2 grid gap-2">
+                <Label htmlFor="project-name">项目名称 *</Label>
+                <Input id="project-name" placeholder="例如：Q2 产品迭代" value={newProjectName}
+                  onChange={e => setNewProjectName(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && submitProject()} />
+              </div>
+              <div className="grid gap-2">
+                <Label>项目类型</Label>
+                <ToggleGroup type="single" variant="outline" value={newProjectType}
+                  onValueChange={v => { if (v) setNewProjectType(v as "temporary" | "permanent"); }}
+                  className="h-9">
+                  {(["temporary", "permanent"] as const).map(t => (
+                    <ToggleGroupItem key={t} value={t}
+                      className={`flex-1 ${newProjectType === t ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
+                      {PROJECT_TYPE_LABEL[t]}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
               </div>
             </div>
-            <div className="opb-modal-footer">
-              <button className="opb-modal-btn" onClick={() => setShowNewProject(false)}>取消</button>
-              <button className="opb-modal-btn opb-modal-btn--primary" onClick={createProject}>创建</button>
+            <div className="grid gap-2">
+              <Label htmlFor="project-desc">项目描述</Label>
+              <Textarea id="project-desc" placeholder="项目目标和范围..."
+                value={newProjectDesc} onChange={e => setNewProjectDesc(e.target.value)}
+                className="min-h-[80px] resize-y" />
             </div>
           </div>
-        </div>,
-        document.body
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowNewProject(false);
+              resetProjectForm();
+            }}>取消</Button>
+            <Button onClick={submitProject}>{editingProject ? "保存" : "创建"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── New Task Modal ── */}
-      {showNewTask && createPortal(
-        <div className="opb-modal-overlay" onClick={() => setShowNewTask(false)}>
-          <div className="opb-modal" onClick={e => e.stopPropagation()}>
-            <div className="opb-modal-header">
-              <span>新建任务</span>
-              <button className="opb-modal-close" onClick={() => setShowNewTask(false)}>×</button>
-            </div>
-            <div className="opb-modal-body">
-              <label className="opb-modal-label">任务标题 *</label>
-              <input className="input" placeholder="例如：设计首页原型" value={newTaskTitle}
-                onChange={e => setNewTaskTitle(e.target.value)}
-                style={{ width: "100%", fontSize: 13 }} autoFocus
+      <Dialog open={showNewTask} onOpenChange={setShowNewTask}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>新建任务</DialogTitle>
+            <DialogDescription className="sr-only">为当前项目创建新任务</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="task-title">任务标题 *</Label>
+              <Input id="task-title" placeholder="例如：设计首页原型" value={newTaskTitle}
+                onChange={e => setNewTaskTitle(e.target.value)} autoFocus
                 onKeyDown={e => e.key === "Enter" && createTask()} />
-              <label className="opb-modal-label">任务描述</label>
-              <textarea className="input" placeholder="任务详细说明..."
-                value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)}
-                style={{ width: "100%", fontSize: 12, minHeight: 50, resize: "vertical" }} />
-              <label className="opb-modal-label">指派给</label>
-              <select className="input" value={newTaskAssignee} onChange={e => setNewTaskAssignee(e.target.value)}
-                style={{ width: "100%", fontSize: 12 }}>
-                <option value="">未分配</option>
-                {nodes.map(n => <option key={n.id} value={n.id}>{n.role_title || n.id}</option>)}
-              </select>
             </div>
-            <div className="opb-modal-footer">
-              <button className="opb-modal-btn" onClick={() => setShowNewTask(false)}>取消</button>
-              <button className="opb-modal-btn opb-modal-btn--primary" onClick={createTask}>添加</button>
+            <div className="grid gap-2">
+              <Label htmlFor="task-desc">任务描述</Label>
+              <Textarea id="task-desc" placeholder="任务详细说明..."
+                value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)}
+                className="min-h-[60px] resize-y" />
+            </div>
+            <div className="grid gap-2">
+              <Label>指派给</Label>
+              <Select value={newTaskAssignee || "__none__"} onValueChange={v => setNewTaskAssignee(v === "__none__" ? "" : v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="未分配" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">未分配</SelectItem>
+                  {nodes.map(n => (
+                    <SelectItem key={n.id} value={n.id}>{n.role_title || n.id}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
-        </div>,
-        document.body
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewTask(false)}>取消</Button>
+            <Button onClick={createTask}>添加</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!projectPendingDelete} onOpenChange={(open) => { if (!open) setProjectPendingDelete(null); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除项目？</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-wrap">
+              {projectPendingDelete ? `确定删除项目「${projectPendingDelete.name}」？\n此操作不可恢复，项目下的任务也会一并删除。` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (projectPendingDelete) {
+                  deleteProject(projectPendingDelete.id);
+                }
+                setProjectPendingDelete(null);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!taskPendingDelete} onOpenChange={(open) => { if (!open) setTaskPendingDelete(null); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除任务？</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-wrap">
+              {taskPendingDelete ? `确定删除任务「${taskPendingDelete.taskTitle}」？\n此操作不可恢复。` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (taskPendingDelete) {
+                  deleteTask(taskPendingDelete.projectId, taskPendingDelete.taskId);
+                }
+                setTaskPendingDelete(null);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── Task Detail Panel ── */}
       {selectedTask && (
@@ -591,7 +960,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           <div className="opb-detail-panel" onClick={e => e.stopPropagation()}>
             <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>任务详情</span>
-              <button className="opb-modal-close" onClick={closeTaskDetail}>×</button>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground" onClick={closeTaskDetail}>×</Button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
               {taskDetailLoading ? (
@@ -624,7 +993,7 @@ function GanttView({
   onTaskClick: (t: ProjectTask) => void;
   onStatusChange: (tid: string, status: string) => void;
   onDispatch: (tid: string) => void;
-  onDelete: (tid: string) => void;
+  onDelete: (task: ProjectTask) => void;
   dispatchingTaskId: string | null;
 }) {
   const sorted = useMemo(() =>
@@ -657,16 +1026,6 @@ function GanttView({
     return { start: new Date(earliest), end: new Date(latest), days };
   }, [tasks]);
 
-  const fmtDay = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
-  const dayMarkers = useMemo(() => {
-    const markers: Date[] = [];
-    const step = Math.max(1, Math.floor(timeRange.days / 8));
-    for (let i = 0; i <= timeRange.days; i += step) {
-      markers.push(new Date(timeRange.start.getTime() + i * 86400000));
-    }
-    return markers;
-  }, [timeRange]);
-
   const getBarStyle = (task: ProjectTask) => {
     const rangeMs = timeRange.end.getTime() - timeRange.start.getTime();
     if (rangeMs <= 0) return { left: "0%", width: "100%" };
@@ -684,104 +1043,105 @@ function GanttView({
   return (
     <div className="opb-gantt">
       {sorted.length === 0 ? (
-        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)" }}>暂无任务，点击「+ 新任务」开始</div>
+        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          暂无任务，点击「+ 新任务」开始
+        </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {/* Time axis header */}
-          <div style={{ display: "flex", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
-            <div style={{ width: 240, flexShrink: 0, padding: "8px 10px", fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>任务</div>
-            <div style={{ width: 70, flexShrink: 0, padding: "8px 4px", fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>状态</div>
-            <div style={{ flex: 1, position: "relative", padding: "8px 0" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "0 4px" }}>
-                {dayMarkers.map((d, i) => (
-                  <span key={i} style={{ fontSize: 9, color: "var(--muted)", textAlign: "center", minWidth: 30 }}>
-                    {fmtDay(d)}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div style={{ width: 90, flexShrink: 0, padding: "8px 4px", fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>操作</div>
-          </div>
-
-          {/* Task rows */}
           {sorted.map(task => {
             const meta = STATUS_META[task.status] || { label: task.status, color: "#64748b" };
             const assignee = task.assignee_node_id ? nodeMap.get(task.assignee_node_id) : null;
             const pct = task.progress_pct ?? 0;
             const barStyle = getBarStyle(task);
             return (
-              <div key={task.id} className="opb-gantt-row" onClick={() => onTaskClick(task)}
-                style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid var(--line, rgba(51,65,85,0.15))", padding: "10px 12px", gap: 6 }}>
-                {/* Row 1: Header — avatar, title, status badge, progress, actions */}
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                  {assignee && <OrgAvatar avatarId={(assignee as any).avatar || null} size={22} />}
+              <div key={task.id} className="opb-gantt-row" onClick={() => onTaskClick(task)}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={24} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
-                      <span style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3, color: "var(--text)" }}>{task.title}</span>
-                      <span className="opb-status-badge" style={{ background: meta.color + "18", color: meta.color, fontSize: 10, padding: "1px 6px", flexShrink: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>{task.title}</span>
+                      <span className="opb-status-badge" style={{ background: meta.color + "18", color: meta.color, fontSize: 10, padding: "1px 6px" }}>
                         {meta.label}
                       </span>
-                      {pct > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: meta.color, flexShrink: 0 }}>{pct}%</span>}
+                      {pct > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: meta.color }}>{pct}%</span>}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 1 }}>
                       {assignee ? (assignee.role_title || assignee.id) : "未分配"}
-                      {task.id && <span style={{ marginLeft: 8, fontFamily: "monospace" }}>#{task.id.slice(0, 8)}</span>}
+                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, opacity: 0.68 }}>#{task.id.slice(0, 8)}</span>
                     </div>
                   </div>
                   <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: "flex", gap: 3 }}>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                       {task.status === "todo" && (
-                        <button className="opb-action-btn" style={{ background: "var(--primary, #6366f1)", color: "#fff", fontSize: 10, padding: "2px 8px" }}
+                        <button data-slot="opb" className="opb-act opb-act--primary"
                           onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
                           {dispatchingTaskId === task.id ? "…" : "派发"}
                         </button>
                       )}
-                      {task.status === "in_progress" && (
-                        <span style={{ fontSize: 10, color: "#3b82f6", fontWeight: 500 }}>⏳ 执行中（节点自动交付）</span>
-                      )}
+                      {task.status === "in_progress" && (<>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => onStatusChange(task.id, "blocked")}
+                          title="中止"
+                        >
+                          中止
+                        </Button>
+                      </>)}
                       {task.status === "delivered" && (<>
-                        <button className="opb-action-btn" style={{ background: "#22c55e", color: "#fff", fontSize: 10, padding: "2px 6px" }}
-                          onClick={() => onStatusChange(task.id, "accepted")}>✓ 验收</button>
-                        <button className="opb-action-btn" style={{ background: "#ef4444", color: "#fff", fontSize: 10, padding: "2px 6px" }}
-                          onClick={() => onStatusChange(task.id, "rejected")}>✗ 打回</button>
+                        <Button size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")}>
+                          <Check />
+                          验收
+                        </Button>
+                        <Button variant="destructive" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "rejected")}>
+                          <CornerUpLeft />
+                          打回
+                        </Button>
                       </>)}
                       {(task.status === "rejected" || task.status === "blocked") && (
-                        <button className="opb-action-btn" style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6", fontSize: 10, padding: "2px 8px" }}
-                          onClick={() => onStatusChange(task.id, "in_progress")}>重新派发</button>
+                        <button data-slot="opb" className="opb-act opb-act--ghost"
+                          onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
+                          {dispatchingTaskId === task.id ? "…" : "重新派发"}
+                        </button>
                       )}
+                      <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => onDelete(task)}
+                        title="删除任务">删除</Button>
                     </div>
                   </div>
                 </div>
-                {/* Row 2: Full description — no truncation */}
                 {task.description && (
-                  <div style={{
-                    fontSize: 11, color: "var(--muted, #94a3b8)", lineHeight: 1.5,
-                    whiteSpace: "pre-wrap", wordBreak: "break-word",
-                    paddingLeft: 30,
-                  }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", paddingLeft: 32 }}>
                     {task.description}
                   </div>
                 )}
-                {/* Row 3: Gantt progress bar */}
-                <div style={{ position: "relative", height: 18, paddingLeft: 30 }}>
-                  <div style={{ position: "relative", height: "100%", background: "var(--line, rgba(51,65,85,0.15))", borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ position: "absolute", inset: 0, display: "flex", justifyContent: "space-between", pointerEvents: "none" }}>
-                      {dayMarkers.map((_, i) => (
-                        <div key={i} style={{ width: 1, height: "100%", background: "rgba(51,65,85,0.1)" }} />
-                      ))}
-                    </div>
+                <div style={{ position: "relative", height: 12, paddingLeft: 32, marginTop: 2 }}>
+                  <div style={{
+                    position: "relative",
+                    height: "100%",
+                    background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                    borderRadius: 999,
+                    overflow: "hidden",
+                    border: "1px solid color-mix(in srgb, var(--line) 82%, transparent)",
+                  }}>
                     <div style={{
-                      position: "absolute", top: 2, bottom: 2,
-                      left: barStyle.left, width: barStyle.width,
-                      borderRadius: 3, overflow: "hidden",
-                      background: meta.color + "35",
-                      border: `1px solid ${meta.color}50`,
-                      transition: "left 0.3s, width 0.3s",
+                      position: "absolute",
+                      top: 1,
+                      bottom: 1,
+                      left: barStyle.left,
+                      width: barStyle.width,
+                      borderRadius: 999,
+                      background: `linear-gradient(90deg, ${meta.color}33, ${meta.color}20)`,
+                      border: `1px solid ${meta.color}35`,
                     }}>
                       <div style={{
-                        position: "absolute", left: 0, top: 0, bottom: 0,
-                        width: `${pct}%`, background: meta.color, opacity: 0.7,
-                        borderRadius: 2, transition: "width 0.3s",
+                        position: "absolute", left: 1, top: 1, bottom: 1,
+                        width: `calc(${pct}% - 2px)`,
+                        minWidth: pct > 0 ? 6 : 0,
+                        background: `linear-gradient(90deg, ${meta.color}, ${meta.color}cc)`,
+                        borderRadius: 999,
+                        boxShadow: `0 0 0 1px ${meta.color}22 inset`,
                       }} />
                     </div>
                   </div>
@@ -805,7 +1165,7 @@ function KanbanView({
   onTaskClick: (t: ProjectTask) => void;
   onStatusChange: (tid: string, status: string) => void;
   onDispatch: (tid: string) => void;
-  onDelete: (tid: string) => void;
+  onDelete: (task: ProjectTask) => void;
   dispatchingTaskId: string | null;
 }) {
   return (
@@ -824,47 +1184,64 @@ function KanbanView({
                 const assignee = task.assignee_node_id ? nodeMap.get(task.assignee_node_id) : null;
                 return (
                   <div key={task.id} className="opb-kanban-card" onClick={() => onTaskClick(task)}>
-                    <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 12 }}>{task.title}</div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-                      {assignee ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                          <OrgAvatar avatarId={(assignee as any).avatar || null} size={16} />
-                          <span style={{ fontSize: 10, color: "var(--muted)" }}>{assignee.role_title || assignee.id}</span>
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 10, color: "var(--muted)" }}>未分配</span>
-                      )}
-                      <div style={{ display: "flex", gap: 2 }} onClick={e => e.stopPropagation()}>
+                    <div className="opb-kanban-card__title">{task.title}</div>
+                    <div className="opb-kanban-card__footer">
+                      <div className="opb-kanban-card__owner">
+                        <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={16} />
+                        <span className="opb-kanban-card__owner-label">{assignee ? (assignee.role_title || assignee.id) : "未分配"}</span>
+                      </div>
+                      <div className="opb-kanban-card__actions" onClick={e => e.stopPropagation()}>
                         {col.key === "todo" && (
-                          <>
-                            <button className="opb-action-btn" style={{ background: "var(--primary)", color: "#fff", fontSize: 10, padding: "1px 6px" }}
-                              onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
-                              {dispatchingTaskId === task.id ? "…" : "派发"}
-                            </button>
-                            <button className="opb-action-btn" style={{ color: "#3b82f6", fontSize: 10 }}
-                              onClick={() => onStatusChange(task.id, "in_progress")}>▶</button>
-                          </>
+                          <button data-slot="opb" className="opb-act opb-act--primary"
+                            onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
+                            {dispatchingTaskId === task.id ? "…" : "派发"}
+                          </button>
                         )}
-                        {col.key === "in_progress" && (
-                          <span style={{ fontSize: 9, color: "#3b82f6" }}>⏳ 自动交付</span>
-                        )}
-                        {col.key === "delivered" && (
-                          <>
-                            <button className="opb-action-btn" style={{ background: "#22c55e", color: "#fff", fontSize: 10, padding: "1px 5px" }}
-                              onClick={() => onStatusChange(task.id, "accepted")}>✓</button>
-                            <button className="opb-action-btn" style={{ background: "#ef4444", color: "#fff", fontSize: 10, padding: "1px 5px" }}
-                              onClick={() => onStatusChange(task.id, "rejected")}>✗</button>
-                          </>
-                        )}
+                        {col.key === "in_progress" && (<>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => onStatusChange(task.id, "blocked")}
+                          >
+                            中止
+                          </Button>
+                        </>)}
+                        {col.key === "delivered" && (<>
+                          <Button size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")} title="验收">
+                            <Check />
+                            验收
+                          </Button>
+                          <Button variant="destructive" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "rejected")} title="打回">
+                            <CornerUpLeft />
+                            打回
+                          </Button>
+                        </>)}
                         {(col.key === "rejected" || col.key === "blocked") && (
-                          <button className="opb-action-btn" style={{ color: "#3b82f6", fontSize: 10 }}
-                            onClick={() => onStatusChange(task.id, "in_progress")}>↻</button>
+                          <button data-slot="opb" className="opb-act opb-act--ghost"
+                            onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
+                            {dispatchingTaskId === task.id ? "…" : "↻"}
+                          </button>
                         )}
+                        <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => onDelete(task)}>删除</Button>
                       </div>
                     </div>
                     {(task.progress_pct ?? 0) > 0 && (task.progress_pct ?? 0) < 100 && (
-                      <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
-                        <div style={{ height: "100%", borderRadius: 2, background: col.color, width: `${task.progress_pct}%` }} />
+                      <div style={{
+                        marginTop: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                        overflow: "hidden",
+                        border: "1px solid color-mix(in srgb, var(--line) 82%, transparent)",
+                      }}>
+                        <div style={{
+                          height: "100%",
+                          borderRadius: 999,
+                          background: `linear-gradient(90deg, ${col.color}, ${col.color}cc)`,
+                          width: `${task.progress_pct}%`,
+                        }} />
                       </div>
                     )}
                   </div>
@@ -892,121 +1269,183 @@ function TaskDetailContent({
   const delegatedBy = task.delegated_by ? nodeMap.get(task.delegated_by) : null;
   const fmt = (s: string | null | undefined) => s ? new Date(s).toLocaleString("zh-CN") : "-";
   const meta = STATUS_META[task.status] || { label: task.status, color: "#64748b" };
+  const progress = Math.min(100, Math.max(0, task.progress_pct ?? 0));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
+    <div className="flex flex-col gap-3 text-xs">
       {(task.ancestors?.length ?? 0) > 0 && (
-        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+        <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+          <span>父任务:</span>
           {(task.ancestors || []).map((a: any, i: number) => (
-            <span key={a.id}>
-              {i > 0 && " / "}
-              <button type="button" onClick={() => onAncestorClick(a)}
-                style={{ background: "none", border: "none", color: "var(--primary)", cursor: "pointer", padding: 0, textDecoration: "underline" }}>
+            <span key={a.id} className="inline-flex items-center gap-1">
+              {i > 0 && <span className="text-muted-foreground/60">/</span>}
+              <Button variant="link" size="xs" className="h-auto px-0 text-xs text-primary" onClick={() => onAncestorClick(a)}>
                 {a.title || a.id}
-              </button>
+              </Button>
             </span>
           ))}
         </div>
       )}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "monospace" }}>#{task.id}</span>
-        <span className="opb-status-badge" style={{ background: meta.color + "18", color: meta.color }}>
-          <span className="opb-status-dot" style={{ background: meta.color }} />
-          {meta.label}
-        </span>
-      </div>
+      <Card className="gap-0 py-0">
+        <CardHeader className="gap-3 px-4 pt-4 pb-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="font-normal text-[10px] text-muted-foreground">
+              #{task.id}
+            </Badge>
+            <Badge variant="secondary" className="gap-1 border-0" style={{ background: meta.color + "18", color: meta.color }}>
+              <span className="opb-status-dot" style={{ background: meta.color }} />
+              {meta.label}
+            </Badge>
+          </div>
+          <CardTitle className="text-xl leading-tight">{task.title}</CardTitle>
+          {task.description ? (
+            <CardDescription className="text-xs leading-5 whitespace-pre-wrap text-muted-foreground">
+              {task.description}
+            </CardDescription>
+          ) : null}
+        </CardHeader>
+        <CardContent className="space-y-4 px-4 py-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">进度</span>
+              <span className="font-semibold">{progress}%</span>
+            </div>
+            <div
+              className="h-2.5 overflow-hidden rounded-full border"
+              style={{
+                background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                borderColor: "color-mix(in srgb, var(--line) 82%, transparent)",
+              }}
+            >
+              <div
+                className="h-full rounded-full transition-[width]"
+                style={{
+                  width: `${progress}%`,
+                  background: `linear-gradient(90deg, ${meta.color}, ${meta.color}cc)`,
+                }}
+              />
+            </div>
+          </div>
 
-      <div>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{task.title}</div>
-        {task.description && <div style={{ color: "var(--muted)", fontSize: 11, whiteSpace: "pre-wrap" }}>{task.description}</div>}
-      </div>
-
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
-          <span>进度</span><span style={{ fontWeight: 600 }}>{task.progress_pct ?? 0}%</span>
-        </div>
-        <div style={{ height: 6, borderRadius: 3, background: "var(--line)", overflow: "hidden" }}>
-          <div style={{ height: "100%", borderRadius: 3, background: meta.color, width: `${Math.min(100, task.progress_pct ?? 0)}%`, transition: "width 0.3s" }} />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-        {assignee && <div><span style={{ color: "var(--muted)" }}>执行人: </span><span>{assignee.role_title || assignee.id}</span></div>}
-        {delegatedBy && <div><span style={{ color: "var(--muted)" }}>委派者: </span><span>{delegatedBy.role_title || delegatedBy.id}</span></div>}
-        <div><span style={{ color: "var(--muted)" }}>创建时间: </span><span>{fmt(task.created_at)}</span></div>
-      </div>
+          <div className="grid gap-2 text-xs sm:grid-cols-2">
+            {assignee && (
+              <div className="rounded-lg border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">执行人</div>
+                <div className="mt-1 font-medium">{assignee.role_title || assignee.id}</div>
+              </div>
+            )}
+            {delegatedBy && (
+              <div className="rounded-lg border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">委派者</div>
+                <div className="mt-1 font-medium">{delegatedBy.role_title || delegatedBy.id}</div>
+              </div>
+            )}
+            <div className="rounded-lg border px-3 py-2 sm:col-span-2">
+              <div className="text-[11px] text-muted-foreground">创建时间</div>
+              <div className="mt-1 font-medium">{fmt(task.created_at)}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {(task.plan_steps?.length ?? 0) > 0 && (
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>计划步骤</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-4 pt-4 pb-0">
+            <CardTitle className="text-base">计划步骤</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 px-4 py-4">
             {(task.plan_steps || []).map((s: any, i: number) => {
               const st = s.status || "pending";
-              const icon = st === "completed" ? "✓" : st === "in_progress" ? "→" : "○";
-              const c = st === "completed" ? "#22c55e" : st === "in_progress" ? "#3b82f6" : "var(--muted)";
+              const label = st === "completed" ? "已完成" : st === "in_progress" ? "进行中" : "待处理";
+              const c = st === "completed" ? "#22c55e" : st === "in_progress" ? "#3b82f6" : "#94a3b8";
               return (
-                <div key={s.id || i} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 11 }}>
-                  <span style={{ color: c, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
-                  <span>{s.description || s.title || `步骤 ${i + 1}`}</span>
+                <div key={s.id || i} className="flex items-start gap-3 rounded-lg border px-3 py-2">
+                  <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c }} />
+                  <div className="min-w-0 flex-1 text-sm leading-5">{s.description || s.title || `步骤 ${i + 1}`}</div>
+                  <Badge variant="outline" className="text-[10px]" style={{ color: c }}>
+                    {label}
+                  </Badge>
                 </div>
               );
             })}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {(task.subtasks?.length ?? 0) > 0 && (
-        <div>
-          <button type="button" onClick={() => setSubtasksExpanded(!subtasksExpanded)}
-            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text)", padding: 0 }}>
-            {subtasksExpanded ? "▼" : "▶"} 子任务 ({task.subtasks.length})
-          </button>
+        <Card className="gap-0 py-0">
+          <CardHeader className="px-4 pt-4 pb-0">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base">子任务</CardTitle>
+              <Button variant="ghost" size="xs" className="text-xs text-muted-foreground" onClick={() => setSubtasksExpanded(!subtasksExpanded)}>
+                {subtasksExpanded ? "收起" : "展开"} {task.subtasks.length}
+              </Button>
+            </div>
+          </CardHeader>
           {subtasksExpanded && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <CardContent className="space-y-2 px-4 py-4">
               {(task.subtasks || []).map((st: any) => {
                 const sm = STATUS_META[st.status] || { label: st.status, color: "#64748b" };
+                const subProgress = Math.min(100, Math.max(0, st.progress_pct ?? 0));
                 return (
-                  <div key={st.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, rgba(30,41,59,0.3))" }}>
-                    <div style={{ fontWeight: 500, marginBottom: 4 }}>{st.title}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10 }}>
-                      <span className="opb-status-badge" style={{ background: sm.color + "18", color: sm.color, fontSize: 10, padding: "1px 6px" }}>
+                  <div key={st.id} className="space-y-2 rounded-lg border px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 text-sm font-medium">{st.title}</div>
+                      <Badge variant="secondary" style={{ background: sm.color + "18", color: sm.color }}>
                         {sm.label}
-                      </span>
-                      <span style={{ color: "var(--muted)" }}>{(st.progress_pct ?? 0)}%</span>
+                      </Badge>
                     </div>
-                    {(st.progress_pct ?? 0) > 0 && (st.progress_pct ?? 0) < 100 && (
-                      <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
-                        <div style={{ height: "100%", borderRadius: 2, background: sm.color, width: `${st.progress_pct}%` }} />
-                      </div>
-                    )}
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>进度</span>
+                      <span>{subProgress}%</span>
+                    </div>
+                    <div
+                      className="h-2 overflow-hidden rounded-full border"
+                      style={{
+                        background: "color-mix(in srgb, var(--bg-subtle) 76%, var(--line) 24%)",
+                        borderColor: "color-mix(in srgb, var(--line) 82%, transparent)",
+                      }}
+                    >
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${subProgress}%`,
+                          background: `linear-gradient(90deg, ${sm.color}, ${sm.color}cc)`,
+                        }}
+                      />
+                    </div>
                   </div>
                 );
               })}
-            </div>
+            </CardContent>
           )}
-        </div>
+        </Card>
       )}
 
-      <div>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>执行时间线</div>
+      <Card className="gap-0 py-0">
+        <CardHeader className="px-4 pt-4 pb-0">
+          <CardTitle className="text-base">执行时间线</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 py-4">
         {timeline.length === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无事件</div>
+          <div className="text-xs text-muted-foreground">暂无事件</div>
         ) : (
-          <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div className="flex max-h-[240px] flex-col gap-2 overflow-y-auto pr-1">
             {timeline.map((ev: any, i: number) => (
-              <div key={i} style={{ padding: "4px 8px", borderRadius: 4, background: "var(--bg-subtle, rgba(30,41,59,0.3))", fontSize: 11 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 500 }}>{ev.event || "event"}</span>
-                  <span style={{ color: "var(--muted)", fontSize: 10 }}>{ev.ts ? new Date(ev.ts).toLocaleString("zh-CN") : ""}</span>
+              <div key={i} className="rounded-lg border px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">{ev.event || "event"}</div>
+                  <div className="text-[11px] text-muted-foreground">{ev.ts ? new Date(ev.ts).toLocaleString("zh-CN") : ""}</div>
                 </div>
-                {ev.actor && <div style={{ fontSize: 10, color: "var(--muted)" }}>by {ev.actor}</div>}
-                {ev.detail && <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{String(ev.detail)}</div>}
+                {ev.actor && <div className="mt-1 text-[11px] text-muted-foreground">by {ev.actor}</div>}
+                {ev.detail && <div className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{String(ev.detail)}</div>}
               </div>
             ))}
           </div>
         )}
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

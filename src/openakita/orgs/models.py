@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
+from openakita.memory.types import normalize_tags
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -386,6 +388,9 @@ class Organization:
     watchdog_stuck_threshold_s: int = 1800
     watchdog_silence_threshold_s: int = 1800
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -423,7 +428,7 @@ class Organization:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "is_template": self.is_template,
-            "tags": list(self.tags) if self.tags else [],
+            "tags": self.tags,
             "total_tasks_completed": self.total_tasks_completed,
             "total_messages_exchanged": self.total_messages_exchanged,
             "total_tokens_used": self.total_tokens_used,
@@ -575,6 +580,19 @@ class OrgMemoryEntry:
     last_accessed_at: str = field(default_factory=_now_iso)
     access_count: int = 0
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+        try:
+            self.importance = float(self.importance)
+        except (ValueError, TypeError):
+            self.importance = 0.5
+        self.importance = max(0.0, min(1.0, self.importance))
+        if self.ttl_hours is not None:
+            try:
+                self.ttl_hours = int(self.ttl_hours)
+            except (ValueError, TypeError):
+                self.ttl_hours = None
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -585,7 +603,7 @@ class OrgMemoryEntry:
             "content": self.content,
             "source_node": self.source_node,
             "source_message_id": self.source_message_id,
-            "tags": list(self.tags) if self.tags else [],
+            "tags": self.tags,
             "importance": self.importance,
             "ttl_hours": self.ttl_hours,
             "created_at": self.created_at,

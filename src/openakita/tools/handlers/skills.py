@@ -1,7 +1,7 @@
 """
 技能管理处理器
 
-处理技能管理相关的系统技能：
+处理技能管理相关的系统技能（共 10 个工具）：
 - list_skills: 列出技能
 - get_skill_info: 获取技能信息
 - run_skill_script: 运行技能脚本
@@ -9,8 +9,9 @@
 - install_skill: 安装技能
 - load_skill: 加载新创建的技能
 - reload_skill: 重新加载已修改的技能
-
-说明：技能创建/封装等工作流建议使用专门的技能（外部技能）完成。
+- manage_skill_enabled: 启用/禁用技能
+- execute_skill: 在隔离上下文中执行技能 (F10)
+- uninstall_skill: 卸载外部技能 (F14)
 """
 
 import logging
@@ -45,6 +46,8 @@ class SkillsHandler:
         "load_skill",
         "reload_skill",
         "manage_skill_enabled",
+        "execute_skill",
+        "uninstall_skill",
     ]
 
     def __init__(self, agent: "Agent"):
@@ -52,24 +55,35 @@ class SkillsHandler:
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
-        if tool_name == "list_skills":
-            return self._list_skills(params)
-        elif tool_name == "get_skill_info":
-            return self._get_skill_info(params)
-        elif tool_name == "run_skill_script":
-            return self._run_skill_script(params)
-        elif tool_name == "get_skill_reference":
-            return self._get_skill_reference(params)
-        elif tool_name == "install_skill":
-            return await self._install_skill(params)
-        elif tool_name == "load_skill":
-            return self._load_skill(params)
-        elif tool_name == "reload_skill":
-            return self._reload_skill(params)
-        elif tool_name == "manage_skill_enabled":
-            return self._manage_skill_enabled(params)
-        else:
-            return f"❌ Unknown skills tool: {tool_name}"
+        try:
+            if tool_name == "list_skills":
+                return self._list_skills(params)
+            elif tool_name == "get_skill_info":
+                return self._get_skill_info(params)
+            elif tool_name == "run_skill_script":
+                return self._run_skill_script(params)
+            elif tool_name == "get_skill_reference":
+                return self._get_skill_reference(params)
+            elif tool_name == "install_skill":
+                return await self._install_skill(params)
+            elif tool_name == "load_skill":
+                return self._load_skill(params)
+            elif tool_name == "reload_skill":
+                return self._reload_skill(params)
+            elif tool_name == "manage_skill_enabled":
+                return self._manage_skill_enabled(params)
+            elif tool_name == "execute_skill":
+                return await self._execute_skill(params)
+            elif tool_name == "uninstall_skill":
+                return self._uninstall_skill(params)
+            else:
+                return f"❌ Unknown skills tool: {tool_name}"
+        except KeyError as e:
+            logger.error("Missing required parameter in %s: %s", tool_name, e)
+            return f"❌ 缺少必需参数: {e}"
+        except Exception as e:
+            logger.error("Unexpected error in skills handler %s: %s", tool_name, e, exc_info=True)
+            return f"❌ 技能操作失败: {e}"
 
     def _list_skills(self, params: dict) -> str:
         """列出所有技能，区分启用/禁用状态"""
@@ -205,8 +219,8 @@ class SkillsHandler:
         hint = (
             f"\n\n{OVERFLOW_MARKER} 技能内容共 {total_chars} 字符，"
             f"已截断到前 {SKILL_MAX_CHARS} 字符。\n"
-            f"完整内容已保存到: {overflow_path}\n"
-            f'使用 read_file(path="{overflow_path}", offset=1, limit=500) 查看后续内容。'
+            f"完整内容已保存，使用以下命令查看后续内容:\n"
+            f'read_file(path="{overflow_path}", offset=1, limit=500)'
         )
         logger.info(
             f"[SkillTruncate] {tool_name} output: {total_chars} → {SKILL_MAX_CHARS} chars, "
@@ -217,6 +231,7 @@ class SkillsHandler:
     def _get_skill_info(self, params: dict) -> str:
         """获取技能详细信息（自动内联引用的子文件）"""
         skill_name = params["skill_name"]
+        user_args = params.get("args", {})
         skill = self.agent.skill_registry.get(skill_name)
 
         if not skill or skill.disabled:
@@ -227,8 +242,30 @@ class SkillsHandler:
                 f"请检查技能名称是否正确，或使用 list_skills 查看所有可用技能。"
             )
 
+        # F6: usage tracking
+        usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
+        if usage_tracker:
+            usage_tracker.record(skill.skill_id)
+
+        # F7: inject allowed_tools into policy engine
+        if skill.allowed_tools:
+            try:
+                from openakita.core.policy import get_policy_engine
+                get_policy_engine().add_skill_allowlist(skill.skill_id, skill.allowed_tools)
+            except Exception as e:
+                logger.warning("Failed to inject skill allowlist for %s: %s", skill.skill_id, e)
+
         exposed = build_skill_exposure(skill)
         body = skill.get_body() or "(无详细指令)"
+
+        # F4: argument substitution
+        if "{{" in body:
+            from openakita.skills.arguments import substitute
+            from openakita.config import settings as _cfg
+            extra = {}
+            if isinstance(user_args, dict):
+                extra = {k: str(v) for k, v in user_args.items()}
+            body = substitute(body, extra, project_root=_cfg.project_root)
 
         # 自动内联 SKILL.md body 中引用的同目录 .md 文件
         if exposed.skill_path:
@@ -238,6 +275,8 @@ class SkillsHandler:
         output = f"# 技能: {skill.name}\n\n"
         output += f"**ID**: {skill.skill_id}\n"
         output += f"**描述**: {skill.description}\n"
+        if skill.when_to_use:
+            output += f"**适用场景**: {skill.when_to_use}\n"
         output += f"**来源**: {exposed.origin_label}\n"
         if exposed.skill_dir:
             output += f"**路径**: {exposed.skill_dir}\n"
@@ -263,6 +302,18 @@ class SkillsHandler:
             output += f"**许可证**: {skill.license}\n"
         if skill.compatibility:
             output += f"**兼容性**: {skill.compatibility}\n"
+        if skill.model:
+            output += f"**推荐模型**: {skill.model}\n"
+        if skill.execution_context and skill.execution_context != "inline":
+            output += f"**执行模式**: {skill.execution_context}\n"
+
+        # F4: display argument schema
+        if skill.arguments:
+            from openakita.skills.arguments import format_argument_schema
+            args_block = format_argument_schema(skill.arguments)
+            if args_block:
+                output += f"\n{args_block}\n"
+
         output += "\n---\n\n"
         output += body
 
@@ -273,10 +324,36 @@ class SkillsHandler:
         skill_name = params["skill_name"]
         script_name = params["script_name"]
         args = params.get("args", [])
-        cwd = params.get("cwd")
+        cwd_raw = params.get("cwd")
+
+        resolved_cwd: Path | None = None
+        if cwd_raw:
+            resolved_cwd = Path(cwd_raw).resolve()
+            from openakita.config import settings as _settings
+            project_root = Path(_settings.project_root).resolve()
+            skill_entry = self.agent.skill_registry.get(skill_name)
+            skill_dir = Path(skill_entry.skill_path).resolve() if skill_entry and skill_entry.skill_path else None
+
+            allowed = False
+            try:
+                resolved_cwd.relative_to(project_root)
+                allowed = True
+            except ValueError:
+                pass
+            if not allowed and skill_dir:
+                try:
+                    resolved_cwd.relative_to(skill_dir)
+                    allowed = True
+                except ValueError:
+                    pass
+            if not allowed:
+                return (
+                    f"❌ 工作目录被拒绝: {cwd_raw}\n"
+                    f"cwd 只能位于项目工作区或技能目录内。"
+                )
 
         success, output = self.agent.skill_loader.run_script(
-            skill_name, script_name, args, cwd=Path(cwd) if cwd else None
+            skill_name, script_name, args, cwd=resolved_cwd
         )
 
         if success:
@@ -466,18 +543,18 @@ class SkillsHandler:
         except Exception:
             pass
 
-        # 如果没有 allowlist 文件，初始化为当前所有外部技能
+        # 如果没有 allowlist 文件，初始化为当前所有外部技能的 skill_id
         if existing_allowlist is None:
             all_skills = self.agent.skill_registry.list_all()
-            existing_allowlist = {s.name for s in all_skills if not s.system}
+            existing_allowlist = {s.skill_id for s in all_skills if not s.system}
 
-        # 收集所有已知外部技能名（包括被 prune 的）
-        all_external_names = set(existing_allowlist)
+        # 收集所有已知外部技能 skill_id（包括被 prune 的）
+        all_external_ids = set(existing_allowlist)
         loader = getattr(self.agent, "skill_loader", None)
         if loader:
-            for name, skill in loader._loaded_skills.items():
+            for sid, skill in loader._loaded_skills.items():
                 if not getattr(skill.metadata, "system", False):
-                    all_external_names.add(name)
+                    all_external_ids.add(sid)
 
         applied: list[str] = []
         skipped: list[str] = []
@@ -488,21 +565,23 @@ class SkillsHandler:
             if not name:
                 continue
 
-            # 系统技能不可禁用
+            # Resolve to skill_id (accept both skill_id and display name)
             skill = self.agent.skill_registry.get(name)
+            sid = skill.skill_id if skill else name
+
             if skill and skill.system:
-                skipped.append(f"{name}（系统技能，不可禁用）")
+                skipped.append(f"{sid}（系统技能，不可禁用）")
                 continue
 
-            if name not in all_external_names:
-                skipped.append(f"{name}（未找到）")
+            if sid not in all_external_ids:
+                skipped.append(f"{sid}（未找到）")
                 continue
 
             if enabled:
-                existing_allowlist.add(name)
+                existing_allowlist.add(sid)
             else:
-                existing_allowlist.discard(name)
-            applied.append(f"{name} → {'启用' if enabled else '禁用'}")
+                existing_allowlist.discard(sid)
+            applied.append(f"{sid} → {'启用' if enabled else '禁用'}")
 
         if not applied:
             msg = "未执行任何变更。"
@@ -555,6 +634,205 @@ class SkillsHandler:
             output += f"\n**跳过**: {', '.join(skipped)}\n"
 
         return output
+
+
+    async def _execute_skill(self, params: dict) -> str:
+        """F10: 在隔离的 fork 上下文中执行技能"""
+        import uuid
+
+        skill_name = params["skill_name"]
+        task = params["task"]
+        max_turns = min(int(params.get("max_turns", 10)), 50)
+
+        skill = self.agent.skill_registry.get(skill_name)
+        if not skill or skill.disabled:
+            available = [s.name for s in self.agent.skill_registry.list_all()[:10]]
+            hint = f"，可用技能: {', '.join(available)}" if available else ""
+            return f"未找到或已禁用技能 '{skill_name}'{hint}。"
+
+        body = skill.get_body() or ""
+        if not body:
+            return f"技能 '{skill_name}' 无可执行内容（SKILL.md body 为空）。"
+
+        # F4: argument substitution on body
+        if "{{" in body:
+            from openakita.skills.arguments import substitute
+            from openakita.config import settings as _cfg
+            body = substitute(body, project_root=_cfg.project_root)
+
+        # F6: record usage
+        usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
+        if usage_tracker:
+            usage_tracker.record(skill.skill_id)
+
+        # F7: inject temporary tool allowlist
+        if skill.allowed_tools:
+            try:
+                from openakita.core.policy import get_policy_engine
+                get_policy_engine().add_skill_allowlist(skill.skill_id, skill.allowed_tools)
+            except Exception as e:
+                logger.warning("Failed to inject allowlist for fork skill %s: %s", skill.skill_id, e)
+
+        # Build fork system prompt
+        fork_system = (
+            f"你是一个专注于 [{skill.name}] 技能的执行助手。\n"
+            f"请严格按照以下技能指令完成用户任务。\n\n"
+            f"---\n{body}\n---\n\n"
+            f"限制：最多执行 {max_turns} 轮操作。"
+        )
+
+        fork_messages = [{"role": "user", "content": task}]
+        fork_conv_id = f"fork_{skill.skill_id}_{uuid.uuid4().hex[:8]}"
+
+        # F11: run before_execute hook
+        hook_runner = None
+        if skill.hooks:
+            from openakita.skills.skill_hooks import create_hook_runner
+            hook_runner = create_hook_runner(skill.skill_id, skill.skill_dir, skill.hooks)
+            if hook_runner and hook_runner.has_hook("before_execute"):
+                hook_result = hook_runner.run_hook("before_execute")
+                if not hook_result["ok"]:
+                    # Clean up allowlist before early return
+                    self._cleanup_fork_allowlist(skill)
+                    return f"技能 before_execute 钩子失败: {hook_result['output']}"
+
+        # Determine tools: prefer skill's allowed_tools, fallback to agent's full toolset
+        tools = self.agent._effective_tools
+        if skill.allowed_tools:
+            allowed_set = set(skill.allowed_tools)
+            filtered = [t for t in tools if t.get("name") in allowed_set]
+            if filtered:
+                tools = filtered
+
+        # F12: restrict tools for untrusted skills
+        restricted = skill.get_restricted_tools()
+        if restricted:
+            tools = [t for t in tools if t.get("name") not in restricted]
+            logger.info(
+                "Fork execution of untrusted skill '%s' (trust=%s): restricted %d tools",
+                skill.skill_id, skill.trust_level, len(restricted),
+            )
+
+        # Determine endpoint override from skill metadata
+        endpoint_override = None
+        if skill.model:
+            endpoint_override = skill.model
+
+        try:
+            result = await self.agent.reasoning_engine.run(
+                fork_messages,
+                tools=tools,
+                system_prompt=fork_system,
+                base_system_prompt=fork_system,
+                task_description=f"Fork execution: {skill.name} — {task[:200]}",
+                session_type="cli",
+                conversation_id=fork_conv_id,
+                is_sub_agent=True,
+                endpoint_override=endpoint_override,
+            )
+        except Exception as e:
+            logger.error("Fork execution of skill '%s' failed: %s", skill_name, e, exc_info=True)
+            result = f"技能执行失败: {e}"
+        finally:
+            self._cleanup_fork_allowlist(skill)
+
+        # F11: run after_execute hook
+        if hook_runner and hook_runner.has_hook("after_execute"):
+            try:
+                hook_runner.run_hook("after_execute")
+            except Exception as e:
+                logger.warning("after_execute hook for '%s' failed: %s", skill.skill_id, e)
+
+        return self._truncate_skill_content("execute_skill", result)
+
+    @staticmethod
+    def _cleanup_fork_allowlist(skill) -> None:
+        """Clean up temporary tool allowlist injected for fork execution."""
+        if skill.allowed_tools:
+            try:
+                from openakita.core.policy import get_policy_engine
+                get_policy_engine().remove_skill_allowlist(skill.skill_id)
+            except Exception:
+                pass
+
+    def _uninstall_skill(self, params: dict) -> str:
+        """F14: 卸载外部技能"""
+        import shutil
+
+        skill_name = params["skill_name"]
+
+        # Resolve via registry first
+        skill = self.agent.skill_registry.get(skill_name)
+
+        from openakita.config import settings as _cfg
+
+        if skill:
+            if skill.system:
+                return f"系统技能 '{skill.name}' 不可卸载。"
+            skill_dir = skill.skill_dir
+            display_name = skill.name
+            skill_id = skill.skill_id
+        else:
+            # Fallback: try to find in skills/ directory
+            skill_dir = _cfg.skills_path / skill_name
+            if not skill_dir.exists():
+                return f"未找到技能 '{skill_name}'，无法卸载。"
+            display_name = skill_name
+            skill_id = skill_name
+
+        # Path safety check
+        skills_root = _cfg.skills_path.resolve()
+        try:
+            skill_dir_resolved = skill_dir.resolve()
+            skill_dir_resolved.relative_to(skills_root)
+        except (ValueError, OSError):
+            return f"安全限制：不允许卸载 skills/ 目录之外的技能。"
+
+        if not skill_dir_resolved.exists():
+            return f"技能目录不存在: {display_name}"
+
+        # Check for system skill marker in SKILL.md
+        skill_md = skill_dir_resolved / "SKILL.md"
+        if skill_md.exists():
+            try:
+                content = skill_md.read_text(encoding="utf-8", errors="replace")[:500]
+                if "system: true" in content.lower():
+                    return f"系统技能 '{display_name}' 不可卸载。"
+            except Exception:
+                pass
+
+        # Perform deletion
+        try:
+            shutil.rmtree(str(skill_dir_resolved))
+        except Exception as e:
+            logger.error("Failed to uninstall skill '%s': %s", skill_name, e)
+            return f"卸载失败: {e}"
+
+        # Unregister from registry
+        if self.agent.skill_registry.get(skill_id):
+            self.agent.skill_registry.unregister(skill_id)
+
+        # Refresh catalog and tools
+        self.agent.skill_catalog.invalidate_cache()
+        self.agent._update_skill_tools()
+        notify_skills_changed("uninstall")
+
+        # Clean up activation manager
+        activation = getattr(self.agent, "_skill_activation", None)
+        if activation:
+            activation.unregister(skill_id)
+
+        # Clean up policy allowlists
+        try:
+            from openakita.core.policy import get_policy_engine
+            get_policy_engine().remove_skill_allowlist(skill_id)
+        except Exception:
+            pass
+
+        return (
+            f"✅ 技能 '{display_name}' 已卸载。\n\n"
+            f"已删除目录及所有文件，并从系统中注销。"
+        )
 
 
 def create_handler(agent: "Agent"):

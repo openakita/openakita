@@ -15,6 +15,30 @@ from ..types import EndpointConfig, LLMRequest, LLMResponse
 
 logger = logging.getLogger(__name__)
 
+_SSE_FIELDS = frozenset({"data", "event", "id", "retry"})
+
+
+def parse_sse_field(line: str) -> tuple[str, str] | None:
+    """Parse an SSE line into (field_name, field_value).
+
+    Recognizes the four standard SSE fields (data, event, id, retry).
+    Per the spec, one leading space after the colon is stripped from the value.
+    Returns None for empty lines, comments (starting with ':'), and
+    non-SSE content (e.g. raw JSON error bodies some providers send).
+    """
+    if not line or line.startswith(":"):
+        return None
+    colon = line.find(":")
+    if colon < 1:
+        return None
+    field = line[:colon]
+    if field not in _SSE_FIELDS:
+        return None
+    value = line[colon + 1:]
+    if value.startswith(" "):
+        value = value[1:]
+    return (field, value)
+
 
 class RPMRateLimiter:
     """滑动窗口 RPM (Requests Per Minute) 限流器。
@@ -326,8 +350,11 @@ class LLMProvider(ABC):
     def _classify_error(error: str) -> str:
         """根据错误信息自动分类
 
-        分类优先级：quota > auth > structural > transient > unknown
+        分类优先级：quota > auth > rate_limit(→transient)
+                    > model_unavailable(→structural) > structural > transient > unknown
         quota 必须在 auth 之前检测，因为 403 配额耗尽也包含 "403" 关键字。
+        rate_limit 必须在 structural 之前检测，因为某些提供商 429 响应体含 "invalid_request"。
+        model_unavailable 必须在 transient 之前检测，因为也返回 503 状态码。
 
         """
         err_lower = error.lower()
@@ -345,6 +372,24 @@ class LLMProvider(ABC):
             "auth", "401", "403", "api_key", "invalid key", "permission",
         ]):
             return "auth"
+
+        # 限速类（必须在 structural 之前，某些提供商 429 响应体含 "invalid_request"）
+        if any(kw in err_lower for kw in [
+            "rate limit", "rate_limit", "too many requests",
+            "rate reaches maximum", "request rate",
+            "(429)",
+        ]):
+            return "transient"
+
+        # 模型不可用类（必须在 transient 之前，因为也返回 503 状态码）
+        if any(kw in err_lower for kw in [
+            "model_not_found", "model not found",
+            "no available channel",
+            "model_decommissioned", "deprecated_model",
+            "model_not_available", "model not available",
+            "model does not exist",
+        ]):
+            return "structural"
 
         # 结构性/格式类
         # 注意: 用 "(400)" 而非 "400"，避免匹配 HTML 中的 CSS 类名等内容

@@ -7,6 +7,7 @@
 - cancel_scheduled_task: 取消任务
 - update_scheduled_task: 更新任务
 - trigger_scheduled_task: 立即触发
+- query_task_executions: 查询执行历史
 """
 
 import logging
@@ -28,6 +29,7 @@ class ScheduledHandler:
         "cancel_scheduled_task",
         "update_scheduled_task",
         "trigger_scheduled_task",
+        "query_task_executions",
     ]
 
     def __init__(self, agent: "Agent"):
@@ -55,9 +57,11 @@ class ScheduledHandler:
         elif tool_name == "cancel_scheduled_task":
             return await self._cancel_task(params)
         elif tool_name == "update_scheduled_task":
-            return self._update_task(params)
+            return await self._update_task(params)
         elif tool_name == "trigger_scheduled_task":
             return await self._trigger_task(params)
+        elif tool_name == "query_task_executions":
+            return self._query_executions(params)
         else:
             return f"❌ Unknown scheduled tool: {tool_name}"
 
@@ -65,10 +69,26 @@ class ScheduledHandler:
         """创建定时任务"""
         from ...core.im_context import get_im_session
         from ...scheduler import ScheduledTask, TriggerType
-        from ...scheduler.task import TaskType
+        from ...scheduler.task import TaskSource, TaskType
 
-        trigger_type = TriggerType(params["trigger_type"])
-        task_type = TaskType(params.get("task_type", "task"))
+        # 必填字段校验
+        for field in ("name", "description", "trigger_type", "trigger_config"):
+            if field not in params or not params[field]:
+                return f"❌ 缺少必填参数: {field}"
+
+        try:
+            trigger_type = TriggerType(params["trigger_type"])
+        except ValueError:
+            return f"❌ 不支持的触发类型: {params['trigger_type']}（支持: once, interval, cron）"
+
+        try:
+            task_type = TaskType(params.get("task_type", "reminder"))
+        except ValueError:
+            return f"❌ 不支持的任务类型: {params.get('task_type')}（支持: reminder, task）"
+
+        trigger_config = params.get("trigger_config", {})
+        if not isinstance(trigger_config, dict):
+            return "❌ trigger_config 必须是一个对象"
 
         # ==================== run_at 合理性校验 ====================
         if trigger_type == TriggerType.ONCE:
@@ -128,11 +148,16 @@ class ScheduledHandler:
             user_id=user_id,
             channel_id=channel_id,
             chat_id=chat_id,
+            task_source=TaskSource.CHAT,
         )
         task.metadata["notify_on_start"] = params.get("notify_on_start", True)
         task.metadata["notify_on_complete"] = params.get("notify_on_complete", True)
 
-        task_id = await self.agent.task_scheduler.add_task(task)
+        try:
+            task_id = await self.agent.task_scheduler.add_task(task)
+        except ValueError as e:
+            return f"❌ {e}"
+
         next_run = task.next_run.strftime("%Y-%m-%d %H:%M:%S") if task.next_run else "待计算"
 
         type_display = "📝 简单提醒" if task_type == TaskType.REMINDER else "🔧 复杂任务"
@@ -171,42 +196,48 @@ class ScheduledHandler:
 
     async def _cancel_task(self, params: dict) -> str:
         """取消任务"""
-        task_id = params["task_id"]
-        success = await self.agent.task_scheduler.remove_task(task_id)
+        task_id = params.get("task_id")
+        if not task_id:
+            return "❌ 缺少必填参数: task_id"
 
-        if success:
+        result = await self.agent.task_scheduler.remove_task(task_id)
+
+        if result == "ok":
             return f"✅ 任务 {task_id} 已取消"
+        elif result == "system_task":
+            return f"⚠️ 「{task_id}」是系统内置任务，不能删除。如需暂停，可以用 update_scheduled_task 设置 enabled=false"
         else:
             return f"❌ 任务 {task_id} 不存在"
 
-    def _update_task(self, params: dict) -> str:
-        """更新任务"""
-        task_id = params["task_id"]
+    async def _update_task(self, params: dict) -> str:
+        """更新任务（通过 scheduler 公共 API）"""
+        task_id = params.get("task_id")
+        if not task_id:
+            return "❌ 缺少必填参数: task_id"
         task = self.agent.task_scheduler.get_task(task_id)
         if not task:
             return f"❌ 任务 {task_id} 不存在"
 
         changes = []
+        updates: dict = {}
+
         if "notify_on_start" in params:
-            task.metadata["notify_on_start"] = params["notify_on_start"]
+            metadata = dict(task.metadata)
+            metadata["notify_on_start"] = params["notify_on_start"]
+            updates["metadata"] = metadata
             changes.append("开始通知: " + ("开" if params["notify_on_start"] else "关"))
         if "notify_on_complete" in params:
-            task.metadata["notify_on_complete"] = params["notify_on_complete"]
+            metadata = updates.get("metadata", dict(task.metadata))
+            metadata["notify_on_complete"] = params["notify_on_complete"]
+            updates["metadata"] = metadata
             changes.append("完成通知: " + ("开" if params["notify_on_complete"] else "关"))
-        if "enabled" in params:
-            if params["enabled"]:
-                task.enable()
-                changes.append("已启用")
-            else:
-                task.disable()
-                changes.append("已暂停")
 
-        # 修改推送通道
         if "target_channel" in params:
             target_channel = params["target_channel"]
             resolved = self._resolve_target_channel(target_channel)
             if resolved:
-                task.channel_id, task.chat_id = resolved
+                updates["channel_id"] = resolved[0]
+                updates["chat_id"] = resolved[1]
                 changes.append(f"推送通道: {target_channel}")
             else:
                 return (
@@ -214,7 +245,16 @@ class ScheduledHandler:
                     f"已配置的通道: {self._list_available_channels()}"
                 )
 
-        self.agent.task_scheduler._save_tasks()
+        if updates:
+            await self.agent.task_scheduler.update_task(task_id, updates)
+
+        if "enabled" in params:
+            if params["enabled"]:
+                await self.agent.task_scheduler.enable_task(task_id)
+                changes.append("已启用")
+            else:
+                await self.agent.task_scheduler.disable_task(task_id)
+                changes.append("已暂停")
 
         if changes:
             return f"✅ 任务 {task.name} 已更新: " + ", ".join(changes)
@@ -222,14 +262,23 @@ class ScheduledHandler:
 
     async def _trigger_task(self, params: dict) -> str:
         """立即触发任务"""
-        task_id = params["task_id"]
+        task_id = params.get("task_id")
+        if not task_id:
+            return "❌ 缺少必填参数: task_id"
+
+        task = self.agent.task_scheduler.get_task(task_id)
+        if not task:
+            return f"❌ 任务 {task_id} 不存在"
+        if not task.enabled:
+            return f"⚠️ 任务「{task.name}」已被暂停，请先恢复后再触发"
+
         execution = await self.agent.task_scheduler.trigger_now(task_id)
 
         if execution:
             status = "成功" if execution.status == "success" else "失败"
             return f"✅ 任务已触发执行，状态: {status}\n结果: {execution.result or execution.error or 'N/A'}"
         else:
-            return f"❌ 任务 {task_id} 不存在"
+            return f"❌ 任务 {task_id} 正在执行中或暂时无法触发"
 
     def _get_gateway(self):
         """获取消息网关实例"""
@@ -353,6 +402,33 @@ class ScheduledHandler:
             running.append(f"{name}({status})")
 
         return ", ".join(running) if running else "（无已配置的通道）"
+
+    def _query_executions(self, params: dict) -> str:
+        """查询执行历史"""
+        task_id = params.get("task_id")
+        limit = min(params.get("limit", 10), 50)
+
+        execs = self.agent.task_scheduler.get_executions(
+            task_id=task_id, limit=limit
+        )
+
+        if not execs:
+            if task_id:
+                return f"任务 {task_id} 暂无执行记录"
+            return "暂无任何任务执行记录"
+
+        lines = []
+        for e in reversed(execs):
+            time_str = e.started_at.strftime("%m-%d %H:%M") if e.started_at else "?"
+            status_icon = "✅" if e.status == "success" else "❌"
+            duration = f"{e.duration_seconds:.1f}s" if e.duration_seconds else "-"
+            line = f"  {status_icon} {time_str} | 耗时 {duration}"
+            if e.error:
+                line += f" | 错误: {e.error[:100]}"
+            lines.append(line)
+
+        header = f"任务 {task_id} 的" if task_id else ""
+        return f"📋 {header}最近 {len(execs)} 条执行记录：\n" + "\n".join(lines)
 
 
 def create_handler(agent: "Agent"):

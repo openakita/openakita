@@ -27,9 +27,12 @@ DYNAMIC_AGENT_POLICIES = {
 
 
 class AgentToolHandler:
-    """Handles delegate_to_agent, delegate_parallel, spawn_agent and create_agent tool calls."""
+    """Handles agent management tool calls including delegation, lifecycle, and messaging."""
 
-    TOOLS = ["delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent"]
+    TOOLS = [
+        "delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent",
+        "task_stop", "send_agent_message",
+    ]
 
     def __init__(self, agent: Agent):
         self.agent = agent
@@ -43,7 +46,11 @@ class AgentToolHandler:
                 f"❌ 你是子 Agent，不允许使用 {tool_name}。"
                 "请直接用你自己的工具完成任务。"
             )
-        if tool_name == "delegate_to_agent":
+        if tool_name == "task_stop":
+            return await self._task_stop(params)
+        elif tool_name == "send_agent_message":
+            return await self._send_message(params)
+        elif tool_name == "delegate_to_agent":
             return await self._delegate(params)
         elif tool_name == "delegate_parallel":
             return await self._delegate_parallel(params)
@@ -596,6 +603,76 @@ class AgentToolHandler:
         if best_score >= 0.5:
             return best_profile
         return None
+
+    # ─── task_stop ───
+    async def _task_stop(self, params: dict[str, Any]) -> str:
+        """Stop a running background agent or shell process."""
+        target_id = params.get("target_id", "").strip()
+        reason = params.get("reason", "user requested stop")
+        if not target_id:
+            return "task_stop requires a 'target_id' parameter."
+
+        # Try to cancel via agent pool
+        pool = getattr(self.agent, "_agent_pool", None)
+        if pool:
+            for inst in pool.values():
+                if getattr(inst, "name", "") == target_id or getattr(inst, "id", "") == target_id:
+                    state = getattr(inst, "agent_state", None)
+                    if state and hasattr(state, "cancel"):
+                        state.cancel(reason)
+                        logger.info(f"[TaskStop] Cancelled agent: {target_id}")
+                        return f"Agent '{target_id}' has been cancelled. Reason: {reason}"
+
+        # Try to cancel via background tasks
+        bg_tasks = getattr(self.agent, "_background_tasks", {})
+        task = bg_tasks.get(target_id)
+        if task and not task.done():
+            task.cancel()
+            logger.info(f"[TaskStop] Cancelled background task: {target_id}")
+            return f"Background task '{target_id}' has been cancelled. Reason: {reason}"
+
+        return f"No running agent or task found with ID '{target_id}'."
+
+    # ─── send_agent_message ───
+    async def _send_message(self, params: dict[str, Any]) -> str:
+        """Send a message to another active agent via orchestrator mailbox."""
+        target = params.get("target", "").strip()
+        message = params.get("message", "").strip()
+        msg_type = params.get("message_type", "text")
+        if not target or not message:
+            return "send_agent_message requires 'target' and 'message' parameters."
+
+        orchestrator = self._get_orchestrator()
+        if orchestrator is None:
+            return "❌ Orchestrator not available — cannot deliver messages"
+
+        msg_payload = {
+            "from": getattr(self.agent, "name", "orchestrator"),
+            "type": msg_type,
+            "message": message,
+            "timestamp": time.time(),
+        }
+
+        if target == "*":
+            pool = getattr(self.agent, "_agent_pool", None)
+            if not pool:
+                return "No active agents to send messages to."
+            delivered = []
+            for inst_id, inst in pool.items():
+                name = getattr(inst, "name", inst_id)
+                mailbox = orchestrator.get_mailbox(inst_id)
+                await mailbox.send(msg_payload)
+                delivered.append(name)
+        else:
+            mailbox = orchestrator.get_mailbox(target)
+            await mailbox.send(msg_payload)
+            delivered = [target]
+
+        if not delivered:
+            return f"No active agent found with name '{target}'."
+
+        logger.info(f"[SendMessage] Delivered to: {delivered}")
+        return f"Message delivered to: {', '.join(delivered)}"
 
 
 def create_handler(agent: Agent):

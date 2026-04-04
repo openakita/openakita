@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,23 @@ class TaskType(Enum):
     TASK = "task"  # 复杂任务（需要 LLM 执行，会发送开始/结束通知）
 
 
+class TaskSource(Enum):
+    """任务来源，用于区分聊天生成、插件生成和系统内置任务。"""
+
+    MANUAL = "manual"
+    CHAT = "chat"
+    PLUGIN = "plugin"
+    SYSTEM = "system"
+    IMPORT = "import"
+
+
+class TaskDurability(Enum):
+    """任务持久化级别。当前调度器默认都是持久化任务。"""
+
+    PERSISTENT = "persistent"
+    SESSION = "session"
+
+
 class TaskStatus(Enum):
     """任务状态"""
 
@@ -38,6 +56,7 @@ class TaskStatus(Enum):
     FAILED = "failed"  # 失败
     DISABLED = "disabled"  # 已禁用
     CANCELLED = "cancelled"  # 已取消
+    MISSED = "missed"  # 错过执行（程序停机期间过期的一次性任务）
 
 
 @dataclass
@@ -62,6 +81,12 @@ class TaskExecution:
         )
 
     def finish(self, success: bool, result: str = None, error: str = None) -> None:
+        if self.finished_at is not None:
+            logger.warning(
+                f"TaskExecution {self.id}: finish() called again "
+                f"(already {self.status}), ignoring"
+            )
+            return
         self.finished_at = datetime.now()
         self.status = "success" if success else "failed"
         self.result = result
@@ -83,17 +108,34 @@ class TaskExecution:
 
     @classmethod
     def from_dict(cls, data: dict) -> "TaskExecution":
+        exec_id = data.get("id")
+        task_id = data.get("task_id")
+        started_at_str = data.get("started_at")
+
+        if not exec_id or not task_id or not started_at_str:
+            raise ValueError(
+                f"TaskExecution missing required fields: "
+                f"id={exec_id!r}, task_id={task_id!r}, started_at={started_at_str!r}"
+            )
+
+        duration = data.get("duration_seconds")
+        if duration is not None:
+            try:
+                duration = float(duration)
+            except (TypeError, ValueError):
+                duration = None
+
         return cls(
-            id=data["id"],
-            task_id=data["task_id"],
-            started_at=datetime.fromisoformat(data["started_at"]),
+            id=exec_id,
+            task_id=task_id,
+            started_at=datetime.fromisoformat(started_at_str),
             finished_at=datetime.fromisoformat(data["finished_at"])
             if data.get("finished_at")
             else None,
             status=data.get("status", "running"),
             result=data.get("result"),
             error=data.get("error"),
-            duration_seconds=data.get("duration_seconds"),
+            duration_seconds=duration,
         )
 
 
@@ -133,6 +175,10 @@ class ScheduledTask:
 
     # 多 Agent 配置（单 Agent 模式下始终为 "default"，无功能影响）
     agent_profile_id: str = "default"
+
+    # 领域边界
+    task_source: TaskSource = TaskSource.MANUAL
+    durability: TaskDurability = TaskDurability.PERSISTENT
 
     # 状态
     enabled: bool = True
@@ -265,31 +311,112 @@ class ScheduledTask:
             **kwargs,
         )
 
+    # 合法状态转换表：当前状态 → 允许的目标状态集合
+    _VALID_TRANSITIONS: ClassVar[dict[TaskStatus, set[TaskStatus]]] = {
+        TaskStatus.PENDING: {
+            TaskStatus.SCHEDULED,
+            TaskStatus.RUNNING,
+            TaskStatus.CANCELLED,
+            TaskStatus.DISABLED,
+        },
+        TaskStatus.SCHEDULED: {
+            TaskStatus.RUNNING, TaskStatus.DISABLED, TaskStatus.CANCELLED,
+            TaskStatus.COMPLETED, TaskStatus.MISSED,
+        },
+        TaskStatus.RUNNING: {
+            TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SCHEDULED, TaskStatus.CANCELLED,
+        },
+        TaskStatus.COMPLETED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
+        TaskStatus.FAILED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
+        TaskStatus.DISABLED: {TaskStatus.SCHEDULED, TaskStatus.CANCELLED},
+        TaskStatus.CANCELLED: {TaskStatus.SCHEDULED},
+        TaskStatus.MISSED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
+    }
+
+    def _check_transition(self, target: TaskStatus) -> bool:
+        """检查状态转换是否合法。不合法时记录警告并返回 False。"""
+        allowed = self._VALID_TRANSITIONS.get(self.status, set())
+        if target not in allowed:
+            logger.warning(
+                f"Task {self.id}: invalid state transition {self.status.value} → {target.value} "
+                f"(allowed: {[s.value for s in allowed]})"
+            )
+            return False
+        return True
+
     def enable(self) -> None:
         """启用任务"""
+        if self.status == TaskStatus.COMPLETED and self.trigger_type == TriggerType.ONCE:
+            logger.warning(
+                f"Task {self.id}: cannot re-enable completed one-time task "
+                f"(run_at has already passed)"
+            )
+            return
+        if self.status == TaskStatus.SCHEDULED and self.enabled:
+            return
+        if self.status == TaskStatus.SCHEDULED and not self.enabled:
+            self.enabled = True
+            self.updated_at = datetime.now()
+            return
+        if not self._check_transition(TaskStatus.SCHEDULED):
+            return
         self.enabled = True
         self.status = TaskStatus.SCHEDULED
         self.updated_at = datetime.now()
 
     def disable(self) -> None:
         """禁用任务"""
+        if not self._check_transition(TaskStatus.DISABLED):
+            return
         self.enabled = False
         self.status = TaskStatus.DISABLED
         self.updated_at = datetime.now()
 
     def cancel(self) -> None:
         """取消任务"""
+        if not self._check_transition(TaskStatus.CANCELLED):
+            return
         self.enabled = False
         self.status = TaskStatus.CANCELLED
         self.updated_at = datetime.now()
 
+    def force_reset_to_scheduled(self, reason: str = "") -> None:
+        """Force-reset from RUNNING to SCHEDULED (for shutdown/recovery).
+
+        Uses the state machine when possible, falls back to direct assignment
+        only if the transition is blocked, and always logs the audit trail.
+        """
+        if self.status == TaskStatus.RUNNING:
+            if not self._check_transition(TaskStatus.SCHEDULED):
+                logger.warning(
+                    f"Task {self.id}: force_reset bypassing state machine "
+                    f"({self.status.value} → scheduled), reason={reason}"
+                )
+            self.status = TaskStatus.SCHEDULED
+            self.updated_at = datetime.now()
+            logger.info(f"Task {self.id}: force-reset to SCHEDULED, reason={reason}")
+        else:
+            logger.debug(
+                f"Task {self.id}: force_reset_to_scheduled called "
+                f"in {self.status.value}, no-op"
+            )
+
     def mark_running(self) -> None:
         """标记为执行中"""
+        if not self._check_transition(TaskStatus.RUNNING):
+            return
         self.status = TaskStatus.RUNNING
         self.updated_at = datetime.now()
 
     def mark_completed(self, next_run: datetime | None = None) -> None:
         """标记执行完成"""
+        if self.status != TaskStatus.RUNNING:
+            logger.warning(
+                f"Task {self.id}: mark_completed called from {self.status.value}, "
+                f"expected RUNNING"
+            )
+            return
+
         self.last_run = datetime.now()
         self.run_count += 1
         self.fail_count = 0
@@ -304,15 +431,25 @@ class ScheduledTask:
 
     def mark_failed(self, error: str = None) -> None:
         """标记执行失败"""
+        if self.status != TaskStatus.RUNNING:
+            logger.warning(
+                f"Task {self.id}: mark_failed called from {self.status.value}, "
+                f"expected RUNNING"
+            )
+            return
+
         self.last_run = datetime.now()
         self.fail_count += 1
         self.updated_at = datetime.now()
+        if error:
+            if not self.metadata:
+                self.metadata = {}
+            self.metadata["last_error"] = error
 
-        # 失败后仍然保持调度（除非连续失败太多次）
         if self.fail_count >= 5:
             self.status = TaskStatus.FAILED
             self.enabled = False
-            logger.warning(f"Task {self.id} disabled after {self.fail_count} failures")
+            logger.warning(f"Task {self.id} disabled after {self.fail_count} consecutive failures")
         else:
             self.status = TaskStatus.SCHEDULED
 
@@ -348,6 +485,8 @@ class ScheduledTask:
             "chat_id": self.chat_id,
             "user_id": self.user_id,
             "agent_profile_id": self.agent_profile_id,
+            "task_source": self.task_source.value,
+            "durability": self.durability.value,
             "enabled": self.enabled,
             "status": self.status.value,
             "deletable": self.deletable,
@@ -362,14 +501,73 @@ class ScheduledTask:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ScheduledTask":
-        """反序列化"""
+        """反序列化（对损坏/残缺数据尽量容错）"""
+        task_id = data.get("id")
+        name = data.get("name")
+        trigger_type_str = data.get("trigger_type")
+
+        if not task_id or not name or not trigger_type_str:
+            raise ValueError(
+                f"ScheduledTask missing required fields: "
+                f"id={task_id!r}, name={name!r}, trigger_type={trigger_type_str!r}"
+            )
+
+        trigger_config = data.get("trigger_config", {})
+        if not isinstance(trigger_config, dict):
+            trigger_config = {}
+
+        metadata = data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        def _safe_int(val, default=0):
+            try:
+                return int(val) if val is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        now_iso = datetime.now().isoformat()
+
+        try:
+            trigger_type = TriggerType(trigger_type_str)
+        except ValueError:
+            raise ValueError(f"Unknown trigger_type: {trigger_type_str!r}")
+
+        try:
+            task_type = TaskType(data.get("task_type", "task"))
+        except ValueError:
+            task_type = TaskType.TASK
+
+        try:
+            task_source = TaskSource(data.get("task_source", "manual"))
+        except ValueError:
+            task_source = TaskSource.MANUAL
+
+        try:
+            durability = TaskDurability(data.get("durability", "persistent"))
+        except ValueError:
+            durability = TaskDurability.PERSISTENT
+
+        try:
+            status = TaskStatus(data.get("status", "pending"))
+        except ValueError:
+            status = TaskStatus.PENDING
+
+        def _parse_dt(val: str | None, fallback: str | None = None) -> datetime | None:
+            if not val:
+                return datetime.fromisoformat(fallback) if fallback else None
+            try:
+                return datetime.fromisoformat(val)
+            except (ValueError, TypeError):
+                return datetime.fromisoformat(fallback) if fallback else None
+
         return cls(
-            id=data["id"],
-            name=data["name"],
-            description=data["description"],
-            trigger_type=TriggerType(data["trigger_type"]),
-            trigger_config=data["trigger_config"],
-            task_type=TaskType(data.get("task_type", "task")),
+            id=task_id,
+            name=name,
+            description=data.get("description", ""),
+            trigger_type=trigger_type,
+            trigger_config=trigger_config,
+            task_type=task_type,
             reminder_message=data.get("reminder_message"),
             prompt=data.get("prompt", ""),
             script_path=data.get("script_path"),
@@ -378,16 +576,18 @@ class ScheduledTask:
             chat_id=data.get("chat_id"),
             user_id=data.get("user_id"),
             agent_profile_id=data.get("agent_profile_id", "default"),
+            task_source=task_source,
+            durability=durability,
             enabled=data.get("enabled", True),
-            status=TaskStatus(data.get("status", "pending")),
+            status=status,
             deletable=data.get("deletable", True),
-            last_run=datetime.fromisoformat(data["last_run"]) if data.get("last_run") else None,
-            next_run=datetime.fromisoformat(data["next_run"]) if data.get("next_run") else None,
-            run_count=data.get("run_count", 0),
-            fail_count=data.get("fail_count", 0),
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
-            metadata=data.get("metadata", {}),
+            last_run=_parse_dt(data.get("last_run")),
+            next_run=_parse_dt(data.get("next_run")),
+            run_count=_safe_int(data.get("run_count"), 0),
+            fail_count=_safe_int(data.get("fail_count"), 0),
+            created_at=_parse_dt(data.get("created_at"), now_iso),
+            updated_at=_parse_dt(data.get("updated_at"), now_iso),
+            metadata=metadata,
         )
 
     def __str__(self) -> str:

@@ -294,6 +294,21 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
+        # Qwen3.5 系列 - 双模（支持 enable_thinking 切换）
+        "qwen3.5-plus": {
+            "text": True,
+            "vision": True,
+            "video": True,
+            "tools": True,
+            "thinking": True,
+        },
+        "qwen3.5-turbo": {
+            "text": True,
+            "vision": True,
+            "video": True,
+            "tools": True,
+            "thinking": True,
+        },
         # Qwen3 开源 - 仅思考模式
         "qwen3-235b-a22b-thinking": {
             "text": True,

@@ -16,6 +16,29 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+_SENSITIVE_KEYS = frozenset({
+    "api_key", "password", "secret", "token", "credential", "auth",
+    "access_key", "secret_key", "private_key", "apikey", "passwd",
+})
+
+
+def _mask_sensitive(text: str, max_len: int = 200) -> str:
+    """对 params_preview 中可能包含的敏感信息进行脱敏。"""
+    if not text:
+        return text
+    masked = text[:max_len]
+    for key in _SENSITIVE_KEYS:
+        if key in masked.lower():
+            import re
+            masked = re.sub(
+                rf"({key}['\"]?\s*[:=]\s*['\"]?)([^'\"\\s,}}]+)",
+                r"\1***MASKED***",
+                masked,
+                flags=re.IGNORECASE,
+            )
+    return masked
+
+
 class AuditLogger:
     """Append-only JSONL audit logger for policy decisions."""
 
@@ -38,7 +61,7 @@ class AuditLogger:
             "decision": decision,
             "reason": reason,
             "policy": policy,
-            "params": params_preview[:200],
+            "params": _mask_sensitive(params_preview),
         }
         if metadata:
             entry["meta"] = metadata

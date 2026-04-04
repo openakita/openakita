@@ -152,6 +152,12 @@ export type ChatArtifact = {
   size?: number;
 };
 
+export type ChatErrorInfo = {
+  message: string;
+  category: "auth" | "quota" | "timeout" | "content_filter" | "network" | "server" | "unknown";
+  raw?: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -164,6 +170,8 @@ export type ChatMessage = {
   attachments?: ChatAttachment[] | null;
   artifacts?: ChatArtifact[] | null;
   thinkingChain?: ChainGroup[] | null;
+  errorInfo?: ChatErrorInfo | null;
+  usage?: { input_tokens: number; output_tokens: number; total_tokens?: number } | null;
   timestamp: number;
   streaming?: boolean;
 };
@@ -235,6 +243,13 @@ export type ChatTodoStep = {
   result?: string | null;
 };
 
+export type PlanApprovalEvent = {
+  conversation_id: string;
+  summary: string;
+  plan_id: string;
+  plan_file: string;
+};
+
 export type ChatAskQuestion = {
   id: string;
   prompt: string;
@@ -259,6 +274,8 @@ export type ChatAttachment = {
   previewUrl?: string;
   size?: number;
   mimeType?: string;
+  /** Transient upload tracking ID — not persisted to backend */
+  _uploadId?: string;
 };
 
 export type ConversationStatus = "idle" | "running" | "completed" | "error";
@@ -271,6 +288,7 @@ export type ChatConversation = {
   messageCount: number;
   pinned?: boolean;
   titleGenerated?: boolean;
+  titleManuallySet?: boolean;
   agentProfileId?: string;
   endpointId?: string;
   status?: ConversationStatus;

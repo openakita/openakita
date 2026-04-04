@@ -25,8 +25,15 @@ class PluginManifest:
     permissions: list[str] = field(default_factory=list)
     requires: dict[str, Any] = field(default_factory=dict)
     provides: dict[str, Any] = field(default_factory=dict)
+    replaces: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+    depends: list[str] = field(default_factory=list)
     category: str = ""
     tags: list[str] = field(default_factory=list)
+    icon: str = ""
+    load_timeout: float = 10.0
+    hook_timeout: float = 5.0
+    retrieve_timeout: float = 3.0
 
 
 class PluginAPI(ABC):
@@ -52,7 +59,7 @@ class PluginAPI(ABC):
     def set_config(self, updates: dict) -> None: ...
 
     @abstractmethod
-    def get_data_dir(self) -> Path: ...
+    def get_data_dir(self) -> Path | None: ...
 
     @abstractmethod
     def register_tools(

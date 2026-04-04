@@ -96,7 +96,7 @@ export function SkillStoreView({ apiBaseUrl, visible }: SkillStoreViewProps) {
   return (
     <div>
       <div className="card" style={{ marginBottom: 16 }}>
-        <h2 className="cardTitle">Skill Store</h2>
+        <h2 className="cardTitle">{t("skillStore.title", "Skill Store")}</h2>
         <p style={{ color: "var(--muted)", fontSize: 13, margin: "4px 0 12px" }}>
           {t("skillStore.subtitle")}
         </p>

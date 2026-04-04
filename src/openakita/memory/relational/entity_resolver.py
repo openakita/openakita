@@ -95,6 +95,7 @@ class EntityResolver:
             resp = await self.brain.compiler_think(
                 prompt=prompt,
                 system="You are an entity resolution expert. Output valid JSON only.",
+                max_tokens=1024,
             )
             response_text = resp.content if hasattr(resp, "content") else str(resp)
             import json

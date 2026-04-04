@@ -130,41 +130,38 @@ class TaskExecutor:
         logger.info(f"TaskExecutor: executing reminder {task.id}")
 
         try:
-            # 1. 发送提醒消息（这是唯一的消息）
             message = task.reminder_message or task.prompt or f"⏰ 提醒: {task.name}"
             message_sent = False
 
             if task.channel_id and task.chat_id and self.gateway:
-                msg_id = await self.gateway.send(
-                    channel=task.channel_id,
-                    chat_id=task.chat_id,
-                    text=message,
+                message_sent = await self._deliver_reminder_message(
+                    task, message
                 )
-                if msg_id is None:
-                    # 部分 IM 平台（如 QQ 官方机器人）可能实际已送达但未返回 message_id，
-                    # 不视为硬失败，避免重试导致重复消息
-                    logger.warning(
-                        f"TaskExecutor: reminder {task.id} sent but no message_id returned "
-                        f"(message may have been delivered) for "
-                        f"{task.channel_id}/{task.chat_id}"
-                    )
-                message_sent = True
-                logger.info(f"TaskExecutor: reminder {task.id} message sent (message_id={msg_id})")
+            elif self.gateway:
+                # 有网关但任务未配置通道，尝试所有已知通道
+                message_sent = await self._deliver_via_fallback_channels(
+                    task, message
+                )
+            # else: 无网关，无法发送
 
-            # 2. 让 LLM 判断是否需要执行额外操作
-            # 这是为了防止设定任务时误判，把复杂任务变成了提醒
+            if not message_sent:
+                # 最后的兜底：尝试桌面通知
+                desktop_sent = await self._try_desktop_notify_fallback(task, message)
+                if not desktop_sent:
+                    return False, f"提醒投递失败: 所有通道均不可用，提醒内容「{message[:50]}」未能送达"
+
+                return True, f"提醒已通过桌面通知送达（IM 通道不可用）: {message[:80]}"
+
             should_execute = await self._check_if_needs_execution(task)
 
             if should_execute:
                 logger.info(
                     f"TaskExecutor: reminder {task.id} needs additional execution, upgrading to task"
                 )
-                # 转为复杂任务执行（注意：不要再发开始通知，因为提醒消息已发）
                 return await self._execute_complex_task_core(
                     task, skip_end_notification=message_sent
                 )
 
-            # 简单提醒完成，不发送"任务完成"通知
             logger.info(f"TaskExecutor: reminder {task.id} completed (no additional action needed)")
             return True, message
 
@@ -172,6 +169,117 @@ class TaskExecutor:
             error_msg = str(e)
             logger.error(f"TaskExecutor: reminder {task.id} failed: {error_msg}")
             return False, error_msg
+
+    async def _deliver_reminder_message(
+        self, task: ScheduledTask, message: str
+    ) -> bool:
+        """
+        向任务配置的主通道投递提醒消息。
+
+        Returns:
+            True 如果消息很可能已送达（含 msg_id=None 但通道活跃的情况）
+        """
+        channel_id = task.channel_id
+        chat_id = task.chat_id
+
+        # 检查主通道适配器是否存在且运行中
+        adapter = (
+            self.gateway.get_adapter(channel_id)
+            if hasattr(self.gateway, 'get_adapter')
+            else None
+        )
+        channel_active = adapter is not None and getattr(adapter, 'is_running', False)
+
+        try:
+            msg_id = await self.gateway.send(
+                channel=channel_id,
+                chat_id=chat_id,
+                text=message,
+            )
+        except Exception as e:
+            logger.warning(
+                f"TaskExecutor: reminder {task.id} primary send error: {e}"
+            )
+            msg_id = None
+            channel_active = False
+
+        if msg_id is not None:
+            logger.info(f"TaskExecutor: reminder {task.id} delivered (msg_id={msg_id})")
+            return True
+
+        if channel_active:
+            logger.warning(
+                f"TaskExecutor: reminder {task.id} sent to active channel "
+                f"{channel_id}/{chat_id} but no msg_id returned (likely delivered)"
+            )
+            return True
+
+        logger.warning(
+            f"TaskExecutor: reminder {task.id} failed on primary channel "
+            f"{channel_id}/{chat_id} (inactive), trying fallback channels"
+        )
+        return await self._deliver_via_fallback_channels(task, message)
+
+    async def _deliver_via_fallback_channels(
+        self, task: ScheduledTask, message: str
+    ) -> bool:
+        """尝试通过所有已知的备用 IM 通道投递提醒"""
+        targets = self._find_all_im_targets()
+        primary = (task.channel_id, task.chat_id)
+
+        for channel, chat_id in targets:
+            if (channel, chat_id) == primary:
+                continue  # 主通道已失败，跳过
+
+            adapter = (
+                self.gateway.get_adapter(channel)
+                if hasattr(self.gateway, 'get_adapter')
+                else None
+            )
+            if not adapter or not getattr(adapter, 'is_running', False):
+                continue
+
+            try:
+                msg_id = await self.gateway.send(
+                    channel=channel,
+                    chat_id=chat_id,
+                    text=message,
+                )
+                if msg_id is not None or (adapter and getattr(adapter, 'is_running', False)):
+                    logger.info(
+                        f"TaskExecutor: reminder {task.id} delivered via fallback "
+                        f"{channel}/{chat_id} (msg_id={msg_id})"
+                    )
+                    return True
+            except Exception as e:
+                logger.warning(
+                    f"TaskExecutor: fallback send failed for {channel}/{chat_id}: {e}"
+                )
+                continue
+
+        return False
+
+    async def _try_desktop_notify_fallback(
+        self, task: ScheduledTask, message: str
+    ) -> bool:
+        """当所有 IM 通道失败时，尝试桌面通知作为最后兜底"""
+        try:
+            from ..config import settings
+
+            if settings.desktop_notify_enabled:
+                from ..core.desktop_notify import notify_task_completed_async
+
+                await notify_task_completed_async(
+                    f"⏰ {task.name}: {message[:100]}",
+                    success=True,
+                    sound=settings.desktop_notify_sound,
+                )
+                logger.info(f"TaskExecutor: reminder {task.id} delivered via desktop notification")
+                return True
+        except Exception as e:
+            logger.debug(f"Desktop notification fallback failed for {task.id}: {e}")
+
+        return False
 
     async def _check_if_needs_execution(self, task: ScheduledTask) -> bool:
         """
@@ -288,8 +396,9 @@ class TaskExecutor:
                     self._run_agent(agent, prompt), timeout=task_timeout
                 )
             except TimeoutError:
-                error_msg = f"Task execution timed out after {task_timeout}s"
-                logger.error(f"TaskExecutor: {error_msg}")
+                timeout_display = f"{task_timeout // 60} 分钟" if task_timeout >= 60 else f"{task_timeout} 秒"
+                error_msg = f"任务执行超时（超过 {timeout_display} 未完成）"
+                logger.error(f"TaskExecutor: task {task.id} timed out after {task_timeout}s")
                 if not skip_end_notification:
                     await self._send_end_notification(task, success=False, message=error_msg)
                 return False, error_msg
@@ -362,22 +471,24 @@ class TaskExecutor:
         except Exception as e:
             logger.debug(f"Desktop notification failed for task {task.id}: {e}")
 
-        # IM 通道通知
+        # IM 通道结果投递
         if not task.channel_id or not task.chat_id or not self.gateway:
             logger.debug(f"Task {task.id} has no notification channel configured")
             return
 
-        if not task.metadata.get("notify_on_complete", True):
-            logger.debug(f"Task {task.id} has completion notification disabled")
+        if not message or not message.strip():
+            logger.debug(f"Task {task.id} produced empty result, skipping IM delivery")
             return
 
         try:
-            status = "✅ 任务完成" if success else "❌ 任务失败"
-            notification = f"""{status}: {task.name}
-
-结果:
-{message}
-"""
+            if task.metadata.get("notify_on_complete", True):
+                status = "✅ 任务完成" if success else "❌ 任务失败"
+                notification = f"{status}: {task.name}\n\n{message}"
+            else:
+                if not success:
+                    notification = f"❌ {task.name} 执行失败:\n{message}"
+                else:
+                    notification = message
 
             await self.gateway.send(
                 channel=task.channel_id,
@@ -392,21 +503,22 @@ class TaskExecutor:
 
     async def _setup_im_context(self, agent: Any, task: ScheduledTask) -> bool:
         """
-        为定时任务注入 IM 上下文，让 Agent 可以使用 IM 工具（如 deliver_artifacts / get_chat_history）
+        为定时任务注入 IM 上下文，让 Agent 可以使用 IM 工具（如 deliver_artifacts / get_chat_history）。
+        返回 True 表示设置成功（调用方应在 finally 中 _cleanup_im_context）。
         """
         try:
             from ..core.im_context import set_im_context
             from ..sessions import Session
 
-            # 创建虚拟 Session（用于 IM 工具上下文）
             virtual_session = Session.create(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
                 user_id=task.user_id or "scheduled_task",
             )
 
-            # 注入到协程上下文（避免并发串台）
-            set_im_context(session=virtual_session, gateway=self.gateway)
+            tokens = set_im_context(session=virtual_session, gateway=self.gateway)
+            # 保存 token 到 agent 上以便对称 reset
+            agent._im_context_tokens = tokens
 
             logger.info(f"Set up IM context for task {task.id}: {task.channel_id}/{task.chat_id}")
             return True
@@ -416,13 +528,15 @@ class TaskExecutor:
             return False
 
     def _cleanup_im_context(self, agent: Any) -> None:
-        """清理 IM 上下文"""
+        """对称清理 IM 上下文（使用 reset_im_context 恢复到原始状态）"""
         try:
-            from ..core.im_context import set_im_context
-
-            set_im_context(session=None, gateway=None)
-        except Exception:
-            pass
+            tokens = getattr(agent, "_im_context_tokens", None)
+            if tokens:
+                from ..core.im_context import reset_im_context
+                reset_im_context(tokens)
+                agent._im_context_tokens = None
+        except Exception as e:
+            logger.warning(f"Failed to cleanup IM context: {e}")
 
     async def _create_agent(self) -> Any:
         """创建 Agent 实例（不启动 scheduler，避免重复执行任务）"""
@@ -447,7 +561,7 @@ class TaskExecutor:
             result = await agent.execute_task_from_message(prompt)
             if isinstance(result, str):
                 return result
-            return result.data if result.success else result.error
+            return result.data if result.success else (result.error or "Unknown error")
         # 降级到普通 chat
         elif hasattr(agent, "chat"):
             return await agent.chat(prompt)
@@ -927,9 +1041,11 @@ class TaskExecutor:
         if task.channel_id and task.chat_id:
             context_parts.append("")
             if suppress_send_to_chat:
-                # 禁止发消息，由系统统一处理
                 context_parts.append(
-                    "注意: 不要尝试通过工具发送文本消息；系统会自动发送结果通知。请直接返回执行结果。"
+                    "重要: 不要通过工具发送文本消息。"
+                    "你的最终回复文本将被系统直接投递给用户，所以必须包含完整的执行结果和详细内容。"
+                    "不要只说「已完成」或「任务完成」——用户看到的就是你返回的文字，"
+                    "请把关键数据、结论、操作记录等全部写在最终回复中。"
                 )
             else:
                 context_parts.append(

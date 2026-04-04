@@ -21,6 +21,22 @@ from .state import PluginState
 logger = logging.getLogger(__name__)
 
 UNLOAD_TIMEOUT = 5.0
+_ALLOWED_HOST_REFS = frozenset({
+    "api_app",
+    "brain",
+    "channel_registry",
+    "external_retrieval_sources",
+    "gateway",
+    "mcp_client",
+    "memory_backends",
+    "memory_manager",
+    "search_backends",
+    "skill_catalog",
+    "skill_loader",
+    "tool_catalog",
+    "tool_definitions",
+    "tool_registry",
+})
 
 
 class PluginManager:
@@ -41,7 +57,7 @@ class PluginManager:
     ) -> None:
         self._plugins_dir = plugins_dir
         self._state_path = state_path or (plugins_dir.parent / "plugin_state.json")
-        self._host_refs = host_refs or {}
+        self._host_refs = self._filter_host_refs(host_refs or {})
 
         self._state = PluginState.load(self._state_path)
         self._error_tracker = PluginErrorTracker()
@@ -50,6 +66,15 @@ class PluginManager:
 
         self._loaded: dict[str, _LoadedPlugin] = {}
         self._failed: dict[str, str] = {}
+
+    @staticmethod
+    def _filter_host_refs(host_refs: dict[str, Any]) -> dict[str, Any]:
+        """Expose only the host references that plugins are expected to use."""
+        filtered = {k: v for k, v in host_refs.items() if k in _ALLOWED_HOST_REFS}
+        dropped = sorted(set(host_refs) - set(filtered))
+        if dropped:
+            logger.debug("PluginManager filtered host_refs: %s", dropped)
+        return filtered
 
     # --- Properties ---
 
@@ -60,6 +85,11 @@ class PluginManager:
     @property
     def loaded_count(self) -> int:
         return len(self._loaded)
+
+    @property
+    def loaded_plugins(self) -> dict[str, _LoadedPlugin]:
+        """Expose loaded plugins dict (read-only access for AgentFactory filtering)."""
+        return self._loaded
 
     @property
     def failed_count(self) -> int:
@@ -97,6 +127,39 @@ class PluginManager:
 
     # --- Loading ---
 
+    @staticmethod
+    def _topological_sort(
+        manifests: list[tuple[Path, PluginManifest]],
+    ) -> tuple[list[tuple[Path, PluginManifest]], list[str]]:
+        """Sort plugins by dependency order using Kahn's algorithm.
+
+        Returns (sorted_list, cyclic_ids).
+        Plugins involved in cycles are excluded and their IDs returned.
+        """
+        by_id: dict[str, tuple[Path, PluginManifest]] = {m.id: (d, m) for d, m in manifests}
+        in_degree: dict[str, int] = {mid: 0 for mid in by_id}
+        dependents: dict[str, list[str]] = {mid: [] for mid in by_id}
+
+        for mid, (_, m) in by_id.items():
+            for dep in m.depends:
+                if dep in by_id:
+                    in_degree[mid] += 1
+                    dependents[dep].append(mid)
+
+        queue = [mid for mid, deg in in_degree.items() if deg == 0]
+        sorted_ids: list[str] = []
+        while queue:
+            node = queue.pop(0)
+            sorted_ids.append(node)
+            for child in dependents.get(node, []):
+                in_degree[child] -= 1
+                if in_degree[child] == 0:
+                    queue.append(child)
+
+        cyclic = [mid for mid in by_id if mid not in sorted_ids]
+        result = [by_id[mid] for mid in sorted_ids]
+        return result, cyclic
+
     async def load_all(self) -> None:
         """Load all discovered and enabled plugins.
 
@@ -108,14 +171,23 @@ class PluginManager:
             logger.debug("No plugins found in %s", self._plugins_dir)
             return
 
+        # Parse all manifests first for topological sorting
+        parsed: list[tuple[Path, PluginManifest]] = []
         for plugin_dir in plugin_dirs:
             try:
                 manifest = parse_manifest(plugin_dir)
+                parsed.append((plugin_dir, manifest))
             except ManifestError as e:
                 logger.error("Skipping %s: %s", plugin_dir.name, e)
                 self._failed[plugin_dir.name] = str(e)
-                continue
 
+        sorted_plugins, cyclic_ids = self._topological_sort(parsed)
+        for cid in cyclic_ids:
+            msg = f"cyclic dependency detected, skipped"
+            logger.error("Plugin '%s' %s", cid, msg)
+            self._failed[cid] = msg
+
+        for plugin_dir, manifest in sorted_plugins:
             if not self._check_openakita_version(manifest):
                 continue
 
@@ -142,6 +214,14 @@ class PluginManager:
                     self._failed[manifest.id] = f"conflicts with {conflict}"
                     continue
 
+            if manifest.depends:
+                missing = [d for d in manifest.depends if d not in self._loaded]
+                if missing:
+                    msg = f"missing dependencies: {', '.join(missing)}"
+                    logger.warning("Plugin '%s' skipped: %s", manifest.id, msg)
+                    self._failed[manifest.id] = msg
+                    continue
+
             try:
                 await asyncio.wait_for(
                     self._load_single(manifest, plugin_dir),
@@ -162,7 +242,16 @@ class PluginManager:
                 self._state.record_error(manifest.id, msg)
 
         self._refresh_skill_catalog()
+        self._reload_llm_registries()
         self._save_state()
+
+    def _reload_llm_registries(self) -> None:
+        """Notify LLM registries to pick up plugin-provided providers."""
+        try:
+            from ..llm.registries import reload_registries
+            reload_registries()
+        except Exception as e:
+            logger.debug("LLM registry reload skipped: %s", e)
 
     async def _load_single(
         self, manifest: PluginManifest, plugin_dir: Path
@@ -182,10 +271,14 @@ class PluginManager:
         )
 
         plugin_instance: PluginBase | None = None
+        module_name = ""
+        sys_path_entry = ""
 
         try:
             if manifest.plugin_type == "python":
-                plugin_instance = self._load_python_plugin(manifest, plugin_dir)
+                plugin_instance, module_name, sys_path_entry = (
+                    self._load_python_plugin(manifest, plugin_dir)
+                )
                 plugin_instance.on_load(api)
                 self._try_load_plugin_skill(manifest, plugin_dir, api)
             elif manifest.plugin_type == "mcp":
@@ -201,11 +294,18 @@ class PluginManager:
             api=api,
             instance=plugin_instance,
             plugin_dir=plugin_dir,
+            module_name=module_name,
+            sys_path_entry=sys_path_entry,
         )
 
     def _load_python_plugin(
         self, manifest: PluginManifest, plugin_dir: Path
-    ) -> PluginBase:
+    ) -> tuple[PluginBase, str, str]:
+        """Load a Python plugin module.
+
+        Returns (instance, module_name, sys_path_entry) so the caller can
+        record them for cleanup on unload.
+        """
         entry_path = plugin_dir / manifest.entry
         if not entry_path.exists():
             raise FileNotFoundError(
@@ -260,7 +360,7 @@ class PluginManager:
                 f"Plugin.Plugin must be a subclass of PluginBase, got {type(plugin_class)}"
             )
 
-        return plugin_class()
+        return plugin_class(), module_name, plugin_dir_str if added_to_path else ""
 
     def _load_mcp_plugin(
         self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI
@@ -277,24 +377,21 @@ class PluginManager:
             api.log("No MCP client available for MCP plugin", "warning")
             return
 
-        try:
-            from ..tools.mcp import MCPServerConfig
+        from ..tools.mcp import MCPServerConfig
 
-            server_cfg = MCPServerConfig(
-                name=manifest.id,
-                command=mcp_config.get("command", ""),
-                args=mcp_config.get("args", []),
-                env=mcp_config.get("env", {}),
-                description=mcp_config.get("description", manifest.description),
-                transport=mcp_config.get("transport", "stdio"),
-                url=mcp_config.get("url", ""),
-                headers=mcp_config.get("headers", {}),
-                cwd=mcp_config.get("cwd", str(plugin_dir)),
-            )
-            mcp_client.add_server(server_cfg)
-            api.log(f"MCP server '{manifest.id}' registered")
-        except Exception as e:
-            api.log_error(f"Failed to register MCP server: {e}", e)
+        server_cfg = MCPServerConfig(
+            name=manifest.id,
+            command=mcp_config.get("command", ""),
+            args=mcp_config.get("args", []),
+            env=mcp_config.get("env", {}),
+            description=mcp_config.get("description", manifest.description),
+            transport=mcp_config.get("transport", "stdio"),
+            url=mcp_config.get("url", ""),
+            headers=mcp_config.get("headers", {}),
+            cwd=mcp_config.get("cwd", str(plugin_dir)),
+        )
+        mcp_client.add_server(server_cfg)
+        api.log(f"MCP server '{manifest.id}' registered")
 
     def _load_skill_plugin(
         self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI
@@ -310,7 +407,7 @@ class PluginManager:
             return
 
         if hasattr(skill_loader, "load_skill"):
-            skill_loader.load_skill(skill_path.parent)
+            skill_loader.load_skill(skill_path.parent, plugin_source=f"plugin:{manifest.id}")
             api.log(f"Skill loaded from {skill_path.parent}")
         elif hasattr(skill_loader, "load_from_directory"):
             skill_loader.load_from_directory(skill_path.parent)
@@ -322,6 +419,7 @@ class PluginManager:
             )
             return
 
+        self._skills_loaded = True
         self._tag_skill_source(skill_path.parent.name, manifest.id)
 
     def _try_load_plugin_skill(
@@ -344,7 +442,7 @@ class PluginManager:
 
         try:
             if hasattr(skill_loader, "load_skill"):
-                skill_loader.load_skill(skill_path.parent)
+                skill_loader.load_skill(skill_path.parent, plugin_source=f"plugin:{manifest.id}")
             elif hasattr(skill_loader, "load_from_directory"):
                 skill_loader.load_from_directory(skill_path.parent)
             else:
@@ -367,6 +465,11 @@ class PluginManager:
         entry = registry.get(skill_id)
         if entry is not None and hasattr(entry, "plugin_source"):
             entry.plugin_source = f"plugin:{plugin_id}"
+        else:
+            logger.warning(
+                "Cannot tag plugin source: skill '%s' not found in registry after load",
+                skill_id,
+            )
 
     def _refresh_skill_catalog(self) -> None:
         """Invalidate skill catalog cache if any plugin loaded a skill."""
@@ -379,6 +482,45 @@ class PluginManager:
                 logger.debug("Skill catalog cache invalidated after plugin skill load")
             except Exception as e:
                 logger.warning("Failed to refresh skill catalog: %s", e)
+
+    def _unload_plugin_skills(self, loaded: _LoadedPlugin) -> None:
+        """Remove skills contributed by this plugin and reset _skills_loaded if needed."""
+        had_skill = (
+            loaded.manifest.plugin_type == "skill"
+            or loaded.manifest.provides.get("skill")
+        )
+        if had_skill:
+            skill_loader = self._host_refs.get("skill_loader")
+            if skill_loader is not None:
+                registry = getattr(skill_loader, "registry", None)
+                if registry is not None:
+                    skill_ids = [
+                        sid for sid, entry in list(registry.items())
+                        if getattr(entry, "plugin_source", "") == f"plugin:{loaded.manifest.id}"
+                    ]
+                    for sid in skill_ids:
+                        try:
+                            if hasattr(skill_loader, "unload_skill"):
+                                skill_loader.unload_skill(sid)
+                            else:
+                                registry.pop(sid, None)
+                        except Exception:
+                            registry.pop(sid, None)
+                    if skill_ids:
+                        logger.debug(
+                            "Removed %d skill(s) from plugin '%s'",
+                            len(skill_ids), loaded.manifest.id,
+                        )
+            self._refresh_skill_catalog()
+
+        if getattr(self, "_skills_loaded", False):
+            has_other_skills = any(
+                lp.manifest.plugin_type == "skill"
+                or lp.manifest.provides.get("skill")
+                for lp in self._loaded.values()
+            )
+            if not has_other_skills:
+                self._skills_loaded = False
 
     # --- Permissions ---
 
@@ -410,14 +552,19 @@ class PluginManager:
         self, plugin_id: str, permissions: list[str]
     ) -> None:
         """Grant additional permissions (called from UI approval flow)."""
+        from .manifest import ALL_PERMISSIONS
+
         entry = self._state.ensure_entry(plugin_id)
         for perm in permissions:
+            if perm not in ALL_PERMISSIONS:
+                logger.warning("Ignoring unknown permission '%s' for plugin '%s'", perm, plugin_id)
+                continue
             if perm not in entry.granted_permissions:
                 entry.granted_permissions.append(perm)
 
         loaded = self._loaded.get(plugin_id)
         if loaded:
-            loaded.api._granted_permissions.update(permissions)
+            loaded.api._granted_permissions = set(entry.granted_permissions)
 
         self._save_state()
 
@@ -456,6 +603,17 @@ class PluginManager:
             )
 
         loaded.api._cleanup()
+
+        if loaded.module_name:
+            sys.modules.pop(loaded.module_name, None)
+        if loaded.sys_path_entry:
+            try:
+                sys.path.remove(loaded.sys_path_entry)
+            except ValueError:
+                pass
+
+        self._unload_plugin_skills(loaded)
+
         logger.info("Plugin '%s' unloaded", plugin_id)
         return True
 
@@ -479,20 +637,31 @@ class PluginManager:
     def _on_plugin_auto_disabled(self, plugin_id: str) -> None:
         """Callback when PluginErrorTracker auto-disables a plugin.
 
-        Cleans up registered tools from the agent's tool list/catalog.
+        Performs full unload (tools, hooks, channels, MCP, etc.) and marks
+        the plugin as disabled in persistent state.
         """
-        loaded = self._loaded.get(plugin_id)
-        if loaded and hasattr(loaded.api, "_cleanup_tools"):
+        self._state.disable(plugin_id, reason="auto_disabled")
+        self._save_state()
+
+        async def _do_unload():
             try:
-                loaded.api._cleanup_tools()
-                logger.info(
-                    "Auto-disable: cleaned up tools for plugin '%s'", plugin_id
-                )
+                await self.unload_plugin(plugin_id)
+                logger.info("Auto-disable: fully unloaded plugin '%s'", plugin_id)
             except Exception as e:
                 logger.warning(
-                    "Auto-disable: tool cleanup failed for plugin '%s': %s",
-                    plugin_id, e,
+                    "Auto-disable: unload failed for plugin '%s': %s", plugin_id, e,
                 )
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_do_unload())
+        except RuntimeError:
+            loaded = self._loaded.get(plugin_id)
+            if loaded and hasattr(loaded.api, "_cleanup_tools"):
+                try:
+                    loaded.api._cleanup_tools()
+                except Exception:
+                    pass
 
     # --- State ---
 
@@ -514,16 +683,45 @@ class PluginManager:
             granted = list(lp.api._granted_permissions)
             result.append({
                 "id": lp.manifest.id,
+                "capability_id": lp.manifest.capability_id,
+                "namespace": lp.manifest.namespace,
+                "origin": lp.manifest.origin,
                 "name": lp.manifest.name,
                 "version": lp.manifest.version,
                 "type": lp.manifest.plugin_type,
                 "category": lp.manifest.category,
                 "permissions": lp.manifest.permissions,
                 "permission_level": lp.manifest.max_permission_level,
+                "review_status": lp.manifest.review_status,
                 "granted_permissions": granted,
                 "pending_permissions": pending,
             })
         return result
+
+    def _find_plugin_dir(self, plugin_id: str) -> Path | None:
+        """Locate the on-disk directory for a plugin by its manifest ID.
+
+        Checks the obvious path first (plugins_dir/plugin_id), then scans all
+        plugin directories for a matching manifest.id.
+        """
+        direct = self._plugins_dir / plugin_id
+        if (direct / "plugin.json").exists():
+            return direct
+        if not self._plugins_dir.exists():
+            return None
+        for child in self._plugins_dir.iterdir():
+            if not child.is_dir():
+                continue
+            manifest_path = child / "plugin.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if raw.get("id") == plugin_id:
+                    return child
+            except Exception:
+                continue
+        return None
 
     async def reload_plugin(self, plugin_id: str) -> None:
         """Unload then re-load a plugin (e.g. after granting new permissions)."""
@@ -533,8 +731,8 @@ class PluginManager:
             manifest = loaded.manifest
             await self.unload_plugin(plugin_id)
         else:
-            plugin_dir = self._plugins_dir / plugin_id
-            if not (plugin_dir / "plugin.json").exists():
+            plugin_dir = self._find_plugin_dir(plugin_id)
+            if plugin_dir is None:
                 logger.warning("Cannot reload '%s': plugin dir not found", plugin_id)
                 return
             try:
@@ -561,10 +759,11 @@ class PluginManager:
 
     def get_plugin_logs(self, plugin_id: str, lines: int = 100) -> str:
         loaded = self._loaded.get(plugin_id)
-        if loaded is None:
-            log_dir = self._plugins_dir / plugin_id / "logs"
-        else:
+        if loaded is not None:
             log_dir = loaded.plugin_dir / "logs"
+        else:
+            found = self._find_plugin_dir(plugin_id)
+            log_dir = (found / "logs") if found else (self._plugins_dir / plugin_id / "logs")
 
         log_file = log_dir / f"{plugin_id}.log"
         if not log_file.exists():
@@ -578,7 +777,7 @@ class PluginManager:
 class _LoadedPlugin:
     """Internal record for a loaded plugin."""
 
-    __slots__ = ("manifest", "api", "instance", "plugin_dir")
+    __slots__ = ("manifest", "api", "instance", "plugin_dir", "module_name", "sys_path_entry")
 
     def __init__(
         self,
@@ -586,8 +785,12 @@ class _LoadedPlugin:
         api: PluginAPI,
         instance: PluginBase | None,
         plugin_dir: Path,
+        module_name: str = "",
+        sys_path_entry: str = "",
     ) -> None:
         self.manifest = manifest
         self.api = api
         self.instance = instance
         self.plugin_dir = plugin_dir
+        self.module_name = module_name
+        self.sys_path_entry = sys_path_entry

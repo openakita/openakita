@@ -38,10 +38,11 @@ SKILLS_TOOLS = [
         "detail": """获取技能的详细信息和指令（Level 2 披露）。
 
 **返回信息**：
-- 完整的 SKILL.md 内容
+- 完整的 SKILL.md 内容（经参数替换后）
 - 使用说明
 - 可用脚本列表
 - 参考文档列表
+- 参数定义（如有）
 
 **适用场景**：
 - 了解技能的使用方法
@@ -49,7 +50,13 @@ SKILLS_TOOLS = [
 - 学习技能参数""",
         "input_schema": {
             "type": "object",
-            "properties": {"skill_name": {"type": "string", "description": "技能名称"}},
+            "properties": {
+                "skill_name": {"type": "string", "description": "技能名称"},
+                "args": {
+                    "type": "object",
+                    "description": "传递给技能的参数（可选，用于占位符替换）",
+                },
+            },
             "required": ["skill_name"],
         },
     },
@@ -235,6 +242,54 @@ SKILLS_TOOLS = [
                 },
             },
             "required": ["changes"],
+        },
+    },
+    {
+        "name": "execute_skill",
+        "category": "Skills",
+        "description": "Execute a skill in a forked context with isolated turns and timeout. Use for skills that declare execution-context: fork, or when you need to run a complex multi-step skill workflow independently.",
+        "detail": """在隔离的 fork 上下文中执行技能。
+
+**适用场景**：
+- 技能声明了 `execution-context: fork`
+- 需要多步骤独立执行复杂工作流
+- 避免技能执行干扰主对话上下文
+
+**参数**：
+- skill_name: 要执行的技能名称
+- task: 分配给技能的任务描述
+- max_turns: 最大执行轮次（默认 10，最大 50）""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skill_name": {"type": "string", "description": "技能名称"},
+                "task": {"type": "string", "description": "分配给技能的任务描述"},
+                "max_turns": {
+                    "type": "integer",
+                    "description": "最大执行轮次（默认 10）",
+                    "default": 10,
+                },
+            },
+            "required": ["skill_name", "task"],
+        },
+    },
+    {
+        "name": "uninstall_skill",
+        "category": "Skills",
+        "description": "Uninstall an external skill by removing its directory. System skills cannot be uninstalled. Use when user explicitly asks to remove a skill.",
+        "detail": """卸载外部技能（删除技能目录及所有文件）。
+
+**限制**：
+- 系统技能不可卸载
+- 仅能卸载 skills/ 目录下的外部技能
+
+**注意**：此操作不可逆，确保用户已确认。""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skill_name": {"type": "string", "description": "要卸载的技能名称"},
+            },
+            "required": ["skill_name"],
         },
     },
 ]

@@ -8,11 +8,12 @@ Prompt Budget - Token 预算裁剪模块
   - SOUL.md 已精简为 ~60 行行为约束（~500 tokens）
   - agent.core 编译后约 ~600 tokens
   - 用户自定义策略（可选）
-- catalogs_budget: 12000 tokens (tools 33% + skills 55% + mcp 10%)
+- catalogs_budget: 8000 tokens (tools 33% + skills 55% + mcp 10%)
+  - 工具定义已通过 API tools 参数传递，system prompt 中的 catalog 仅补充描述
 - user_budget: 300 tokens (user.summary + runtime_facts)
 - memory_budget: 2500 tokens (retriever 输出)
 
-默认总预算约 ~18000 tokens。
+默认总预算约 ~14000 tokens。
 对于小上下文窗口模型，使用 BudgetConfig.for_context_window(ctx) 自适应缩放。
 """
 
@@ -29,13 +30,11 @@ CHARS_PER_TOKEN = 4  # 保守估计，中文约 1.5-2，英文约 4
 class BudgetConfig:
     """Token 预算配置"""
 
-    # 各部分预算（tokens）
     identity_budget: int = 6000   # SOUL.md(60%) + AGENT.md(25%) + user_policies(15%)
     catalogs_budget: int = 12000  # tools(33%) + skills(55%) + mcp(10%) 全量注入
     user_budget: int = 300        # user.summary + runtime_facts
     memory_budget: int = 2500     # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
 
-    # 总预算（作为硬限制）
     total_budget: int = 21000
 
     # 裁剪优先级（数字越小越先被裁剪）

@@ -64,6 +64,7 @@ class OrgSetupHandler:
     def _get_resources(self) -> str:
         result: dict[str, Any] = {}
 
+        preset_ids: set[str] = set()
         try:
             from ...agents.presets import SYSTEM_PRESETS
             agents = []
@@ -77,10 +78,30 @@ class OrgSetupHandler:
                     "category": getattr(p, "category", "general"),
                     "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
                 })
+                preset_ids.add(p.id)
             result["agents"] = agents
         except Exception as e:
             logger.warning(f"[OrgSetup] Failed to load agent presets: {e}")
             result["agents"] = []
+
+        try:
+            from ...agents.profile import get_profile_store
+            store = get_profile_store()
+            custom_agents = []
+            for p in store.list_all(include_ephemeral=False, include_hidden=False):
+                if p.id in preset_ids or p.is_system:
+                    continue
+                custom_agents.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "description": p.description or "",
+                    "category": "custom",
+                    "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
+                })
+            if custom_agents:
+                result["custom_agents"] = custom_agents
+        except Exception as e:
+            logger.warning(f"[OrgSetup] Failed to load custom profiles: {e}")
 
         try:
             manager = self._get_org_manager()
@@ -182,16 +203,40 @@ class OrgSetupHandler:
             if n.role_goal:
                 lines.append(f"{indent}  目标: {n.role_goal}")
 
-        lines.append(f"\n### 层级关系 ({len(org.edges)} 条)\n")
+        hierarchy_edges = []
+        other_edges = []
         for e in org.edges:
-            src = self._find_title_by_node_id(org.nodes, e.source)
-            tgt = self._find_title_by_node_id(org.nodes, e.target)
             etype = e.edge_type.value if hasattr(e.edge_type, "value") else e.edge_type
-            lines.append(f"- {src} → {tgt} ({etype})")
+            if etype == "hierarchy":
+                hierarchy_edges.append(e)
+            else:
+                other_edges.append(e)
+
+        lines.append(f"\n### 连线关系 ({len(org.edges)} 条)\n")
+
+        if hierarchy_edges:
+            lines.append("**层级（hierarchy）：**")
+            for e in hierarchy_edges:
+                src = self._find_title_by_node_id(org.nodes, e.source)
+                tgt = self._find_title_by_node_id(org.nodes, e.target)
+                lines.append(f"- {src} → {tgt}")
+
+        if other_edges:
+            lines.append("\n**协作/咨询/上报：**")
+            for e in other_edges:
+                src = self._find_title_by_node_id(org.nodes, e.source)
+                tgt = self._find_title_by_node_id(org.nodes, e.target)
+                etype = e.edge_type.value if hasattr(e.edge_type, "value") else e.edge_type
+                label = f" \"{e.label}\"" if getattr(e, "label", "") else ""
+                bidir = "↔" if getattr(e, "bidirectional", True) else "→"
+                lines.append(
+                    f"- `{e.id}` {src} {bidir} {tgt} ({etype}{label})"
+                )
 
         lines.append(
             "\n---\n"
-            "使用 update_org 修改此组织。修改节点时请提供 node_id 以精确匹配。"
+            "使用 update_org 修改此组织。修改节点时请提供 node_id 以精确匹配。\n"
+            "添加协作连线用 add_edges，删除连线用 remove_edges（传 edge ID）。"
         )
         return "\n".join(lines)
 
@@ -216,7 +261,7 @@ class OrgSetupHandler:
         if params.get("core_business"):
             lines.append(f"核心业务：{params['core_business']}\n")
 
-        lines.append(f"节点数：{len(nodes)}，层级关系：{len(edges)} 条\n")
+        lines.append(f"节点数：{len(nodes)}，连线：{len(edges)} 条\n")
         lines.append("### 节点明细\n")
 
         for n in sorted(nodes, key=lambda x: (x.get("level", 0), x.get("department", ""))):
@@ -233,11 +278,25 @@ class OrgSetupHandler:
                 f"{tools_str}"
             )
 
-        lines.append("\n### 层级关系\n")
-        for e in edges:
-            src = self._find_title_by_id(nodes, e["source"])
-            tgt = self._find_title_by_id(nodes, e["target"])
-            lines.append(f"- {src} → {tgt}")
+        h_edges = [e for e in edges if e.get("edge_type") == "hierarchy"]
+        o_edges = [e for e in edges if e.get("edge_type") != "hierarchy"]
+
+        lines.append(f"\n### 连线关系 ({len(edges)} 条)\n")
+        if h_edges:
+            lines.append("**层级：**")
+            for e in h_edges:
+                src = self._find_title_by_id(nodes, e["source"])
+                tgt = self._find_title_by_id(nodes, e["target"])
+                lines.append(f"- {src} → {tgt}")
+        if o_edges:
+            lines.append("\n**协作/咨询/上报：**")
+            for e in o_edges:
+                src = self._find_title_by_id(nodes, e["source"])
+                tgt = self._find_title_by_id(nodes, e["target"])
+                etype = e.get("edge_type", "collaborate")
+                label = f" \"{e['label']}\"" if e.get("label") else ""
+                bidir = "↔" if e.get("bidirectional", True) else "→"
+                lines.append(f"- {src} {bidir} {tgt} ({etype}{label})")
 
         lines.append("\n---\n确认无误后请调用 create 正式创建。")
         return "\n".join(lines)
@@ -273,11 +332,12 @@ class OrgSetupHandler:
 
         try:
             org = manager.create(org_data)
+            edge_summary = self._format_edge_summary(org.edges)
             return (
                 f"✅ 组织「{org.name}」创建成功！\n"
                 f"- ID: {org.id}\n"
                 f"- 节点数: {len(org.nodes)}\n"
-                f"- 层级关系: {len(org.edges)} 条\n"
+                f"- 连线: {edge_summary}\n"
                 f"- 状态: dormant（需在前端启动）\n\n"
                 f"用户可在组织编排页面查看和微调架构。"
             )
@@ -475,11 +535,93 @@ class OrgSetupHandler:
 
         edges_list.extend(new_edges)
 
-        # --- 4. Recalculate positions ---
+        # --- 4. Remove edges ---
+        for edge_id_ref in params.get("remove_edges", []):
+            found = False
+            for e in edges_list:
+                if e.get("id") == edge_id_ref:
+                    if e.get("edge_type") == "hierarchy":
+                        changes.append(
+                            f"⚠️ 不能通过 remove_edges 删除层级连线 {edge_id_ref}，"
+                            f"请通过修改节点的 parent_role_title 调整层级"
+                        )
+                    else:
+                        src_title = self._find_title_by_id(
+                            list(nodes_dict.values()), e["source"]
+                        )
+                        tgt_title = self._find_title_by_id(
+                            list(nodes_dict.values()), e["target"]
+                        )
+                        edges_list = [
+                            ex for ex in edges_list if ex.get("id") != edge_id_ref
+                        ]
+                        changes.append(
+                            f"删除连线 {src_title} → {tgt_title} ({e.get('edge_type')})"
+                        )
+                    found = True
+                    break
+            if not found:
+                changes.append(f"⚠️ 未找到要删除的连线: {edge_id_ref}")
+
+        # --- 5. Add edges ---
+        allowed_edge_types = ("collaborate", "escalate", "consult")
+        for er in params.get("add_edges", []):
+            etype = er.get("edge_type", "")
+            if etype not in allowed_edge_types:
+                changes.append(
+                    f"⚠️ add_edges 不支持 edge_type='{etype}'，"
+                    f"层级关系请用 parent_role_title"
+                )
+                continue
+
+            src_ref = er.get("source", "").strip()
+            tgt_ref = er.get("target", "").strip()
+            src_id = title_to_id.get(src_ref, src_ref)
+            tgt_id = title_to_id.get(tgt_ref, tgt_ref)
+
+            if src_id not in nodes_dict:
+                changes.append(f"⚠️ add_edges 中 source='{src_ref}' 未找到对应节点")
+                continue
+            if tgt_id not in nodes_dict:
+                changes.append(f"⚠️ add_edges 中 target='{tgt_ref}' 未找到对应节点")
+                continue
+            if src_id == tgt_id:
+                changes.append("⚠️ add_edges 中 source 和 target 不能是同一节点")
+                continue
+
+            duplicate = any(
+                e["source"] == src_id and e["target"] == tgt_id
+                and e.get("edge_type") == etype
+                for e in edges_list
+            )
+            if duplicate:
+                src_title = nodes_dict[src_id].get("role_title", src_id)
+                tgt_title = nodes_dict[tgt_id].get("role_title", tgt_id)
+                changes.append(
+                    f"⚠️ 连线已存在: {src_title} → {tgt_title} ({etype})，跳过"
+                )
+                continue
+
+            new_edge = {
+                "id": f"edge_{uuid.uuid4().hex[:12]}",
+                "source": src_id,
+                "target": tgt_id,
+                "edge_type": etype,
+                "label": er.get("label", ""),
+                "bidirectional": er.get("bidirectional", True),
+            }
+            edges_list.append(new_edge)
+
+            src_title = nodes_dict[src_id].get("role_title", src_id)
+            tgt_title = nodes_dict[tgt_id].get("role_title", tgt_id)
+            label_str = f" \"{er.get('label')}\"" if er.get("label") else ""
+            changes.append(f"添加连线 {src_title} ↔ {tgt_title} ({etype}{label_str})")
+
+        # --- 6. Recalculate positions ---
         final_nodes = list(nodes_dict.values())
         self._calculate_positions(final_nodes)
 
-        # --- 5. Commit update ---
+        # --- 7. Commit update ---
         update_data: dict[str, Any] = {
             **safe_fields,
             "nodes": final_nodes,
@@ -496,10 +638,11 @@ class OrgSetupHandler:
                 return "ℹ️ 未检测到任何变更。请提供要修改的内容。"
 
             summary = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(changes))
+            edge_summary = self._format_edge_summary(org.edges)
             return (
                 f"✅ 组织「{org.name}」修改成功！\n\n"
                 f"变更摘要：\n{summary}\n\n"
-                f"当前节点数: {len(org.nodes)} | 层级关系: {len(org.edges)} 条"
+                f"当前节点数: {len(org.nodes)} | 连线: {edge_summary}"
             )
         except Exception as e:
             logger.error(f"[OrgSetup] Failed to update org: {e}", exc_info=True)
@@ -639,6 +782,38 @@ class OrgSetupHandler:
                 "bidirectional": True,
             })
 
+        allowed_edge_types = ("collaborate", "escalate", "consult")
+        for er in params.get("edges", []):
+            etype = er.get("edge_type", "")
+            if etype not in allowed_edge_types:
+                errors.append(
+                    f"edges 中不支持 edge_type='{etype}'，"
+                    f"层级关系请用 parent_role_title，"
+                    f"此处仅支持: {', '.join(allowed_edge_types)}"
+                )
+                continue
+            src_ref = er.get("source", "").strip()
+            tgt_ref = er.get("target", "").strip()
+            src_id = title_to_id.get(src_ref)
+            tgt_id = title_to_id.get(tgt_ref)
+            if not src_id:
+                errors.append(f"edges 中 source='{src_ref}' 未找到对应节点")
+                continue
+            if not tgt_id:
+                errors.append(f"edges 中 target='{tgt_ref}' 未找到对应节点")
+                continue
+            if src_id == tgt_id:
+                errors.append(f"edges 中 source 和 target 不能是同一节点: '{src_ref}'")
+                continue
+            edges.append({
+                "id": f"edge_{uuid.uuid4().hex[:12]}",
+                "source": src_id,
+                "target": tgt_id,
+                "edge_type": etype,
+                "label": er.get("label", ""),
+                "bidirectional": er.get("bidirectional", True),
+            })
+
         root_nodes = [n for n in nodes if n["level"] == 0]
         if not root_nodes:
             errors.append("至少需要一个 level=0 的根节点")
@@ -677,6 +852,13 @@ class OrgSetupHandler:
                     return f"{p.name} ({p.id})"
         except Exception:
             pass
+        try:
+            from ...agents.profile import get_profile_store
+            profile = get_profile_store().get(agent_id)
+            if profile:
+                return f"{profile.name} ({agent_id})"
+        except Exception:
+            pass
         return agent_id
 
     def _find_title_by_id(self, nodes: list[dict], node_id: str) -> str:
@@ -684,6 +866,32 @@ class OrgSetupHandler:
             if n["id"] == node_id:
                 return n["role_title"]
         return node_id
+
+    @staticmethod
+    def _format_edge_summary(edges) -> str:
+        """Format edge count by type for display."""
+        counts: dict[str, int] = {}
+        for e in edges:
+            if hasattr(e, "edge_type"):
+                etype = e.edge_type.value if hasattr(e.edge_type, "value") else e.edge_type
+            else:
+                etype = e.get("edge_type", "hierarchy")
+            counts[etype] = counts.get(etype, 0) + 1
+
+        total = sum(counts.values())
+        if total == 0:
+            return "0 条"
+        parts = []
+        type_labels = {
+            "hierarchy": "层级",
+            "collaborate": "协作",
+            "escalate": "上报",
+            "consult": "咨询",
+        }
+        for t, label in type_labels.items():
+            if t in counts:
+                parts.append(f"{label} {counts[t]}")
+        return f"{total} 条（{' / '.join(parts)}）"
 
     @staticmethod
     def _find_title_by_node_id(nodes, node_id: str) -> str:

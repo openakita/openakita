@@ -264,7 +264,32 @@ async def write_env(body: EnvUpdateRequest):
         os.environ.pop(key, None)
     count = len([v for v in body.entries.values() if v]) + len(body.delete_keys)
     logger.info(f"[Config API] Updated .env with {count} entries")
-    return {"status": "ok", "updated_keys": list(body.entries.keys())}
+
+    # Determine if any changed keys require a service restart
+    _RESTART_REQUIRED_PREFIXES = (
+        "TELEGRAM_", "FEISHU_", "DINGTALK_", "WEWORK_", "ONEBOT_", "QQ_",
+        "WECHAT_", "IM_", "REDIS_", "DATABASE_", "SANDBOX_",
+    )
+    _HOT_RELOAD_PREFIXES = (
+        "OPENAI_", "ANTHROPIC_", "LLM_", "DEFAULT_MODEL", "TEMPERATURE",
+        "MAX_TOKENS", "OPENAKITA_THEME", "LANGUAGE",
+    )
+    changed_keys = set(k for k, v in body.entries.items() if v) | set(body.delete_keys)
+    restart_required = any(
+        any(k.upper().startswith(p) for p in _RESTART_REQUIRED_PREFIXES)
+        for k in changed_keys
+    )
+    hot_reloadable = all(
+        any(k.upper().startswith(p) for p in _HOT_RELOAD_PREFIXES) or k.upper().startswith("OPENAKITA_")
+        for k in changed_keys
+    ) if changed_keys else True
+
+    return {
+        "status": "ok",
+        "updated_keys": list(body.entries.keys()),
+        "restart_required": restart_required,
+        "hot_reloadable": hot_reloadable,
+    }
 
 
 @router.get("/api/config/endpoints")
@@ -718,33 +743,48 @@ async def list_models_api(body: ListModelsRequest):
 
 # ─── Security Policy Routes ───────────────────────────────────────────
 
-def _read_policies_yaml() -> dict:
-    """Read identity/POLICIES.yaml as dict."""
+def _read_policies_yaml() -> dict | None:
+    """Read identity/POLICIES.yaml as dict.
+
+    Returns None on parse error to distinguish from empty file ({}).
+    Callers must check for None before writing to prevent data loss (P1-9).
+    """
     import yaml
     policies_path = _project_root() / "identity" / "POLICIES.yaml"
     if not policies_path.exists():
         return {}
     try:
         return yaml.safe_load(policies_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
+    except Exception as e:
+        logger.error(f"[Config] 无法读取 POLICIES.yaml: {e}")
+        return None
 
 
-def _write_policies_yaml(data: dict) -> None:
-    """Write dict to identity/POLICIES.yaml."""
+def _write_policies_yaml(data: dict) -> bool:
+    """Write dict to identity/POLICIES.yaml.
+
+    Returns False if the write was refused (P1-9: 防止配置文件覆盖丢失).
+    """
     import yaml
+    existing = _read_policies_yaml()
+    if existing is None:
+        logger.error("[Config] 拒绝写入 POLICIES.yaml: 当前文件无法正确读取，写入可能导致数据丢失")
+        return False
     policies_path = _project_root() / "identity" / "POLICIES.yaml"
     policies_path.parent.mkdir(parents=True, exist_ok=True)
     policies_path.write_text(
         yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
         encoding="utf-8",
     )
+    return True
 
 
 @router.get("/api/config/security")
 async def read_security_config():
     """Read the full security policy configuration."""
     data = _read_policies_yaml()
+    if data is None:
+        return {"security": {}, "_warning": "配置文件读取失败"}
     return {"security": data.get("security", {})}
 
 
@@ -752,8 +792,11 @@ async def read_security_config():
 async def write_security_config(body: SecurityConfigUpdate):
     """Write the full security policy configuration."""
     data = _read_policies_yaml()
+    if data is None:
+        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
     data["security"] = body.security
-    _write_policies_yaml(data)
+    if not _write_policies_yaml(data):
+        return {"status": "error", "message": "配置写入失败"}
     try:
         from openakita.core.policy import reset_policy_engine
         reset_policy_engine()
@@ -766,7 +809,7 @@ async def write_security_config(body: SecurityConfigUpdate):
 @router.get("/api/config/security/zones")
 async def read_security_zones():
     """Read zone path configuration."""
-    data = _read_policies_yaml()
+    data = _read_policies_yaml() or {}
     zones = data.get("security", {}).get("zones", {})
     return {
         "workspace": zones.get("workspace", []),
@@ -781,6 +824,8 @@ async def read_security_zones():
 async def write_security_zones(body: SecurityZonesUpdate):
     """Update zone path configuration."""
     data = _read_policies_yaml()
+    if data is None:
+        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
     if "security" not in data:
         data["security"] = {}
     if "zones" not in data["security"]:
@@ -803,7 +848,7 @@ async def write_security_zones(body: SecurityZonesUpdate):
 @router.get("/api/config/security/commands")
 async def read_security_commands():
     """Read command pattern configuration."""
-    data = _read_policies_yaml()
+    data = _read_policies_yaml() or {}
     cp = data.get("security", {}).get("command_patterns", {})
     return {
         "custom_critical": cp.get("custom_critical", []),
@@ -817,6 +862,8 @@ async def read_security_commands():
 async def write_security_commands(body: SecurityCommandsUpdate):
     """Update command pattern configuration."""
     data = _read_policies_yaml()
+    if data is None:
+        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
     if "security" not in data:
         data["security"] = {}
     if "command_patterns" not in data["security"]:
@@ -839,7 +886,7 @@ async def write_security_commands(body: SecurityCommandsUpdate):
 @router.get("/api/config/security/sandbox")
 async def read_security_sandbox():
     """Read sandbox configuration."""
-    data = _read_policies_yaml()
+    data = _read_policies_yaml() or {}
     sb = data.get("security", {}).get("sandbox", {})
     return {
         "enabled": sb.get("enabled", True),
@@ -854,6 +901,8 @@ async def read_security_sandbox():
 async def write_security_sandbox(body: SecuritySandboxUpdate):
     """Update sandbox configuration."""
     data = _read_policies_yaml()
+    if data is None:
+        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
     if "security" not in data:
         data["security"] = {}
     if "sandbox" not in data["security"]:
@@ -871,6 +920,44 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
         pass
     logger.info("[Config API] Updated security sandbox")
     return {"status": "ok"}
+
+
+@router.get("/api/config/permission-mode")
+async def read_permission_mode():
+    """读取当前安全模式（前端 cautious/smart/trust 与后端同步）。"""
+    try:
+        from openakita.core.policy import get_policy_engine
+        pe = get_policy_engine()
+        mode = getattr(pe, "_frontend_mode", "smart")
+        return {"mode": mode}
+    except Exception as e:
+        logger.debug(f"[Config API] permission-mode read fallback: {e}")
+        return {"mode": "smart"}
+
+
+class _PermissionModeBody(BaseModel):
+    mode: str = "smart"
+
+
+@router.post("/api/config/permission-mode")
+async def write_permission_mode(body: _PermissionModeBody):
+    """设置安全模式（P3-3: 前端安全模式与后端联动）。"""
+    mode = body.mode
+    if mode not in ("cautious", "smart", "trust"):
+        return {"status": "error", "message": f"无效的安全模式: {mode}"}
+    try:
+        from openakita.core.policy import get_policy_engine
+        pe = get_policy_engine()
+        pe._frontend_mode = mode
+        if mode == "trust":
+            pe._config.confirmation.auto_confirm = True
+        else:
+            pe._config.confirmation.auto_confirm = False
+        logger.info(f"[Config API] Permission mode set to: {mode}")
+        return {"status": "ok", "mode": mode}
+    except Exception as e:
+        logger.warning(f"[Config API] permission-mode write error: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/api/config/security/audit")

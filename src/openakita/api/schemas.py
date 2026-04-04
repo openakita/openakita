@@ -96,6 +96,10 @@ class ModelInfo(BaseModel):
 class SkillInfoResponse(BaseModel):
     """Skill information for the API."""
 
+    skill_id: str | None = None
+    capability_id: str | None = None
+    namespace: str | None = None
+    origin: str | None = None
     name: str
     description: str
     system: bool = False

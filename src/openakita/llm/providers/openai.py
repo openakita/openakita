@@ -38,7 +38,7 @@ from ..types import (
     Usage,
     normalize_base_url,
 )
-from .base import LLMProvider
+from .base import LLMProvider, parse_sse_field
 from .proxy_utils import build_httpx_timeout, get_httpx_transport, get_proxy_config
 
 logger = logging.getLogger(__name__)
@@ -198,11 +198,11 @@ class OpenAIProvider(LLMProvider):
             body_chars += sum(len(str(t)) for t in tools)
 
         est_tokens = body_chars // 2  # 中文约 2 字符/token
-        if est_tokens < 60_000:
+        if est_tokens < 30_000:
             return None
 
         base_timeout = self.config.timeout or 180
-        scale = min(est_tokens / 60_000, 3.0)  # 最多 3 倍
+        scale = min(est_tokens / 30_000, 3.0)  # 最多 3 倍
         new_read = base_timeout * scale
         new_read = min(new_read, 540.0)  # 上限 9 分钟
         if new_read <= base_timeout * 1.1:
@@ -261,10 +261,10 @@ class OpenAIProvider(LLMProvider):
             if response.status_code >= 400:
                 body = (response.text or "")[:500]
                 if response.status_code == 401:
-                    raise AuthenticationError(f"Authentication failed: {body}")
+                    raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {body}")
-                raise LLMError(f"API error ({response.status_code}): {body}")
+                    raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
+                raise LLMError(f"API error ({response.status_code}): {body}", status_code=response.status_code)
 
             try:
                 data = response.json()
@@ -340,14 +340,17 @@ class OpenAIProvider(LLMProvider):
                     error_text = error_body.decode(errors="replace")[:500]
                     if response.status_code == 401:
                         raise AuthenticationError(
-                            f"Authentication failed: {error_text}"
+                            f"Authentication failed: {error_text}",
+                            status_code=401,
                         )
                     if response.status_code == 429:
                         raise RateLimitError(
-                            f"Rate limit exceeded: {error_text}"
+                            f"Rate limit exceeded: {error_text}",
+                            status_code=429,
                         )
                     raise LLMError(
-                        f"API error ({response.status_code}): {error_text}"
+                        f"API error ({response.status_code}): {error_text}",
+                        status_code=response.status_code,
                     )
 
                 has_content = False
@@ -358,13 +361,19 @@ class OpenAIProvider(LLMProvider):
                     if first_line_raw is None:
                         first_line_raw = line
 
-                    if line.startswith("data: "):
-                        data = line[6:]
+                    parsed = parse_sse_field(line)
+                    if parsed is not None and parsed[0] == "data":
+                        data = parsed[1]
                         if data.strip() and data != "[DONE]":
                             try:
                                 event = json.loads(data)
                                 has_content = True
-                                yield self._convert_stream_event(event)
+                                converted = self._convert_stream_event(event)
+                                if isinstance(converted, list):
+                                    for ev in converted:
+                                        yield ev
+                                else:
+                                    yield converted
                             except json.JSONDecodeError:
                                 continue
                     elif not has_content and not line.startswith(":"):
@@ -902,35 +911,66 @@ class OpenAIProvider(LLMProvider):
             reasoning_content=reasoning_content,
         )
 
-    def _convert_stream_event(self, event: dict) -> dict:
-        """转换流式事件为统一格式"""
+    def _convert_stream_event(self, event: dict) -> dict | list[dict]:
+        """转换流式事件为统一格式。
+
+        同一个 chunk 可能同时携带 reasoning_content + content + finish_reason
+        （DeepSeek 等模型的特殊行为），因此返回 dict 或 list[dict]。
+        """
         choices = event.get("choices", [])
         if not choices:
             return {"type": "ping"}
 
         choice = choices[0]
         delta = choice.get("delta", {})
+        events: list[dict] = []
 
-        result = {"type": "content_block_delta"}
+        # 1) Thinking: reasoning_content (DeepSeek R1, Qwen3) / reasoning (OpenRouter)
+        reasoning = delta.get("reasoning_content") or ""
+        if not reasoning:
+            r = delta.get("reasoning")
+            if isinstance(r, str) and r:
+                reasoning = r
+            elif isinstance(r, dict):
+                reasoning = r.get("content", "") or ""
+        if reasoning:
+            events.append({
+                "type": "content_block_delta",
+                "delta": {"type": "thinking", "text": reasoning},
+            })
 
-        if "content" in delta:
-            result["delta"] = {"type": "text", "text": delta["content"]}
-        elif "tool_calls" in delta:
+        # 2) Text content
+        if delta.get("content"):
+            events.append({
+                "type": "content_block_delta",
+                "delta": {"type": "text", "text": delta["content"]},
+            })
+
+        # 3) Tool calls
+        if "tool_calls" in delta:
             tool_calls = delta["tool_calls"]
             if tool_calls:
                 tc = tool_calls[0]
-                result["delta"] = {
-                    "type": "tool_use",
-                    "id": tc.get("id"),
-                    "name": tc.get("function", {}).get("name"),
-                    "arguments": tc.get("function", {}).get("arguments"),
-                }
+                events.append({
+                    "type": "content_block_delta",
+                    "delta": {
+                        "type": "tool_use",
+                        "id": tc.get("id"),
+                        "name": tc.get("function", {}).get("name"),
+                        "arguments": tc.get("function", {}).get("arguments"),
+                    },
+                })
 
+        # 4) Finish reason → message_stop
         if choice.get("finish_reason"):
-            result["type"] = "message_stop"
-            result["stop_reason"] = choice["finish_reason"]
+            events.append({
+                "type": "message_stop",
+                "stop_reason": choice["finish_reason"],
+            })
 
-        return result
+        if not events:
+            return {"type": "ping"}
+        return events[0] if len(events) == 1 else events
 
     async def close(self):
         """关闭客户端"""

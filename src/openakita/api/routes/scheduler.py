@@ -16,7 +16,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class TaskCreateRequest(BaseModel):
     name: str
     task_type: str = "reminder"  # reminder | task
     trigger_type: str = "once"  # once | interval | cron
-    trigger_config: dict = {}
+    trigger_config: dict = Field(default_factory=dict)
     reminder_message: str | None = None
     prompt: str = ""
     channel_id: str | None = None
@@ -69,16 +69,27 @@ class TaskUpdateRequest(BaseModel):
 
 
 @router.get("/api/scheduler/tasks")
-async def list_tasks(request: Request):
-    """List all scheduled tasks."""
+async def list_tasks(
+    request: Request,
+    offset: int = 0,
+    limit: int = 50,
+    enabled_only: bool = False,
+):
+    """List scheduled tasks with pagination."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
         return {"error": "Agent not initialized", "tasks": []}
 
-    tasks = scheduler.list_tasks()
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
+    all_tasks = scheduler.list_tasks(enabled_only=enabled_only)
+    total = len(all_tasks)
+    page = all_tasks[offset : offset + limit]
     return {
-        "tasks": [t.to_dict() for t in tasks],
-        "total": len(tasks),
+        "tasks": [t.to_dict() for t in page],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
     }
 
 
@@ -103,7 +114,7 @@ async def create_task(request: Request, body: TaskCreateRequest):
     if scheduler is None:
         return {"error": "Agent not initialized"}
 
-    from openakita.scheduler.task import ScheduledTask, TaskType, TriggerType
+    from openakita.scheduler.task import ScheduledTask, TaskSource, TaskType, TriggerType
 
     try:
         trigger_type = TriggerType(body.trigger_type)
@@ -125,11 +136,15 @@ async def create_task(request: Request, body: TaskCreateRequest):
         reminder_message=body.reminder_message,
         prompt=body.prompt,
     )
+    task.task_source = TaskSource.MANUAL
     task.channel_id = body.channel_id or None
     task.chat_id = body.chat_id or None
     task.enabled = body.enabled
 
-    task_id = await scheduler.add_task(task)
+    try:
+        task_id = await scheduler.add_task(task)
+    except ValueError as e:
+        return {"error": str(e)}
     _notify_scheduler_change("create")
     return {"status": "ok", "task_id": task_id, "task": task.to_dict()}
 
@@ -213,9 +228,11 @@ async def delete_task(request: Request, task_id: str):
     if not task.deletable:
         return {"error": "System task cannot be deleted, use disable instead"}
 
-    success = await scheduler.remove_task(task_id)
-    if not success:
-        return {"error": "Delete failed"}
+    result = await scheduler.remove_task(task_id)
+    if result == "system_task":
+        return {"error": "System task cannot be deleted, use disable instead"}
+    if result == "not_found":
+        return {"error": "Task not found"}
 
     _notify_scheduler_change("delete")
     return {"status": "ok", "task_id": task_id}
@@ -257,6 +274,51 @@ async def trigger_task(request: Request, task_id: str):
 
     _notify_scheduler_change("trigger")
     return {"status": "ok", "execution": execution.to_dict()}
+
+
+@router.get("/api/scheduler/executions")
+async def list_executions(
+    request: Request,
+    task_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List execution history, optionally filtered by task_id."""
+    scheduler = _get_scheduler(request)
+    if scheduler is None:
+        return {"error": "Agent not initialized", "executions": []}
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    all_execs = scheduler.get_executions(task_id=task_id)
+    total = len(all_execs)
+    all_execs_reversed = list(reversed(all_execs))
+    page = all_execs_reversed[offset : offset + limit]
+    return {
+        "executions": [e.to_dict() for e in page],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@router.get("/api/scheduler/tasks/{task_id}/executions")
+async def list_task_executions(
+    request: Request,
+    task_id: str,
+    limit: int = 20,
+):
+    """List execution history for a specific task."""
+    scheduler = _get_scheduler(request)
+    if scheduler is None:
+        return {"error": "Agent not initialized", "executions": []}
+
+    limit = max(1, min(limit, 100))
+    execs = scheduler.get_executions(task_id=task_id, limit=limit)
+    return {
+        "executions": [e.to_dict() for e in reversed(execs)],
+        "total": len(execs),
+    }
 
 
 @router.get("/api/scheduler/channels")

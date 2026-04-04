@@ -141,6 +141,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.1.9",
     "mypy>=1.8.0",
+    "pyright>=1.1.0",
 ]
 
 [project.scripts]
@@ -151,7 +152,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/openakita", "skills", "mcps", "identity", "VERSION", "pyproject.toml", "README.md", "LICENSE"]
+include = [
+    "src/openakita",
+    "skills",
+    "mcps",
+    "identity",
+    "VERSION",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    # Keep sdist and wheel inputs aligned; otherwise `python -m build`
+    # fails when wheel is built from sdist and force-include targets are absent.
+    "apps/setup-center/dist-web",
+    "docs-site/.vitepress/dist",
+    "docs-site/.vitepress/dist/.keep",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openakita"]
@@ -163,9 +178,11 @@ packages = ["src/openakita"]
 # mcps          → site-packages/openakita/builtin_mcps/
 [tool.hatch.build.targets.wheel.force-include]
 # Web frontend (built with: cd apps/setup-center && VITE_BUILD_TARGET=web npm run build:web)
-"apps/setup-center/dist-web" = "openakita/web"
+# NOTE: do not force-include generated frontend artifacts here.
+# They may be unavailable in sdist-based wheel builds and should not block default `python -m build`.
 # User docs (built with: python scripts/build_docs.py)
-"docs-site/.vitepress/dist" = "openakita/docs_dist"
+# NOTE: do not force-include docs-site/.vitepress/dist here.
+# It may be absent in sdist-based wheel builds and should not block default `python -m build`.
 "skills/system" = "openakita/builtin_skills/system"
 "mcps" = "openakita/builtin_mcps"
 "skills/xiaohongshu-creator" = "openakita/builtin_skills/external/xiaohongshu-creator"

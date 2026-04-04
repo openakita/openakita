@@ -23,6 +23,10 @@ HOOK_NAMES = frozenset({
     "on_session_end",
     "on_prompt_build",
     "on_schedule",
+    "on_before_tool_use",
+    "on_after_tool_use",
+    "on_config_change",
+    "on_error",
 })
 
 HookCallback = Callable[..., Coroutine[Any, Any, Any]]
@@ -118,5 +122,44 @@ HOOK_SIGNATURES: dict[str, dict[str, Any]] = {
             'async def on_prompt_build(**kwargs):\n'
             '    return "\\n\\nAdditional context from my plugin..."'
         ),
+    },
+    "on_before_tool_use": {
+        "description": "Fired before a tool call is executed. Can inspect or modify arguments.",
+        "kwargs": {
+            "tool_name": "str — name of the tool about to be called",
+            "arguments": "dict — arguments that will be passed to the tool",
+        },
+        "permission": "hooks.retrieve",
+        "return": "None (ignored)",
+    },
+    "on_after_tool_use": {
+        "description": "Fired after a tool call completes (similar to on_tool_result but with timing info).",
+        "kwargs": {
+            "tool_name": "str — name of the tool that was called",
+            "arguments": "dict — arguments that were passed",
+            "result": "str — the tool's return value",
+            "elapsed_ms": "float — execution time in milliseconds",
+        },
+        "permission": "hooks.retrieve",
+        "return": "None (ignored)",
+    },
+    "on_config_change": {
+        "description": "Fired when the plugin's configuration is updated.",
+        "kwargs": {
+            "plugin_id": "str — ID of the plugin whose config changed",
+            "config": "dict — the new configuration values",
+        },
+        "permission": "hooks.basic",
+        "return": "None (ignored)",
+    },
+    "on_error": {
+        "description": "Fired when an error occurs during plugin operation.",
+        "kwargs": {
+            "plugin_id": "str — ID of the plugin that errored",
+            "context": "str — where the error occurred (e.g. 'hook:on_retrieve')",
+            "error": "str — error description",
+        },
+        "permission": "hooks.basic",
+        "return": "None (ignored)",
     },
 }

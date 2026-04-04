@@ -63,6 +63,17 @@ class SkillMetadata:
     #            "required": bool, "help": str, "default": Any, "options": list, "min": num, "max": num}
     config: list[dict] = field(default_factory=list)
 
+    # --- F1: 新增 9 个 frontmatter 字段 ---
+    when_to_use: str = ""
+    keywords: list[str] = field(default_factory=list)
+    arguments: list[dict] = field(default_factory=list)
+    argument_hint: str = ""
+    execution_context: str = "inline"  # "inline" | "fork"
+    agent_profile: str | None = None
+    paths: list[str] = field(default_factory=list)
+    hooks: dict = field(default_factory=dict)
+    model: str | None = None
+
     # 国际化（由 agents/openai.yaml i18n 字段注入，兼容旧的 .openakita-i18n.json）
     # key 为语言代码 (如 "zh")，value 为该语言的显示名/描述
     name_i18n: dict[str, str] = field(default_factory=dict)
@@ -168,6 +179,9 @@ class SkillParser:
     # YAML frontmatter 正则
     FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
+    # F13: mtime-based parse cache — key: (resolved_path, mtime), value: ParsedSkill
+    _parse_cache: dict[tuple[str, float], "ParsedSkill"] = {}
+
     def parse_file(self, path: Path) -> ParsedSkill:
         """
         解析 SKILL.md 文件
@@ -185,8 +199,25 @@ class SkillParser:
         if not path.exists():
             raise FileNotFoundError(f"SKILL.md not found: {path}")
 
+        # F13: check mtime-based cache
+        resolved = str(path.resolve())
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        cache_key = (resolved, mtime)
+        cached = self._parse_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         content = path.read_text(encoding="utf-8")
-        return self.parse_content(content, path)
+        result = self.parse_content(content, path)
+
+        # Store in cache (limit size to prevent unbounded growth)
+        if len(self._parse_cache) > 500:
+            self._parse_cache.clear()
+        self._parse_cache[cache_key] = result
+        return result
 
     def parse_content(self, content: str, path: Path) -> ParsedSkill:
         """
@@ -213,8 +244,8 @@ class SkillParser:
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML frontmatter in {path}: {e}")
 
-        # 构建元数据
-        metadata = self._build_metadata(data, path)
+        # 构建元数据（body 用于 description 自动提取回退）
+        metadata = self._build_metadata(data, path, body=body)
 
         # 验证目录名匹配（命名空间格式取 @ 后部分比较）
         skill_dir = path.parent
@@ -239,14 +270,19 @@ class SkillParser:
             assets_dir=assets_dir if assets_dir.exists() else None,
         )
 
-    def _build_metadata(self, data: dict, path: Path) -> SkillMetadata:
+    def _build_metadata(self, data: dict, path: Path, body: str = "") -> SkillMetadata:
         """从 YAML 数据构建元数据"""
         # 必需字段
         name = data.get("name")
-        description = data.get("description")
+        description = data.get("description", "")
 
         if not name:
             raise ValueError(f"Missing required 'name' field in {path}")
+
+        if not description and body:
+            first_para = body.split("\n\n")[0].replace("\n", " ").strip()
+            description = first_para[:100] + ("..." if len(first_para) > 100 else "")
+
         if not description:
             raise ValueError(f"Missing required 'description' field in {path}")
 
@@ -309,6 +345,28 @@ class SkillParser:
                 if isinstance(env_val, list):
                     required_env = [str(e) for e in env_val]
 
+        # F1: 新字段解析
+        when_to_use = str(data.get("when-to-use", "") or "")
+        keywords_raw = data.get("keywords", [])
+        if isinstance(keywords_raw, list):
+            keywords = [str(k) for k in keywords_raw]
+        elif isinstance(keywords_raw, str):
+            keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+        else:
+            keywords = []
+        arguments_raw = data.get("arguments", [])
+        arguments = [a for a in arguments_raw if isinstance(a, dict)] if isinstance(arguments_raw, list) else []
+        argument_hint = str(data.get("argument-hint", "") or "")
+        execution_context = str(data.get("execution-context", "inline") or "inline")
+        if execution_context not in ("inline", "fork"):
+            execution_context = "inline"
+        agent_profile = data.get("agent-profile") or None
+        paths_raw = data.get("paths", [])
+        paths = [str(p) for p in paths_raw] if isinstance(paths_raw, list) else []
+        hooks_raw = data.get("hooks", {})
+        hooks = hooks_raw if isinstance(hooks_raw, dict) else {}
+        model = data.get("model") or None
+
         return SkillMetadata(
             name=name,
             description=description.strip(),
@@ -326,6 +384,15 @@ class SkillParser:
             required_bins=required_bins,
             required_env=required_env,
             config=config,
+            when_to_use=when_to_use,
+            keywords=keywords,
+            arguments=arguments,
+            argument_hint=argument_hint,
+            execution_context=execution_context,
+            agent_profile=agent_profile if isinstance(agent_profile, str) else None,
+            paths=paths,
+            hooks=hooks,
+            model=model if isinstance(model, str) else None,
         )
 
     def parse_directory(self, skill_dir: Path) -> ParsedSkill:
@@ -348,27 +415,61 @@ class SkillParser:
         Returns:
             错误消息列表 (空列表表示验证通过)
         """
+        import shutil as _shutil
         errors = []
+        meta = skill.metadata
 
-        # 检查目录名匹配（命名空间格式取 @ 后部分）
-        expected_dir = (
-            skill.metadata.name.split("@", 1)[-1]
-            if "@" in skill.metadata.name
-            else skill.metadata.name
-        )
-        if skill.skill_dir.name != expected_dir:
-            errors.append(
-                f"Directory name '{skill.skill_dir.name}' should match "
-                f"expected '{expected_dir}' (from skill name '{skill.metadata.name}')"
+        # Name length (soft recommendation; hard limit is 128 in _validate_name)
+        if len(meta.name) > 64:
+            logger.warning(
+                "Skill name '%s...' exceeds recommended 64 characters (%d)",
+                meta.name[:30], len(meta.name),
             )
 
-        # 检查 body 长度 (建议 < 5000 tokens, 约 500 行)
+        # Directory name vs expected
+        expected_dir = (
+            meta.name.split("@", 1)[-1]
+            if "@" in meta.name
+            else meta.name
+        )
+        if skill.skill_dir and skill.skill_dir.name != expected_dir:
+            errors.append(
+                f"Directory name '{skill.skill_dir.name}' should match "
+                f"expected '{expected_dir}' (from skill name '{meta.name}')"
+            )
+
+        # Body length
         body_lines = skill.body.count("\n") + 1
         if body_lines > 500:
             errors.append(
                 f"SKILL.md body has {body_lines} lines. "
                 f"Recommended: keep under 500 lines for efficient context usage."
             )
+
+        # System skill must have handler and tool_name
+        if meta.system and not meta.handler:
+            errors.append("System skill must declare 'handler' in frontmatter")
+        if meta.system and not meta.tool_name:
+            errors.append("System skill must declare 'tool-name' in frontmatter")
+
+        # required_bins availability
+        for bin_name in meta.required_bins:
+            if not _shutil.which(bin_name):
+                errors.append(f"Required binary '{bin_name}' not found in PATH")
+
+        # required_env availability
+        import os as _os
+        for env_name in meta.required_env:
+            if not _os.environ.get(env_name):
+                errors.append(f"Required environment variable '{env_name}' not set")
+
+        # Config schema basic validation
+        for item in (meta.config or []):
+            if isinstance(item, dict):
+                if "key" not in item:
+                    errors.append(f"Config item missing 'key': {item}")
+                if "type" in item and item["type"] not in ("string", "number", "boolean", "select"):
+                    errors.append(f"Config item '{item.get('key', '?')}' has unknown type: {item['type']}")
 
         return errors
 

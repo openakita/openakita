@@ -11,6 +11,8 @@ import json
 import logging
 from typing import Any, TYPE_CHECKING
 
+from openakita.memory.types import normalize_tags
+
 from .models import (
     MemoryType,
     MsgType,
@@ -33,19 +35,45 @@ class OrgToolHandler:
     def __init__(self, runtime: OrgRuntime) -> None:
         self._runtime = runtime
 
+    _INT_DEFAULTS: dict[str, int] = {
+        "priority": 0,
+        "bandwidth_limit": 60,
+        "limit": 10,
+        "max_rounds": 3,
+        "interval_s": 60,
+        "progress_pct": 0,
+    }
+    _FLOAT_DEFAULTS: dict[str, float] = {
+        "importance": 0.5,
+    }
+
     @staticmethod
     def _coerce_types(args: dict) -> dict:
         """Ensure LLM-provided arguments have correct Python types."""
-        if "priority" in args:
+        for key, default in OrgToolHandler._INT_DEFAULTS.items():
+            if key in args:
+                try:
+                    args[key] = int(args[key])
+                except (ValueError, TypeError):
+                    args[key] = default
+        for key, default in OrgToolHandler._FLOAT_DEFAULTS.items():
+            if key in args:
+                try:
+                    args[key] = float(args[key])
+                except (ValueError, TypeError):
+                    args[key] = default
+        if "tags" in args and isinstance(args["tags"], str):
+            import json as _json
             try:
-                args["priority"] = int(args["priority"])
-            except (ValueError, TypeError):
-                args["priority"] = 0
-        if "bandwidth_limit" in args:
-            try:
-                args["bandwidth_limit"] = int(args["bandwidth_limit"])
-            except (ValueError, TypeError):
-                args["bandwidth_limit"] = 60
+                parsed = _json.loads(args["tags"])
+                if isinstance(parsed, list):
+                    args["tags"] = parsed
+            except Exception:
+                args["tags"] = [
+                    t.strip()
+                    for t in args["tags"].replace("\u3001", ",").split(",")
+                    if t.strip()
+                ]
         return args
 
     @staticmethod
@@ -712,7 +740,7 @@ class OrgToolHandler:
             content=args["content"],
             source_node=node_id,
             memory_type=mt,
-            tags=args.get("tags", []),
+            tags=normalize_tags(args.get("tags")),
             importance=args.get("importance", 0.5),
         )
         if entry is None:
@@ -759,7 +787,7 @@ class OrgToolHandler:
         entry = bb.write_department(
             dept, args["content"], node_id,
             memory_type=mt,
-            tags=args.get("tags", []),
+            tags=normalize_tags(args.get("tags")),
             importance=args.get("importance", 0.5),
         )
         if entry is None:

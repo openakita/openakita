@@ -143,6 +143,7 @@ class FeishuAdapter(ChannelAdapter):
         "get_chat_members": True,
         "get_recent_messages": True,
         "markdown": True,
+        "add_reaction": True,
     }
 
     def __init__(
@@ -1077,10 +1078,24 @@ class FeishuAdapter(ChannelAdapter):
         except Exception as e:
             logger.debug(f"Feishu: failed to invalidate token cache: {e}")
 
-    async def add_reaction(self, message_id: str, emoji_type: str = "Get") -> None:
-        """给消息添加表情回复，用作「已读」回执替代。默认用 [了解] 表示正在处理。"""
+    _EMOJI_TO_FEISHU: dict[str, str] = {
+        "✅": "DONE",
+        "👀": "Get",
+        "👍": "THUMBSUP",
+        "❤️": "HEART",
+        "🎉": "Celebrate",
+    }
+
+    async def add_reaction(
+        self,
+        chat_id: str,
+        message_id: str,
+        emoji: str = "👀",
+    ) -> bool:
+        """给消息添加表情回复。飞书使用名称标识而非 Unicode，自动映射常见 emoji。"""
         if not self._client:
-            return
+            return False
+        emoji_type = self._EMOJI_TO_FEISHU.get(emoji, "Get")
         try:
             request = (
                 lark_oapi.api.im.v1.CreateMessageReactionRequest.builder()
@@ -1099,8 +1114,10 @@ class FeishuAdapter(ChannelAdapter):
             await asyncio.get_running_loop().run_in_executor(
                 None, lambda: self._client.im.v1.message_reaction.create(request)
             )
+            return True
         except Exception as e:
             logger.debug(f"Feishu: add_reaction failed (non-critical): {e}")
+            return False
 
     # ==================== 会话级 key 辅助 ====================
 
@@ -1528,12 +1545,13 @@ class FeishuAdapter(ChannelAdapter):
                 except (ValueError, TypeError):
                     pass
 
+            chat_id = msg_dict.get("chat_id")
+
             # 发送已读回执（表情回复，fire-and-forget）
             if msg_id:
-                asyncio.create_task(self.add_reaction(msg_id))
+                asyncio.create_task(self.add_reaction(chat_id or "", msg_id))
 
             # 记录最近用户消息 ID，供 send_typing 回复定位（session_key 级别）
-            chat_id = msg_dict.get("chat_id")
             root_id = msg_dict.get("root_id")
             if chat_id and msg_id:
                 sk = self._make_session_key(chat_id, root_id or None)
@@ -1650,11 +1668,12 @@ class FeishuAdapter(ChannelAdapter):
                 except (ValueError, TypeError):
                     pass
 
-            if msg_id:
-                asyncio.create_task(self.add_reaction(msg_id))
-
             chat_id = message.get("chat_id")
             root_id = message.get("root_id")
+
+            if msg_id:
+                asyncio.create_task(self.add_reaction(chat_id or "", msg_id))
+
             if chat_id and msg_id:
                 sk = self._make_session_key(chat_id, root_id or None)
                 self._last_user_msg[sk] = msg_id

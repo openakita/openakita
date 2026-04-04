@@ -22,6 +22,7 @@ import { WechatQRModal } from "../components/WechatQRModal";
 import { PluginOnboardModal } from "../components/PluginOnboardModal";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -229,9 +230,9 @@ export function IMView({
 
   if (!serviceRunning) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+      <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-center h-full text-muted-foreground">
         <IconIM size={48} />
-        <div className="mt-3 font-semibold">{t("im.channels")}</div>
+        <div className="mt-3 font-semibold">{t("im.title", "消息与群聊")}</div>
         <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
       </div>
     );
@@ -240,32 +241,46 @@ export function IMView({
   const [activeTab, setActiveTab] = useState<"messages" | "groupPolicy">("messages");
 
   return (
-    <div className="flex flex-col h-full">
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
-        <ToggleGroup
-          type="single"
-          value={activeTab}
-          onValueChange={(v) => { if (v) setActiveTab(v as "messages" | "groupPolicy"); }}
-          variant="outline"
-        >
-          <ToggleGroupItem
-            value="messages"
-            className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-6 h-full overflow-hidden">
+      {/* 统一的页面头部 */}
+      <div className="flex items-center justify-between shrink-0">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <IconIM className="text-primary" size={28} />
+            {t("im.title", "消息与群聊")}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {t("im.description", "管理各个 IM 平台的机器人、会话与消息记录")}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ToggleGroup
+            type="single"
+            value={activeTab}
+            onValueChange={(v) => { if (v) setActiveTab(v as "messages" | "groupPolicy"); }}
+            variant="outline"
+            className="bg-background shadow-sm"
           >
-            {t("im.tabMessages")}
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="groupPolicy"
-            className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
-          >
-            {t("im.tabGroupPolicy")}
-          </ToggleGroupItem>
-        </ToggleGroup>
+            <ToggleGroupItem
+              value="messages"
+              className="text-sm px-4 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+            >
+              {t("im.tabMessages")}
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="groupPolicy"
+              className="text-sm px-4 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+            >
+              {t("im.tabGroupPolicy")}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-auto">
+
+      <Card className="flex-1 flex overflow-hidden border-border/80 shadow-sm bg-background">
         {activeTab === "messages" && <MessagesTab serviceRunning={serviceRunning} apiBase={api} />}
         {activeTab === "groupPolicy" && <GroupPolicyTab apiBase={api} />}
-      </div>
+      </Card>
     </div>
   );
 }
@@ -645,9 +660,9 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
 
   return (
     <>
-      <div className="imView">
+    <div className="imView w-full">
         {/* ── Left sidebar: channels + sessions ── */}
-        <div className="imLeft">
+      <div className="imLeft bg-muted/10">
           {/* Channel list header */}
           <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
             <span className="text-sm font-semibold text-foreground">{t("im.channels")}</span>
@@ -655,23 +670,23 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
               {refreshing ? <Loader2 className="animate-spin size-3" /> : <RefreshCw className="size-3" />}
               {t("topbar.refresh")}
             </Button>
-          </div>
+        </div>
 
           {/* Channel list */}
           <div className="px-1.5 space-y-0.5">
             {channels.length === 0 && (
               <div className="px-4 py-4 text-center text-xs text-muted-foreground">{t("im.noChannels")}</div>
             )}
-            {channels.map((ch) => (
+          {channels.map((ch) => (
               <button
-                key={ch.channel}
+              key={ch.channel}
                 className={cn(
                   "flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-[13px] font-semibold transition-[background,color,border,box-shadow] duration-150 cursor-pointer select-none",
                   selectedChannel === ch.channel
                     ? "bg-[#93c5fd] dark:bg-[#1d4ed8]/40 text-[#1e40af] dark:text-[#93c5fd] font-bold border-l-[4px] border-l-primary ring-1 ring-primary/50 shadow-md"
                     : "hover:bg-[var(--nav-hover)] text-muted-foreground border-l-[3px] border-transparent hover:text-foreground"
                 )}
-                onClick={() => handleSelectChannel(ch.channel)}
+              onClick={() => handleSelectChannel(ch.channel)}
               >
                 <span className="flex items-center gap-1.5 min-w-0">
                   {ch.status === "online" ? <DotGreen /> : ch.error ? (
@@ -693,15 +708,15 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                   {ch.sessionCount}
                 </Badge>
               </button>
-            ))}
-          </div>
+          ))}
+        </div>
 
           {/* Session list */}
-          {selectedChannel && (
-            <>
+        {selectedChannel && (
+          <>
               <div className="flex items-center justify-between px-3 pt-3 pb-1.5">
                 <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wide">{t("im.sessions")}</span>
-              </div>
+            </div>
               <div className="px-1.5">
                 {sessions.length === 0 && (
                   <div className="px-4 py-4 text-center text-xs text-muted-foreground">{t("im.noSessions")}</div>
@@ -752,8 +767,8 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                       ? (s.chatType === "group" ? (s.chatName || s.chatId || "") : (s.displayName || s.chatId || ""))
                       : (s.chatType === "group" && s.displayName ? s.displayName : (s.chatId || s.sessionId.slice(0, 12)));
                     return (
-                    <div
-                      key={s.sessionId}
+                <div
+                  key={s.sessionId}
                       className={cn(
                         "group flex flex-col gap-0.5 rounded-[10px] py-1.5 transition-[background,color,border,box-shadow] duration-150 cursor-pointer select-none border",
                         item.indented ? "pl-5 pr-2.5" : "px-2.5",
@@ -762,7 +777,7 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                           : "hover:bg-[var(--nav-hover)] border-transparent",
                         !isBotActive && "opacity-50",
                       )}
-                      onClick={() => handleSelectSession(s.sessionId)}
+                  onClick={() => handleSelectSession(s.sessionId)}
                       title={[
                         s.alias ? `✏ ${s.alias}` : null,
                         s.chatType === "group"
@@ -772,9 +787,9 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                         s.chatId ? `chat: ${s.chatId}` : "",
                         s.userId ? `user: ${s.userId}` : "",
                       ].filter(Boolean).join("\n")}
-                      role="button"
-                      tabIndex={0}
-                    >
+                  role="button"
+                  tabIndex={0}
+                >
                       {/* Row 1: icon + name + alias badge + time */}
                       <div
                         className="flex items-center gap-1.5"
@@ -804,9 +819,9 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                           <Badge variant="outline" className="h-4 text-[9px] px-1 py-0 shrink-0">{t("im.aliasSet")}</Badge>
                         )}
                         <span className="text-[11px] text-muted-foreground whitespace-nowrap shrink-0">
-                          {s.lastActive ? new Date(s.lastActive).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                        </span>
-                      </div>
+                      {s.lastActive ? new Date(s.lastActive).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                    </span>
+                  </div>
                       {/* Row 2: subtitle + count + actions menu */}
                       <div className="flex items-center gap-1.5 pl-[19px]">
                         <span className="text-[11px] text-muted-foreground truncate flex-1 min-w-0">
@@ -867,24 +882,24 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                           </div>,
                           document.body,
                         )}
-                      </div>
+                </div>
                     </div>
                     );
                   });
                 })()}
-              </div>
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
+      </div>
 
         {/* ── Right: message area ── */}
-        <div className="imRight">
-          {!selectedSessionId ? (
+      <div className="imRight">
+        {!selectedSessionId ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <IconMessageCircle size={40} />
+            <IconMessageCircle size={40} />
               <div className="mt-2 text-xs opacity-50">{t("im.noMessages")}</div>
-            </div>
-          ) : (
+          </div>
+        ) : (
             <div className="flex flex-col h-full">
               {/* Messages header + toolbar */}
               <div className="flex items-center justify-between px-4 py-2 border-b">
@@ -892,7 +907,7 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                   {t("im.messages")} ({totalMessages})
                 </span>
                 {/* TODO: batch delete — hidden until backend reliability is confirmed */}
-              </div>
+            </div>
               {/* Date range filter */}
               <div className="flex items-center gap-2 px-4 py-1.5 border-b">
                 <span className="text-[11px] text-muted-foreground shrink-0">{t("im.dateFrom")}</span>
@@ -958,15 +973,15 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                           variant={msg.role === "user" ? "default" : msg.role === "system" ? "outline" : "secondary"}
                           className="text-[10px] px-1.5 py-0 h-[18px]"
                         >
-                          {msg.role === "user" ? t("im.user") : msg.role === "system" ? t("im.system") : t("im.bot")}
+                    {msg.role === "user" ? t("im.user") : msg.role === "system" ? t("im.system") : t("im.bot")}
                         </Badge>
                         <span className="text-[10px] text-muted-foreground">
                           {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ""}
                         </span>
-                      </div>
-                      {msg.role !== "user" && msg.chain_summary && msg.chain_summary.length > 0 && (
-                        <IMChainSummary chain={msg.chain_summary} />
-                      )}
+                  </div>
+                  {msg.role !== "user" && msg.chain_summary && msg.chain_summary.length > 0 && (
+                    <IMChainSummary chain={msg.chain_summary} />
+                  )}
                       <div className={cn(
                         "text-[13px] leading-relaxed p-2.5 rounded-lg border",
                         msg.role === "user"
@@ -974,9 +989,9 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                           : "bg-muted/50 border-border",
                         selectMode && selectedMsgIds.has(idx) && "ring-2 ring-primary/30",
                       )}>
-                        <MediaContent content={msg.content} />
-                      </div>
-                    </div>
+                    <MediaContent content={msg.content} />
+                  </div>
+                </div>
                   </div>
                   </div>
                   );
@@ -1132,9 +1147,9 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
   }, [t]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full w-full">
       {/* Left: channel list */}
-      <div className="w-56 shrink-0 border-r overflow-y-auto">
+      <div className="w-56 shrink-0 border-r overflow-y-auto bg-muted/10">
         <div className="px-3 pt-2.5 pb-1.5">
           <span className="text-sm font-semibold text-foreground">{t("im.groupPolicyTitle")}</span>
         </div>
@@ -1166,11 +1181,11 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
               <span className="font-semibold truncate">{getChannelDisplayName(ch)}</span>
             </button>
           ))}
-        </div>
+            </div>
       </div>
 
       {/* Right: per-group mode config */}
-      <div className="flex-1 min-w-0 overflow-y-auto p-4">
+      <div className="flex-1 min-w-0 overflow-y-auto p-4 bg-background">
         {!selectedChannel ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm">
             <IconUsers size={40} />
@@ -1182,38 +1197,42 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
             <p className="mt-2">{t("im.groupAllowlistEmpty")}</p>
           </div>
         ) : (
-          <div className="space-y-2 max-w-2xl">
-            <p className="text-xs text-muted-foreground mb-3">{t("im.groupPolicyDesc")}</p>
-            {groupSessions.map((g) => (
-              <div key={g.chatId} className="flex items-center justify-between rounded-lg border px-3 py-2.5 gap-3">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <IconUsers size={14} className="shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <span className={cn("text-sm font-medium truncate block", g.alias && "text-primary")}>{g.alias || g.chatName}</span>
-                    {(g.alias || g.chatName !== g.chatId) && (
-                      <span className="text-[11px] text-muted-foreground truncate block">{g.alias ? g.chatName : g.chatId}</span>
-                    )}
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t("im.groupPolicyDesc")}</p>
+            <div className="grid grid-cols-1 gap-3">
+              {groupSessions.map((g) => (
+                <div key={g.chatId} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm transition-all hover:shadow-md">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                      <IconUsers size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className={cn("text-[15px] font-semibold truncate block text-foreground", g.alias && "text-primary")}>{g.alias || g.chatName}</span>
+                      {(g.alias || g.chatName !== g.chatId) && (
+                        <span className="text-xs text-muted-foreground truncate block mt-0.5 font-mono">{g.alias ? g.chatName : g.chatId}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0 ml-4">
+                    {savingChat === g.chatId && <Loader2 className="animate-spin size-4 text-muted-foreground" />}
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      value={g.responseMode || "global"}
+                      onValueChange={(v) => handleSetMode(g, v)}
+                      className="bg-muted/30 p-1 rounded-lg [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground [&_[data-state=on]]:shadow-sm"
+                    >
+                      {RESPONSE_MODES.map((m) => (
+                        <ToggleGroupItem key={m.value} value={m.value} className="text-xs h-7 px-3 rounded-md transition-all">
+                          {t(m.labelKey)}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {savingChat === g.chatId && <Loader2 className="animate-spin size-3.5 text-muted-foreground" />}
-                  <ToggleGroup
-                    type="single"
-                    variant="outline"
-                    size="sm"
-                    value={g.responseMode || "global"}
-                    onValueChange={(v) => handleSetMode(g, v)}
-                    className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground"
-                  >
-                    {RESPONSE_MODES.map((m) => (
-                      <ToggleGroupItem key={m.value} value={m.value} className="text-[11px] h-6 px-2">
-                        {t(m.labelKey)}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -1263,7 +1282,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
       const res = await safeFetch(`${apiBase}/api/agents/bots`);
       const data = await res.json();
       setBots(data.bots || []);
-      setLoading(false);
+    setLoading(false);
       return true;
     } catch (e) {
       logger.warn("IM", "Failed to fetch bots", { error: String(e) });
@@ -1494,8 +1513,8 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                 <div className="min-w-0">
                   <div className="font-bold text-sm truncate" title={bot.name || bot.id}>{bot.name || bot.id}</div>
                   <div className="text-[11px] text-muted-foreground/45 font-mono truncate" title={bot.id}>{bot.id}</div>
+                  </div>
                 </div>
-              </div>
               <p className="text-xs text-muted-foreground mb-2.5">
                 {t("im.botAgent")}: {agentProfile?.name || bot.agent_profile_id}
               </p>
@@ -1537,7 +1556,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => confirmDeleteId && handleDelete(confirmDeleteId)}>
-              {t("common.delete")}
+                {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1580,7 +1599,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent position="popper" side="bottom" sideOffset={4}>
                   <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
-                  {profiles.map((p) => (
+                {profiles.map((p) => (
                     <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
                   ))}
                 </SelectContent>
@@ -1643,7 +1662,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                 <p className="text-[11px] text-muted-foreground">
                   {editingBot.type === "wework_ws" ? t("config.imWeworkModeWsHint") : t("config.imWeworkModeHttpHint")}
                 </p>
-              </div>
+                </div>
             )}
 
             {/* 4c. QQ Bot mode selector */}
@@ -1726,24 +1745,24 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                   <Label className="text-sm text-muted-foreground">{t(field.label, { defaultValue: field.label })}</Label>
                   <div className="flex gap-1.5">
                     <Input
-                      type={field.secret && !revealedSecrets.has(field.key) ? "password" : "text"}
-                      value={String(editingBot.credentials[field.key] ?? "")}
-                      onChange={(e) => updateCredential(field.key, e.target.value)}
+                    type={field.secret && !revealedSecrets.has(field.key) ? "password" : "text"}
+                    value={String(editingBot.credentials[field.key] ?? "")}
+                    onChange={(e) => updateCredential(field.key, e.target.value)}
                       placeholder={field.placeholder ? t(field.placeholder, { defaultValue: field.placeholder }) : undefined}
                       className="flex-1 placeholder:text-foreground/40"
-                    />
-                    {field.secret && (
+                  />
+                  {field.secret && (
                       <Button variant="outline" size="sm" className="h-9 px-2.5 text-xs shrink-0"
-                        onClick={() => setRevealedSecrets((prev) => {
-                          const next = new Set(prev);
+                      onClick={() => setRevealedSecrets((prev) => {
+                        const next = new Set(prev);
                           if (next.has(field.key)) next.delete(field.key); else next.add(field.key);
-                          return next;
-                        })}
-                      >
-                        {revealedSecrets.has(field.key) ? t("skills.hide") : t("skills.show")}
+                        return next;
+                      })}
+                    >
+                      {revealedSecrets.has(field.key) ? t("skills.hide") : t("skills.show")}
                       </Button>
-                    )}
-                  </div>
+                  )}
+                </div>
                 </div>
               ))}
             </div>
@@ -1824,8 +1843,8 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                     <span className="text-sm">{t("qqbot.footerElapsed")}</span>
                     <Switch checked={footerElapsed} onCheckedChange={(v) => updateCredential("footer_elapsed", v ? "true" : "false")} />
                   </label>
+                  </div>
                 </div>
-              </div>
             )}
 
             {/* Feishu extras */}
@@ -1859,7 +1878,7 @@ export function BotConfigTab({ apiBase, multiAgentEnabled, onRequestRestart, ven
                   {(editingBot.credentials.group_response_mode === "smart" || editingBot.credentials.group_response_mode === "always") && (
                     <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed">{t("feishu.groupModeHint")}</p>
                   )}
-                </div>
+                  </div>
                 <div className="space-y-1.5">
                   <Label>{t("feishu.footerTitle")}</Label>
                   <label className="flex items-center justify-between p-2.5 rounded-lg border cursor-pointer select-none">
@@ -2195,9 +2214,9 @@ function BotCreationWizard({
                 <div className="flex items-center gap-1.5 rounded-full bg-primary/8 border border-primary/20 px-2.5 py-0.5">
                   <platformInfo.logo size={16} />
                   <span className="text-xs font-medium text-primary">{platformTitle}</span>
-                </div>
+                    </div>
               )}
-            </div>
+                  </div>
           </DialogHeader>
 
           {/* Step indicator */}
@@ -2298,7 +2317,7 @@ function BotCreationWizard({
                 {!multiAgentEnabled && (
                   <p className="text-[11px] text-muted-foreground">{t("im.needMultiAgent")}</p>
                 )}
-              </div>
+                  </div>
             )}
 
             {/* Step: Mode */}
@@ -2318,8 +2337,8 @@ function BotCreationWizard({
                     <p className="text-[11px] text-muted-foreground">
                       {bot.type === "onebot_reverse" ? t("config.imOneBotModeReverseHint") : t("config.imOneBotModeForwardHint")}
                     </p>
-                  </div>
-                )}
+                    </div>
+                  )}
                 {WEWORK_TYPES.has(bot.type) && (
                   <div className="space-y-1.5">
                     <Label>{t("config.imWeworkMode")}</Label>
@@ -2334,9 +2353,9 @@ function BotCreationWizard({
                     <p className="text-[11px] text-muted-foreground">
                       {bot.type === "wework_ws" ? t("config.imWeworkModeWsHint") : t("config.imWeworkModeHttpHint")}
                     </p>
-                  </div>
-                )}
-              </div>
+                </div>
+            )}
+          </div>
             )}
 
             {/* Step: ID & Name */}
@@ -2443,8 +2462,8 @@ function BotCreationWizard({
                             {revealedSecrets.has(field.key) ? t("skills.hide") : t("skills.show")}
                           </Button>
                         )}
-                      </div>
-                    </div>
+          </div>
+        </div>
                   ))}
                 </div>
 

@@ -2604,6 +2604,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let result: Result<(), Box<dyn std::error::Error>> = (|| {
             // ── NSIS 安装后以当前用户执行清理（解决“以管理员运行安装程序”时清错目录的问题） ──
@@ -3578,13 +3580,23 @@ fn set_auto_update(enabled: bool) -> Result<(), String> {
 
 /// 前端心跳检测到后端状态变化时调用，更新托盘 tooltip
 /// status: "alive" | "degraded" | "dead"
+/// im_summary: 可选的 IM 通道状态摘要（如 "TG:✓ FS:✓ WX:✗"）
 #[tauri::command]
-fn set_tray_backend_status(app: tauri::AppHandle, status: String) -> Result<(), String> {
-    let tooltip = match status.as_str() {
+fn set_tray_backend_status(app: tauri::AppHandle, status: String, im_summary: Option<String>) -> Result<(), String> {
+    let base = match status.as_str() {
         "alive" => "OpenAkita - Running",
         "degraded" => "OpenAkita - Backend Unresponsive",
         "dead" => "OpenAkita - Backend Stopped",
         _ => "OpenAkita",
+    };
+    let tooltip = if let Some(ref im) = im_summary {
+        if !im.is_empty() {
+            format!("{}\nIM: {}", base, im)
+        } else {
+            base.to_string()
+        }
+    } else {
+        base.to_string()
     };
     // 更新所有 tray icon 的 tooltip
     if let Some(tray) = app.tray_by_id("main_tray") {

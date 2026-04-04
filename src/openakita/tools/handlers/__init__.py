@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 # 处理器类型：同步或异步函数
 HandlerFunc = Callable[[str, dict], str | Awaitable[str]]
 
+# Per-tool permission callback: (tool_name, tool_input) → PermissionDecision | None
+# Returning None means "no opinion" (defer to other layers).
+ToolPermissionCheck = Callable[[str, dict], Any]
+
 
 class SystemHandlerRegistry:
     """
@@ -38,12 +42,14 @@ class SystemHandlerRegistry:
     def __init__(self):
         self._handlers: dict[str, HandlerFunc] = {}
         self._tool_to_handler: dict[str, str] = {}  # tool_name -> handler_name
+        self._permission_checks: dict[str, ToolPermissionCheck] = {}  # tool_name -> check fn
 
     def register(
         self,
         handler_name: str,
         handler: HandlerFunc,
         tool_names: list[str] | None = None,
+        check_permissions: ToolPermissionCheck | None = None,
     ) -> None:
         """
         注册处理器
@@ -54,6 +60,9 @@ class SystemHandlerRegistry:
             tool_names: 该处理器处理的工具名称列表。
                 如果为 None，自动从 handler 所属实例的 TOOLS 属性读取
                 （handler 是 bound method 时通过 __self__.TOOLS 获取）。
+            check_permissions: Optional per-tool permission callback.
+                Invoked by ToolExecutor.check_permission() after mode+policy
+                checks pass.  Returns PermissionDecision or None.
         """
         self._handlers[handler_name] = handler
 
@@ -63,6 +72,12 @@ class SystemHandlerRegistry:
 
         if tool_names:
             for tool_name in tool_names:
+                existing = self._tool_to_handler.get(tool_name)
+                if existing and existing != handler_name:
+                    logger.warning(
+                        f"[Registry] 工具名冲突: '{tool_name}' 已注册到 '{existing}'，"
+                        f"现被 '{handler_name}' 覆盖"
+                    )
                 self._tool_to_handler[tool_name] = handler_name
         else:
             logger.warning(
@@ -70,6 +85,10 @@ class SystemHandlerRegistry:
                 "add a TOOLS class attribute to the handler class",
                 handler_name,
             )
+
+        if check_permissions and tool_names:
+            for tool_name in tool_names:
+                self._permission_checks[tool_name] = check_permissions
 
         logger.info(
             "Registered handler: %s (%d tools)", handler_name, len(tool_names or []),
@@ -198,6 +217,10 @@ class SystemHandlerRegistry:
     def has_tool(self, tool_name: str) -> bool:
         """检查工具是否已映射"""
         return tool_name in self._tool_to_handler
+
+    def get_permission_check(self, tool_name: str) -> ToolPermissionCheck | None:
+        """Return the per-tool permission callback, if any."""
+        return self._permission_checks.get(tool_name)
 
     def list_handlers(self) -> list[str]:
         """列出所有处理器名称"""

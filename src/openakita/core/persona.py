@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from openakita.memory.types import normalize_tags
+
 logger = logging.getLogger(__name__)
 
 
@@ -301,7 +303,7 @@ class PersonaManager:
     def _parse_trait_from_memory(self, mem: dict) -> PersonaTrait | None:
         """从记忆字典中解析 PersonaTrait"""
         content = mem.get("content", "")
-        tags = mem.get("tags", [])
+        tags = normalize_tags(mem.get("tags"))
 
         # 尝试从 tags 中获取维度信息
         dimension = None

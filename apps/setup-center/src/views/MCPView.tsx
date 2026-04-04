@@ -12,8 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Plus, Trash2, Plug, Unplug } from "lucide-react";
+import { Loader2, RefreshCw, Plus, Trash2, Plug, Unplug, Info, Server, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 type MCPTool = {
@@ -57,6 +59,12 @@ const emptyForm: AddServerForm = {
   description: "",
   auto_connect: false,
 };
+
+function transportLabel(transport: string): string {
+  if (transport === "streamable_http") return "HTTP";
+  if (transport === "sse") return "SSE";
+  return "stdio";
+}
 
 /**
  * Parse args string into an array, respecting quoted strings for paths with spaces.
@@ -266,47 +274,87 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
     );
   }
 
-  return (
-    <div>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <IconLink size={20} />
-          <span style={{ fontSize: 16, fontWeight: 600 }}>{t("mcp.title")}</span>
-          {!mcpEnabled && (
-            <span style={{
-              fontSize: 11, fontWeight: 500, color: "#b45309",
-              background: "#fef3c7", padding: "2px 8px", borderRadius: 4,
-            }}>
-              {t("mcp.disabled") || "MCP 已禁用"}
-            </span>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Button variant="outline" size="sm" onClick={() => setShowAdd(!showAdd)}>
-            <Plus size={14} /> {t("mcp.addServer")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={fetchServers} disabled={loading}>
-            {loading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
-            {t("topbar.refresh")}
-          </Button>
-        </div>
-      </div>
+  const connectedCount = servers.filter((server) => server.connected).length;
+  const totalTools = servers.reduce((sum, server) => sum + (server.connected ? server.tool_count : server.catalog_tool_count), 0);
 
-      {/* Add server form */}
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
+      <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
+        <CardHeader className="gap-3 px-6 py-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <IconLink size={22} />
+              </div>
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <CardTitle className="text-xl tracking-tight">{t("mcp.title")}</CardTitle>
+                  {!mcpEnabled && (
+                    <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                      {t("mcp.disabled") || "MCP 已禁用"}
+                    </Badge>
+                  )}
+                </div>
+                <CardDescription className="max-w-3xl text-sm leading-6">
+                  <strong className="font-semibold text-foreground">MCP (Model Context Protocol)</strong> {t("mcp.helpLine1")}
+                  <br />
+                  {t("mcp.helpLine2")}
+                  <br />
+                  {t("mcp.helpLine3")}
+                </CardDescription>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant={showAdd ? "secondary" : "outline"} onClick={() => setShowAdd(!showAdd)}>
+                <Plus size={14} />
+                {t("mcp.addServer")}
+              </Button>
+              <Button variant="outline" onClick={fetchServers} disabled={loading}>
+                {loading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                {t("topbar.refresh")}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3 border-t px-6 py-4 sm:grid-cols-3">
+          <div className="rounded-xl border bg-background/80 p-4">
+            <div className="text-xs text-muted-foreground">MCP Servers</div>
+            <div className="mt-2 text-2xl font-semibold">{servers.length}</div>
+          </div>
+          <div className="rounded-xl border bg-background/80 p-4">
+            <div className="text-xs text-muted-foreground">{t("mcp.connected")}</div>
+            <div className="mt-2 text-2xl font-semibold text-emerald-600">{connectedCount}</div>
+          </div>
+          <div className="rounded-xl border bg-background/80 p-4">
+            <div className="text-xs text-muted-foreground">{t("mcp.availableTools")}</div>
+            <div className="mt-2 text-2xl font-semibold">{totalTools}</div>
+          </div>
+        </CardContent>
+      </Card>
+
       {showAdd && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{t("mcp.addServerTitle")}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px" }}>
-            <div className="space-y-1.5">
+        <Card className="gap-0 border-border/80 py-0 shadow-sm">
+          <CardHeader className="gap-2 px-6 py-4">
+            <CardTitle className="text-base">{t("mcp.addServerTitle")}</CardTitle>
+            <CardDescription>
+              {form.transport === "stdio"
+                ? t("mcp.stdioDesc")
+                : form.transport === "sse"
+                  ? "使用 SSE 端点接入远程 MCP 服务。"
+                  : "使用 Streamable HTTP 端点接入远程 MCP 服务。"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 px-6 py-4 md:grid-cols-2">
+            <div className="space-y-2">
               <Label>{t("mcp.serverName")} *</Label>
               <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder={t("mcp.serverNamePlaceholder")} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>{t("mcp.description")}</Label>
               <Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder={t("mcp.descriptionPlaceholder")} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>{t("mcp.transport")}</Label>
               <Select value={form.transport} onValueChange={v => setForm({ ...form, transport: v as "stdio" | "streamable_http" | "sse" })}>
                 <SelectTrigger className="w-full">
@@ -320,30 +368,33 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
               </Select>
             </div>
             {form.transport === "stdio" ? (
-              <>
-                <div className="space-y-1.5">
-                  <Label>{t("mcp.command")} *</Label>
-                  <Input value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} placeholder={t("mcp.commandPlaceholder")} />
-                </div>
-                <div className="space-y-1.5" style={{ gridColumn: "1 / -1" }}>
-                  <Label>{t("mcp.argsLabel")}</Label>
-                  <Textarea
-                    value={form.args}
-                    onChange={e => setForm({ ...form, args: e.target.value })}
-                    placeholder={'如: -m openakita.mcp_servers.web_search\n或每行一个参数:\n-y\n@anthropic/mcp-server-filesystem\n"C:\\My Path\\dir"'}
-                    rows={2}
-                    className="resize-y font-mono text-xs"
-                  />
-                </div>
-              </>
+              <div className="space-y-2">
+                <Label>{t("mcp.command")} *</Label>
+                <Input value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} placeholder={t("mcp.commandPlaceholder")} />
+              </div>
             ) : (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label>URL *</Label>
-                <Input value={form.url} onChange={e => setForm({ ...form, url: e.target.value })}
-                  placeholder={form.transport === "sse" ? "如: http://127.0.0.1:8080/sse" : "如: http://127.0.0.1:12306/mcp"} />
+                <Input
+                  value={form.url}
+                  onChange={e => setForm({ ...form, url: e.target.value })}
+                  placeholder={form.transport === "sse" ? "如: http://127.0.0.1:8080/sse" : "如: http://127.0.0.1:12306/mcp"}
+                />
               </div>
             )}
-            <div className="space-y-1.5" style={{ gridColumn: "1 / -1" }}>
+            {form.transport === "stdio" && (
+              <div className="space-y-2 md:col-span-2">
+                <Label>{t("mcp.argsLabel")}</Label>
+                <Textarea
+                  value={form.args}
+                  onChange={e => setForm({ ...form, args: e.target.value })}
+                  placeholder={'如: -m openakita.mcp_servers.web_search\n或每行一个参数:\n-y\n@anthropic/mcp-server-filesystem\n"C:\\My Path\\dir"'}
+                  rows={3}
+                  className="resize-y font-mono text-xs"
+                />
+              </div>
+            )}
+            <div className="space-y-2 md:col-span-2">
               <Label>{t("mcp.envLabel")}</Label>
               <Textarea
                 value={form.env}
@@ -353,132 +404,159 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                 className="resize-y font-mono text-xs"
               />
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "space-between", alignItems: "center" }}>
-            <Label className="flex items-center gap-2 cursor-pointer text-sm font-normal text-muted-foreground">
+          </CardContent>
+          <CardFooter className="flex flex-col gap-3 border-t px-6 py-4 md:flex-row md:items-center md:justify-between">
+            <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
               <Checkbox checked={form.auto_connect} onCheckedChange={(v) => setForm({ ...form, auto_connect: !!v })} />
               {t("mcp.autoConnect")}
             </Label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Button variant="outline" size="sm" onClick={() => { setShowAdd(false); setForm({ ...emptyForm }); }}>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => { setShowAdd(false); setForm({ ...emptyForm }); }}>
                 {t("common.cancel")}
               </Button>
-              <Button size="sm" onClick={addServer} disabled={busy === "add"}>
+              <Button onClick={addServer} disabled={busy === "add"}>
                 {busy === "add" && <Loader2 className="animate-spin" size={14} />}
                 {t("mcp.add")}
               </Button>
             </div>
-          </div>
-        </div>
+          </CardFooter>
+        </Card>
       )}
 
-      {/* Server list */}
       {loading && servers.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: 30, color: "var(--muted)" }}>
-          {t("common.loading")}
-        </div>
+        <Card className="shadow-sm">
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            {t("common.loading")}
+          </CardContent>
+        </Card>
       ) : servers.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-          <p style={{ fontSize: 15, marginBottom: 8 }}>{t("mcp.noServers")}</p>
-          <p style={{ fontSize: 13 }}>{t("mcp.noServersHint")}</p>
-        </div>
+        <Card className="shadow-sm">
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <p className="text-base font-medium text-foreground">{t("mcp.noServers")}</p>
+            <p className="mt-2 text-sm">{t("mcp.noServersHint")}</p>
+          </CardContent>
+        </Card>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {servers.map(s => (
-            <div key={s.name} className="card" style={{ padding: 0 }}>
-              {/* Server header */}
-              <div
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "12px 16px", cursor: "pointer",
-                }}
-                onClick={() => toggleExpand(s.name)}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  {expandedServer === s.name ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-                  {s.connected ? <DotGreen /> : <DotGray />}
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{s.name}</span>
-                  <span style={{ fontSize: 12, color: "var(--muted)", background: "var(--bg-subtle, #f1f5f9)", padding: "1px 6px", borderRadius: 3 }}>
-                    {s.transport === "streamable_http" ? "HTTP" : s.transport === "sse" ? "SSE" : "stdio"}
-                  </span>
-                  <span style={{
-                    fontSize: 11, padding: "1px 6px", borderRadius: 3,
-                    background: s.source === "workspace" ? "var(--ok-bg, #dcfce7)" : "var(--bg-subtle, #f1f5f9)",
-                    color: s.source === "workspace" ? "var(--ok, #16a34a)" : "var(--muted)",
-                  }}>
-                    {s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
-                  </span>
-                  {s.description && (
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>— {s.description}</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={e => e.stopPropagation()}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                    {s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
-                  </span>
-                  {s.connected ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => disconnectServer(s.name)}
-                      disabled={busy === s.name}
-                      className="text-amber-600 border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950"
-                    >
-                      {busy === s.name ? <Loader2 className="animate-spin" size={14} /> : <Unplug size={14} />}
-                      {t("mcp.disconnect")}
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      onClick={() => connectServer(s.name)}
-                      disabled={busy === s.name}
-                    >
-                      {busy === s.name ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
-                      {t("mcp.connect")}
-                    </Button>
-                  )}
-                  {s.removable && (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => removeServer(s.name)}
-                      disabled={busy === s.name}
-                      title={t("mcp.deleteServer")}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 size={14} />
-                    </Button>
-                  )}
-                </div>
-              </div>
+        <div className="flex flex-col gap-4">
+          {servers.map((s) => (
+            <Card key={s.name} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="gap-3 px-6 py-4">
+                <div
+                  className="flex cursor-pointer flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"
+                  onClick={() => toggleExpand(s.name)}
+                >
+                  <div className="flex min-w-0 gap-4">
+                    <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground">
+                      {s.connected ? <DotGreen /> : <DotGray />}
+                    </div>
+                    <div className="min-w-0 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="pointer-events-none -ml-2"
+                        >
+                          {expandedServer === s.name ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+                        </Button>
+                        <CardTitle className="text-base">{s.name}</CardTitle>
+                        <Badge variant="secondary">{transportLabel(s.transport)}</Badge>
+                        <Badge
+                          variant="outline"
+                          className={s.source === "workspace" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : undefined}
+                        >
+                          {s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
+                        </Badge>
+                        {s.connected ? (
+                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                            {t("mcp.connected")}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            {t("mcp.disconnected")}
+                          </Badge>
+                        )}
+                      </div>
 
-              {/* Expanded details */}
+                      {s.description && (
+                        <CardDescription className="max-w-3xl text-sm leading-6">
+                          {s.description}
+                        </CardDescription>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline" className="gap-1">
+                          <Wrench size={12} />
+                          {s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
+                        </Badge>
+                        {s.has_instructions && (
+                          <Badge variant="outline" className="gap-1">
+                            <Info size={12} />
+                            {t("mcp.instructions")}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    {s.connected ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => disconnectServer(s.name)}
+                        disabled={busy === s.name}
+                        className="text-amber-600 border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950"
+                      >
+                        {busy === s.name ? <Loader2 className="animate-spin" size={14} /> : <Unplug size={14} />}
+                        {t("mcp.disconnect")}
+                      </Button>
+                    ) : (
+                      <Button onClick={() => connectServer(s.name)} disabled={busy === s.name}>
+                        {busy === s.name ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
+                        {t("mcp.connect")}
+                      </Button>
+                    )}
+                    {s.removable && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => removeServer(s.name)}
+                        disabled={busy === s.name}
+                        title={t("mcp.deleteServer")}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+
               {expandedServer === s.name && (
-                <div style={{ borderTop: "1px solid var(--line, #e5e7eb)", padding: "12px 16px" }}>
-                  {/* Connection info */}
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                <CardContent className="space-y-4 border-t px-6 py-4">
+                  <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    <div className="mb-1 flex items-center gap-2 font-medium text-foreground">
+                      <Server size={14} />
+                      {t("mcp.transport")}
+                    </div>
                     {s.transport === "streamable_http" || s.transport === "sse" ? (
-                      <span>{s.transport === "sse" ? "SSE" : "HTTP"} URL: <code>{s.url}</code></span>
+                      <span>{transportLabel(s.transport)} URL: <code>{s.url}</code></span>
                     ) : (
                       <span>{t("mcp.commandLabel")}: <code>{s.command}</code></span>
                     )}
                   </div>
 
-                  {/* Tools */}
                   {s.tools.length > 0 ? (
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                    <div className="space-y-3">
+                      <div className="text-sm font-semibold text-foreground">
                         {t("mcp.availableTools")} ({s.tools.length})
                       </div>
-                      <div style={{ display: "grid", gap: 6 }}>
-                        {s.tools.map(t => (
-                          <div key={t.name} style={{
-                            background: "var(--bg-subtle, #f8fafc)", borderRadius: 6, padding: "8px 12px",
-                          }}>
-                            <div style={{ fontWeight: 500, fontSize: 13 }}>{t.name}</div>
-                            {t.description && (
-                              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                                {t.description}
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {s.tools.map((tool) => (
+                          <div key={tool.name} className="rounded-xl border bg-background/80 p-4">
+                            <div className="text-sm font-medium text-foreground">{tool.name}</div>
+                            {tool.description && (
+                              <div className="mt-2 text-sm leading-6 text-muted-foreground">
+                                {tool.description}
                               </div>
                             )}
                           </div>
@@ -486,43 +564,37 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                       </div>
                     </div>
                   ) : !s.connected ? (
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      <DotYellow /> {t("mcp.connectToSeeTools")}
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
+                      <span className="inline-flex items-center gap-2">
+                        <DotYellow />
+                        {t("mcp.connectToSeeTools")}
+                      </span>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("mcp.noTools")}</div>
+                    <div className="rounded-xl border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                      {t("mcp.noTools")}
+                    </div>
                   )}
 
-                  {/* Instructions */}
                   {s.has_instructions && instructions[s.name] && (
-                    <details style={{ marginTop: 12 }}>
-                      <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "var(--primary, #3b82f6)", lineHeight: "20px" }}>
-                        {t("mcp.instructions")}
-                      </summary>
-                      <pre style={{
-                        marginTop: 8, padding: 12, background: "var(--bg-subtle, #f8fafc)",
-                        borderRadius: 6, fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-word",
-                        maxHeight: 300, overflow: "auto",
-                      }}>
-                        {instructions[s.name]}
-                      </pre>
-                    </details>
+                    <Card className="gap-0 border-border/70 bg-muted/20 py-0 shadow-none">
+                      <CardHeader className="gap-2 px-4 py-3">
+                        <CardTitle className="text-sm">{t("mcp.instructions")}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <pre className="max-h-[300px] overflow-auto rounded-lg border bg-background p-3 text-xs leading-6 text-foreground whitespace-pre-wrap break-words">
+                          {instructions[s.name]}
+                        </pre>
+                      </CardContent>
+                    </Card>
                   )}
-                </div>
+                </CardContent>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}
 
-      {/* Help text */}
-      <div style={{ marginTop: 16, fontSize: 12, color: "var(--muted)", lineHeight: 1.8 }}>
-        <strong>MCP (Model Context Protocol)</strong> {t("mcp.helpLine1")}
-        <br />
-        {t("mcp.helpLine2")}
-        <br />
-        {t("mcp.helpLine3")}
-      </div>
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
     </div>
   );

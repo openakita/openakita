@@ -527,31 +527,48 @@ def _purge_old_commands() -> None:
         _command_store.pop(cid, None)
 
 
-def _bridge_command_to_session(
-    sm,
-    org_id: str,
-    target_node_id: str | None,
-    content: str,
-    result: dict,
+def _bridge_session_chat_id(org_id: str, target_node_id: str | None) -> str:
+    """Compute the frontend-matching chat_id.
+
+    Must stay in sync with OrgChatPanel.sessionId():
+      nodeId ? `org_${orgId}_node_${nodeId}` : `org_${orgId}`
+    """
+    return f"org_{org_id}_node_{target_node_id}" if target_node_id else f"org_{org_id}"
+
+
+def _bridge_persist_user_message(
+    sm, org_id: str, target_node_id: str | None, content: str,
 ) -> None:
-    """Write user command + result to SessionManager so OrgChatPanel can restore history."""
+    """Persist user command to session IMMEDIATELY so it survives even if execution fails."""
     if not sm:
         return
-    # Must match frontend OrgChatPanel.sessionId():
-    #   nodeId ? `org_${orgId}_node_${nodeId}` : `org_${orgId}`
-    # Use the frontend-requested target_node_id (not the internally-routed node)
-    # to ensure the bridge writes to the same session the UI reads from.
-    frontend_chat_id = f"org_{org_id}_node_{target_node_id}" if target_node_id else f"org_{org_id}"
+    chat_id = _bridge_session_chat_id(org_id, target_node_id)
     try:
         session = sm.get_session(
-            channel="desktop",
-            chat_id=frontend_chat_id,
-            user_id="desktop_user",
+            channel="desktop", chat_id=chat_id, user_id="desktop_user",
+            create_if_missing=True,
+        )
+        if session:
+            session.add_message("user", content)
+            sm.mark_dirty()
+    except Exception as exc:
+        logger.warning("[OrgCmd] failed to persist user message to session: %s", exc)
+
+
+def _bridge_persist_result(
+    sm, org_id: str, target_node_id: str | None, result: dict,
+) -> None:
+    """Persist command result (assistant reply or error) to session."""
+    if not sm:
+        return
+    chat_id = _bridge_session_chat_id(org_id, target_node_id)
+    try:
+        session = sm.get_session(
+            channel="desktop", chat_id=chat_id, user_id="desktop_user",
             create_if_missing=True,
         )
         if not session:
             return
-        session.add_message("user", content)
         if result.get("error"):
             session.add_message("system", f"命令执行失败: {result['error']}")
         elif result.get("result"):
@@ -561,7 +578,7 @@ def _bridge_command_to_session(
             session.add_message("assistant", str(text))
         sm.mark_dirty()
     except Exception as exc:
-        logger.debug(f"[OrgCmd] session bridge failed: {exc}")
+        logger.warning("[OrgCmd] failed to persist result to session: %s", exc)
 
 
 @router.post("/{org_id}/command")
@@ -590,13 +607,18 @@ async def send_command(request: Request, org_id: str):
 
     sm = getattr(request.app.state, "session_manager", None)
 
+    # Persist user message IMMEDIATELY — survives even if execution crashes
+    _bridge_persist_user_message(sm, org_id, target_node, content)
+
     async def _run() -> None:
         from openakita.api.routes.websocket import broadcast_event
 
         try:
             result = await rt.send_command(org_id, target_node, content)
-            _command_store[command_id].update(status="done", result=result, updated_at=time.time())
-            _bridge_command_to_session(sm, org_id, target_node, content, result)
+            _command_store[command_id].update(
+                status="done", result=result, updated_at=time.time(),
+            )
+            _bridge_persist_result(sm, org_id, target_node, result)
             await broadcast_event(
                 "org:command_done",
                 {
@@ -607,15 +629,9 @@ async def send_command(request: Request, org_id: str):
             )
         except Exception as exc:
             _command_store[command_id].update(
-                status="error", error=str(exc), updated_at=time.time()
+                status="error", error=str(exc), updated_at=time.time(),
             )
-            _bridge_command_to_session(
-                sm,
-                org_id,
-                target_node,
-                content,
-                {"error": str(exc)},
-            )
+            _bridge_persist_result(sm, org_id, target_node, {"error": str(exc)})
             await broadcast_event(
                 "org:command_done",
                 {
@@ -1504,21 +1520,28 @@ async def get_org_stats(request: Request, org_id: str):
             pending_messages += messenger.get_pending_count(n.id)
 
     now_mono = _time.monotonic()
+    now_wall = _time.time()
     per_node: list[dict] = []
     anomalies: list[dict] = []
     agent_cache = getattr(rt, "_agent_cache", None) or {}
+    node_last_activity = getattr(rt, "_node_last_activity", {})
+    node_busy_since = getattr(rt, "_node_busy_since", {})
     store = _get_project_store(request, org_id)
     for n in org.nodes:
         cache_key = f"{org_id}:{n.id}"
-        cached = agent_cache.get(cache_key) if isinstance(agent_cache, dict) else None
         idle_secs = None
-        if cached:
-            try:
-                last = cached.last_used
-                if isinstance(last, (int, float)) and last > 0:
-                    idle_secs = now_mono - last
-            except Exception:
-                pass
+        last_act = node_last_activity.get(cache_key)
+        if last_act and last_act > 0:
+            idle_secs = now_mono - last_act
+        else:
+            cached = agent_cache.get(cache_key) if isinstance(agent_cache, dict) else None
+            if cached:
+                try:
+                    last = cached.last_used
+                    if isinstance(last, (int, float)) and last > 0:
+                        idle_secs = now_mono - last
+                except Exception:
+                    pass
         node_pending = messenger.get_pending_count(n.id) if messenger else 0
 
         assigned = store.all_tasks(assignee=n.id)
@@ -1540,6 +1563,16 @@ async def get_org_stats(request: Request, org_id: str):
         }
         external_tools = list(getattr(n, "external_tools", []) or [])
 
+        running_since_ms: float | None = None
+        if n.status.value == "busy":
+            bs = node_busy_since.get(cache_key)
+            if bs and bs > 0:
+                running_since_ms = (now_wall - (now_mono - bs)) * 1000
+
+        recent_activity_ts: int | None = None
+        if last_act and last_act > 0:
+            recent_activity_ts = round((now_wall - (now_mono - last_act)) * 1000)
+
         entry = {
             "id": n.id,
             "role_title": n.role_title,
@@ -1547,6 +1580,8 @@ async def get_org_stats(request: Request, org_id: str):
             "status": n.status.value,
             "pending_messages": node_pending,
             "idle_seconds": round(idle_secs) if idle_secs is not None else None,
+            "running_since": round(running_since_ms) if running_since_ms is not None else None,
+            "recent_activity_ts": recent_activity_ts,
             "current_task": getattr(n, "_current_task_desc", None),
             "current_task_title": current_task_title,
             "plan_progress": plan_progress,
@@ -1613,7 +1648,7 @@ async def get_org_stats(request: Request, org_id: str):
                         if hasattr(e.memory_type, "value")
                         else str(e.memory_type),
                         "timestamp": e.created_at,
-                        "tags": e.tags[:3] if e.tags else [],
+                        "tags": e.tags[:3],
                     }
                 )
         except Exception:
@@ -1659,7 +1694,7 @@ async def get_org_stats(request: Request, org_id: str):
                     "type": et,
                     "from": d.get("from_node") or evt.get("actor", ""),
                     "to": d.get("to_node", ""),
-                    "task": (d.get("task") or d.get("content") or "")[:80],
+                    "task": (d.get("task") or d.get("content") or d.get("result_preview") or d.get("prompt") or "")[:800],
                     "status": (
                         "accepted"
                         if et == "task_accepted"

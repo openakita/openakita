@@ -106,11 +106,20 @@ class SessionManager:
             import asyncio
 
             loop = asyncio.get_running_loop()
-            loop.create_task(self._plugin_hooks.dispatch(hook_name, **kwargs))
+            task = loop.create_task(self._plugin_hooks.dispatch(hook_name, **kwargs))
+            task.add_done_callback(self._hook_task_done)
         except RuntimeError:
             pass
         except Exception as e:
             logger.debug(f"Hook '{hook_name}' dispatch error: {e}")
+
+    @staticmethod
+    def _hook_task_done(task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("Plugin hook task failed: %s", exc)
 
     def flush(self) -> None:
         """立即保存所有待写入的会话（绕过防抖延迟）"""
@@ -146,6 +155,7 @@ class SessionManager:
                 newer = [t for t in db_turns if t.get("timestamp", "") > last_ts] if last_ts else []
                 if not newer and not session.context.messages and db_turns:
                     newer = db_turns
+                newer = [t for t in newer if (t.get("content") or "").strip()]
                 for t in newer:
                     session.context.add_message(
                         role=t["role"],
@@ -451,6 +461,9 @@ class SessionManager:
         skipped_error = 0
         for item in data:
             try:
+                if not isinstance(item, dict):
+                    skipped_error += 1
+                    continue
                 session = Session.from_dict(item)
                 if not session.is_expired() and session.state != SessionState.CLOSED:
                     msg_count = len(session.context.messages)
@@ -467,7 +480,13 @@ class SessionManager:
 
                 session_ts = session.last_active.isoformat()
                 existing = self._channel_registry.get(session.channel)
-                if not existing or session_ts >= existing.get("last_seen", ""):
+                _existing_ts = ""
+                if isinstance(existing, dict):
+                    _existing_ts = existing.get("last_seen", "")
+                elif isinstance(existing, list) and existing:
+                    top = existing[0]
+                    _existing_ts = top.get("last_seen", "") if isinstance(top, dict) else ""
+                if not existing or session_ts >= _existing_ts:
                     self._channel_registry[session.channel] = {
                         "chat_id": session.chat_id,
                         "user_id": session.user_id,
@@ -692,14 +711,12 @@ class SessionManager:
             # 3. 备份旧文件（如果存在）
             if sessions_file.exists():
                 try:
-                    if backup_file.exists():
-                        backup_file.unlink()
-                    sessions_file.rename(backup_file)
+                    sessions_file.replace(backup_file)
                 except Exception as e:
                     logger.warning(f"Failed to backup sessions file: {e}")
 
-            # 4. 原子重命名临时文件为正式文件
-            temp_file.rename(sessions_file)
+            # 4. 原子重命名临时文件为正式文件 (replace works on Windows too)
+            temp_file.replace(sessions_file)
 
             logger.debug(f"Saved {len(data)} sessions to storage (atomic)")
             return True

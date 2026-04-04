@@ -37,12 +37,14 @@ logger = logging.getLogger(__name__)
 
 
 # 高频工具白名单 - 直接提供完整 schema 给 LLM API，跳过渐进式披露
-HIGH_FREQ_TOOLS = {
+# 使用 sorted tuple 而非 set，确保迭代顺序稳定（prompt cache 友好）
+HIGH_FREQ_TOOLS = tuple(sorted({
     "run_shell", "read_file", "write_file", "edit_file",
-    "list_directory", "ask_user", "grep", "glob",
+    "list_directory", "ask_user", "glob",
     "web_search", "web_fetch", "delete_file", "read_lints",
     "semantic_search",
-}
+}))
+_HIGH_FREQ_TOOLS_SET = frozenset(HIGH_FREQ_TOOLS)
 
 
 class ToolCatalog:
@@ -167,9 +169,10 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         categories: OrderedDict[str, list[tuple[str, dict]]] = OrderedDict()
         uncategorized: list[tuple[str, dict]] = []
 
-        for name, tool in self._tools.items():
+        for name in sorted(self._tools):
+            tool = self._tools[name]
             # 高频工具已在 tools 参数中全量提供，跳过以节省 token
-            if exclude_high_freq and name in HIGH_FREQ_TOOLS:
+            if exclude_high_freq and name in _HIGH_FREQ_TOOLS_SET:
                 continue
             cat = tool.get("category")
             if not cat:
@@ -240,7 +243,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
 
     def is_high_freq_tool(self, tool_name: str) -> bool:
         """判断是否为高频工具"""
-        return tool_name in HIGH_FREQ_TOOLS
+        return tool_name in _HIGH_FREQ_TOOLS_SET
 
     def _format_category_section(
         self, display_name: str, tools: list[tuple[str, dict]]

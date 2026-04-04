@@ -11,6 +11,7 @@ import { Loader2 } from "lucide-react";
 import { safeFetch } from "../providers";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -205,10 +206,10 @@ function SkillCard({
   const hasConfig = skill.config && skill.config.length > 0;
   const configComplete = skill.configComplete ?? true;
   const statusColor = skill.enabled === false
-    ? "var(--muted)"
+    ? "bg-muted text-muted-foreground border-muted-foreground/30"
     : configComplete
-      ? "rgba(16,185,129,1)"
-      : "rgba(245,158,11,1)";
+      ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30 dark:text-emerald-400"
+      : "bg-amber-500/10 text-amber-600 border-amber-500/30 dark:text-amber-400";
   const { t, i18n } = useTranslation();
   const lang = i18n.language || "zh";
   const displayName = getSkillDisplayName(skill, lang);
@@ -220,91 +221,95 @@ function SkillCard({
       : t("skills.configIncomplete");
 
   return (
-    <div className="card" style={{ marginTop: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: skill.system ? "rgba(37,99,235,0.1)" : "rgba(124,58,237,0.1)", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
-          {skill.system ? <IconGear size={18} /> : <IconZap size={18} />}
-        </div>
-        <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={onViewDetail}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 800, fontSize: 14 }}>{displayName}</span>
-            {displayName !== skill.name && (
-              <span style={{ fontSize: 11, opacity: 0.4, fontFamily: "monospace" }}>{skill.name}</span>
-            )}
-            {!skill.system && skill.sourceUrl && (() => {
-              const src = skill.sourceUrl!;
-              const ownerRepo = src.includes("@") ? src.split("@")[0] : src.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
-              return ownerRepo ? (
-                <span style={{ fontSize: 11, opacity: 0.45, fontFamily: "monospace" }}>{ownerRepo}</span>
-              ) : null;
-            })()}
-            <span className="pill" style={{ fontSize: 11, borderColor: statusColor + "33" }}>
-              <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: 3, background: statusColor, marginRight: 4 }} />
-              {statusText}
-            </span>
-            <span style={{ fontSize: 11, opacity: 0.5 }}>{skill.system ? t("skills.system") : t("skills.external")}</span>
+    <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-all hover:shadow-md">
+      <CardContent className="p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={onViewDetail}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${skill.system ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : "bg-purple-500/10 text-purple-600 dark:text-purple-400"}`}>
+              {skill.system ? <IconGear size={20} /> : <IconZap size={20} />}
+            </div>
+            <div className="flex flex-col min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="font-bold text-[15px] text-foreground">{displayName}</span>
+                {displayName !== skill.name && (
+                  <span className="text-[11px] text-muted-foreground font-mono">{skill.name}</span>
+                )}
+                {!skill.system && skill.sourceUrl && (() => {
+                  const src = skill.sourceUrl!;
+                  const ownerRepo = src.includes("@") ? src.split("@")[0] : src.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+                  return ownerRepo ? (
+                    <span className="text-[11px] text-muted-foreground font-mono">{ownerRepo}</span>
+                  ) : null;
+                })()}
+                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-5 font-medium ${statusColor}`}>
+                  {statusText}
+                </Badge>
+                <span className="text-[11px] text-muted-foreground ml-1">{skill.system ? t("skills.system") : t("skills.external")}</span>
+              </div>
+              <div className="text-xs text-muted-foreground truncate">
+                {displayDesc}
+              </div>
+            </div>
           </div>
-          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {displayDesc}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 2, flexShrink: 0, alignItems: "center" }}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onViewDetail}
-            title={t("skills.viewDetail")}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <IconEye size={14} />
-          </Button>
-          {!skill.system && onUninstall && (
+          
+          <div className="flex items-center gap-2 shrink-0 ml-12 sm:ml-0">
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={onUninstall}
-              disabled={uninstalling}
-              title={t("skills.uninstall")}
-              className="text-muted-foreground hover:text-destructive"
+              onClick={onViewDetail}
+              title={t("skills.viewDetail")}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted"
             >
-              {uninstalling ? <Loader2 className="animate-spin" size={14} /> : <IconTrash size={14} />}
+              <IconEye size={14} />
             </Button>
-          )}
-          <Label className="flex items-center gap-1.5 cursor-pointer text-xs font-normal ml-1">
-            <Checkbox
-              checked={skill.enabled !== false}
-              onCheckedChange={() => onToggleEnabled()}
-            />
-            {t("skills.enabled")}
-          </Label>
-          {hasConfig && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onToggleExpand}
-              className={expanded ? "bg-accent" : ""}
-            >
-              {expanded ? t("chat.collapse") : t("skills.configure")}
-            </Button>
-          )}
+            {!skill.system && onUninstall && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onUninstall}
+                disabled={uninstalling}
+                title={t("skills.uninstall")}
+                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              >
+                {uninstalling ? <Loader2 className="animate-spin" size={14} /> : <IconTrash size={14} />}
+              </Button>
+            )}
+            <Label className="flex items-center gap-1.5 cursor-pointer text-xs font-normal ml-2 mr-2">
+              <Checkbox
+                checked={skill.enabled !== false}
+                onCheckedChange={() => onToggleEnabled()}
+              />
+              {t("skills.enabled")}
+            </Label>
+            {hasConfig && (
+              <Button
+                variant={expanded ? "secondary" : "outline"}
+                size="sm"
+                onClick={onToggleExpand}
+                className="h-8 text-xs"
+              >
+                {expanded ? t("chat.collapse") : t("skills.configure")}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
 
-      {expanded && hasConfig && skill.config && (
-        <div style={{ marginTop: 10, borderTop: "1px solid var(--line)", paddingTop: 10 }}>
-          <SkillConfigForm fields={skill.config} envDraft={envDraft} onEnvChange={onEnvChange} />
-          <Button
-            onClick={onSaveConfig}
-            disabled={saving}
-            size="sm"
-            className="mt-2.5"
-          >
-            {saving && <Loader2 className="animate-spin" />}
-            {t("skills.saveConfig")}
-          </Button>
-        </div>
-      )}
-    </div>
+        {expanded && hasConfig && skill.config && (
+          <div className="mt-4 pt-4 border-t border-border/50 animate-in slide-in-from-top-2 duration-200">
+            <SkillConfigForm fields={skill.config} envDraft={envDraft} onEnvChange={onEnvChange} />
+            <Button
+              onClick={onSaveConfig}
+              disabled={saving}
+              size="sm"
+              className="mt-4"
+            >
+              {saving && <Loader2 className="animate-spin mr-1.5" size={14} />}
+              {t("skills.saveConfig")}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -345,7 +350,8 @@ function SkillDetailModal({
   onUninstall?: () => void;
   uninstalling?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language || "zh";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -375,8 +381,8 @@ function SkillDetailModal({
               {isSystem ? <IconGear size={16} /> : <IconZap size={16} />}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>{skill.name}</div>
-              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{skill.description}</div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>{getSkillDisplayName(skill, lang)}</div>
+              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>{getSkillDisplayDesc(skill, lang)}</div>
             </div>
             <Button
               variant="ghost"
@@ -512,56 +518,70 @@ function MarketplaceSkillCard({
   skill,
   onInstall,
   installing,
+  installStatus,
 }: {
   skill: MarketplaceSkill;
   onInstall: () => void;
   installing: boolean;
+  installStatus?: string;
 }) {
   const { t } = useTranslation();
   return (
-    <div className="card" style={{ marginTop: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(124,58,237,0.08)", display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
-          <IconPackage size={18} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontWeight: 800, fontSize: 14 }}>{skill.name}</span>
-            {skill.installed && <span className="pill" style={{ fontSize: 11, borderColor: "rgba(16,185,129,0.25)" }}>{t("skills.installed")}</span>}
-            {skill.installs != null && skill.installs > 0 && (
-              <span style={{ fontSize: 11, opacity: 0.5, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <IconDownload size={10} />{skill.installs.toLocaleString()}
-              </span>
-            )}
-            {skill.stars != null && skill.stars > 0 && <span style={{ fontSize: 11, opacity: 0.5, display: "inline-flex", alignItems: "center", gap: 4 }}><IconStar size={11} />{skill.stars}</span>}
-          </div>
-          {skill.description && (
-            <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{skill.description}</div>
-          )}
-          <div style={{ fontSize: 11, opacity: 0.4, marginTop: 2 }}>
-            {skill.url && <span style={{ fontFamily: "monospace" }}>{skill.url}</span>}
-          </div>
-          {skill.tags && skill.tags.length > 0 && (
-            <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
-              {skill.tags.map((tag) => (
-                <span key={tag} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(37,99,235,0.08)", color: "var(--brand)" }}>
-                  {tag}
-                </span>
-              ))}
+    <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-all hover:shadow-md">
+      <CardContent className="p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+              <IconPackage size={20} />
             </div>
-          )}
+            <div className="flex flex-col min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="font-bold text-[15px] text-foreground">{skill.name}</span>
+                {skill.installed && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 font-medium bg-emerald-500/10 text-emerald-600 border-emerald-500/30 dark:text-emerald-400">{t("skills.installed")}</Badge>}
+                {skill.installs != null && skill.installs > 0 && (
+                  <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <IconDownload size={10} />{skill.installs.toLocaleString()}
+                  </span>
+                )}
+                {skill.stars != null && skill.stars > 0 && (
+                  <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <IconStar size={11} />{skill.stars}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground truncate">
+                {skill.description || t("skills.marketplaceNoDesc", "暂无描述，安装后可在技能详情中查看")}
+              </div>
+              <div className="text-[11px] text-muted-foreground/60 font-mono mt-1 truncate">
+                {skill.url}
+              </div>
+              {skill.tags && skill.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {skill.tags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0 bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 dark:text-blue-400">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          
+          <div className="shrink-0 ml-12 sm:ml-0">
+            <Button
+              variant={skill.installed ? "outline" : "default"}
+              size="sm"
+              onClick={onInstall}
+              disabled={skill.installed || installing}
+              className={!skill.installed && !installing ? "bg-gradient-to-br from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white border-0 shadow-md shadow-indigo-500/20" : ""}
+            >
+              {installing && <Loader2 className="animate-spin mr-1.5" size={14} />}
+              {skill.installed ? t("skills.installed") : installing && installStatus ? installStatus : t("skills.install")}
+            </Button>
+          </div>
         </div>
-        <Button
-          variant={skill.installed ? "outline" : "default"}
-          size="sm"
-          onClick={onInstall}
-          disabled={skill.installed || installing}
-        >
-          {installing && <Loader2 className="animate-spin" />}
-          {skill.installed ? t("skills.installed") : t("skills.install")}
-        </Button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -614,6 +634,7 @@ export function SkillManager({
   const [detailEditContent, setDetailEditContent] = useState("");
   const [detailSaving, setDetailSaving] = useState(false);
   const [uninstallingSet, setUninstallingSet] = useState<Set<string>>(new Set());
+  const [installStatus, setInstallStatus] = useState<string>("");
   const [uninstallConfirm, setUninstallConfirm] = useState<SkillInfo | null>(null);
   const marketRequestId = useRef(0);
   const detailRequestNameRef = useRef<string | null>(null);
@@ -1173,12 +1194,14 @@ export function SkillManager({
     }
     const uniqueKey = skill.url || skill.id || skill.name;
     setInstallingSet(prev => new Set(prev).add(uniqueKey));
+    setInstallStatus(t("skills.installDownloading", "正在下载技能..."));
     setError(null);
     try {
       let installed = false;
 
-      // 方式1：服务运行中 → HTTP API 安装（首选，不回退 Tauri 避免 venv 缺失报错）
+      // 方式1：服务运行中 → HTTP API 安装
       if (serviceRunning && apiBaseUrl != null) {
+        setInstallStatus(t("skills.installDownloading", "正在下载技能..."));
         const res = await safeFetch(`${apiBaseUrl}/api/skills/install`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1188,6 +1211,7 @@ export function SkillManager({
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         installed = true;
+        setInstallStatus(t("skills.installParsing", "正在解析技能..."));
         try {
           await safeFetch(`${apiBaseUrl}/api/skills/reload`, {
             method: "POST",
@@ -1195,7 +1219,7 @@ export function SkillManager({
             body: JSON.stringify({}),
             signal: AbortSignal.timeout(10_000),
           });
-        } catch { /* reload 失败不阻塞，技能下次重启时自动加载 */ }
+        } catch { /* reload 失败不阻塞 */ }
       }
 
       // 方式2：服务未运行 → Tauri invoke（本地模式）
@@ -1207,6 +1231,7 @@ export function SkillManager({
         });
       }
 
+      setInstallStatus(t("skills.installDone", "安装完成"));
       setMarketplace((prev) => prev.map((s) =>
         s.url === skill.url ? { ...s, installed: true } : s
       ));
@@ -1233,6 +1258,7 @@ export function SkillManager({
       }
     } finally {
       setInstallingSet(prev => { const next = new Set(prev); next.delete(uniqueKey); return next; });
+      setInstallStatus("");
     }
   }, [loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t]);
 
@@ -1308,14 +1334,15 @@ export function SkillManager({
   }
 
   return (
-    <>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
       {/* Tab 切换 */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div className="flex flex-col md:flex-row md:items-center gap-4">
         <ToggleGroup
           type="single"
           value={tab}
           onValueChange={(v) => { if (v) setTab(v as "installed" | "marketplace"); }}
           variant="outline"
+          className="justify-start"
         >
           <ToggleGroupItem
             value="installed"
@@ -1340,7 +1367,7 @@ export function SkillManager({
             {t("skills.marketplace")}
           </ToggleGroupItem>
         </ToggleGroup>
-        <div style={{ flex: 1 }} />
+        <div className="flex-1" />
         <Button
           variant="outline"
           onClick={async () => {
@@ -1368,80 +1395,105 @@ export function SkillManager({
           }}
           disabled={refreshing || loading}
           title={t("skills.reloadHint")}
+          className="w-full md:w-auto"
         >
-          {(refreshing || loading) && <Loader2 className="animate-spin" />}
+          {(refreshing || loading) && <Loader2 className="animate-spin mr-1.5" size={14} />}
           {t("topbar.refresh")}
         </Button>
       </div>
 
-      {error && <div className="errorBox" style={{ marginBottom: 12 }}>{error}</div>}
+      {error && <div className="p-4 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">{error}</div>}
 
       {/* 已安装技能 */}
       {tab === "installed" && (
-        <>
-          <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-            {/* 搜索 + AI 整理 */}
-            {skillsWithConfig.length > 0 && (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ flex: 1, position: "relative" }}>
-                  <IconSearch size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} />
-                  <Input
-                    value={installedSearch}
-                    onChange={(e) => setInstalledSearch(e.target.value)}
-                    placeholder={t("skills.filterPlaceholder")}
-                    className="pl-8"
-                  />
+        <div className="flex flex-col gap-4">
+          {/* 搜索 + AI 整理 */}
+          {skillsWithConfig.length > 0 && (
+            <Card className="gap-0 border-border/80 py-0 shadow-sm">
+              <CardContent className="p-4">
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                  <div className="relative flex-1">
+                    <IconSearch size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                    <Input
+                      value={installedSearch}
+                      onChange={(e) => setInstalledSearch(e.target.value)}
+                      placeholder={t("skills.filterPlaceholder")}
+                      className="pl-9 h-9 text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {dataMode !== "remote" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleImportLocal}
+                        disabled={localImporting}
+                        title={t("skills.importLocalTitle")}
+                        className="h-9"
+                      >
+                        {localImporting ? <Loader2 className="animate-spin mr-1.5" size={14} /> : <IconFolderOpen size={14} className="mr-1.5" />}
+                        {t("skills.importLocal")}
+                      </Button>
+                    )}
+                    {serviceRunning && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAiOrganize}
+                        disabled={aiOrganizing}
+                        title={t("skills.aiOrganizeHint")}
+                        className="h-9 bg-gradient-to-br from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white border-0 shadow-md shadow-indigo-500/20"
+                      >
+                        {aiOrganizing ? <Loader2 className="animate-spin mr-1.5" size={14} /> : <IconZap size={14} className="mr-1.5" />}
+                        {t("skills.aiOrganize")}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                {dataMode !== "remote" && (
-                  <Button
-                    variant="outline"
-                    onClick={handleImportLocal}
-                    disabled={localImporting}
-                    title={t("skills.importLocalTitle")}
-                  >
-                    {localImporting ? <Loader2 className="animate-spin" size={14} /> : <IconFolderOpen size={14} />}
-                    {t("skills.importLocal")}
-                  </Button>
-                )}
-                {serviceRunning && (
-                  <Button
-                    variant="outline"
-                    onClick={handleAiOrganize}
-                    disabled={aiOrganizing}
-                    title={t("skills.aiOrganizeHint")}
-                  >
-                    {aiOrganizing ? <Loader2 className="animate-spin" size={14} /> : <IconZap size={14} />}
-                    {t("skills.aiOrganize")}
-                  </Button>
-                )}
-              </div>
-            )}
+              </CardContent>
+            </Card>
+          )}
 
-            {loading && skillsWithConfig.length === 0 && <div className="cardHint">{t("skills.loading")}</div>}
-            {!loading && skillsWithConfig.length === 0 && (
-              <div className="card" style={{ textAlign: "center", padding: "30px 20px" }}>
-                <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><IconZap size={36} /></div>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("skills.noSkills")}</div>
-                <div className="help">{t("skills.noSkillsHint")}</div>
+          {loading && skillsWithConfig.length === 0 && (
+            <Card className="border-dashed border-border/80 shadow-sm">
+              <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                <Loader2 className="animate-spin mb-3" size={28} />
+                <p className="text-sm">{t("skills.loading")}</p>
+              </CardContent>
+            </Card>
+          )}
+          
+          {!loading && skillsWithConfig.length === 0 && (
+            <Card className="border-dashed border-border/80 shadow-sm">
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <IconZap size={40} className="text-muted-foreground/30 mb-3" />
+                <p className="text-sm font-bold text-foreground mb-1">{t("skills.noSkills")}</p>
+                <p className="text-xs text-muted-foreground/60 mb-4">{t("skills.noSkillsHint")}</p>
                 {dataMode !== "remote" && (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleImportLocal}
                     disabled={localImporting}
-                    className="mt-3"
                   >
-                    {localImporting ? <Loader2 className="animate-spin" size={13} /> : <IconFolderOpen size={13} />}
+                    {localImporting ? <Loader2 className="animate-spin mr-1.5" size={14} /> : <IconFolderOpen size={14} className="mr-1.5" />}
                     {t("skills.importLocal")}
                   </Button>
                 )}
-              </div>
-            )}
-            {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (
-              <div className="cardHint" style={{ textAlign: "center", padding: 16 }}>
-                {t("skills.noResults")}
-              </div>
-            )}
+              </CardContent>
+            </Card>
+          )}
+          
+          {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (
+            <Card className="border-dashed border-border/80 shadow-sm">
+              <CardContent className="flex flex-col items-center justify-center py-14">
+                <IconSearch size={32} className="text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">{t("skills.noResults")}</p>
+              </CardContent>
+            </Card>
+          )}
+          
+          <div className="flex flex-col gap-3">
             {filteredSkills.map((skill) => (
               <SkillCard
                 key={skill.skillId}
@@ -1459,69 +1511,81 @@ export function SkillManager({
               />
             ))}
           </div>
-
-        </>
+        </div>
       )}
-
-      
 
       {/* 技能市场 */}
       {tab === "marketplace" && (
-        <>
+        <div className="flex flex-col gap-4">
           {/* 安全提示 */}
-          <div style={{
-            marginBottom: 12,
-            padding: "10px 14px",
-            borderRadius: 10,
-            background: "rgba(245,158,11,0.08)",
-            border: "1px solid rgba(245,158,11,0.2)",
-            fontSize: 12,
-            lineHeight: 1.6,
-            color: "var(--text)",
-          }}>
-            <span style={{ fontWeight: 700 }}>&#9888; {t("skills.securityTitle")}</span>
-            <span style={{ opacity: 0.75 }}>&ensp;{t("skills.securityWarning")}</span>
-          </div>
-
-          {/* 手动输入链接安装 */}
-          <div className="card" style={{ marginBottom: 12, padding: "12px 14px" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, opacity: 0.7 }}>
-              {t("skills.manualInstallTitle")}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={manualUrl}
-                onChange={(e) => setManualUrl(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && manualUrl.trim()) handleManualInstall(); }}
-                placeholder={t("skills.manualInstallPlaceholder")}
-                disabled={manualInstalling}
-                style={{ flex: 1, fontSize: 13 }}
-              />
-              <Button
-                size="sm"
-                onClick={handleManualInstall}
-                disabled={!manualUrl.trim() || manualInstalling}
-              >
-                {manualInstalling && <Loader2 className="animate-spin" />}
-                {t("skills.install")}
-              </Button>
-            </div>
-            <div style={{ fontSize: 11, opacity: 0.4, marginTop: 6 }}>
-              {t("skills.manualInstallHint")}
+          <div className="flex items-start gap-2 px-4 py-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400">
+            <span className="font-bold text-sm shrink-0">&#9888;</span>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-bold">{t("skills.securityTitle")}</span>
+              <span className="opacity-80">{t("skills.securityWarning")}</span>
             </div>
           </div>
 
-          <div style={{ marginBottom: 12, position: "relative" }}>
-            <IconSearch size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4, pointerEvents: "none" }} />
-            <input
-              value={marketSearch}
-              onChange={(e) => setMarketSearch(e.target.value)}
-              placeholder={t("skills.searchPlaceholder")}
-              style={{ width: "100%", fontSize: 14, paddingLeft: 32 }}
-            />
-          </div>
-          <div style={{ display: "grid", gap: 10 }}>
-            {marketLoading && <div className="cardHint">{t("common.loading")}</div>}
+          <Card className="gap-0 border-border/80 py-0 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex flex-col md:flex-row gap-6">
+                {/* 手动输入链接安装 */}
+                <div className="flex-1 flex flex-col gap-2">
+                  <div className="text-xs font-bold text-foreground/70">
+                    {t("skills.manualInstallTitle")}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={manualUrl}
+                      onChange={(e) => setManualUrl(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && manualUrl.trim()) handleManualInstall(); }}
+                      placeholder={t("skills.manualInstallPlaceholder")}
+                      disabled={manualInstalling}
+                      className="h-9 text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleManualInstall}
+                      disabled={!manualUrl.trim() || manualInstalling}
+                      className="h-9"
+                    >
+                      {manualInstalling && <Loader2 className="animate-spin mr-1.5" size={14} />}
+                      {t("skills.install")}
+                    </Button>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {t("skills.manualInstallHint")}
+                  </div>
+                </div>
+
+                <div className="hidden md:block w-px bg-border/50" />
+
+                {/* 市场搜索 */}
+                <div className="flex-1 flex flex-col gap-2 justify-center">
+                  <div className="relative">
+                    <IconSearch size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                    <Input
+                      value={marketSearch}
+                      onChange={(e) => setMarketSearch(e.target.value)}
+                      placeholder={t("skills.searchPlaceholder")}
+                      className="pl-9 h-9 text-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex flex-col gap-3">
+            {marketLoading && (
+              <Card className="border-dashed border-border/80 shadow-sm">
+                <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                  <Loader2 className="animate-spin mb-3" size={28} />
+                  <p className="text-sm">{t("common.loading")}</p>
+                </CardContent>
+              </Card>
+            )}
+            
             {!marketLoading && marketplace.map((skill) => {
               const uk = skill.url || skill.id || skill.name;
               return (
@@ -1530,22 +1594,30 @@ export function SkillManager({
                   skill={skill}
                   onInstall={() => handleInstall(skill)}
                   installing={installingSet.has(uk)}
+                  installStatus={installingSet.has(uk) ? installStatus : undefined}
                 />
               );
             })}
+            
             {!marketLoading && marketplace.length === 0 && (
-              <div className="cardHint" style={{ textAlign: "center", padding: 20 }}>
-                {marketSearch ? t("skills.noResults") : t("skills.noSkills")}
-              </div>
+              <Card className="border-dashed border-border/80 shadow-sm">
+                <CardContent className="flex flex-col items-center justify-center py-14">
+                  <IconSearch size={32} className="text-muted-foreground/30 mb-3" />
+                  <p className="text-sm text-muted-foreground">
+                    {marketSearch ? t("skills.noResults") : t("skills.noSkills")}
+                  </p>
+                </CardContent>
+              </Card>
             )}
           </div>
-          <div style={{ textAlign: "center", fontSize: 11, opacity: 0.4, marginTop: 16 }}>
+          
+          <div className="text-center text-[11px] text-muted-foreground/60 mt-4">
             {t("skills.poweredBy")} &middot;{" "}
-            <a href="https://skills.sh" target="_blank" rel="noreferrer" style={{ color: "var(--brand)", textDecoration: "none" }}>
+            <a href="https://skills.sh" target="_blank" rel="noreferrer" className="text-primary hover:underline">
               skills.sh
             </a>
           </div>
-        </>
+        </div>
       )}
 
       {/* 技能详情弹窗 */}
@@ -1616,6 +1688,6 @@ export function SkillManager({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

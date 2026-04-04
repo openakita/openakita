@@ -90,8 +90,9 @@ class ResourceBudget:
     ReasoningEngine 每轮迭代调用 check() 检查预算。
     """
 
-    def __init__(self, config: BudgetConfig | None = None) -> None:
+    def __init__(self, config: BudgetConfig | None = None, parent: ResourceBudget | None = None) -> None:
         self._config = config or BudgetConfig()
+        self._parent: ResourceBudget | None = parent
         self._start_time: float = 0.0
 
         # 累计消耗
@@ -135,18 +136,26 @@ class ResourceBudget:
     def record_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
         """记录 token 消耗"""
         self._tokens_used += input_tokens + output_tokens
+        if self._parent is not None:
+            self._parent.record_tokens(input_tokens, output_tokens)
 
     def record_cost(self, cost_usd: float) -> None:
         """记录成本"""
         self._cost_used += cost_usd
+        if self._parent is not None:
+            self._parent.record_cost(cost_usd)
 
     def record_iteration(self) -> None:
         """记录迭代"""
         self._iterations_used += 1
+        if self._parent is not None:
+            self._parent.record_iteration()
 
     def record_tool_calls(self, count: int = 1) -> None:
         """记录工具调用"""
         self._tool_calls_used += count
+        if self._parent is not None:
+            self._parent.record_tool_calls(count)
 
     def allocate_sub_budget(self, ratio: float = 0.5) -> "ResourceBudget":
         """为子任务/委派分配预算（按比例缩减）"""
@@ -162,7 +171,7 @@ class ResourceBudget:
             pause_threshold=self._config.pause_threshold,
             exceed_policy=self._config.exceed_policy,
         )
-        sub = ResourceBudget(sub_config)
+        sub = ResourceBudget(sub_config, parent=self)
         sub.start()
         return sub
 

@@ -20,6 +20,7 @@ from .models import (
     _new_id,
     _now_iso,
 )
+from openakita.memory.types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +272,7 @@ class OrgManager:
                     "description": data.get("description", ""),
                     "icon": data.get("icon", "🏢"),
                     "node_count": len(data.get("nodes", [])),
-                    "tags": data.get("tags", []),
+                    "tags": normalize_tags(data.get("tags")),
                 })
             except Exception as exc:
                 logger.warning(f"Failed to load template {p.name}: {exc}")

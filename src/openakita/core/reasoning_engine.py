@@ -41,7 +41,7 @@ from .response_handler import (
     strip_thinking_tags,
 )
 from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_settings
-from .supervisor import RuntimeSupervisor
+from .supervisor import RuntimeSupervisor, UNPRODUCTIVE_ADMIN_TOOLS as _ADMIN_TOOL_NAMES
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
 from ..api.routes.websocket import broadcast_event
@@ -50,6 +50,31 @@ from ..llm.converters.tools import PARSE_ERROR_KEY
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
+_MAX_TOOL_RESULTS_TOTAL_CHARS = 200_000
+
+
+def _apply_tool_result_budget(
+    tool_results: list[dict], max_total: int = _MAX_TOOL_RESULTS_TOTAL_CHARS,
+) -> list[dict]:
+    """Proportionally truncate tool results if total exceeds budget."""
+    total = sum(len(str(r.get("content", ""))) for r in tool_results)
+    if total <= max_total:
+        return tool_results
+
+    ratio = max_total / total
+    for r in tool_results:
+        content = str(r.get("content", ""))
+        if len(content) > 1000:
+            budget = max(500, int(len(content) * ratio))
+            if len(content) > budget:
+                half = budget // 2
+                r["content"] = (
+                    content[:half]
+                    + f"\n\n... [{len(content) - budget} chars truncated] ...\n\n"
+                    + content[-half:]
+                )
+    return tool_results
+
 
 # ---------------------------------------------------------------------------
 # Mode-based tool filtering
@@ -59,6 +84,7 @@ from .permission import (
     disabled as permission_disabled,
     PLAN_MODE_RULESET,
     ASK_MODE_RULESET,
+    COORDINATOR_MODE_RULESET,
     DEFAULT_RULESET,
     Ruleset as PermissionRuleset,
 )
@@ -70,6 +96,8 @@ def _get_mode_ruleset(mode: str) -> PermissionRuleset:
         return PLAN_MODE_RULESET
     elif mode == "ask":
         return ASK_MODE_RULESET
+    elif mode == "coordinator":
+        return COORDINATOR_MODE_RULESET
     return DEFAULT_RULESET
 
 
@@ -80,6 +108,7 @@ def _filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
     - agent: DEFAULT_RULESET (all tools allowed)
     - ask: ASK_MODE_RULESET (write tools removed)
     - plan: PLAN_MODE_RULESET (write tools visible but path-restricted at runtime)
+    - coordinator: COORDINATOR_MODE_RULESET (delegation/planning tools only)
     """
     if mode == "agent" or not tools:
         return tools
@@ -172,7 +201,7 @@ def _should_block_tool(
             "请使用已提供的工具列表中的工具，或建议用户切换到 agent 模式。"
         )
 
-    if tool_name == "run_shell":
+    if tool_name in ("run_shell", "run_powershell"):
         cmd = ""
         if isinstance(tool_input, dict):
             cmd = tool_input.get("command", "")
@@ -183,10 +212,10 @@ def _should_block_tool(
                 pass
         if cmd and _is_shell_write_command(cmd):
             logger.warning(
-                f"[ModeGuard] Blocked run_shell write command in {mode} mode: {cmd[:100]}"
+                f"[ModeGuard] Blocked {tool_name} write command in {mode} mode: {cmd[:100]}"
             )
             return (
-                f"错误：在 {mode} 模式下，run_shell 仅允许执行只读命令（如 cat、grep、ls、find 等）。"
+                f"错误：在 {mode} 模式下，{tool_name} 仅允许执行只读命令（如 cat、grep、ls、find 等）。"
                 f"检测到写操作命令，已拦截。请使用只读命令，或建议用户切换到 agent 模式。"
             )
 
@@ -252,6 +281,7 @@ class ReasoningEngine:
         response_handler: ResponseHandler,
         agent_state: AgentState,
         memory_manager: Any = None,
+        plan_exit_pending: dict | None = None,
     ) -> None:
         self._brain = brain
         self._tool_executor = tool_executor
@@ -259,6 +289,7 @@ class ReasoningEngine:
         self._response_handler = response_handler
         self._state = agent_state
         self._memory_manager = memory_manager
+        self._plan_exit_pending = plan_exit_pending
         self._plugin_hooks = None
 
         # Agent Harness: Runtime Supervisor + Resource Budget
@@ -681,7 +712,8 @@ class ReasoningEngine:
             "model": self._brain.model,
         })
 
-        max_iterations = settings.max_iterations
+        max_iterations = getattr(self, "_max_iterations_override", None) or settings.max_iterations
+        self._max_iterations_override = None  # consume once
         self._empty_content_retries = 0
 
         # 进度回调辅助（安全调用，忽略异常）
@@ -724,7 +756,7 @@ class ReasoningEngine:
         im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
         configured = int(
             getattr(self, "_force_tool_override", None)
-            or getattr(settings, "force_tool_call_max_retries", 1)
+            or getattr(settings, "force_tool_call_max_retries", 0)
         )
         if session_type == "im":
             base_force_retries = max(im_floor, configured)
@@ -738,8 +770,8 @@ class ReasoningEngine:
             max_no_tool_retries = force_tool_retries
             logger.info(f"[ForceToolCall] Intent override: max_retries={force_tool_retries}")
 
-        max_verify_retries = 3
-        max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
+        max_verify_retries = 1
+        max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 1)))
 
         # 追踪变量
         executed_tool_names: list[str] = []
@@ -752,6 +784,9 @@ class ReasoningEngine:
         verify_incomplete_count = 0
         no_confirmation_text_count = 0
         tools_executed_in_task = False
+        _supervisor_intervened = False
+        _tool_call_counter: dict[str, int] = {}
+        _MAX_SAME_TOOL_PER_TASK = 5
 
         def _build_effective_system_prompt() -> str:
             """动态追加活跃 Plan"""
@@ -847,6 +882,7 @@ class ReasoningEngine:
                     current_model, working_messages = switch_result
                     no_tool_call_count = 0
                     tools_executed_in_task = False
+                    _supervisor_intervened = False
                     verify_incomplete_count = 0
                     executed_tool_names = []
                     consecutive_tool_rounds = 0
@@ -974,6 +1010,7 @@ class ReasoningEngine:
                     current_model, working_messages = retry_result
                     no_tool_call_count = 0
                     tools_executed_in_task = False
+                    _supervisor_intervened = False
                     verify_incomplete_count = 0
                     executed_tool_names = []
                     consecutive_tool_rounds = 0
@@ -1110,10 +1147,10 @@ class ReasoningEngine:
                     max_confirmation_text_retries=max_confirmation_text_retries,
                     base_force_retries=base_force_retries,
                     conversation_id=conversation_id,
+                    supervisor_intervened=_supervisor_intervened,
                 )
 
                 if isinstance(result, str):
-                    # 最终答案
                     react_trace.append(_iter_trace)
                     logger.info(
                         f"[ReAct] === COMPLETED after {iteration+1} iterations, "
@@ -1157,7 +1194,9 @@ class ReasoningEngine:
                 if _allowed_tool_names is not None:
                     _guarded_calls = []
                     for tc in decision.tool_calls:
-                        _tc_name = tc.get("name", "")
+                        _tc_name = self._tool_executor.canonicalize_tool_name(
+                            tc.get("name", "")
+                        )
                         _tc_id = tc.get("id", "")
                         _tc_input = tc.get("input", tc.get("arguments", {}))
                         _block_reason = _should_block_tool(
@@ -1228,7 +1267,8 @@ class ReasoningEngine:
                             )
                         )
                         if other_executed:
-                            tools_executed_in_task = True
+                            if any(t not in _ADMIN_TOOL_NAMES for t in other_executed):
+                                tools_executed_in_task = True
                             executed_tool_names.extend(other_executed)
                             state.record_tool_execution(other_executed)
                         if other_receipts:
@@ -1377,9 +1417,37 @@ class ReasoningEngine:
 
                 # === IM 进度: 描述即将执行的工具 ===
                 for tc in (decision.tool_calls or []):
-                    _tc_name = tc.get("name", "unknown")
+                    _tc_name = self._tool_executor.canonicalize_tool_name(
+                        tc.get("name", "unknown")
+                    )
                     _tc_args = tc.get("input", tc.get("arguments", {}))
                     await _emit_progress(f"🔧 {self._describe_tool_call(_tc_name, _tc_args)}")
+
+                # 同名工具频率限制：超阈值的调用跳过执行，返回提示
+                _all_tool_calls = list(decision.tool_calls or [])
+                _rate_limited_by_id: dict[str, dict] = {}
+                _calls_to_execute = []
+                for tc in _all_tool_calls:
+                    _tc_name = self._tool_executor.canonicalize_tool_name(tc.get("name", ""))
+                    _tool_call_counter[_tc_name] = _tool_call_counter.get(_tc_name, 0) + 1
+                    if _tool_call_counter[_tc_name] > _MAX_SAME_TOOL_PER_TASK:
+                        logger.warning(
+                            f"[RateLimit] Tool '{_tc_name}' called "
+                            f"{_tool_call_counter[_tc_name]} times (limit={_MAX_SAME_TOOL_PER_TASK}), "
+                            f"skipping execution"
+                        )
+                        _rate_limited_by_id[tc.get("id", "")] = {
+                            "type": "tool_result",
+                            "tool_use_id": tc.get("id", ""),
+                            "content": (
+                                f"[系统] 工具 {_tc_name} 已在本任务中调用 "
+                                f"{_tool_call_counter[_tc_name] - 1} 次，已达上限。"
+                                f"请整合操作或继续下一步。"
+                            ),
+                        }
+                    else:
+                        _calls_to_execute.append(tc)
+                decision.tool_calls = _calls_to_execute
 
                 # 执行工具
                 tool_results, executed, receipts = await self._tool_executor.execute_batch(
@@ -1389,9 +1457,20 @@ class ReasoningEngine:
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
                 )
+                if _rate_limited_by_id:
+                    _executed_by_id = {r.get("tool_use_id"): r for r in tool_results}
+                    merged_results = []
+                    for tc in _all_tool_calls:
+                        tid = tc.get("id", "")
+                        if tid in _rate_limited_by_id:
+                            merged_results.append(_rate_limited_by_id[tid])
+                        elif tid in _executed_by_id:
+                            merged_results.append(_executed_by_id[tid])
+                    tool_results = merged_results
 
                 if executed:
-                    tools_executed_in_task = True
+                    if any(t not in _ADMIN_TOOL_NAMES for t in executed):
+                        tools_executed_in_task = True
                     executed_tool_names.extend(executed)
                     state.record_tool_execution(executed)
                     self._budget.record_tool_calls(len(executed))
@@ -1549,7 +1628,8 @@ class ReasoningEngine:
                         working_messages, _build_effective_system_prompt(), current_model, state
                     )
 
-                # 添加工具结果
+                # 添加工具结果（按预算截断过长批次）
+                tool_results = _apply_tool_result_budget(tool_results)
                 working_messages.append({
                     "role": "user",
                     "content": tool_results,
@@ -1638,6 +1718,9 @@ class ReasoningEngine:
                 )
 
                 if intervention:
+                    _supervisor_intervened = True
+                    max_no_tool_retries = 0
+
                     if intervention.should_terminate:
                         cleaned = strip_thinking_tags(decision.text_content)
                         self._save_react_trace(react_trace, conversation_id, session_type, "loop_terminated", _trace_started_at)
@@ -1674,9 +1757,12 @@ class ReasoningEngine:
                             "role": "user",
                             "content": intervention.prompt_injection,
                         })
-
-                    if intervention.should_escalate:
+                        tools = []
                         max_no_tool_retries = 0
+                        logger.info(
+                            f"[Supervisor] NUDGE: tools stripped to force text response "
+                            f"(iter={iteration}, pattern={intervention.pattern.value})"
+                        )
 
         self._last_working_messages = working_messages
         self._save_react_trace(react_trace, conversation_id, session_type, "max_iterations", _trace_started_at)
@@ -1809,6 +1895,15 @@ class ReasoningEngine:
                 _ask_rules = _build_mode_rules("ask")
                 if _ask_rules:
                     effective_prompt += f"\n\n{_ask_rules}"
+            elif _effective_mode == "coordinator":
+                effective_prompt += (
+                    "\n\n## Coordinator Mode\n"
+                    "你当前处于 **协调者模式**。你的职责是规划、委派和监督，而非直接执行。\n"
+                    "- 使用 delegate_to_agent / delegate_parallel / spawn_agent 将具体任务委派给下属 Agent\n"
+                    "- 使用 create_todo / update_todo_step 跟踪任务进度\n"
+                    "- 使用 ask_user 向用户确认重要决策\n"
+                    "- 你不能直接编辑文件、执行命令或进行文件操作——这些由你委派的 Agent 完成\n"
+                )
 
             # Tool filtering by mode — restrict available tools based on current mode
             tools = _filter_tools_by_mode(tools, _effective_mode)
@@ -1848,7 +1943,8 @@ class ReasoningEngine:
             state.original_user_messages = [
                 msg for msg in messages if self._is_human_user_message(msg)
             ]
-            max_iterations = settings.max_iterations
+            max_iterations = getattr(self, "_max_iterations_override", None) or settings.max_iterations
+            self._max_iterations_override = None  # consume once
             self._empty_content_retries = 0
             working_messages = list(messages)
 
@@ -1856,7 +1952,7 @@ class ReasoningEngine:
             im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
             configured = int(
                 getattr(self, "_force_tool_override", None)
-                or getattr(settings, "force_tool_call_max_retries", 1)
+                or getattr(settings, "force_tool_call_max_retries", 0)
             )
             if session_type == "im":
                 base_force_retries = max(im_floor, configured)
@@ -1870,8 +1966,8 @@ class ReasoningEngine:
                 max_no_tool_retries = force_tool_retries
                 logger.info(f"[ForceToolCall/Stream] Intent override: max_retries={force_tool_retries}")
 
-            max_verify_retries = 3
-            max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
+            max_verify_retries = 1
+            max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 1)))
 
             executed_tool_names: list[str] = []
             delivery_receipts: list[dict] = []
@@ -1881,6 +1977,9 @@ class ReasoningEngine:
             verify_incomplete_count = 0
             no_confirmation_text_count = 0
             tools_executed_in_task = False
+            _supervisor_intervened = False
+            _tool_call_counter: dict[str, int] = {}
+            _MAX_SAME_TOOL_PER_TASK = 5
 
             def _make_tool_sig(tc: dict) -> str:
                 nonlocal _last_browser_url
@@ -1896,6 +1995,26 @@ class ReasoningEngine:
                     param_str = f"{param_str}|url={_last_browser_url}"
                 param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
                 return f"{name}({param_hash})"
+
+            # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
+            if conversation_id:
+                try:
+                    from ..tools.handlers.plan import has_active_todo, get_todo_handler_for_session
+                    if has_active_todo(conversation_id):
+                        _rh = get_todo_handler_for_session(conversation_id)
+                        _rp = _rh.get_plan_for(conversation_id) if _rh else None
+                        if _rp and _rp.get("status") == "in_progress":
+                            yield {"type": "todo_created", "restored": True, "plan": {
+                                "id": _rp.get("id", ""),
+                                "taskSummary": _rp.get("task_summary", ""),
+                                "steps": [
+                                    {"id": s.get("id", ""), "description": s.get("description", ""), "status": s.get("status", "pending")}
+                                    for s in _rp.get("steps", [])
+                                ],
+                                "status": "in_progress",
+                            }}
+                except Exception:
+                    pass
 
             # ==================== 主循环 ====================
             logger.info(
@@ -1949,6 +2068,7 @@ class ReasoningEngine:
                         current_model, working_messages = switch_result
                         no_tool_call_count = 0
                         tools_executed_in_task = False
+                        _supervisor_intervened = False
                         verify_incomplete_count = 0
                         executed_tool_names = []
                         consecutive_tool_rounds = 0
@@ -2030,14 +2150,18 @@ class ReasoningEngine:
                 # --- 思维链: 迭代开始事件 ---
                 yield {"type": "iteration_start", "iteration": _iteration + 1}
 
-                # --- Reason phase ---
+                # --- Reason phase (真流式) ---
                 _thinking_t0 = time.time()
                 yield {"type": "thinking_start"}
                 await broadcast_event("pet-status-update", {"status": "thinking"})
+                _streamed_text = False
+                _streamed_thinking = False
+                _stream_usage: dict | None = None
+                _raw_streamed_text: str = ""
 
                 try:
                     decision = None
-                    async for hb_event in self._reason_with_heartbeat(
+                    async for stream_event in self._reason_stream_iter(
                         working_messages,
                         system_prompt=effective_prompt,
                         tools=tools,
@@ -2048,12 +2172,21 @@ class ReasoningEngine:
                         iteration=_iteration,
                         agent_profile_id=agent_profile_id,
                     ):
-                        if hb_event["type"] == "heartbeat":
+                        _evt_type = stream_event.get("type")
+                        if _evt_type == "heartbeat":
                             yield {"type": "heartbeat"}
-                        elif hb_event["type"] == "decision":
-                            decision = hb_event["decision"]
+                        elif _evt_type == "text_delta":
+                            yield stream_event
+                            _streamed_text = True
+                        elif _evt_type == "thinking_delta":
+                            yield stream_event
+                            _streamed_thinking = True
+                        elif _evt_type == "decision":
+                            decision = stream_event["decision"]
+                            _stream_usage = stream_event.get("usage")
+                            _raw_streamed_text = stream_event.get("raw_streamed_text", "")
                     if decision is None:
-                        raise RuntimeError("_reason returned no decision")
+                        raise RuntimeError("_reason_stream returned no decision")
 
                     if task_monitor:
                         task_monitor.reset_retry_count()
@@ -2067,7 +2200,6 @@ class ReasoningEngine:
                     self._save_react_trace(
                         react_trace, conversation_id, session_type, "cancelled", _trace_started_at
                     )
-                    # 流式输出收尾
                     async for ev in self._stream_cancel_farewell(
                         working_messages, effective_prompt, current_model, state
                     ):
@@ -2107,6 +2239,7 @@ class ReasoningEngine:
                         current_model, working_messages = retry_result
                         no_tool_call_count = 0
                         tools_executed_in_task = False
+                        _supervisor_intervened = False
                         verify_incomplete_count = 0
                         executed_tool_names = []
                         consecutive_tool_rounds = 0
@@ -2121,10 +2254,10 @@ class ReasoningEngine:
                         yield {"type": "done"}
                         return
 
-                # Emit thinking content
+                # Emit thinking content (已在流式过程中逐步发出; 兜底: 非流式 fallback)
                 _thinking_duration = int((time.time() - _thinking_t0) * 1000)
                 _has_thinking = bool(decision.thinking_content)
-                if _has_thinking:
+                if _has_thinking and not _streamed_thinking:
                     yield {"type": "thinking_delta", "content": decision.thinking_content}
                 yield {
                     "type": "thinking_end",
@@ -2132,20 +2265,35 @@ class ReasoningEngine:
                     "has_thinking": _has_thinking,
                 }
 
-                # === chain_text: LLM 推理意图（text_content 中可能含推理说明） ===
-                _decision_text = (decision.text_content or "").strip()
-                if _decision_text and decision.type == DecisionType.TOOL_CALLS:
-                    # LLM 在调用工具前输出的思路文字
-                    yield {"type": "chain_text", "content": _decision_text[:2000]}
+                # chain_text: 文本已通过 text_delta 实时推送; 仅在未流式时 fallback
+                if not _streamed_text:
+                    _decision_text = (decision.text_content or "").strip()
+                    if _decision_text and decision.type == DecisionType.TOOL_CALLS:
+                        yield {"type": "chain_text", "content": _decision_text[:2000]}
+                elif decision.type == DecisionType.TOOL_CALLS:
+                    yield {"type": "text_replace", "content": ""}
+                    _decision_text = (decision.text_content or "").strip()
+                    if _decision_text:
+                        yield {"type": "chain_text", "content": _decision_text[:2000]}
+                elif _raw_streamed_text != (decision.text_content or ""):
+                    yield {
+                        "type": "text_replace",
+                        "content": decision.text_content or "",
+                    }
 
                 if task_monitor:
                     task_monitor.end_iteration(decision.text_content or "")
 
                 # -- 收集 ReAct trace + Budget 记录 token --
+                # 流式模式: usage 来自 StreamAccumulator (_stream_usage dict)
+                # 非流式 fallback: usage 来自 decision.raw_response
                 _raw = decision.raw_response
                 _usage = getattr(_raw, "usage", None) if _raw else None
                 _in_tokens = getattr(_usage, "input_tokens", 0) if _usage else 0
                 _out_tokens = getattr(_usage, "output_tokens", 0) if _usage else 0
+                if not (_in_tokens or _out_tokens) and _stream_usage:
+                    _in_tokens = _stream_usage.get("input_tokens", 0)
+                    _out_tokens = _stream_usage.get("output_tokens", 0)
                 if _in_tokens or _out_tokens:
                     self._budget.record_tokens(_in_tokens, _out_tokens)
                 _iter_trace: dict = {
@@ -2234,10 +2382,10 @@ class ReasoningEngine:
                         max_confirmation_text_retries=max_confirmation_text_retries,
                         base_force_retries=base_force_retries,
                         conversation_id=conversation_id,
+                        supervisor_intervened=_supervisor_intervened,
                     )
 
                     if isinstance(result, str):
-                        # 最终答案 → stream 给前端
                         react_trace.append(_iter_trace)
                         self._save_react_trace(
                             react_trace, conversation_id, session_type, "completed", _trace_started_at
@@ -2249,18 +2397,24 @@ class ReasoningEngine:
                         logger.info(
                             f"[ReAct-Stream] === COMPLETED after {_iteration+1} iterations ==="
                         )
-                        chunk_size = 20
-                        for i in range(0, len(result), chunk_size):
-                            yield {"type": "text_delta", "content": result[i:i + chunk_size]}
-                            await asyncio.sleep(0.01)
+                        if _streamed_text:
+                            if result != _raw_streamed_text:
+                                yield {"type": "text_replace", "content": result}
+                        else:
+                            chunk_size = 20
+                            for i in range(0, len(result), chunk_size):
+                                yield {"type": "text_delta", "content": result[i:i + chunk_size]}
+                                await asyncio.sleep(0.01)
                         await broadcast_event("pet-status-update", {"status": "success"})
                         yield {"type": "done"}
                         return
                     else:
-                        # 验证不通过 → 继续循环
+                        # 验证不通过 → 继续循环; 清除前端已展示的流式文本
                         logger.info(
                             f"[ReAct-Stream] Iter {_iteration+1} — VERIFY: incomplete, continuing loop"
                         )
+                        if _streamed_text:
+                            yield {"type": "text_replace", "content": ""}
                         yield {"type": "chain_text", "content": "任务尚未完成，继续处理..."}
                         react_trace.append(_iter_trace)
                         try:
@@ -2297,10 +2451,12 @@ class ReasoningEngine:
                         # 先执行非 ask_user 工具
                         tool_results_for_msg: list[dict] = []
                         for tc in other_tool_calls:
-                            t_name = tc.get("name", "unknown")
+                            t_name = self._tool_executor.canonicalize_tool_name(
+                                tc.get("name", "unknown")
+                            )
                             t_args = tc.get("input", tc.get("arguments", {}))
                             t_id = tc.get("id", str(uuid.uuid4()))
-                            # Runtime mode guard
+                            # Runtime mode guard — no tool_call events for blocked tools
                             _blocked_msg = _should_block_tool(
                                 t_name, t_args, _allowed_tool_names, _effective_mode
                             )
@@ -2308,12 +2464,7 @@ class ReasoningEngine:
                                 logger.warning(
                                     f"[ModeGuard] Blocked '{t_name}' in {_effective_mode} mode"
                                 )
-                                yield {"type": "tool_call_start", "tool": t_name, "name": t_name, "args": t_args, "id": t_id}
-                                yield {
-                                    "type": "tool_call_end", "tool": t_name,
-                                    "result": _blocked_msg[:_SSE_RESULT_PREVIEW_CHARS],
-                                    "id": t_id, "is_error": True,
-                                }
+                                yield {"type": "chain_text", "content": f"\n{_blocked_msg}\n"}
                                 tool_results_for_msg.append({
                                     "type": "tool_result", "tool_use_id": t_id,
                                     "content": _blocked_msg, "is_error": True,
@@ -2330,12 +2481,31 @@ class ReasoningEngine:
                             if _pr.decision == PolicyDecision.DENY:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
+                            elif _pr.decision == PolicyDecision.CONFIRM:
+                                _risk = _pr.metadata.get("risk_level", "HIGH")
+                                _pe.store_ui_pending(t_id, t_name, t_args if isinstance(t_args, dict) else {}, session_id=conversation_id or "")
+                                yield {
+                                    "type": "security_confirm",
+                                    "tool": t_name,
+                                    "args": t_args if isinstance(t_args, dict) else {},
+                                    "id": t_id,
+                                    "reason": _pr.reason,
+                                    "risk_level": _risk,
+                                    "needs_sandbox": _pr.metadata.get("needs_sandbox", False),
+                                }
+                                r = (
+                                    f"⚠️ 需要用户确认: {_pr.reason}\n"
+                                    "请使用 ask_user 工具询问用户是否允许此操作，"
+                                    "得到用户同意后再重新调用此工具。"
+                                )
+                                _tool_is_error = True
                             else:
                                 _tool_is_error = False
                                 try:
-                                    r = await self._tool_executor.execute_tool(
+                                    r = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=t_name,
                                         tool_input=t_args if isinstance(t_args, dict) else {},
+                                        policy_result=_pr,
                                         session_id=conversation_id,
                                     )
                                     r = str(r) if r else ""
@@ -2400,7 +2570,7 @@ class ReasoningEngine:
                                 parsed_questions.append(pq)
                             if parsed_questions:
                                 event["questions"] = parsed_questions
-                        
+
                         await broadcast_event("pet-status-update", {"status": "idle"})
                         yield event
                         react_trace.append(_iter_trace)
@@ -2428,11 +2598,40 @@ class ReasoningEngine:
                             _stream_cancelled = True
                             break
 
-                        tool_name = tc.get("name", "unknown")
+                        tool_name = self._tool_executor.canonicalize_tool_name(
+                            tc.get("name", "unknown")
+                        )
                         tool_args = tc.get("input", tc.get("arguments", {}))
                         tool_id = tc.get("id", str(uuid.uuid4()))
 
-                        # Runtime mode guard
+                        # 同名工具频率限制
+                        _tool_call_counter[tool_name] = _tool_call_counter.get(tool_name, 0) + 1
+                        if _tool_call_counter[tool_name] > _MAX_SAME_TOOL_PER_TASK:
+                            logger.warning(
+                                f"[RateLimit] Tool '{tool_name}' called "
+                                f"{_tool_call_counter[tool_name]} times "
+                                f"(limit={_MAX_SAME_TOOL_PER_TASK}), skipping"
+                            )
+                            _rl_msg = (
+                                f"[系统] 工具 {tool_name} 已在本任务中调用 "
+                                f"{_tool_call_counter[tool_name] - 1} 次，已达上限。"
+                                f"请整合操作或继续下一步。"
+                            )
+                            yield {"type": "tool_call_start", "tool": tool_name, "name": tool_name, "args": tool_args, "id": tool_id}
+                            yield {
+                                "type": "tool_call_end", "tool": tool_name,
+                                "result": _rl_msg[:_SSE_RESULT_PREVIEW_CHARS],
+                                "id": tool_id, "is_error": False,
+                            }
+                            tool_results_for_msg.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": _rl_msg,
+                            })
+                            continue
+
+                        # Runtime mode guard — blocked tools do NOT emit
+                        # tool_call_start/end to avoid leaking events to the frontend
                         _blocked_msg = _should_block_tool(
                             tool_name, tool_args, _allowed_tool_names, _effective_mode
                         )
@@ -2440,12 +2639,7 @@ class ReasoningEngine:
                             logger.warning(
                                 f"[ModeGuard] Blocked '{tool_name}' in {_effective_mode} mode"
                             )
-                            yield {"type": "tool_call_start", "tool": tool_name, "name": tool_name, "args": tool_args, "id": tool_id}
-                            yield {
-                                "type": "tool_call_end", "tool": tool_name,
-                                "result": _blocked_msg[:_SSE_RESULT_PREVIEW_CHARS],
-                                "id": tool_id, "is_error": True,
-                            }
+                            yield {"type": "chain_text", "content": f"\n{_blocked_msg}\n"}
                             tool_results_for_msg.append({
                                 "type": "tool_result", "tool_use_id": tool_id,
                                 "content": _blocked_msg, "is_error": True,
@@ -2484,7 +2678,7 @@ class ReasoningEngine:
                         if _pr.decision == PolicyDecision.CONFIRM:
                             _risk = _pr.metadata.get("risk_level", "HIGH")
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                            _pe.store_ui_pending(tool_id, tool_name, _tool_args_dict)
+                            _pe.store_ui_pending(tool_id, tool_name, _tool_args_dict, session_id=conversation_id or "")
                             yield {
                                 "type": "security_confirm",
                                 "tool": tool_name,
@@ -2518,9 +2712,10 @@ class ReasoningEngine:
                         # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
                         try:
                             tool_exec_task = asyncio.create_task(
-                                self._tool_executor.execute_tool(
+                                self._tool_executor.execute_tool_with_policy(
                                     tool_name=tool_name,
                                     tool_input=tool_args if isinstance(tool_args, dict) else {},
+                                    policy_result=_pr,
                                     session_id=conversation_id,
                                 )
                             )
@@ -2626,12 +2821,44 @@ class ReasoningEngine:
                                     })
                                 else:
                                     plan_steps.append({"id": f"step_{idx + 1}", "description": str(s), "status": "pending"})
+                            # 从后端获取真实 plan_id，保持前后端 ID 一致
+                            _sse_plan_id = str(uuid.uuid4())
+                            try:
+                                from ..tools.handlers.plan import get_active_plan_id
+                                _real_id = get_active_plan_id(conversation_id)
+                                if _real_id:
+                                    _sse_plan_id = _real_id
+                            except Exception:
+                                pass
                             yield {"type": "todo_created", "plan": {
-                                "id": str(uuid.uuid4()),
+                                "id": _sse_plan_id,
                                 "taskSummary": tool_args.get("task_summary", ""),
                                 "steps": plan_steps,
                                 "status": "in_progress",
                             }}
+                        elif tool_name == "create_plan_file" and isinstance(tool_args, dict):
+                            pf_todos = tool_args.get("todos", [])
+                            pf_steps = []
+                            for idx, t in enumerate(pf_todos):
+                                if isinstance(t, dict):
+                                    pf_steps.append({
+                                        "id": str(t.get("id", f"step_{idx + 1}")),
+                                        "description": str(t.get("content", t.get("id", ""))),
+                                        "status": "pending",
+                                    })
+                            if pf_steps:
+                                _pf_plan_id = ""
+                                try:
+                                    from ..tools.handlers.plan import get_active_plan_id
+                                    _pf_plan_id = get_active_plan_id(conversation_id) or ""
+                                except Exception:
+                                    pass
+                                yield {"type": "todo_created", "plan": {
+                                    "id": _pf_plan_id or str(uuid.uuid4()),
+                                    "taskSummary": tool_args.get("name", ""),
+                                    "steps": pf_steps,
+                                    "status": "in_progress",
+                                }}
                         elif tool_name == "update_todo_step" and isinstance(tool_args, dict):
                             step_id = tool_args.get("step_id", "")
                             yield {"type": "todo_step_updated", "stepId": step_id, "status": tool_args.get("status", "completed")}
@@ -2661,6 +2888,18 @@ class ReasoningEngine:
                             "The user can approve the plan to switch to Agent mode, "
                             "or request changes to continue refining."
                         )
+
+                        # SSE: 通知前端显示审批面板（通过 SSE 而非 WS，确保 Tauri 本地模式可用）
+                        _pending = self._plan_exit_pending or {}
+                        _pending_data = _pending.get(conversation_id, {}) if isinstance(_pending, dict) else {}
+                        if _pending_data:
+                            yield {"type": "plan_ready_for_approval", "data": {
+                                "conversation_id": conversation_id,
+                                "summary": _pending_data.get("summary", ""),
+                                "plan_id": _pending_data.get("plan_id", ""),
+                                "plan_file": _pending_data.get("plan_file", ""),
+                            }}
+
                         yield {"type": "text_delta", "content": _summary_text}
                         self._save_react_trace(
                             react_trace, conversation_id, session_type,
@@ -2670,10 +2909,9 @@ class ReasoningEngine:
                         return
 
                     if decision.tool_calls:
-                        # _non_denied_tool_names 在工具循环中构建，
-                        # 仅含通过策略检查的工具（与 run() 的 executed 语义一致）
                         if _non_denied_tool_names:
-                            tools_executed_in_task = True
+                            if any(t not in _ADMIN_TOOL_NAMES for t in _non_denied_tool_names):
+                                tools_executed_in_task = True
                             executed_tool_names.extend(_non_denied_tool_names)
                             state.record_tool_execution(_non_denied_tool_names)
                             self._budget.record_tool_calls(len(_non_denied_tool_names))
@@ -2744,6 +2982,7 @@ class ReasoningEngine:
                         yield {"type": "done"}
                         return
 
+                    tool_results_for_msg = _apply_tool_result_budget(tool_results_for_msg)
                     working_messages.append({
                         "role": "user",
                         "content": tool_results_for_msg,
@@ -2809,10 +3048,14 @@ class ReasoningEngine:
                                 react_trace, conversation_id, session_type,
                                 "completed_end_turn", _trace_started_at,
                             )
-                            chunk_size = 20
-                            for i in range(0, len(cleaned_text), chunk_size):
-                                yield {"type": "text_delta", "content": cleaned_text[i:i + chunk_size]}
-                                await asyncio.sleep(0.01)
+                            if _streamed_text:
+                                if cleaned_text != _raw_streamed_text:
+                                    yield {"type": "text_replace", "content": cleaned_text}
+                            else:
+                                chunk_size = 20
+                                for i in range(0, len(cleaned_text), chunk_size):
+                                    yield {"type": "text_delta", "content": cleaned_text[i:i + chunk_size]}
+                                    await asyncio.sleep(0.01)
                             yield {"type": "done"}
                             return
 
@@ -2835,6 +3078,9 @@ class ReasoningEngine:
                     )
 
                     if intervention:
+                        _supervisor_intervened = True
+                        max_no_tool_retries = 0
+
                         if intervention.should_terminate:
                             cleaned = strip_thinking_tags(decision.text_content)
                             self._save_react_trace(
@@ -2865,9 +3111,12 @@ class ReasoningEngine:
                                 "role": "user",
                                 "content": intervention.prompt_injection,
                             })
-
-                        if intervention.should_escalate:
+                            tools = []
                             max_no_tool_retries = 0
+                            logger.info(
+                                f"[Supervisor] NUDGE: tools stripped to force text response "
+                                f"(iter={_iteration}, pattern={intervention.pattern.value})"
+                            )
 
                     continue  # Next iteration
 
@@ -2917,6 +3166,94 @@ class ReasoningEngine:
                         llm_client.restore_default(conversation_id=conversation_id)
                     except Exception:
                         pass
+
+    # ==================== Unified Async Generator Interface ====================
+
+    async def run_stream(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        system_prompt: str = "",
+        base_system_prompt: str = "",
+        task_description: str = "",
+        task_monitor: Any = None,
+        session_type: str = "desktop",
+        mode: str = "agent",
+        endpoint_override: str | None = None,
+        conversation_id: str | None = None,
+        thinking_mode: str | None = None,
+        thinking_depth: str | None = None,
+        agent_profile_id: str = "default",
+        session: Any = None,
+        force_tool_retries: int | None = None,
+        is_sub_agent: bool = False,
+    ):
+        """
+        统一流式接口: 将 reason_stream 包装为标准化异步生成器。
+
+        所有流式事件通过 async for 消费，调用方无需关注内部循环细节。
+        与 run() 保持相同的功能集（重试、回滚、取消等），同时支持:
+        - Token 预算警告注入
+        - 可观测性 metrics
+        - 标准化事件格式
+
+        Yields dict events (same format as reason_stream).
+        """
+        try:
+            from .token_budget import TokenBudget
+
+            budget = TokenBudget()
+
+            # Parse budget from last user message
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        from .token_budget import parse_token_budget
+                        parsed = parse_token_budget(content)
+                        if parsed:
+                            budget.total_limit = parsed
+                    break
+        except ImportError:
+            budget = None
+
+        async for event in self.reason_stream(
+            messages,
+            tools=tools,
+            system_prompt=system_prompt,
+            base_system_prompt=base_system_prompt,
+            task_description=task_description,
+            task_monitor=task_monitor,
+            session_type=session_type,
+            mode=mode,
+            endpoint_override=endpoint_override,
+            conversation_id=conversation_id,
+            thinking_mode=thinking_mode,
+            thinking_depth=thinking_depth,
+            agent_profile_id=agent_profile_id,
+            session=session,
+            force_tool_retries=force_tool_retries,
+            is_sub_agent=is_sub_agent,
+        ):
+            # Track token usage for budget
+            if budget and event.get("type") == "usage":
+                tokens = event.get("total_tokens", 0)
+                if tokens:
+                    budget.record(tokens)
+                    warning = budget.get_warning_message()
+                    if warning:
+                        yield {"type": "budget_warning", "message": warning}
+                    if budget.is_exceeded:
+                        yield {
+                            "type": "budget_exceeded",
+                            "message": f"Token budget exceeded: "
+                                       f"{budget.used:,}/{budget.total_limit:,}",
+                        }
+                        yield {"type": "done", "reason": "budget_exceeded"}
+                        return
+
+            yield event
 
     # ==================== 思维链叙事辅助 ====================
 
@@ -3135,6 +3472,82 @@ class ReasoningEngine:
             logger.debug(f"[CancelFarewell] Failed to reset cooldown: {exc}")
 
     @staticmethod
+    def _yield_missing_tool_results(working_messages: list[dict]) -> None:
+        """Patch *working_messages* in-place so every ``tool_use`` block in the
+        last assistant message has a matching ``tool_result`` in a subsequent
+        user message.
+
+        When an exception (cancel / timeout / model-switch) fires after the
+        assistant emits ``tool_use`` blocks but before all tool executions
+        complete, some ``tool_result`` entries will be absent.  The next LLM
+        API call would then fail with HTTP 400.  This helper fills the gaps
+        with synthetic ``[cancelled]`` results.
+        """
+        if not working_messages:
+            return
+
+        last_asst_idx: int | None = None
+        for i in range(len(working_messages) - 1, -1, -1):
+            msg = working_messages[i]
+            if msg.get("role") == "assistant":
+                content = msg.get("content")
+                if isinstance(content, list) and any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    for b in content
+                ):
+                    last_asst_idx = i
+                break
+
+        if last_asst_idx is None:
+            return
+
+        tool_use_ids: set[str] = set()
+        for block in working_messages[last_asst_idx].get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id"):
+                tool_use_ids.add(block["id"])
+        if not tool_use_ids:
+            return
+
+        answered_ids: set[str] = set()
+        existing_result_msg: dict | None = None
+        for msg in working_messages[last_asst_idx + 1:]:
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            tid = block.get("tool_use_id")
+                            if tid:
+                                answered_ids.add(tid)
+                                if existing_result_msg is None:
+                                    existing_result_msg = msg
+
+        missing_ids = tool_use_ids - answered_ids
+        if not missing_ids:
+            return
+
+        synthetic = [
+            {
+                "type": "tool_result",
+                "tool_use_id": mid,
+                "content": "[cancelled]",
+                "is_error": True,
+            }
+            for mid in missing_ids
+        ]
+
+        if existing_result_msg is not None:
+            existing_result_msg["content"].extend(synthetic)
+        else:
+            working_messages.append({"role": "user", "content": synthetic})
+
+        logger.debug(
+            "[ToolResultSafetyNet] Injected %d synthetic tool_result(s) for IDs: %s",
+            len(synthetic),
+            ", ".join(missing_ids),
+        )
+
+    @staticmethod
     def _sanitize_messages_for_farewell(messages: list[dict]) -> list[dict]:
         """
         清理 working_messages 使其可安全发送给 LLM 的 farewell 调用。
@@ -3190,6 +3603,8 @@ class ReasoningEngine:
         state: TaskState | None = None,
     ) -> str:
         """非流式场景下的取消收尾：立即返回默认文本，后台异步发起 LLM 收尾。"""
+        self._yield_missing_tool_results(working_messages)
+
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         logger.info(
             f"[ReAct][CancelFarewell] 进入收尾流程: cancel_reason={cancel_reason!r}, "
@@ -3220,6 +3635,8 @@ class ReasoningEngine:
         Yields:
             {"type": "user_insert", ...} 和 {"type": "text_delta", ...} 事件
         """
+        self._yield_missing_tool_results(working_messages)
+
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         logger.info(
             f"[ReAct-Stream][CancelFarewell] 进入收尾流程: cancel_reason={cancel_reason!r}, "
@@ -3253,6 +3670,7 @@ class ReasoningEngine:
     ) -> None:
         """后台执行 LLM 收尾调用，将结果持久化到上下文（不阻塞用户）。"""
         try:
+            self._yield_missing_tool_results(working_messages)
             cancel_msg = (
                 f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
                 "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"
@@ -3292,9 +3710,107 @@ class ReasoningEngine:
         except Exception as e:
             logger.warning(f"[ReAct-Stream][BgFarewell] 后台收尾异常: {e}")
 
-    # ==================== 心跳保活 ====================
+    # ==================== 流式推理 ====================
 
-    _HEARTBEAT_INTERVAL = 15  # 秒：LLM 等待期间心跳间隔
+    _HEARTBEAT_INTERVAL = 15  # 秒：无事件时心跳间隔
+
+    async def _reason_stream_iter(
+        self,
+        messages: list[dict],
+        *,
+        system_prompt: str,
+        tools: list[dict],
+        current_model: str,
+        conversation_id: str | None = None,
+        thinking_mode: str | None = None,
+        thinking_depth: str | None = None,
+        iteration: int = 0,
+        agent_profile_id: str = "default",
+    ):
+        """流式推理迭代器：即时 yield text/thinking delta，流结束后 yield Decision。
+
+        参考 Claude Code (claude.ts) 的 for-await 事件循环模式：
+        - 每个 LLM token 到达时即通过 StreamAccumulator 产出高层事件
+        - 流结束后从累积状态构建 Decision 对象
+
+        Yields:
+            {"type": "text_delta", "content": "..."}
+            {"type": "thinking_delta", "content": "..."}
+            {"type": "heartbeat"}
+            {"type": "decision", "decision": Decision}
+        """
+        import time as _time
+
+        from .stream_accumulator import StreamAccumulator, post_process_streamed_decision
+
+        acc = StreamAccumulator()
+        last_yield_time = _time.monotonic()
+
+        state = (
+            self._state.get_task_for_session(conversation_id)
+            if conversation_id
+            else None
+        ) or self._state.current_task
+        cancel_event = state.cancel_event if state else asyncio.Event()
+
+        use_thinking = None
+        if thinking_mode == "on":
+            use_thinking = True
+        elif thinking_mode == "off":
+            use_thinking = False
+
+        tracer = get_tracer()
+        with tracer.llm_span(model=current_model) as span:
+            async for raw_event in self._brain.messages_create_stream(
+                use_thinking=use_thinking,
+                thinking_depth=thinking_depth,
+                model=current_model,
+                max_tokens=self._brain.max_tokens,
+                system=system_prompt,
+                tools=tools,
+                messages=messages,
+                conversation_id=conversation_id,
+                iteration=iteration,
+                agent_profile_id=agent_profile_id,
+            ):
+                if cancel_event.is_set():
+                    cancel_reason = state.cancel_reason if state else "用户请求停止"
+                    raise UserCancelledError(
+                        reason=cancel_reason,
+                        source="llm_stream",
+                    )
+
+                for high_event in acc.feed(raw_event):
+                    yield high_event
+                    last_yield_time = _time.monotonic()
+
+                now = _time.monotonic()
+                if now - last_yield_time > self._HEARTBEAT_INTERVAL:
+                    yield {"type": "heartbeat"}
+                    last_yield_time = now
+
+            # 流结束 → 构建 Decision
+            decision = acc.build_decision()
+            raw_streamed_text = decision.text_content or ""
+            post_process_streamed_decision(decision)
+
+            if acc.usage:
+                in_tok = acc.usage.get("input_tokens", 0)
+                out_tok = acc.usage.get("output_tokens", 0)
+                span.set_attribute("input_tokens", in_tok)
+                span.set_attribute("output_tokens", out_tok)
+
+            span.set_attribute("decision_type", decision.type.value)
+            span.set_attribute("tool_count", len(decision.tool_calls))
+
+            yield {
+                "type": "decision",
+                "decision": decision,
+                "usage": acc.usage,
+                "raw_streamed_text": raw_streamed_text,
+            }
+
+    # ==================== 心跳保活（非流式路径使用） ====================
 
     async def _reason_with_heartbeat(
         self,
@@ -3624,6 +4140,7 @@ class ReasoningEngine:
         max_confirmation_text_retries: int,
         base_force_retries: int,
         conversation_id: str | None,
+        supervisor_intervened: bool = False,
     ) -> str | tuple:
         """
         处理纯文本响应（无工具调用）。
@@ -3637,13 +4154,13 @@ class ReasoningEngine:
             cleaned_text = strip_thinking_tags(decision.text_content)
             _, cleaned_text = parse_intent_tag(cleaned_text)
             if cleaned_text and len(cleaned_text.strip()) > 0:
-                # 任务完成度验证
                 is_completed = await self._response_handler.verify_task_completion(
                     user_request=ResponseHandler.get_last_user_request(original_messages),
                     assistant_response=cleaned_text,
                     executed_tools=executed_tool_names,
                     delivery_receipts=delivery_receipts,
                     conversation_id=conversation_id,
+                    bypass=supervisor_intervened,
                 )
 
                 if is_completed:
@@ -3651,9 +4168,8 @@ class ReasoningEngine:
 
                 verify_incomplete_count += 1
 
-                # 检查活跃 Plan
                 has_todo_pending = self._has_active_todo_pending(conversation_id)
-                effective_max = max_verify_retries * 2 if has_todo_pending else max_verify_retries
+                effective_max = max_verify_retries + 1 if has_todo_pending else max_verify_retries
 
                 is_in_progress_promise = self._is_in_progress_promise(cleaned_text)
 
@@ -3795,7 +4311,13 @@ class ReasoningEngine:
             return (working_messages, no_tool_call_count, verify_incomplete_count,
                     no_confirmation_text_count, max_no_tool_retries)
 
-        # [REPLY] / [ACTION] / 无标记 → 统一使用配置的重试次数
+        if intent == "REPLY" and stripped_text and len(stripped_text.strip()) > 10:
+            logger.info(
+                "[IntentTag] REPLY intent with substantial text, "
+                "accepting as valid response (no ForceToolCall)"
+            )
+            return clean_llm_response(stripped_text)
+
         max_no_tool_retries = self._effective_force_retries(base_force_retries, conversation_id)
         no_tool_call_count += 1
 
@@ -3808,13 +4330,11 @@ class ReasoningEngine:
                 })
             if intent == "REPLY":
                 logger.warning(
-                    f"[IntentTag] REPLY intent but tool_calls=0 — "
+                    f"[IntentTag] REPLY intent but text too short — "
                     f"ForceToolCall retry ({no_tool_call_count}/{max_no_tool_retries})"
                 )
                 retry_msg = (
-                    "[系统] 你声明了 [REPLY] 但系统检测到 tool_calls=0。"
-                    "如果你的回复包含即将执行的操作，请立即调用对应的工具；"
-                    "如果确实只是纯对话回复，请直接重新回复即可。"
+                    "[系统] 你的回复过于简短，请提供更详细的回答。"
                 )
             elif intent == "ACTION":
                 logger.warning(
@@ -3827,8 +4347,8 @@ class ReasoningEngine:
                 )
             else:
                 logger.warning(
-                    f"[IntentTag] No intent tag, text claims completion but tool_calls=0 — "
-                    f"hallucination suspected, ForceToolCall retry "
+                    f"[IntentTag] No intent tag, short text with action claims, tool_calls=0 — "
+                    f"ForceToolCall retry "
                     f"({no_tool_call_count}/{max_no_tool_retries})"
                 )
                 retry_msg = (
@@ -4228,6 +4748,19 @@ class ReasoningEngine:
                         "payload" in error_lower and "larger" in error_lower
                     )
                 if is_ctx_overflow:
+                    # Layer 2: Reactive compact (三层压缩策略的第三层)
+                    try:
+                        import asyncio as _aio
+                        loop = _aio.get_running_loop()
+                        loop.create_task(
+                            self._context_manager.reactive_compact(
+                                working_messages,
+                                system_prompt=getattr(state, '_system_prompt', ''),
+                            )
+                        )
+                    except Exception:
+                        pass
+
                     trunc_msgs, did_trunc = self._truncate_oversized_messages(
                         working_messages
                     )
@@ -4249,7 +4782,6 @@ class ReasoningEngine:
                     # 方案 C2: 单条截断无效（多条小消息累积溢出）
                     # 强制按当前上下文预算的 50% 做硬截断
                     if len(working_messages) > 3:
-                        from .context_manager import ContextManager
                         cm = self._context_manager
                         budget = cm.get_max_context_tokens() if cm else 60000
                         reduced_budget = budget // 2
@@ -4486,80 +5018,14 @@ class ReasoningEngine:
         return any(re.search(pat, _tail) for pat in confirmation_patterns)
 
     @staticmethod
-    def _is_conversational_reply(text: str, messages: list[dict]) -> bool:
-        """判断无 intent 标记的回复是否为合法的对话式回复。
-
-        许多模型（如 kimi-for-coding、部分 OpenAI 兼容端点）不会可靠地
-        输出 [REPLY]/[ACTION] 标记。此方法通过启发式规则区分：
-        - 对话回复（回答问题、闲聊、说明能力）→ True → 直接返回
-        - 伪执行断言（声称已完成操作但未调用工具）→ False → ForceToolCall
-        """
-        _text = (text or "").strip()
-        if not _text or len(_text) < 5:
-            return False
-
-        _action_claims = (
-            "已完成", "已执行", "已保存", "已发送", "已创建", "已修改",
-            "已删除", "已上传", "已下载", "已安装", "已设置", "已配置",
-            "我已经", "操作完成", "任务完成", "执行成功", "文件已",
-            "脚本已", "命令已", "已写入", "已生成文件",
-        )
-        if any(claim in _text for claim in _action_claims):
-            return False
-
-        last_user_text = ""
-        for msg in reversed(messages):
-            if msg.get("role") != "user":
-                continue
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                if content.startswith("[系统]") or content.startswith("[系统提示]"):
-                    continue
-                last_user_text = content
-                break
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        t = part.get("text", "")
-                        if not t.startswith("[系统]") and not t.startswith("[系统提示]"):
-                            last_user_text = t
-                            break
-                if last_user_text:
-                    break
-
-        _ctx_prefix = "[以上是之前的对话历史"
-        if _ctx_prefix in last_user_text:
-            idx = last_user_text.find("：]")
-            if idx != -1:
-                last_user_text = last_user_text[idx + 2:].strip()
-
-        _question_markers = ("?", "？", "吗", "吗？", "嘛", "呢", "不", "能不能", "可以")
-        if any(m in last_user_text for m in _question_markers):
-            return True
-
-        _greeting_patterns = (
-            "你好", "在吗", "在嘛", "在不在", "嗨", "hello", "hi ",
-            "干嘛", "干啥", "你在", "早上好", "晚上好", "下午好",
-        )
-        _lower = last_user_text.lower().strip()
-        if any(_lower.startswith(g) or _lower == g for g in _greeting_patterns):
-            return True
-        if len(last_user_text.strip()) <= 10:
-            return True
-
-        return False
-
     @staticmethod
     def _effective_force_retries(base_retries: int, conversation_id: str | None) -> int:
-        """计算有效 ForceToolCall 重试次数"""
-        retries = base_retries
-        try:
-            from ..tools.handlers.plan import has_active_todo, is_todo_required
-            if conversation_id and (has_active_todo(conversation_id) or is_todo_required(conversation_id)):
-                retries = max(retries, 1)
-        except Exception:
-            pass
-        return max(0, int(retries))
+        """计算有效 ForceToolCall 重试次数。
+
+        不再因 active plan 自动提升——Plan 推进由 Supervisor 自检和
+        todo_reminder 驱动，ForceToolCall 仅尊重配置值。
+        """
+        return max(0, int(base_retries))
 
     @staticmethod
     def _has_active_todo_pending(conversation_id: str | None) -> bool:

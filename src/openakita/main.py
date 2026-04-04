@@ -9,7 +9,9 @@ OpenAkita CLI 入口
 import openakita._ensure_utf8  # noqa: F401  # isort: skip
 
 import asyncio
+import contextlib
 import importlib
+import json
 import logging
 import os
 import subprocess
@@ -20,7 +22,6 @@ import typer
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Prompt
 from rich.table import Table
 
 from .config import settings
@@ -941,7 +942,7 @@ async def start_im_channels(agent_or_master):
 
     async def agent_handler(session, message: str) -> str:
         """通过 Agent 处理消息（运行时检查多Agent模式开关）"""
-        from .channels.gateway import format_user_friendly_error
+        from .utils.errors import format_user_friendly_error
 
         if settings.multi_agent_enabled and _orchestrator is not None:
             try:
@@ -1143,31 +1144,73 @@ async def run_interactive():
     print_welcome()
 
     shutdown_event = asyncio.Event()
+    init_done = asyncio.Event()
+    early_input_queue: list[str] = []
 
     agent = get_agent()
 
-    with console.status("[bold green]正在初始化 Agent...", spinner="dots"):
-        await agent.initialize()
+    async def _background_init():
+        """Background: initialize agent, core services, and IM channels."""
+        console.print("[dim]正在初始化 Agent...[/dim]")
+        try:
+            await agent.initialize()
+            console.print("[green]✓[/green] Agent 已准备就绪")
+        except Exception as e:
+            console.print(f"[red]✗ Agent 初始化失败: {e}[/red]")
+            shutdown_event.set()
+            init_done.set()
+            return
 
-    console.print("[green]✓[/green] Agent 已准备就绪")
+        console.print("[dim]正在初始化核心服务...[/dim]")
+        try:
+            await init_core_services(agent)
+        except Exception as e:
+            console.print(f"[red]✗ 核心服务初始化失败: {e}[/red]")
+            logger.error(f"Core services init failed: {e}", exc_info=True)
+
+        # Session recovery (depends on _session_manager from init_core_services)
+        _cli_sf = _cli_session_file
+        _cid: str | None = None
+        if not _cli_force_new_session and _cli_sf.exists():
+            try:
+                _cid = json.loads(_cli_sf.read_text(encoding="utf-8")).get("chat_id")
+            except Exception:
+                _cid = None
+        if not _cid:
+            _cid = f"cli_{_uuid.uuid4().hex[:12]}"
+        nonlocal _cli_chat_id
+        _cli_chat_id = _cid
+        if _session_manager:
+            cs = _session_manager.get_session(channel="cli", chat_id=_cid, user_id="cli_user", create_if_missing=True)
+            if cs:
+                agent._cli_session = cs
+                mc = len(cs.context.get_messages())
+                if mc > 0 and not _cli_force_new_session:
+                    console.print(f"[green]✓[/green] 已恢复上次会话 ({mc} 条消息)")
+                _cli_sf.parent.mkdir(parents=True, exist_ok=True)
+                _cli_sf.write_text(json.dumps({"chat_id": _cid}), encoding="utf-8")
+
+        async def _start_im_bg():
+            try:
+                channels = await start_im_channels(agent)
+                if channels:
+                    console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(channels)}")
+            except Exception as e:
+                logger.warning(f"IM channel start failed: {e}")
+
+        asyncio.create_task(_start_im_bg())
+        init_done.set()
+
+    import uuid as _uuid
 
     agent_or_master = agent
     agent_name = agent.name
+    _cli_chat_id: str | None = None
+    _cli_session_file = settings.project_root / "data" / ".cli_last_session"
 
-    # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
-    with console.status("[bold green]正在初始化核心服务...", spinner="dots"):
-        await init_core_services(agent_or_master)
+    _init_task = asyncio.create_task(_background_init())
 
-    # 启动 IM 通道（可选）
-    im_channels = []
-    with console.status("[bold green]正在启动 IM 通道...", spinner="dots"):
-        im_channels = await start_im_channels(agent_or_master)
-
-    if im_channels:
-        console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
-    else:
-        console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（Desktop Chat 仍可使用）")
-
+    console.print("[dim]可以开始输入，初始化完成后将自动处理[/dim]")
     console.print()
 
     # 注册信号处理器用于优雅关闭
@@ -1187,17 +1230,64 @@ async def run_interactive():
     _signal.signal(_signal.SIGINT, _interactive_signal_handler)
     _signal.signal(_signal.SIGTERM, _interactive_signal_handler)
 
-    try:
-        loop = asyncio.get_running_loop()
+    from .cli.input import create_cli_session, prompt_input
+    from .cli.stream_renderer import render_stream
+    from .commands.registry import CommandScope, find_command, get_commands
 
+    _cli_handled = {"help", "status", "selfcheck", "memory", "skills", "channels", "clear", "sessions", "session", "exit", "quit"}
+    cli_commands = [
+        (f"/{c.name}", c.description)
+        for c in get_commands()
+        if CommandScope.CLI in c.scope and c.name in _cli_handled
+    ]
+    pt_session, _completer = create_cli_session(commands=cli_commands)
+
+    async def _process_message(user_input: str):
+        """Process a single user message (extracted for early-input replay)."""
+        session_messages: list[dict] = []
+        _active_session = getattr(agent_or_master, '_cli_session', None)
+        if _active_session:
+            session_messages = _active_session.context.get_messages()
+        elif hasattr(agent_or_master, '_context'):
+            session_messages = agent_or_master._context.messages
+        _sid = _active_session.id if _active_session else _cli_chat_id
+        event_stream = agent_or_master.chat_with_session_stream(
+            message=user_input,
+            session_messages=session_messages,
+            session_id=_sid,
+        )
+        await render_stream(event_stream, console, agent_name=agent_name)
+
+    try:
         while not shutdown_event.is_set():
             try:
-                user_input = await loop.run_in_executor(
-                    None, Prompt.ask, "[bold blue]You[/bold blue]"
-                )
+                prompt_prefix = "You> " if init_done.is_set() else "(初始化中) You> "
+                user_input = await prompt_input(pt_session, prompt_prefix)
 
                 if not user_input.strip():
                     continue
+
+                # N7: Queue early input if agent is not ready yet
+                if not init_done.is_set():
+                    if user_input.startswith("/") and user_input.lower().strip() in ("/exit", "/quit"):
+                        console.print("[yellow]再见！[/yellow]")
+                        shutdown_event.set()
+                        break
+                    early_input_queue.append(user_input.strip())
+                    console.print(f"[dim]已缓存消息 ({len(early_input_queue)})，Agent 就绪后将自动处理[/dim]")
+                    continue
+
+                # Replay queued messages after initialization
+                if early_input_queue:
+                    queued = early_input_queue.copy()
+                    early_input_queue.clear()
+                    console.print(f"[green]正在处理 {len(queued)} 条缓存消息...[/green]")
+                    for q in queued:
+                        if q.startswith("/"):
+                            console.print(f"[dim]跳过缓存命令: {q}[/dim]")
+                            continue
+                        console.print(f"[dim]>>> {q}[/dim]")
+                        await _process_message(q)
 
                 # 处理命令
                 if user_input.startswith("/"):
@@ -1232,39 +1322,117 @@ async def run_interactive():
                         continue
 
                     elif cmd == "/clear":
-                        if hasattr(agent_or_master, '_cli_session') and agent_or_master._cli_session:
-                            agent_or_master._cli_session.context.clear_messages()
+                        _new_id = f"cli_{_uuid.uuid4().hex[:12]}"
+                        if _session_manager:
+                            cli_session = _session_manager.get_session(
+                                channel="cli", chat_id=_new_id, user_id="cli_user",
+                                create_if_missing=True,
+                            )
+                            if cli_session:
+                                agent_or_master._cli_session = cli_session
+                        else:
+                            if hasattr(agent_or_master, '_cli_session') and agent_or_master._cli_session:
+                                agent_or_master._cli_session.context.clear_messages()
                         agent_or_master._conversation_history.clear()
                         agent_or_master._context.messages.clear()
-                        console.print("[green]对话历史已清空[/green]")
+                        _cli_chat_id = _new_id
+                        _cli_session_file.parent.mkdir(parents=True, exist_ok=True)
+                        _cli_session_file.write_text(
+                            json.dumps({"chat_id": _cli_chat_id}), encoding="utf-8"
+                        )
+                        console.print("[green]对话历史已清空，已开启新会话[/green]")
+                        continue
+
+                    elif cmd == "/sessions":
+                        if _session_manager:
+                            cli_sessions = sorted(
+                                _session_manager.list_sessions(channel="cli"),
+                                key=lambda s: getattr(s, "created_at", None) or "",
+                                reverse=True,
+                            )
+                            if not cli_sessions:
+                                console.print("[yellow]没有历史 CLI 会话[/yellow]")
+                            else:
+                                from rich.table import Table as _Tbl
+                                tbl = _Tbl(title="CLI 会话列表")
+                                tbl.add_column("#", style="cyan", width=4)
+                                tbl.add_column("会话 ID", style="green")
+                                tbl.add_column("消息数", justify="right")
+                                tbl.add_column("创建时间")
+                                tbl.add_column("当前", justify="center")
+                                for i, s in enumerate(cli_sessions, 1):
+                                    is_cur = "✓" if (cli_session and s.id == cli_session.id) else ""
+                                    tbl.add_row(
+                                        str(i),
+                                        s.session_key.split(":")[1][:16],
+                                        str(len(s.context.get_messages())),
+                                        s.created_at.strftime("%m-%d %H:%M") if hasattr(s, "created_at") and s.created_at else "?",
+                                        is_cur,
+                                    )
+                                console.print(tbl)
+                                console.print("[dim]输入 /session <#> 切换到对应会话[/dim]")
+                        else:
+                            console.print("[yellow]SessionManager 未启动[/yellow]")
+                        continue
+
+                    elif cmd == "/session":
+                        console.print("[yellow]用法: /session <序号>  (先用 /sessions 查看列表)[/yellow]")
+                        continue
+
+                    elif cmd.startswith("/session "):
+                        parts = cmd.split(maxsplit=1)
+                        if not _session_manager:
+                            console.print("[yellow]SessionManager 未启动[/yellow]")
+                        elif len(parts) == 2:
+                            try:
+                                idx = int(parts[1]) - 1
+                                cli_sessions = sorted(
+                                    _session_manager.list_sessions(channel="cli"),
+                                    key=lambda s: getattr(s, "created_at", None) or "",
+                                    reverse=True,
+                                )
+                                if 0 <= idx < len(cli_sessions):
+                                    target = cli_sessions[idx]
+                                    cli_session = target
+                                    agent_or_master._cli_session = target
+                                    _cli_chat_id = target.session_key.split(":")[1]
+                                    _cli_session_file.parent.mkdir(parents=True, exist_ok=True)
+                                    _cli_session_file.write_text(
+                                        json.dumps({"chat_id": _cli_chat_id}), encoding="utf-8"
+                                    )
+                                    msg_count = len(target.context.get_messages())
+                                    console.print(f"[green]已切换到会话 ({msg_count} 条消息)[/green]")
+                                else:
+                                    console.print("[red]序号超出范围[/red]")
+                            except ValueError:
+                                console.print("[red]请输入有效的会话序号[/red]")
                         continue
 
                     else:
-                        console.print(f"[red]未知命令: {cmd}[/red]")
-                        print_help()
+                        known = find_command(cmd)
+                        if known:
+                            console.print(f"[yellow]命令 /{known.name} 暂不支持 CLI，请在 Desktop 中使用[/yellow]")
+                        else:
+                            console.print(f"[red]未知命令: {cmd}[/red]")
+                            print_help()
                         continue
 
-                # 正常对话
-                with console.status("[bold green]思考中...", spinner="dots"):
-                    response = await agent_or_master.chat(user_input)
+                # 正常对话 — 流式输出
+                await _process_message(user_input)
 
-                # 显示响应
-                console.print()
-                console.print(
-                    Panel(
-                        Markdown(response),
-                        title=f"[bold green]{agent_name}[/bold green]",
-                        border_style="green",
-                    )
-                )
-                console.print()
-
+            except EOFError:
+                console.print("\n[yellow]再见！[/yellow]")
+                break
             except KeyboardInterrupt:
                 console.print("\n[yellow]使用 /exit 退出[/yellow]")
             except Exception as e:
                 logger.error(f"Error: {e}", exc_info=True)
                 console.print(f"[red]错误: {e}[/red]")
     finally:
+        if not _init_task.done():
+            _init_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _init_task
         with console.status("[bold yellow]正在停止服务...", spinner="dots"):
             await stop_im_channels(graceful=True, drain_timeout=30.0)
         console.print("[green]✓[/green] 服务已停止")
@@ -1359,16 +1527,23 @@ def show_skills():
         console.print(f"[red]无法加载技能列表: {e}[/red]")
 
 
+_cli_force_new_session = False
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="显示版本信息"),
+    new_session: bool = typer.Option(False, "--new", help="强制开启新 CLI 会话，不恢复上次对话"),
 ):
     """
     OpenAkita - 全能自进化AI助手
 
     直接运行进入交互模式
     """
+    global _cli_force_new_session
+    _cli_force_new_session = new_session
+
     if version:
         from . import __version__
 
@@ -1398,6 +1573,7 @@ def main(
 @app.command()
 def init(
     project_dir: str | None = typer.Argument(None, help="项目目录（默认当前目录）"),
+    quick: bool = typer.Option(False, "--quick", "-q", help="快速模式：仅配置 Provider + API Key + Model"),
 ):
     """
     初始化 OpenAkita - 交互式配置向导
@@ -1410,12 +1586,13 @@ def init(
 
     示例:
         openakita init
+        openakita init --quick
         openakita init ./my-project
     """
     from .setup import SetupWizard
 
     wizard = SetupWizard(project_dir)
-    success = wizard.run()
+    success = wizard.run(quick=quick)
 
     if success:
         raise typer.Exit(0)
@@ -2002,6 +2179,144 @@ def serve(
 
     # 主循环结束，停止心跳并清理心跳文件
     _stop_heartbeat()
+
+
+@app.command(name="plugin-validate")
+def plugin_validate(
+    path: str = typer.Argument(".", help="插件目录路径（含 plugin.json）"),
+    fix: bool = typer.Option(False, "--fix", help="自动修正可修复的问题"),
+):
+    """校验插件 manifest 是否有效（Pydantic 校验 + 权限检查 + 入口文件检查 + config schema 校验）"""
+    from .plugins.manifest import ALL_PERMISSIONS, ManifestError, parse_manifest
+
+    plugin_dir = Path(path).resolve()
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    # --- 1. 目录检查 ---
+    if not plugin_dir.is_dir():
+        console.print(f"[bold red]✗[/bold red] 路径不存在或不是目录: {plugin_dir}")
+        raise typer.Exit(1)
+
+    manifest_file = plugin_dir / "plugin.json"
+    if not manifest_file.is_file():
+        console.print(f"[bold red]✗[/bold red] 未找到 plugin.json: {manifest_file}")
+        raise typer.Exit(1)
+
+    # --- 2. Manifest 解析（Pydantic 校验）---
+    try:
+        manifest = parse_manifest(plugin_dir)
+    except ManifestError as e:
+        console.print(f"[bold red]✗[/bold red] Manifest 校验失败:")
+        for line in str(e).split("\n"):
+            console.print(f"  {line}")
+        raise typer.Exit(1)
+
+    # --- 3. 入口文件检查 ---
+    entry_path = plugin_dir / manifest.entry
+    if not entry_path.is_file():
+        errors.append(f"入口文件不存在: {manifest.entry}")
+
+    # --- 4. 权限检查 ---
+    unknown_perms = [p for p in manifest.permissions if p not in ALL_PERMISSIONS]
+    if unknown_perms:
+        warnings.append(f"未知权限: {', '.join(unknown_perms)}")
+
+    # --- 5. config_schema.json 校验 ---
+    schema_file = plugin_dir / "config_schema.json"
+    schema_data: dict | None = None
+    if schema_file.is_file():
+        try:
+            raw_schema = json.loads(schema_file.read_text(encoding="utf-8"))
+            if not isinstance(raw_schema, dict):
+                errors.append("config_schema.json 不是有效的 JSON 对象")
+            else:
+                schema_data = raw_schema
+                if "type" not in schema_data:
+                    warnings.append("config_schema.json 缺少 'type' 字段（建议设为 'object'）")
+        except json.JSONDecodeError as e:
+            errors.append(f"config_schema.json JSON 解析失败: {e}")
+
+        config_file = plugin_dir / "config.json"
+        if config_file.is_file() and schema_data is not None:
+            try:
+                from jsonschema import ValidationError as JsonSchemaError
+                from jsonschema import validate
+
+                config_data = json.loads(config_file.read_text(encoding="utf-8"))
+                validate(instance=config_data, schema=schema_data)
+            except JsonSchemaError as ve:
+                errors.append(f"config.json 不符合 schema: {ve.message}")
+            except ImportError:
+                warnings.append("jsonschema 未安装，跳过 config.json 校验")
+            except Exception as ve:
+                warnings.append(f"config.json 校验异常: {ve}")
+
+    # --- 6. README 检查 ---
+    readme_candidates = ["README.md", "readme.md", "README.txt", "README"]
+    has_readme = any((plugin_dir / f).is_file() for f in readme_candidates)
+    if not has_readme:
+        warnings.append("缺少 README.md（建议添加使用说明）")
+
+    # --- 7. icon 检查 ---
+    if manifest.icon:
+        icon_path = plugin_dir / manifest.icon
+        if not icon_path.is_file():
+            warnings.append(f"icon 文件不存在: {manifest.icon}")
+    else:
+        warnings.append("未设置 icon（建议添加插件图标）")
+
+    # --- 8. pip 依赖可用性检查 ---
+    pip_deps = manifest.requires.get("pip", [])
+    if isinstance(pip_deps, str):
+        pip_deps = [pip_deps] if pip_deps.strip() else []
+    if pip_deps:
+        import importlib as _imp
+
+        for dep in pip_deps:
+            pkg_name = dep.split(">=")[0].split("==")[0].split("<")[0].split(">")[0].strip()
+            pkg_import = pkg_name.replace("-", "_")
+            try:
+                _imp.import_module(pkg_import)
+            except ImportError:
+                warnings.append(f"pip 依赖 '{pkg_name}' 当前不可用（安装后会自动解决）")
+
+    # --- 输出结果 ---
+    table = Table(title="插件校验报告", show_header=True, header_style="bold cyan")
+    table.add_column("属性", style="bold")
+    table.add_column("值")
+    table.add_row("ID", manifest.id)
+    table.add_row("名称", manifest.name)
+    table.add_row("版本", manifest.version)
+    table.add_row("类型", manifest.plugin_type)
+    table.add_row("入口", manifest.entry)
+    table.add_row("权限级别", manifest.max_permission_level)
+    if manifest.permissions:
+        table.add_row("权限", ", ".join(manifest.permissions))
+    if manifest.depends:
+        table.add_row("依赖", ", ".join(manifest.depends))
+    if manifest.description:
+        table.add_row("描述", manifest.description)
+    if manifest.author:
+        table.add_row("作者", manifest.author)
+    console.print(table)
+
+    if warnings:
+        console.print()
+        for w in warnings:
+            console.print(f"  [yellow]⚠[/yellow] {w}")
+
+    if errors:
+        console.print()
+        for e in errors:
+            console.print(f"  [bold red]✗[/bold red] {e}")
+        console.print(f"\n[bold red]校验失败[/bold red]（{len(errors)} 个错误，{len(warnings)} 个警告）")
+        raise typer.Exit(1)
+
+    if warnings:
+        console.print(f"\n[bold green]✓ 校验通过[/bold green]（{len(warnings)} 个警告）")
+    else:
+        console.print(f"\n[bold green]✓ 校验通过，一切正常！[/bold green]")
 
 
 @app.command(name="run-mcp-module", hidden=True)

@@ -84,12 +84,12 @@ SCHEDULED_TOOLS = [
                 "notify_on_start": {
                     "type": "boolean",
                     "default": True,
-                    "description": "任务开始时发通知？默认 true",
+                    "description": "执行开始时在 IM 发'开始执行…'状态消息？通常不需要设置。默认 true",
                 },
                 "notify_on_complete": {
                     "type": "boolean",
                     "default": True,
-                    "description": "任务完成时发通知？默认 true",
+                    "description": "结果投递时添加'✅ 任务完成'状态标题？任务结果始终会发送到 IM 通道，此项仅控制标题包装。通常不需要设置。默认 true",
                 },
             },
             "required": ["name", "description", "task_type", "trigger_type", "trigger_config"],
@@ -153,8 +153,8 @@ reminder 任务的唯一作用就是发送提醒消息。
         "detail": """修改定时任务设置【不删除任务】。
 
 **可修改项**：
-- notify_on_start: 开始时是否通知（仅控制执行开始/完成的状态通知，不影响 reminder 消息！）
-- notify_on_complete: 完成时是否通知（同上）
+- notify_on_start: 开始时是否发"开始执行…"状态消息（不影响 reminder 消息！）
+- notify_on_complete: 结果前是否添加"✅ 任务完成"标题包装（任务结果始终投递，不影响 reminder 消息！）
 - enabled: 是否启用（false=暂停，true=恢复）
 - target_channel: 修改推送通道（如 wework/telegram/dingtalk/feishu/slack）
 
@@ -172,10 +172,13 @@ reminder 任务的唯一作用就是发送提醒消息。
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "要修改的任务 ID"},
-                "notify_on_start": {"type": "boolean", "description": "开始时发通知？不传=不修改"},
+                "notify_on_start": {
+                    "type": "boolean",
+                    "description": "开始时发'开始执行…'状态消息？不传=不修改",
+                },
                 "notify_on_complete": {
                     "type": "boolean",
-                    "description": "完成时发通知？不传=不修改",
+                    "description": "结果前添加'✅ 任务完成'标题？任务结果始终投递。不传=不修改",
                 },
                 "enabled": {"type": "boolean", "description": "启用/暂停任务？不传=不修改"},
                 "target_channel": {
@@ -202,6 +205,32 @@ reminder 任务的唯一作用就是发送提醒消息。
             "type": "object",
             "properties": {"task_id": {"type": "string", "description": "任务 ID"}},
             "required": ["task_id"],
+        },
+    },
+    {
+        "name": "query_task_executions",
+        "category": "Scheduled",
+        "description": "Query execution history of scheduled tasks. View recent execution times, status, duration and error messages.",
+        "detail": """查询定时任务的执行历史记录。
+
+**适用场景**：
+- 查看任务最近的执行结果
+- 排查任务失败原因
+- 了解任务执行频率和耗时""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "任务 ID（可选，不指定则查询所有任务的执行记录）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "返回记录数量，默认 10",
+                    "default": 10,
+                },
+            },
+            "required": [],
         },
     },
 ]

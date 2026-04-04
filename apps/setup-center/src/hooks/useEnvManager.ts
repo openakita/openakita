@@ -64,7 +64,7 @@ export function useEnvManager(opts: UseEnvManagerOpts) {
     return parsed;
   }
 
-  async function saveEnvKeys(keys: string[]) {
+  async function saveEnvKeys(keys: string[]): Promise<{ restartRequired?: boolean; hotReloadable?: boolean }> {
     const { shouldUseHttpApi, httpApiBase, currentWorkspaceId } = optsRef.current;
 
     const entries: Record<string, string> = {};
@@ -79,16 +79,20 @@ export function useEnvManager(opts: UseEnvManagerOpts) {
         }
       }
     }
-    if (!Object.keys(entries).length && !deleteKeys.length) return;
+    if (!Object.keys(entries).length && !deleteKeys.length) return {};
 
     if (shouldUseHttpApi()) {
       try {
-        await safeFetch(`${httpApiBase()}/api/config/env`, {
+        const res = await safeFetch(`${httpApiBase()}/api/config/env`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ entries, delete_keys: deleteKeys }),
         });
-        return;
+        const data = await res.json().catch(() => ({}));
+        return {
+          restartRequired: data.restart_required ?? false,
+          hotReloadable: data.hot_reloadable ?? true,
+        };
       } catch {
         logger.warn("useEnvManager", "saveEnvKeys: HTTP failed, falling back to Tauri");
       }
@@ -101,6 +105,7 @@ export function useEnvManager(opts: UseEnvManagerOpts) {
       ];
       await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries: tauriEntries });
     }
+    return {};
   }
 
   function resetEnvLoaded() {

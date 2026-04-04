@@ -5,8 +5,23 @@ import { PixelOfficeAgentList, type AgentListItem } from '../components/pixel-of
 import { PixelOfficeThemeSelector } from '../components/pixel-office/PixelOfficeThemeSelector';
 import { EventBus } from '../components/pixel-office/EventBus';
 import type { OrgData } from '../components/pixel-office/OfficeScene';
+import type { AgentSpriteConfig } from '../components/pixel-office/AgentSprite';
 import { safeFetch } from '../providers';
 import '../components/pixel-office/pixel-office.css';
+
+interface AgentDetailPanel {
+  nodeId: string;
+  config: AgentSpriteConfig;
+  x: number;
+  y: number;
+}
+
+interface AgentContextMenu {
+  nodeId: string;
+  config: AgentSpriteConfig;
+  x: number;
+  y: number;
+}
 
 const MAX_LOG_ENTRIES = 200;
 const POLL_INTERVAL = 5000;
@@ -168,6 +183,38 @@ export function PixelOfficeView({
     });
   }, []);
 
+  // Agent click/context menu state
+  const [agentDetail, setAgentDetail] = useState<AgentDetailPanel | null>(null);
+  const [agentCtxMenu, setAgentCtxMenu] = useState<AgentContextMenu | null>(null);
+
+  useEffect(() => {
+    const onClickAgent = (nodeId: string, config: AgentSpriteConfig, sx: number, sy: number) => {
+      setAgentCtxMenu(null);
+      setAgentDetail({ nodeId, config, x: sx, y: sy });
+    };
+    const onCtxAgent = (nodeId: string, config: AgentSpriteConfig, sx: number, sy: number) => {
+      setAgentDetail(null);
+      setAgentCtxMenu({ nodeId, config, x: sx, y: sy });
+    };
+    EventBus.on('agent-clicked', onClickAgent);
+    EventBus.on('agent-context-menu', onCtxAgent);
+    return () => {
+      EventBus.off('agent-clicked', onClickAgent);
+      EventBus.off('agent-context-menu', onCtxAgent);
+    };
+  }, []);
+
+  const handleAssignTask = useCallback((nodeId: string) => {
+    const task = prompt(`分配任务给 ${nodeId}：`);
+    if (!task) return;
+    safeFetch(`${apiBaseUrl}/api/orgs/${selectedOrgId}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: task, target_node_id: nodeId }),
+    }).catch(() => {});
+    setAgentCtxMenu(null);
+  }, [apiBaseUrl, selectedOrgId]);
+
   const effectiveOrgData = isSoloMode ? SOLO_ORG_DATA : (orgData ?? null);
 
   if (!visible) return null;
@@ -267,6 +314,83 @@ export function PixelOfficeView({
             onSelectTheme={setThemeId}
           />
         </div>
+      )}
+
+      {/* Agent detail panel (click) */}
+      {agentDetail && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 900 }} onClick={() => setAgentDetail(null)} />
+          <div style={{
+            position: 'fixed', left: Math.min(agentDetail.x, window.innerWidth - 260),
+            top: Math.min(agentDetail.y + 10, window.innerHeight - 200),
+            width: 240, zIndex: 901,
+            background: 'var(--card, #1a1a2e)', border: '1px solid var(--border, rgba(255,255,255,0.12))',
+            borderRadius: 12, padding: 14, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+            color: 'var(--text, #e0e0e0)', fontSize: 13,
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>
+              {agentDetail.config.icon && <span style={{ marginRight: 4 }}>{agentDetail.config.icon}</span>}
+              {agentDetail.config.name}
+            </div>
+            <div style={{ opacity: 0.7, marginBottom: 4 }}>ID: {agentDetail.nodeId}</div>
+            {agentDetail.config.department && <div style={{ opacity: 0.7, marginBottom: 4 }}>部门: {agentDetail.config.department}</div>}
+            <div style={{ opacity: 0.7, marginBottom: 8 }}>状态: {agentDetail.config.status || 'idle'}</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => { handleAssignTask(agentDetail.nodeId); setAgentDetail(null); }}
+                style={{
+                  flex: 1, padding: '5px 0', borderRadius: 6, border: 'none',
+                  background: 'var(--brand, #3b82f6)', color: '#fff', fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                分配任务
+              </button>
+              <button
+                onClick={() => { EventBus.emit('zoom-to-node', agentDetail.nodeId); setAgentDetail(null); }}
+                style={{
+                  flex: 1, padding: '5px 0', borderRadius: 6, border: '1px solid var(--border, rgba(255,255,255,0.2))',
+                  background: 'transparent', color: 'var(--text)', fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                聚焦
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Agent context menu (right-click) */}
+      {agentCtxMenu && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 900 }} onClick={() => setAgentCtxMenu(null)} />
+          <div style={{
+            position: 'fixed', left: agentCtxMenu.x, top: agentCtxMenu.y,
+            zIndex: 901, minWidth: 140,
+            background: 'var(--card, #1a1a2e)', border: '1px solid var(--border, rgba(255,255,255,0.12))',
+            borderRadius: 8, padding: '4px 0', boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+            color: 'var(--text, #e0e0e0)', fontSize: 13,
+          }}>
+            {[
+              { label: '📋 分配任务', action: () => handleAssignTask(agentCtxMenu.nodeId) },
+              { label: '🔍 聚焦', action: () => { EventBus.emit('zoom-to-node', agentCtxMenu.nodeId); setAgentCtxMenu(null); } },
+              { label: '📄 查看详情', action: () => { setAgentDetail({ ...agentCtxMenu }); setAgentCtxMenu(null); } },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                style={{
+                  display: 'block', width: '100%', padding: '6px 14px', border: 'none',
+                  background: 'transparent', color: 'inherit', textAlign: 'left',
+                  cursor: 'pointer', fontSize: 13,
+                }}
+                onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; }}
+                onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.background = 'transparent'; }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

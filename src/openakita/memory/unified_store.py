@@ -124,21 +124,36 @@ class UnifiedStore:
         scope: str = "global",
         scope_owner: str = "",
     ) -> list[SemanticMemory]:
+        scored = self.search_semantic_scored(
+            query, limit=limit, filter_type=filter_type,
+            scope=scope, scope_owner=scope_owner,
+        )
+        return [mem for mem, _score in scored]
+
+    def search_semantic_scored(
+        self,
+        query: str,
+        limit: int = 10,
+        filter_type: str | None = None,
+        scope: str = "global",
+        scope_owner: str = "",
+    ) -> list[tuple[SemanticMemory, float]]:
+        """Like search_semantic but also returns the raw similarity score."""
         results = self.search.search(query, limit=limit * 3, filter_type=filter_type)
         if not results and self._fts5_fallback is not None:
             results = self._fts5_fallback.search(query, limit=limit * 3, filter_type=filter_type)
 
-        memories: list[SemanticMemory] = []
-        for memory_id, _score in results:
+        scored: list[tuple[SemanticMemory, float]] = []
+        for memory_id, score in results:
             d = self.db.get_memory(memory_id)
             if d:
                 d_scope = d.get("scope") or "global"
                 d_owner = d.get("scope_owner") or ""
                 if d_scope == scope and d_owner == scope_owner:
-                    memories.append(SemanticMemory.from_dict(d))
-                    if len(memories) >= limit:
+                    scored.append((SemanticMemory.from_dict(d), float(score)))
+                    if len(scored) >= limit:
                         break
-        return memories
+        return scored
 
     def query_semantic(self, **kwargs: Any) -> list[SemanticMemory]:
         rows = self.db.query(**kwargs)  # scope/scope_owner pass through via kwargs

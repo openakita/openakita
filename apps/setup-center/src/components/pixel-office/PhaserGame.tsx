@@ -81,6 +81,7 @@ export const PhaserGame = forwardRef<GameRef, PhaserGameProps>(function PhaserGa
         },
       });
       gameRef.current = game;
+      game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
       pollTimer = setInterval(pollForScene, 100);
     };
 

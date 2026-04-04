@@ -18,16 +18,25 @@ export interface AgentSpriteConfig {
   pixelAppearance?: Record<string, unknown> | null;
 }
 
+export type AgentClickHandler = (nodeId: string, config: AgentSpriteConfig, screenX: number, screenY: number) => void;
+export type AgentContextMenuHandler = (nodeId: string, config: AgentSpriteConfig, screenX: number, screenY: number) => void;
+
 export class AgentSprite {
   readonly nodeId: string;
   private sprite: Phaser.GameObjects.Image;
   private nameLabel: Phaser.GameObjects.Text;
   private bubbleText: Phaser.GameObjects.Text | null = null;
   private bubbleTimer: Phaser.Time.TimerEvent | null = null;
+  private tooltipText: Phaser.GameObjects.Text | null = null;
   private scene: Phaser.Scene;
   private config: AgentSpriteConfig;
   private isMoving = false;
   private moveTarget: { x: number; y: number } | null = null;
+  private _currentTask: string = '';
+  private _toolCalls: string[] = [];
+
+  onAgentClick: AgentClickHandler | null = null;
+  onAgentContextMenu: AgentContextMenuHandler | null = null;
 
   constructor(scene: Phaser.Scene, config: AgentSpriteConfig, x: number, y: number) {
     this.scene = scene;
@@ -39,6 +48,27 @@ export class AgentSprite {
 
     this.sprite = scene.add.image(x, y, textureKey);
     this.sprite.setDepth(10);
+    this.sprite.setInteractive({ useHandCursor: true });
+
+    this.sprite.on('pointerover', () => { this._showTooltip(); });
+    this.sprite.on('pointerout', () => { this._hideTooltip(); });
+    this.sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      const nativeEvent = pointer.event;
+      const clientX =
+        nativeEvent instanceof MouseEvent ? nativeEvent.clientX :
+        nativeEvent instanceof TouchEvent ? nativeEvent.changedTouches[0]?.clientX ?? pointer.x :
+        pointer.x;
+      const clientY =
+        nativeEvent instanceof MouseEvent ? nativeEvent.clientY :
+        nativeEvent instanceof TouchEvent ? nativeEvent.changedTouches[0]?.clientY ?? pointer.y :
+        pointer.y;
+      if (pointer.rightButtonDown()) {
+        pointer.event.preventDefault();
+        this.onAgentContextMenu?.(this.nodeId, this.config, clientX, clientY);
+      } else {
+        this.onAgentClick?.(this.nodeId, this.config, clientX, clientY);
+      }
+    });
 
     this.nameLabel = scene.add.text(x, y + LABEL_OFFSET_Y, config.name, {
       fontSize: '13px',
@@ -52,6 +82,42 @@ export class AgentSprite {
     this.nameLabel.setDepth(11);
 
     this.addIdleFloat();
+  }
+
+  setCurrentTask(task: string) { this._currentTask = task; }
+  addToolCall(tool: string) { this._toolCalls = [...this._toolCalls.slice(-9), tool]; }
+
+  private _showTooltip() {
+    this._hideTooltip();
+    const lines = [
+      `${this.config.name} (${this.nodeId})`,
+      `Status: ${this.config.status || 'idle'}`,
+    ];
+    if (this.config.department) lines.push(`Dept: ${this.config.department}`);
+    if (this._currentTask) lines.push(`Task: ${this._currentTask.slice(0, 40)}`);
+    if (this._toolCalls.length) lines.push(`Tools: ${this._toolCalls.slice(-3).join(', ')}`);
+
+    this.tooltipText = this.scene.add.text(
+      this.sprite.x, this.sprite.y - 60, lines.join('\n'),
+      {
+        fontSize: '11px',
+        fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
+        color: '#e0e0e0',
+        backgroundColor: '#1a1a2edd',
+        padding: { x: 8, y: 6 },
+        align: 'left',
+        wordWrap: { width: 220 },
+      },
+    );
+    this.tooltipText.setOrigin(0.5, 1);
+    this.tooltipText.setDepth(100);
+  }
+
+  private _hideTooltip() {
+    if (this.tooltipText) {
+      this.tooltipText.destroy();
+      this.tooltipText = null;
+    }
   }
 
   private ensureTexture(key: string, config: AgentSpriteConfig) {
@@ -209,6 +275,7 @@ export class AgentSprite {
 
   destroy() {
     this.clearBubble();
+    this._hideTooltip();
     this.scene.tweens.killTweensOf(this.sprite);
     this.sprite.destroy();
     this.nameLabel.destroy();

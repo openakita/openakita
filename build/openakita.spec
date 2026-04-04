@@ -394,6 +394,11 @@ print(f"[spec] Auto-collected {len(_stdlib_modules)} stdlib modules")
 
 hidden_imports = hidden_imports_core + _stdlib_modules
 
+# Collect all OpenAkita LLM submodules to prevent regressions when adding
+# new files (e.g. openakita.llm.cache/retry/sse) that may be imported
+# transitively but missed by static analysis in frozen builds.
+hidden_imports += collect_submodules("openakita.llm")
+
 # ============== Excludes ==============
 
 excludes_core = [

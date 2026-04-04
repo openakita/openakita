@@ -1,29 +1,163 @@
 """
-L6: OS 级沙箱 — 按需隔离执行
+Bash 沙箱: 命令执行权限控制
 
-仅对 HIGH 风险 shell 命令启用沙箱。日常操作不受影响。
+参考 Claude Code 的 sandbox 设计:
+- 限制文件系统访问范围
+- 限制网络访问
+- 命令白名单/黑名单
+- 超时强制终止
 
-支持后端:
-- Windows: Low Integrity 进程 (MIC, 零依赖)
-- Linux: bubblewrap (bwrap)
-- macOS: Seatbelt (sandbox-exec)
-- 任何平台: Docker (可选)
+此模块为规则引擎部分，实际 OS 级隔离需配合 Docker/seatbelt/landlock。
 """
 
 from __future__ import annotations
 
 import asyncio
-import ctypes
+import fnmatch
 import logging
-import platform
-import shutil
+import os
+import re
+import shlex
 import subprocess
-import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class SandboxPolicy:
+    """沙箱策略定义"""
+
+    allowed_dirs: list[str] = field(default_factory=list)
+    denied_dirs: list[str] = field(default_factory=lambda: [
+        "/etc/shadow", "/etc/passwd", "/root",
+        os.path.expanduser("~/.ssh"),
+        os.path.expanduser("~/.aws"),
+    ])
+    allowed_commands: list[str] = field(default_factory=list)
+    denied_commands: list[str] = field(default_factory=lambda: [
+        "rm -rf /",
+        "mkfs*",
+        "dd if=/dev/*",
+        ":(){ :|:& };:",
+    ])
+    denied_command_patterns: list[str] = field(default_factory=lambda: [
+        r"curl\s+.*\|\s*(?:bash|sh|zsh)",
+        r"wget\s+.*\|\s*(?:bash|sh|zsh)",
+        r"eval\s+\$\(",
+        r">\s*/dev/sd[a-z]",
+    ])
+    max_execution_time: int = 120
+    allow_network: bool = True
+    writable_dirs: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SandboxVerdict:
+    """沙箱检查结果"""
+
+    allowed: bool
+    reason: str = ""
+    modified_command: str = ""
+
+
+class CommandSandbox:
+    """命令执行沙箱。
+
+    在实际执行命令前，检查是否符合安全策略。
+    """
+
+    def __init__(
+        self,
+        policy: SandboxPolicy | None = None,
+        project_root: str | Path | None = None,
+    ) -> None:
+        self._policy = policy or SandboxPolicy()
+        self._project_root = str(project_root or os.getcwd())
+        if not self._policy.allowed_dirs:
+            self._policy.allowed_dirs = [self._project_root]
+        if not self._policy.writable_dirs:
+            self._policy.writable_dirs = [self._project_root]
+
+    def check_command(self, command: str) -> SandboxVerdict:
+        """检查命令是否被允许执行。"""
+        # Check denied commands (exact match / glob)
+        for denied in self._policy.denied_commands:
+            if fnmatch.fnmatch(command.strip(), denied):
+                return SandboxVerdict(
+                    allowed=False,
+                    reason=f"Command matches deny rule: {denied}",
+                )
+
+        # Check denied patterns (regex)
+        for pattern in self._policy.denied_command_patterns:
+            if re.search(pattern, command):
+                return SandboxVerdict(
+                    allowed=False,
+                    reason=f"Command matches dangerous pattern: {pattern}",
+                )
+
+        # Check if directory access is allowed
+        dir_violation = self._check_dir_access(command)
+        if dir_violation:
+            return SandboxVerdict(allowed=False, reason=dir_violation)
+
+        # Check allowed commands (whitelist mode)
+        if self._policy.allowed_commands:
+            try:
+                parts = shlex.split(command)
+                base_cmd = parts[0] if parts else ""
+            except ValueError:
+                base_cmd = command.split()[0] if command.split() else ""
+
+            if base_cmd and base_cmd not in self._policy.allowed_commands:
+                return SandboxVerdict(
+                    allowed=False,
+                    reason=f"Command '{base_cmd}' not in allowed list",
+                )
+
+        return SandboxVerdict(allowed=True)
+
+    def check_command_zh(self, command: str) -> SandboxVerdict:
+        """check_command 的中文化封装，将英文 reason 翻译为用户可见中文。"""
+        verdict = self.check_command(command)
+        if not verdict.allowed and verdict.reason:
+            if "deny rule" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason=f"命令被安全规则禁止: {command.split()[0] if command.split() else command}")
+            elif "dangerous pattern" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason="检测到危险命令模式，已拦截")
+            elif "denied directory" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason="命令涉及受保护的系统目录，禁止访问")
+            elif "not in allowed list" in verdict.reason:
+                verdict = SandboxVerdict(allowed=False, reason=f"命令 '{command.split()[0] if command.split() else command}' 不在允许列表中")
+        return verdict
+
+    def _check_dir_access(self, command: str) -> str:
+        """检查命令中引用的路径是否在允许范围内。"""
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return ""
+
+        for part in parts:
+            if not part.startswith("/") and not part.startswith("~"):
+                continue
+
+            expanded = os.path.expanduser(part)
+            abs_path = os.path.abspath(expanded)
+
+            for denied in self._policy.denied_dirs:
+                denied_abs = os.path.abspath(os.path.expanduser(denied))
+                if abs_path.startswith(denied_abs):
+                    return f"Path '{abs_path}' is in denied directory: {denied}"
+
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# P1-1: SandboxExecutor — subprocess 隔离执行
+# ---------------------------------------------------------------------------
 
 @dataclass
 class SandboxResult:
@@ -31,400 +165,82 @@ class SandboxResult:
     stdout: str
     stderr: str
     returncode: int
-    sandboxed: bool
-    backend: str
+    backend: str = "subprocess"
 
 
 class SandboxExecutor:
+    """轻量沙箱执行器 — 基于 subprocess 的基础隔离。
+
+    未来可扩展为 Docker/seatbelt/landlock 后端。
     """
-    Unified sandbox interface. Automatically selects the best available
-    backend for the current platform.
-    """
 
-    def __init__(
-        self,
-        writable_paths: list[str] | None = None,
-        allow_network: bool = False,
-        backend: str = "auto",
-    ) -> None:
-        self._writable_paths = writable_paths or []
-        self._allow_network = allow_network
-        self._requested_backend = backend
-        self._backend: str | None = None
-
-    def detect_backend(self) -> str:
-        """Detect the best available sandbox backend."""
-        if self._requested_backend != "auto":
-            return self._requested_backend
-
-        sys = platform.system()
-        if sys == "Linux":
-            if shutil.which("bwrap"):
-                return "bubblewrap"
-        elif sys == "Darwin":
-            if shutil.which("sandbox-exec"):
-                return "seatbelt"
-        elif sys == "Windows":
-            return "low_integrity"
-
-        return "none"
-
-    def is_available(self) -> bool:
-        backend = self.detect_backend()
-        return backend != "none"
+    def __init__(self, sandbox: CommandSandbox | None = None) -> None:
+        self._sandbox = sandbox or CommandSandbox()
 
     async def execute(
         self,
         command: str,
+        *,
         cwd: str | None = None,
-        timeout: float = 300,
-        env: dict[str, str] | None = None,
+        timeout: float = 120,
     ) -> SandboxResult:
-        """Execute a command inside the sandbox."""
-        backend = self.detect_backend()
-        self._backend = backend
-
-        if backend == "bubblewrap":
-            return await self._exec_bubblewrap(command, cwd, timeout, env)
-        elif backend == "seatbelt":
-            return await self._exec_seatbelt(command, cwd, timeout, env)
-        elif backend == "low_integrity":
-            return await self._exec_low_integrity(command, cwd, timeout, env)
-        else:
-            return await self._exec_unsandboxed(command, cwd, timeout, env)
-
-    # ----- Linux: bubblewrap -----------------------------------------------
-
-    async def _exec_bubblewrap(
-        self, command: str, cwd: str | None, timeout: float,
-        env: dict[str, str] | None,
-    ) -> SandboxResult:
-        args = ["bwrap", "--ro-bind", "/", "/"]
-
-        for wp in self._writable_paths:
-            p = str(Path(wp).resolve())
-            args.extend(["--bind", p, p])
-
-        args.extend(["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"])
-
-        if not self._allow_network:
-            args.append("--unshare-net")
-
-        args.extend(["--", "/bin/bash", "-c", command])
-
-        return await self._run_subprocess(
-            args, cwd, timeout, env, backend="bubblewrap"
-        )
-
-    # ----- macOS: Seatbelt -------------------------------------------------
-
-    async def _exec_seatbelt(
-        self, command: str, cwd: str | None, timeout: float,
-        env: dict[str, str] | None,
-    ) -> SandboxResult:
-        rules = ['(version 1)', '(deny default)']
-        rules.append('(allow process-exec process-fork)')
-
-        read_paths = ["/usr", "/bin", "/sbin", "/lib", "/System",
-                      "/Library", "/private/var", "/private/etc",
-                      "/dev/urandom", "/dev/null"]
-        for rp in read_paths:
-            rules.append(f'(allow file-read* (subpath "{rp}"))')
-
-        for wp in self._writable_paths:
-            p = str(Path(wp).resolve())
-            rules.append(f'(allow file-read* file-write* (subpath "{p}"))')
-
-        if cwd:
-            rules.append(f'(allow file-read* file-write* (subpath "{cwd}"))')
-
-        tmpdir = tempfile.gettempdir()
-        rules.append(f'(allow file-read* file-write* (subpath "{tmpdir}"))')
-
-        if self._allow_network:
-            rules.append('(allow network*)')
-
-        profile = "\n".join(rules)
-
-        args = ["sandbox-exec", "-p", profile, "/bin/bash", "-c", command]
-
-        return await self._run_subprocess(
-            args, cwd, timeout, env, backend="seatbelt"
-        )
-
-    # ----- Windows: Low Integrity process ----------------------------------
-
-    async def _exec_low_integrity(
-        self, command: str, cwd: str | None, timeout: float,
-        env: dict[str, str] | None,
-    ) -> SandboxResult:
-        if platform.system() != "Windows":
-            return await self._exec_unsandboxed(command, cwd, timeout, env)
-
-        for wp in self._writable_paths:
-            try:
-                subprocess.run(
-                    ["icacls", wp, "/setintegritylevel", "(OI)(CI)Low"],
-                    capture_output=True, timeout=10,
-                )
-            except Exception as e:
-                logger.debug(f"[Sandbox] icacls failed for {wp}: {e}")
-
-        try:
-            result = await self._run_low_integrity_win(
-                command, cwd, timeout, env
-            )
-            return result
-        except Exception as e:
-            logger.warning(
-                f"[Sandbox] Low integrity execution failed, falling back: {e}"
-            )
-            return await self._exec_unsandboxed(command, cwd, timeout, env)
-
-    async def _run_low_integrity_win(
-        self, command: str, cwd: str | None, timeout: float,
-        env: dict[str, str] | None,
-    ) -> SandboxResult:
-        """Create a low-integrity process on Windows using ctypes."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self._sync_low_integrity_win, command, cwd, timeout, env
-        )
-
-    def _sync_low_integrity_win(
-        self, command: str, cwd: str | None, timeout: float,
-        env: dict[str, str] | None,
-    ) -> SandboxResult:
-        import ctypes.wintypes as wt
-
-        advapi32 = ctypes.windll.advapi32  # type: ignore[attr-defined]
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-
-        TOKEN_DUPLICATE = 0x0002
-        TOKEN_QUERY = 0x0008
-        TOKEN_ADJUST_DEFAULT = 0x0080
-        TOKEN_ASSIGN_PRIMARY = 0x0001
-        MAXIMUM_ALLOWED = 0x02000000
-        SecurityImpersonation = 2
-        TokenPrimary = 1
-        TokenIntegrityLevel = 25
-
-        LOW_INTEGRITY_SID = "S-1-16-4096"
-
-        CREATE_UNICODE_ENVIRONMENT = 0x00000400
-
-        class STARTUPINFOW(ctypes.Structure):
-            _fields_ = [
-                ("cb", wt.DWORD), ("lpReserved", wt.LPWSTR),
-                ("lpDesktop", wt.LPWSTR), ("lpTitle", wt.LPWSTR),
-                ("dwX", wt.DWORD), ("dwY", wt.DWORD),
-                ("dwXSize", wt.DWORD), ("dwYSize", wt.DWORD),
-                ("dwXCountChars", wt.DWORD), ("dwYCountChars", wt.DWORD),
-                ("dwFillAttribute", wt.DWORD), ("dwFlags", wt.DWORD),
-                ("wShowWindow", wt.WORD), ("cbReserved2", wt.WORD),
-                ("lpReserved2", ctypes.c_void_p),
-                ("hStdInput", wt.HANDLE), ("hStdOutput", wt.HANDLE),
-                ("hStdError", wt.HANDLE),
-            ]
-
-        class PROCESS_INFORMATION(ctypes.Structure):  # noqa: N801
-            _fields_ = [
-                ("hProcess", wt.HANDLE), ("hThread", wt.HANDLE),
-                ("dwProcessId", wt.DWORD), ("dwThreadId", wt.DWORD),
-            ]
-
-        h_token = wt.HANDLE()
-        h_new_token = wt.HANDLE()
-        pi = PROCESS_INFORMATION()
-        sid = None
-
-        try:
-            if not advapi32.OpenProcessToken(
-                kernel32.GetCurrentProcess(),
-                TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT | TOKEN_ASSIGN_PRIMARY,
-                ctypes.byref(h_token),
-            ):
-                raise OSError(f"OpenProcessToken failed: {ctypes.GetLastError()}")
-
-            if not advapi32.DuplicateTokenEx(
-                h_token, MAXIMUM_ALLOWED, None,
-                SecurityImpersonation, TokenPrimary,
-                ctypes.byref(h_new_token),
-            ):
-                raise OSError(f"DuplicateTokenEx failed: {ctypes.GetLastError()}")
-
-            sid = ctypes.c_void_p()
-            if not advapi32.ConvertStringSidToSidW(
-                LOW_INTEGRITY_SID, ctypes.byref(sid)
-            ):
-                raise OSError(f"ConvertStringSidToSidW failed: {ctypes.GetLastError()}")
-
-            class SID_AND_ATTRIBUTES(ctypes.Structure):  # noqa: N801
-                _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wt.DWORD)]
-
-            class TOKEN_MANDATORY_LABEL(ctypes.Structure):  # noqa: N801
-                _fields_ = [("Label", SID_AND_ATTRIBUTES)]
-
-            label = TOKEN_MANDATORY_LABEL()
-            label.Label.Sid = sid
-            label.Label.Attributes = 0x00000020  # SE_GROUP_INTEGRITY
-
-            if not advapi32.SetTokenInformation(
-                h_new_token, TokenIntegrityLevel,
-                ctypes.byref(label), ctypes.sizeof(label),
-            ):
-                raise OSError(f"SetTokenInformation failed: {ctypes.GetLastError()}")
-
-            si = STARTUPINFOW()
-            si.cb = ctypes.sizeof(STARTUPINFOW)
-
-            out_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
-                mode="w", suffix="_sb_out.txt", delete=False
-            )
-            err_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
-                mode="w", suffix="_sb_err.txt", delete=False
-            )
-            out_path = out_file.name
-            err_path = err_file.name
-            out_file.close()
-            err_file.close()
-
-            escaped_cmd = command.replace('"', '\\"')
-            full_cmd = f'cmd /c "{escaped_cmd}" > "{out_path}" 2> "{err_path}"'
-            cmd_line = ctypes.create_unicode_buffer(full_cmd)
-
-            if not advapi32.CreateProcessAsUserW(
-                h_new_token,
-                None,
-                cmd_line,
-                None, None, False,
-                CREATE_UNICODE_ENVIRONMENT,
-                None,
-                cwd,
-                ctypes.byref(si),
-                ctypes.byref(pi),
-            ):
-                raise OSError(
-                    f"CreateProcessAsUserW failed: {ctypes.GetLastError()}"
-                )
-
-            timeout_ms = int(timeout * 1000)
-            kernel32.WaitForSingleObject(pi.hProcess, timeout_ms)
-
-            exit_code = wt.DWORD()
-            kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(exit_code))
-
-            stdout_text = ""
-            stderr_text = ""
-            try:
-                with open(out_path, encoding="utf-8", errors="replace") as f:
-                    stdout_text = f.read()
-            except Exception:
-                pass
-            try:
-                with open(err_path, encoding="utf-8", errors="replace") as f:
-                    stderr_text = f.read()
-            except Exception:
-                pass
-
-            import os
-            for p in (out_path, err_path):
-                try:
-                    os.unlink(p)
-                except Exception:
-                    pass
-
+        """在沙箱中异步执行命令。"""
+        verdict = self._sandbox.check_command(command)
+        if not verdict.allowed:
             return SandboxResult(
-                stdout=stdout_text,
-                stderr=stderr_text,
-                returncode=exit_code.value,
-                sandboxed=True,
-                backend="low_integrity",
+                stdout="",
+                stderr=f"沙箱拒绝执行: {verdict.reason}",
+                returncode=-1,
+                backend="sandbox_denied",
             )
 
-        except Exception:
-            raise
-        finally:
-            if sid:
-                kernel32.LocalFree(sid)
-            for h in (h_token, h_new_token, pi.hProcess, pi.hThread):
-                if h:
-                    kernel32.CloseHandle(h)
-
-    # ----- Fallback: unsandboxed -------------------------------------------
-
-    async def _exec_unsandboxed(
-        self, command: str, cwd: str | None, timeout: float,
-        env: dict[str, str] | None,
-    ) -> SandboxResult:
-        result = await self._run_subprocess(
-            ["/bin/bash", "-c", command] if platform.system() != "Windows"
-            else ["cmd", "/c", command],
-            cwd, timeout, env, backend="none",
+        effective_timeout = min(
+            timeout,
+            self._sandbox._policy.max_execution_time,
         )
-        result.sandboxed = False
-        return result
 
-    # ----- Shared subprocess runner ----------------------------------------
-
-    async def _run_subprocess(
-        self, args: list[str], cwd: str | None, timeout: float,
-        env: dict[str, str] | None, backend: str,
-    ) -> SandboxResult:
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
+            proc = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env=env,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=effective_timeout,
             )
             return SandboxResult(
-                stdout=stdout.decode("utf-8", errors="replace"),
-                stderr=stderr.decode("utf-8", errors="replace"),
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                stderr=stderr_bytes.decode("utf-8", errors="replace"),
                 returncode=proc.returncode or 0,
-                sandboxed=True,
-                backend=backend,
             )
-        except TimeoutError:
-            if proc:
+        except asyncio.TimeoutError:
+            try:
                 proc.kill()
-            return SandboxResult(
-                stdout="", stderr="Sandbox execution timed out",
-                returncode=-1, sandboxed=True, backend=backend,
-            )
-        except FileNotFoundError:
+            except Exception:
+                pass
             return SandboxResult(
                 stdout="",
-                stderr=f"Sandbox backend '{backend}' not found",
-                returncode=-1, sandboxed=False, backend="none",
+                stderr=f"命令执行超时 ({effective_timeout}s)，已强制终止",
+                returncode=-2,
+                backend="timeout",
+            )
+        except Exception as e:
+            return SandboxResult(
+                stdout="",
+                stderr=f"沙箱执行异常: {e}",
+                returncode=-3,
+                backend="error",
             )
 
 
-_global_sandbox: SandboxExecutor | None = None
+_global_sandbox_executor: SandboxExecutor | None = None
 
 
 def get_sandbox_executor() -> SandboxExecutor:
-    global _global_sandbox
-    if _global_sandbox is None:
-        try:
-            from .policy import get_policy_engine
-            cfg = get_policy_engine().config
-            writable = (
-                cfg.zones.workspace + cfg.zones.controlled
-            )
-            writable = [
-                str(Path.cwd()).replace("\\", "/") if p == "${CWD}" else p
-                for p in writable
-            ]
-            _global_sandbox = SandboxExecutor(
-                writable_paths=writable,
-                allow_network=cfg.sandbox.network_allow_in_sandbox,
-                backend=cfg.sandbox.backend,
-            )
-        except Exception:
-            _global_sandbox = SandboxExecutor()
-    return _global_sandbox
+    """获取全局沙箱执行器单例。"""
+    global _global_sandbox_executor
+    if _global_sandbox_executor is None:
+        _global_sandbox_executor = SandboxExecutor()
+    return _global_sandbox_executor

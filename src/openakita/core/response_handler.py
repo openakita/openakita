@@ -65,12 +65,19 @@ def strip_tool_simulation_text(text: str) -> str:
     移除 LLM 在文本中模拟工具调用的内容。
 
     当使用不支持原生工具调用的备用模型时，LLM 可能在文本中
-    "模拟"工具调用。支持两种情况：
+    "模拟"工具调用。支持三种情况：
     1. 整行都是工具调用（直接移除）
     2. 行内嵌入的 .tool_name(args)（从行尾剥离，保留前面的正文）
+    3. <tool_call>...</tool_call> XML 块（Ask 模式下 LLM 常泄漏此格式）
     """
     if not text:
         return text
+
+    # 先移除 <tool_call>...</tool_call> 块（可能跨行）
+    text = re.sub(
+        r"<tool_call>\s*.*?\s*</tool_call>",
+        "", text, flags=re.DOTALL | re.IGNORECASE,
+    ).strip()
 
     pattern1 = r"^\.?[a-z_]+\s*\(.*\)\s*$"
     pattern2 = r"^[a-z_]+:\d+[\{\(].*[\}\)]\s*$"
@@ -190,6 +197,7 @@ class ResponseHandler:
         executed_tools: list[str],
         delivery_receipts: list[dict] | None = None,
         conversation_id: str | None = None,
+        bypass: bool = False,
     ) -> bool:
         """
         任务完成度复核。
@@ -202,13 +210,19 @@ class ResponseHandler:
             executed_tools: 已执行的工具列表
             delivery_receipts: 交付回执
             conversation_id: 对话 ID（用于 Plan 检查）
+            bypass: 当 Supervisor 已介入时跳过验证
 
         Returns:
             True 如果任务已完成
         """
+        if bypass:
+            logger.info("[TaskVerify] Bypassed (supervisor intervention active)")
+            return True
+
         delivery_receipts = delivery_receipts or []
 
         # === Deterministic Validation (Agent Harness) ===
+        plan_fail_reason = ""
         try:
             from .validators import ValidationContext, ValidationResult, create_default_registry
 
@@ -232,8 +246,8 @@ class ResponseHandler:
 
                 for output in report.outputs:
                     if output.result == ValidationResult.FAIL and output.name == "PlanValidator":
-                        logger.info(f"[TaskVerify] Deterministic FAIL: {output.name} — {output.reason}")
-                        return False
+                        plan_fail_reason = output.reason
+                        logger.info(f"[TaskVerify] PlanValidator FAIL (non-blocking): {output.reason}")
 
                 for output in report.outputs:
                     if output.result == ValidationResult.FAIL and output.name == "ArtifactValidator":
@@ -257,6 +271,14 @@ class ResponseHandler:
         user_display, _ = smart_truncate(user_request, 3000, save_full=False, label="verify_user")
         response_display, _ = smart_truncate(assistant_response, 8000, save_full=False, label="verify_response")
 
+        _plan_section = ""
+        if plan_fail_reason:
+            _plan_section = (
+                f"\n## Plan 状态\n"
+                f"当前 Plan 有未完成步骤: {plan_fail_reason}\n"
+                f"注意: Plan 步骤未更新不代表任务未完成。如果实际工具已执行成功，应判 COMPLETED。\n"
+            )
+
         verify_prompt = f"""请判断以下交互是否已经**完成**用户的意图。
 
 ## 用户消息
@@ -270,7 +292,7 @@ class ResponseHandler:
 
 ## 附件交付回执（如有）
 {delivery_receipts if delivery_receipts else "无"}
-
+{_plan_section}
 ## 判断标准
 
 ### 非任务类消息（直接判 COMPLETED）
@@ -296,9 +318,10 @@ MISSING: 缺失的内容
 NEXT: 建议的下一步"""
 
         try:
-            response = await self._brain.think(
+            response = await self._brain.think_lightweight(
                 prompt=verify_prompt,
                 system="你是一个任务完成度判断助手。请分析任务是否完成，并说明证据和缺失项。",
+                max_tokens=512,
             )
 
             result = response.content.strip().upper() if response.content else ""
@@ -346,9 +369,10 @@ NEXT: 建议的下一步"""
             context = task_monitor.get_retrospect_context()
             prompt = RETROSPECT_PROMPT.format(context=context)
 
-            response = await self._brain.think(
+            response = await self._brain.think_lightweight(
                 prompt=prompt,
                 system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
+                max_tokens=512,
             )
 
             result = strip_thinking_tags(response.content).strip() if response.content else ""

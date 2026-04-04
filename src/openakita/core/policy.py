@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import logging
 import platform
@@ -73,7 +74,7 @@ _ZONE_OP_MATRIX: dict[Zone, dict[OpType, PolicyDecision]] = {
         OpType.CREATE: PolicyDecision.ALLOW,
         OpType.EDIT: PolicyDecision.ALLOW,
         OpType.OVERWRITE: PolicyDecision.ALLOW,
-        OpType.DELETE: PolicyDecision.ALLOW,
+        OpType.DELETE: PolicyDecision.CONFIRM,
         OpType.RECURSIVE_DELETE: PolicyDecision.CONFIRM,
     },
     Zone.CONTROLLED: {
@@ -129,6 +130,7 @@ _CRITICAL_SHELL_PATTERNS: list[str] = [
 _HIGH_RISK_SHELL_PATTERNS: list[str] = [
     # Windows cmd + PowerShell
     r"Remove-Item\s+.*-Recurse",
+    r"Remove-Item\s+.*-Force",
     r"del\s+/[sS]",
     r"rd\s+/[sS]",
     r"rmdir\s+/[sS]\s*/[qQ]",
@@ -160,6 +162,34 @@ _HIGH_RISK_SHELL_PATTERNS: list[str] = [
     r"npm\s+uninstall\s+-g",
     r"curl\s+.*\|\s*(bash|sh)",
     r"wget\s+.*\|\s*(bash|sh)",
+]
+
+# P1-6: MEDIUM 风险 Shell 模式（需确认但不需沙箱）
+_MEDIUM_RISK_SHELL_PATTERNS: list[str] = [
+    # 删除 / 清理（未匹配 HIGH 的情况）
+    r"Remove-Item\b",
+    r"Clear-Content\b",
+    r"Clear-Item\b",
+    # 环境 / 配置修改
+    r"setx?\s+",
+    r"export\s+\w+=",
+    r"npm\s+install\s+-g",
+    r"pip\s+install\s+",
+    r"choco\s+install",
+    r"winget\s+install",
+    r"apt\s+install",
+    r"brew\s+install",
+    # 网络操作
+    r"ssh\s+",
+    r"scp\s+",
+    r"rsync\s+",
+    r"git\s+push",
+    r"git\s+clone",
+    r"docker\s+(run|exec|build)",
+    # 进程管理
+    r"kill\s+",
+    r"pkill\s+",
+    r"nohup\s+",
 ]
 
 # Default blocked shell commands (direct DENY)
@@ -339,8 +369,23 @@ def _path_matches(normalised_path: str, pattern: str) -> bool:
 
 
 def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
-    """Infer OpType from tool name and params."""
-    if tool_name in ("read_file", "list_directory", "grep", "glob"):
+    """Infer OpType from tool name and params.
+
+    安全原则：未知工具默认归为 CREATE（有副作用），避免误放行。
+    """
+    _READ_TOOLS = (
+        "read_file", "list_directory", "grep", "glob",
+        "search_files", "web_search", "news_search",
+        "browser_screenshot", "view_image",
+        "get_tool_info", "get_skill_info", "list_skills",
+        "get_workspace_map", "get_session_logs",
+        "get_todo_status", "get_user_profile", "get_persona_profile",
+        "list_mcp_servers", "get_mcp_instructions",
+        "list_scheduled_tasks", "search_memory",
+        "list_recent_tasks", "trace_memory",
+        "search_conversation_traces", "get_memory_stats",
+    )
+    if tool_name in _READ_TOOLS:
         return OpType.READ
     if tool_name == "write_file":
         path = params.get("path", "")
@@ -354,9 +399,26 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
         return OpType.CREATE
     if tool_name == "edit_file":
         return OpType.EDIT
-    if tool_name == "delete_file":
+    if tool_name in ("delete_file", "rename_file"):
         return OpType.DELETE
-    return OpType.READ
+    if tool_name in (
+        "run_shell", "run_powershell", "call_mcp_tool",
+        "browser_navigate", "browser_use", "browser_click", "browser_type",
+        "desktop_click", "desktop_type",
+    ):
+        return OpType.CREATE
+    return OpType.CREATE
+
+
+
+_ZONE_LABELS = {"workspace": "工作区", "controlled": "受控区", "protected": "受保护区", "forbidden": "禁止访问区"}
+_OP_LABELS = {"read": "读取", "create": "创建", "edit": "编辑", "overwrite": "覆盖写入", "delete": "删除", "recursive_delete": "批量删除"}
+
+def _zone_label(zone: Zone) -> str:
+    return _ZONE_LABELS.get(zone.value, zone.value)
+
+def _op_label(op: OpType) -> str:
+    return _OP_LABELS.get(op.value, op.value)
 
 
 # ---------------------------------------------------------------------------
@@ -375,14 +437,20 @@ class PolicyEngine:
         self._config = config or self._make_default_config()
         self._audit_log: list[dict[str, Any]] = []
         self._consecutive_denials = 0
+        self._total_denials = 0  # P1-8: 累计拒绝次数（不随 ALLOW 重置）
         self._readonly_mode = False
         # Confirmation cache: (tool_name, param_hash) → expiry timestamp
-        # Prevents CONFIRM loops when user already approved a recent action.
         self._confirmed_cache: dict[str, float] = {}
         self._confirm_ttl = 120.0  # seconds
+        # P1-5: 并发保护锁
+        self._cache_lock = asyncio.Lock()
         # Pending UI confirmations: tool_id → {tool_name, params}
-        # Populated when SSE security_confirm is sent; consumed by API callback.
         self._pending_ui_confirms: dict[str, dict[str, Any]] = {}
+        self._pending_lock = asyncio.Lock()
+        # F7: Temporary allowlists granted by skill activation.
+        self._skill_allowlists: dict[str, set[str]] = {}
+        # P3-3: 前端安全模式（cautious/smart/trust）
+        self._frontend_mode: str = "smart"
 
     @property
     def config(self) -> SecurityConfig:
@@ -410,6 +478,12 @@ class PolicyEngine:
             tool_policies=[
                 ToolPolicyRule(
                     tool_name="run_shell",
+                    require_confirmation=False,
+                    dangerous_patterns=[],
+                    blocked_patterns=[],
+                ),
+                ToolPolicyRule(
+                    tool_name="run_powershell",
                     require_confirmation=False,
                     dangerous_patterns=[],
                     blocked_patterns=[],
@@ -571,24 +645,24 @@ class PolicyEngine:
             metadata may contain:
               - zone: Zone
               - op_type: OpType
-              - risk_level: RiskLevel (for run_shell)
+              - risk_level: RiskLevel (for run_shell / run_powershell)
               - needs_checkpoint: bool
               - needs_sandbox: bool
         """
         params = params or {}
 
         if not self._config.enabled:
-            return PolicyResult(decision=PolicyDecision.ALLOW, reason="Security disabled")
+            return PolicyResult(decision=PolicyDecision.ALLOW, reason="安全策略已禁用")
 
         # Bypass CONFIRM if user recently approved an identical action
         if self._is_recently_confirmed(tool_name, params):
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
-                reason="Recently confirmed by user",
+                reason="用户刚刚确认过此操作",
                 metadata={"confirmed_bypass": True},
             )
 
-        # Death switch: readonly mode
+        # Death switch: readonly mode (NOT bypassable by skill allowlists)
         if self._readonly_mode:
             op = _tool_to_optype(tool_name, params)
             if op != OpType.READ:
@@ -598,10 +672,31 @@ class PolicyEngine:
                     policy_name="DeathSwitch",
                 )
 
-        # L5: Self-protection check
+        # L5: Self-protection check (NOT bypassable by skill allowlists)
         sp_result = self._check_self_protection(tool_name, params)
         if sp_result:
             return sp_result
+
+        # F7: Skill-granted temporary allowlist — bypasses L1/L3 and legacy
+        # policies but NOT death switch, self-protection, or zone DELETE/CONFIRM.
+        if self._is_skill_allowed(tool_name):
+            # Even skill-allowed tools must respect zone DELETE CONFIRM
+            op = _tool_to_optype(tool_name, params)
+            if op in (OpType.DELETE, OpType.RECURSIVE_DELETE):
+                zone_result = self._check_zone_policy(tool_name, params)
+                if zone_result:
+                    return zone_result
+            # Shell commands still need risk check even when skill-allowed
+            if tool_name in ("run_shell", "run_powershell"):
+                shell_result = self._check_shell_command(tool_name, params)
+                if shell_result and shell_result.decision == PolicyDecision.DENY:
+                    return shell_result
+            self._on_allow(tool_name, params)
+            return PolicyResult(
+                decision=PolicyDecision.ALLOW,
+                reason="技能临时授权放行",
+                metadata={"skill_allowlist": True},
+            )
 
         # Legacy tool-level policy (blocked_patterns, require_confirmation)
         legacy_result = self._check_legacy_tool_policy(tool_name, params)
@@ -609,7 +704,7 @@ class PolicyEngine:
             return legacy_result
 
         # L3: Shell command risk classification
-        if tool_name == "run_shell":
+        if tool_name in ("run_shell", "run_powershell"):
             shell_result = self._check_shell_command(tool_name, params)
             if shell_result:
                 return shell_result
@@ -624,8 +719,39 @@ class PolicyEngine:
             if zone_result:
                 return zone_result
 
-        self._on_allow(tool_name)
+        self._on_allow(tool_name, params)
         return PolicyResult(decision=PolicyDecision.ALLOW)
+
+    # ----- F7: Skill temporary allowlist ------------------------------------
+
+    def _is_skill_allowed(self, tool_name: str) -> bool:
+        """Check if tool_name is temporarily allowed by any active skill."""
+        for allowed_set in self._skill_allowlists.values():
+            if tool_name in allowed_set:
+                return True
+        return False
+
+    def add_skill_allowlist(self, skill_id: str, tool_names: list[str]) -> None:
+        """Grant temporary tool access for a skill context."""
+        if tool_names:
+            self._skill_allowlists[skill_id] = set(tool_names)
+            logger.debug(
+                "[Policy] Skill '%s' granted temporary access to: %s",
+                skill_id, tool_names,
+            )
+
+    def remove_skill_allowlist(self, skill_id: str) -> None:
+        """Revoke temporary tool access for a skill context."""
+        removed = self._skill_allowlists.pop(skill_id, None)
+        if removed:
+            logger.debug(
+                "[Policy] Revoked skill '%s' temporary access to: %s",
+                skill_id, removed,
+            )
+
+    def clear_skill_allowlists(self) -> None:
+        """Revoke all skill-granted allowlists."""
+        self._skill_allowlists.clear()
 
     # ----- L1: Zone policy --------------------------------------------------
 
@@ -679,8 +805,7 @@ class PolicyEngine:
             result = PolicyResult(
                 decision=PolicyDecision.DENY,
                 reason=(
-                    f"操作被拒绝: {op_type.value} 在 {zone.value} 区域 "
-                    f"(路径: {path})"
+                    f"操作被拒绝: 不允许在{_zone_label(zone)}对该路径执行{_op_label(op_type)}操作 (路径: {path})"
                 ),
                 policy_name="ZonePolicy",
                 metadata={
@@ -697,8 +822,7 @@ class PolicyEngine:
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
                 reason=(
-                    f"操作需要确认: {op_type.value} 在 {zone.value} 区域 "
-                    f"(路径: {path})"
+                    f"此操作需要您的确认: 在{_zone_label(zone)}执行{_op_label(op_type)} (路径: {path})"
                 ),
                 policy_name="ZonePolicy",
                 metadata={
@@ -749,6 +873,15 @@ class PolicyEngine:
             except re.error:
                 pass
 
+        for pattern in _MEDIUM_RISK_SHELL_PATTERNS:
+            if pattern in excluded:
+                continue
+            try:
+                if re.search(pattern, command, re.IGNORECASE):
+                    return RiskLevel.MEDIUM
+            except re.error:
+                pass
+
         return RiskLevel.LOW
 
     def _check_shell_command(
@@ -793,7 +926,7 @@ class PolicyEngine:
         if risk == RiskLevel.CRITICAL:
             result = PolicyResult(
                 decision=PolicyDecision.DENY,
-                reason=f"CRITICAL 风险命令被自动拒绝: {command[:120]}",
+                reason=f"极高风险命令，已自动拦截: {command[:120]}",
                 policy_name="RiskClassification",
                 metadata={"risk_level": risk.value},
             )
@@ -802,6 +935,7 @@ class PolicyEngine:
 
         if risk == RiskLevel.HIGH:
             if self._config.confirmation.auto_confirm:
+                self._on_allow(tool_name, params)
                 return PolicyResult(
                     decision=PolicyDecision.ALLOW,
                     metadata={
@@ -811,12 +945,28 @@ class PolicyEngine:
                 )
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
-                reason=f"HIGH 风险命令需要确认: {command[:120]}",
+                reason=f"高风险命令，执行前需要您的确认: {command[:120]}",
                 policy_name="RiskClassification",
                 metadata={
                     "risk_level": risk.value,
                     "needs_sandbox": needs_sandbox,
                 },
+            )
+            self._audit(tool_name, params, result)
+            return result
+
+        if risk == RiskLevel.MEDIUM:
+            if self._config.confirmation.auto_confirm:
+                self._on_allow(tool_name, params)
+                return PolicyResult(
+                    decision=PolicyDecision.ALLOW,
+                    metadata={"risk_level": risk.value},
+                )
+            result = PolicyResult(
+                decision=PolicyDecision.CONFIRM,
+                reason=f"此命令可能修改系统配置或安装软件，需要确认: {command[:120]}",
+                policy_name="RiskClassification",
+                metadata={"risk_level": risk.value},
             )
             self._audit(tool_name, params, result)
             return result
@@ -833,7 +983,7 @@ class PolicyEngine:
             return None
 
         write_tools = {"write_file", "edit_file", "delete_file"}
-        if tool_name == "run_shell":
+        if tool_name in ("run_shell", "run_powershell"):
             command = str(params.get("command", ""))
             risk = self.classify_shell_risk(command)
             if risk in (RiskLevel.HIGH, RiskLevel.CRITICAL):
@@ -880,7 +1030,7 @@ class PolicyEngine:
                         if re.search(pattern, param_str, re.IGNORECASE):
                             result = PolicyResult(
                                 decision=PolicyDecision.DENY,
-                                reason=f"Blocked pattern '{pattern}' in {tool_name}",
+                                reason=f"工具 {tool_name} 的参数包含被禁止的内容模式",
                                 policy_name="ToolPolicy",
                             )
                             self._on_deny(tool_name, params, result)
@@ -891,7 +1041,7 @@ class PolicyEngine:
             if rule.decision == PolicyDecision.DENY:
                 result = PolicyResult(
                     decision=PolicyDecision.DENY,
-                    reason=f"Tool '{tool_name}' is blocked by policy",
+                    reason=f"工具 '{tool_name}' 已被安全策略禁用",
                     policy_name="ToolPolicy",
                 )
                 self._on_deny(tool_name, params, result)
@@ -905,23 +1055,32 @@ class PolicyEngine:
         self, tool_name: str, params: dict[str, Any], result: PolicyResult
     ) -> None:
         self._consecutive_denials += 1
-        threshold = self._config.self_protection.death_switch_threshold
-        if (
+        self._total_denials += 1
+        # 双阈值逻辑（P1-8）：连续拒绝 或 累计拒绝过多
+        consecutive_threshold = self._config.self_protection.death_switch_threshold
+        total_threshold = consecutive_threshold * 3 if consecutive_threshold > 0 else 0
+        should_trigger = (
             self._config.self_protection.enabled
-            and threshold > 0
-            and self._consecutive_denials >= threshold
             and not self._readonly_mode
-        ):
+            and (
+                (consecutive_threshold > 0 and self._consecutive_denials >= consecutive_threshold)
+                or (total_threshold > 0 and self._total_denials >= total_threshold)
+            )
+        )
+        if should_trigger:
             self._readonly_mode = True
             logger.warning(
-                f"[Policy] 死亡开关触发: 连续 {self._consecutive_denials} 次操作被拒绝, "
-                "Agent 进入只读模式"
+                f"[Policy] 死亡开关触发: 连续拒绝={self._consecutive_denials}, "
+                f"累计拒绝={self._total_denials}, Agent 进入只读模式"
             )
         self._audit(tool_name, params, result)
 
-    def _on_allow(self, tool_name: str) -> None:
+    def _on_allow(self, tool_name: str, params: dict[str, Any] | None = None) -> None:
         if tool_name not in ("read_file", "list_directory", "grep", "glob"):
             self._consecutive_denials = 0
+        if params is not None:
+            result = PolicyResult(decision=PolicyDecision.ALLOW, reason="", policy_name="")
+            self._audit(tool_name, params, result)
 
     def reset_readonly_mode(self) -> None:
         """Manually reset the death switch (e.g. after user intervention)."""
@@ -958,13 +1117,39 @@ class PolicyEngine:
         return False
 
     def store_ui_pending(
-        self, tool_id: str, tool_name: str, params: dict[str, Any]
+        self, tool_id: str, tool_name: str, params: dict[str, Any],
+        *, session_id: str = "",
     ) -> None:
         """Store a pending UI confirmation (SSE security_confirm sent)."""
+        import time
+        self._cleanup_expired_confirms()
         self._pending_ui_confirms[tool_id] = {
             "tool_name": tool_name,
             "params": params,
+            "created_at": time.time(),
+            "session_id": session_id,
         }
+
+    def _cleanup_expired_confirms(self, ttl: float = 120.0) -> None:
+        """Remove pending confirmations older than TTL seconds."""
+        import time
+        now = time.time()
+        expired = [
+            k for k, v in self._pending_ui_confirms.items()
+            if now - v.get("created_at", 0) > ttl
+        ]
+        for k in expired:
+            self._pending_ui_confirms.pop(k, None)
+
+    def cleanup_session(self, session_id: str) -> None:
+        """Remove all pending confirmations associated with a session.
+        Call this when a session ends or is closed."""
+        to_remove = [
+            k for k, v in self._pending_ui_confirms.items()
+            if v.get("session_id") == session_id
+        ]
+        for k in to_remove:
+            self._pending_ui_confirms.pop(k, None)
 
     def resolve_ui_confirm(self, confirm_id: str, decision: str) -> bool:
         """Called by the /api/chat/security-confirm endpoint.
@@ -1001,6 +1186,19 @@ class PolicyEngine:
             logger.info(
                 f"[Policy] {result.decision.value}: {tool_name} — {result.reason}"
             )
+
+        try:
+            from .audit_logger import get_audit_logger
+            get_audit_logger().log(
+                tool_name=tool_name,
+                decision=result.decision.value,
+                reason=result.reason,
+                policy=result.policy_name,
+                params_preview=str(params)[:200],
+                metadata=result.metadata if result.metadata else None,
+            )
+        except Exception:
+            pass
 
         try:
             from ..tracing.tracer import get_tracer

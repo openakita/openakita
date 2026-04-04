@@ -5,6 +5,13 @@ import remarkGfm from "remark-gfm";
 import { safeFetch } from "../providers";
 import { showInFolder, downloadFile } from "../platform";
 import { IconCode, IconPlug, IconFileText2, IconPackage, IconBook, IconGear, IconShield, IconFolderOpen, IconDownload, IconTerminal } from "../icons";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
+import { Checkbox } from "../components/ui/checkbox";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { cn } from "../lib/utils";
 
 interface PluginInfo {
   id: string;
@@ -48,12 +55,6 @@ interface ConfigSchema {
   properties?: Record<string, ConfigProp>;
   required?: string[];
 }
-
-const LEVEL_COLORS: Record<string, string> = {
-  basic: "var(--ok, #22c55e)",
-  advanced: "var(--warning, #f59e0b)",
-  system: "var(--danger, #ef4444)",
-};
 
 const PERM_LABELS: Record<string, { zh: string; en: string }> = {
   "tools.register":      { zh: "注册工具",     en: "Register Tools" },
@@ -117,6 +118,15 @@ function categoryLabel(cat: string, lang: string): string {
   return lang.startsWith("zh") ? entry.zh : entry.en;
 }
 
+const LEVEL_BADGE_STYLES: Record<string, { color: string; backgroundColor: string }> = {
+  basic: { color: "var(--ok, #22c55e)", backgroundColor: "rgba(34, 197, 94, 0.12)" },
+  advanced: { color: "var(--warning, #f59e0b)", backgroundColor: "rgba(245, 158, 11, 0.14)" },
+  system: { color: "var(--danger, #ef4444)", backgroundColor: "rgba(239, 68, 68, 0.12)" },
+};
+
+const PANEL_CARD_CLASS = "rounded-xl border bg-muted/30 p-4";
+const FIELD_CLASS_NAME = "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
+
 function TypeIcon({ type }: { type: string }) {
   const style = { flexShrink: 0, color: "var(--muted)" } as const;
   switch (type) {
@@ -171,6 +181,14 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   const [logsPanel, setLogsPanel] = useState<string | null>(null);
   const [logsContent, setLogsContent] = useState("");
+
+  const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const showToast = (msg: string, type: "ok" | "err" = "ok") => {
+    clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
   const [categoryFilter, setCategoryFilter] = useState("all");
 
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -199,7 +217,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setNotAvailable(false);
     try {
       const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/list`);
-      const data: PluginListResponse = await resp.json();
+      const raw = await resp.json();
+      const data: PluginListResponse = raw.data ?? raw;
       setPlugins(data.plugins || []);
       setFailed(data.failed || {});
     } catch (e: any) {
@@ -236,6 +255,12 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setLogsPanel((prev) => (prev === id ? null : prev));
   };
 
+  const ACTION_LABELS: Record<string, { ok: string; err: string }> = {
+    enable:  { ok: t("plugins.toastEnabled"),     err: t("plugins.toastEnableFail") },
+    disable: { ok: t("plugins.toastDisabled"),    err: t("plugins.toastDisableFail") },
+    delete:  { ok: t("plugins.toastUninstalled"), err: t("plugins.toastUninstallFail") },
+  };
+
   const handleAction = async (id: string, action: "enable" | "disable" | "delete") => {
     try {
       const method = action === "delete" ? "DELETE" : "POST";
@@ -249,13 +274,16 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       } else {
         updatePluginLocal(id, { enabled: action === "enable" });
       }
+      showToast(ACTION_LABELS[action]?.ok ?? "OK");
     } catch (e: any) {
-      setError(e.message);
+      const msg = ACTION_LABELS[action]?.err ?? e.message;
+      showToast(`${msg}: ${e.message}`, "err");
     }
   };
 
   const handleInstall = async () => {
     if (!installUrl.trim()) return;
+    if (!confirm(t("plugins.trustWarning"))) return;
     setInstalling(true);
     setError("");
     try {
@@ -265,8 +293,10 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         body: JSON.stringify({ source: installUrl.trim() }),
       });
       setInstallUrl("");
+      showToast(t("plugins.toastInstalled"));
       await fetchPlugins(false);
     } catch (e: any) {
+      showToast(e.message, "err");
       setError(e.message);
     } finally {
       setInstalling(false);
@@ -284,7 +314,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     if (!readmeCache[pluginId]) {
       try {
         const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/readme`);
-        const data = await resp.json();
+        const raw = await resp.json();
+        const data = raw.data ?? raw;
         setReadmeCache((prev) => ({ ...prev, [pluginId]: data.readme || t("plugins.noReadme") }));
       } catch {
         setReadmeCache((prev) => ({ ...prev, [pluginId]: t("plugins.readmeLoadFail") }));
@@ -308,9 +339,11 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/schema`),
         safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/config`),
       ]);
-      const schemaData = await schemaResp.json();
-      const configData = await configResp.json();
-      setConfigSchema(schemaData.schema || null);
+      const schemaRaw = await schemaResp.json();
+      const configRaw = await configResp.json();
+      const schemaData = schemaRaw.data ?? schemaRaw;
+      const configData = configRaw.data ?? configRaw;
+      setConfigSchema(schemaData.schema ?? null);
       setConfigValues(configData || {});
     } catch {
       setConfigSchema(null);
@@ -373,7 +406,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/open-folder`, {
         method: "POST",
       });
-      const data = await resp.json();
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
       if (data.path) {
         await showInFolder(data.path);
       }
@@ -402,7 +436,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setLogsContent("");
     try {
       const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
-      const data = await resp.json();
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
       setLogsContent(data.logs || t("plugins.noLogs"));
     } catch {
       setLogsContent(t("plugins.logsLoadFail"));
@@ -413,7 +448,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setLogsContent("");
     try {
       const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
-      const data = await resp.json();
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
       setLogsContent(data.logs || t("plugins.noLogs"));
     } catch {
       setLogsContent(t("plugins.logsLoadFail"));
@@ -421,680 +457,613 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   };
 
   const installBtnDisabled = installing || !installUrl.trim() || notAvailable;
-
-  if (!visible) return null;
-
   const pluginsWithPending = plugins.filter(
     (p) => (p.pending_permissions?.length ?? 0) > 0
   );
+  const failedEntries = Object.entries(failed);
+  const categoryTabs = ["all", ...Array.from(new Set(plugins.map((p) => p.category || p.type || "tool"))).sort()];
+  const filteredPlugins = plugins.filter(
+    (p) => categoryFilter === "all" || (p.category || p.type || "tool") === categoryFilter
+  );
+
+  if (!visible) return null;
 
   return (
-    <div style={{ padding: "24px", maxWidth: 900 }}>
-      <h2 style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8, color: "var(--fg)" }}>
-        {t("plugins.title")}
-        <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 400 }}>
-          {t("plugins.installed", { count: plugins.length })}
-        </span>
-      </h2>
-      <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 20 }}>
-        {t("plugins.desc")}
-      </p>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
+      <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
+        <CardHeader className="gap-3 px-6 py-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <IconPlug size={24} />
+              </div>
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <CardTitle className="text-xl tracking-tight">{t("plugins.title")}</CardTitle>
+                  <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                    {t("plugins.installed", { count: plugins.length })}
+                  </Badge>
+                </div>
+                <CardDescription className="max-w-3xl text-sm leading-6">
+                  {t("plugins.desc")}
+                </CardDescription>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3 border-t px-6 py-4 sm:grid-cols-3">
+          <div className="rounded-xl border bg-background/80 p-4">
+            <div className="text-xs text-muted-foreground">{t("plugins.title")}</div>
+            <div className="mt-2 text-2xl font-semibold">{plugins.length}</div>
+          </div>
+          <div className="rounded-xl border bg-background/80 p-4">
+            <div className="text-xs text-muted-foreground">{t("plugins.permPendingTitle")}</div>
+            <div className="mt-2 text-2xl font-semibold text-amber-600">{pluginsWithPending.length}</div>
+          </div>
+          <div className="rounded-xl border bg-background/80 p-4">
+            <div className="text-xs text-muted-foreground">{t("plugins.failedToLoad")}</div>
+            <div className="mt-2 text-2xl font-semibold text-destructive">{failedEntries.length}</div>
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Install bar */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <input
-          type="text"
-          placeholder={t("plugins.installPlaceholder")}
-          value={installUrl}
-          onChange={(e) => setInstallUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !installBtnDisabled && handleInstall()}
-          disabled={notAvailable}
-          style={{
-            flex: 1, padding: "8px 12px",
-            border: "1px solid var(--line)", borderRadius: 6,
-            background: "var(--bg-subtle, var(--panel))", color: "var(--fg)",
-            fontSize: 13, outline: "none",
-          }}
-        />
-        <button
-          onClick={handleInstall}
-          disabled={installBtnDisabled}
-          style={{
-            padding: "8px 16px", borderRadius: 6, border: "none",
-            background: installBtnDisabled ? "var(--muted, #9ca3af)" : "var(--primary, #2563eb)",
-            color: "#fff", cursor: installBtnDisabled ? "not-allowed" : "pointer",
-            fontSize: 13, opacity: installBtnDisabled ? 0.5 : 1,
-            transition: "background 0.2s, opacity 0.2s",
-          }}
-        >
-          {installing ? t("plugins.installing") : t("plugins.install")}
-        </button>
-        <button
-          onClick={() => fetchPlugins(false)}
-          style={{
-            padding: "8px 12px", borderRadius: 6,
-            border: "1px solid var(--line)", background: "transparent",
-            color: "var(--muted)", cursor: "pointer", fontSize: 13,
-          }}
-        >
-          {t("plugins.refresh")}
-        </button>
-      </div>
+      <Card className="gap-0 border-border/80 py-0 shadow-sm">
+        <CardHeader className="gap-2 px-6 py-4">
+          <CardTitle className="text-base">{t("plugins.install")}</CardTitle>
+          <CardDescription>{t("plugins.installPlaceholder")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 px-6 py-4">
+          <div className="flex flex-col gap-3 lg:flex-row">
+            <Input
+              type="text"
+              placeholder={t("plugins.installPlaceholder")}
+              value={installUrl}
+              onChange={(e) => setInstallUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !installBtnDisabled && handleInstall()}
+              disabled={notAvailable}
+              className="flex-1"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleInstall} disabled={installBtnDisabled}>
+                {installing ? t("plugins.installing") : t("plugins.install")}
+              </Button>
+              <Button variant="outline" onClick={() => fetchPlugins(false)}>
+                {t("plugins.refresh")}
+              </Button>
+            </div>
+          </div>
+
+          {!notAvailable && plugins.length > 0 && (
+            <div className="rounded-xl border bg-muted/20 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-foreground">{categoryLabel(categoryFilter, lang)}</div>
+                <div className="text-xs text-muted-foreground">
+                  {t("plugins.installed", { count: filteredPlugins.length })}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {categoryTabs.map((cat) => {
+                  const active = categoryFilter === cat;
+                  const count = cat === "all"
+                    ? plugins.length
+                    : plugins.filter((p) => (p.category || p.type || "tool") === cat).length;
+                  return (
+                    <Button
+                      key={cat}
+                      size="sm"
+                      variant={active ? "default" : "outline"}
+                      className="rounded-full px-4"
+                      onClick={() => setCategoryFilter(cat)}
+                    >
+                      {categoryLabel(cat, lang)}
+                      <span className="ml-1 opacity-70">{count}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {notAvailable && (
-        <div style={{
-          padding: "14px 18px",
-          background: "var(--warn-bg, rgba(245, 158, 11, 0.15))",
-          border: "1px solid var(--warning, #f59e0b)",
-          borderRadius: 6, color: "var(--fg)", marginBottom: 16,
-          fontSize: 13, lineHeight: 1.5,
-        }}>
-          {t("plugins.notAvailable")}
-        </div>
+        <Card className="border-amber-500/40 bg-amber-500/5 shadow-sm">
+          <CardContent className="py-5 text-sm leading-6 text-foreground">
+            {t("plugins.notAvailable")}
+          </CardContent>
+        </Card>
       )}
 
       {error && (
-        <div style={{
-          padding: "10px 14px",
-          background: "var(--err-bg, rgba(239, 68, 68, 0.15))",
-          border: "1px solid var(--danger, #ef4444)",
-          borderRadius: 6, color: "var(--error, #f87171)",
-          marginBottom: 16, fontSize: 13,
-        }}>
-          {error}
-        </div>
+        <Card className="border-destructive/40 bg-destructive/5 shadow-sm">
+          <CardContent className="py-4 text-sm text-destructive">
+            {error}
+          </CardContent>
+        </Card>
       )}
 
-      {/* Pending permissions banner */}
       {pluginsWithPending.length > 0 && (
-        <div style={{
-          padding: "12px 16px", marginBottom: 16, borderRadius: 6,
-          background: "var(--warn-bg, rgba(245, 158, 11, 0.1))",
-          border: "1px solid var(--warning, #f59e0b)",
-          fontSize: 13, color: "var(--fg)",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, marginBottom: 6 }}>
-            <IconShield size={14} style={{ color: "var(--warning, #f59e0b)" }} />
-            {t("plugins.permPendingTitle")}
-          </div>
-          <div style={{ color: "var(--muted)", lineHeight: 1.5, marginBottom: 8 }}>
-            {t("plugins.permPendingDesc")}
-          </div>
-          {pluginsWithPending.map((p) => (
-            <div key={p.id} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "6px 0", borderTop: "1px solid var(--line)",
-            }}>
-              <span style={{ fontSize: 13 }}>
-                <strong>{p.name}</strong>
-                <span style={{ color: "var(--muted)", marginLeft: 8 }}>
-                  {(p.pending_permissions || []).map((pp) => permLabel(pp, lang)).join(", ")}
-                </span>
-              </span>
-              <button
-                onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
-                disabled={granting}
-                style={{
-                  padding: "3px 10px", borderRadius: 4, border: "none",
-                  background: "var(--warning, #f59e0b)", color: "#fff",
-                  cursor: granting ? "not-allowed" : "pointer", fontSize: 11,
-                  opacity: granting ? 0.6 : 1,
-                }}
-              >
-                {granting ? "..." : t("plugins.grantAll")}
-              </button>
+        <Card className="gap-0 border-amber-500/40 bg-amber-500/5 py-0 shadow-sm">
+          <CardHeader className="gap-2 px-6 py-4">
+            <div className="flex items-center gap-2 text-amber-600">
+              <IconShield size={16} />
+              <CardTitle className="text-base text-foreground">{t("plugins.permPendingTitle")}</CardTitle>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Category filter */}
-      {!notAvailable && plugins.length > 0 && (() => {
-        const cats = Array.from(new Set(plugins.map((p) => p.category || p.type || "tool")));
-        const tabs = ["all", ...cats.sort()];
-        return (
-          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-            {tabs.map((cat) => {
-              const active = categoryFilter === cat;
-              const count = cat === "all" ? plugins.length : plugins.filter((p) => (p.category || p.type || "tool") === cat).length;
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setCategoryFilter(cat)}
-                  style={{
-                    padding: "4px 12px", borderRadius: 14, fontSize: 12,
-                    border: active ? "1px solid var(--primary, #2563eb)" : "1px solid var(--line)",
-                    background: active ? "var(--primary, #2563eb)" : "transparent",
-                    color: active ? "#fff" : "var(--muted)",
-                    cursor: "pointer", transition: "all 0.15s",
-                    fontWeight: active ? 600 : 400,
-                  }}
+            <CardDescription>{t("plugins.permPendingDesc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 px-6 py-4">
+            {pluginsWithPending.map((p) => (
+              <div
+                key={p.id}
+                className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-background/80 p-4 md:flex-row md:items-center md:justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-foreground">{p.name}</div>
+                  <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {(p.pending_permissions || []).map((pp) => permLabel(pp, lang)).join(", ")}
+                  </div>
+                </div>
+                <Button
+                  className="md:self-start"
+                  onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
+                  disabled={granting}
                 >
-                  {categoryLabel(cat, lang)}
-                  <span style={{ marginLeft: 4, opacity: 0.7 }}>{count}</span>
-                </button>
-              );
-            })}
-          </div>
-        );
-      })()}
+                  {granting ? "..." : t("plugins.grantAll")}
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {loading && !notAvailable ? (
-        <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>
-          {t("plugins.loading")}
-        </div>
-      ) : !notAvailable && plugins.length === 0 && Object.keys(failed).length === 0 ? (
-        <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>
-          {t("plugins.noPlugins")}
-        </div>
+        <Card className="shadow-sm">
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">
+            {t("plugins.loading")}
+          </CardContent>
+        </Card>
+      ) : !notAvailable && filteredPlugins.length === 0 && failedEntries.length === 0 ? (
+        <Card className="shadow-sm">
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">
+            {t("plugins.noPlugins")}
+          </CardContent>
+        </Card>
       ) : !notAvailable ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {plugins
-            .filter((p) => categoryFilter === "all" || (p.category || p.type || "tool") === categoryFilter)
-            .map((p) => {
+        <div className="flex flex-col gap-4">
+          {filteredPlugins.map((p) => {
             const hasPending = (p.pending_permissions?.length ?? 0) > 0;
+            const showBody =
+              (p.tags?.length ?? 0) > 0 ||
+              (!!p.error && !hasPending) ||
+              permDialog === p.id ||
+              expandedId === p.id ||
+              configPanel === p.id ||
+              logsPanel === p.id;
+            const badgeStyle = p.permission_level ? LEVEL_BADGE_STYLES[p.permission_level] : null;
+
             return (
               <div
                 key={p.id}
                 ref={(el) => { cardRefs.current[p.id] = el; }}
-                style={{
-                  border: `1px solid ${hasPending ? "var(--warning, #f59e0b)" : "var(--line)"}`,
-                  borderRadius: 8, padding: "14px 18px",
-                  background: "var(--card-bg, var(--panel))",
-                }}
               >
-                {/* Header row */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-                    <PluginIcon plugin={p} apiBase={apiBaseRef.current()} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14, color: "var(--fg)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                        {p.name}
-                        {p.permission_level && (
-                          <span style={{
-                            display: "inline-block", padding: "1px 6px", borderRadius: 10,
-                            fontSize: 10, fontWeight: 600, color: "#fff",
-                            background: LEVEL_COLORS[p.permission_level] || "var(--muted)",
-                          }}>
-                            {levelLabel(p.permission_level, lang)}
-                          </span>
-                        )}
-                        {hasPending && (
-                          <span style={{
-                            display: "inline-block", padding: "1px 6px", borderRadius: 10,
-                            fontSize: 10, fontWeight: 600,
-                            color: "var(--warning, #f59e0b)",
-                            border: "1px solid var(--warning, #f59e0b)",
-                            background: "transparent",
-                          }}>
-                            {t("plugins.permPending")}
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
-                        v{p.version} · {categoryLabel(p.category || p.type || "tool", lang)}
-                        {p.author ? ` · ${p.author}` : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                    {p.status === "failed" && (
-                      <span style={{ color: "var(--error, #f87171)", fontSize: 11 }}>{t("plugins.failed")}</span>
-                    )}
-                    {(p.permissions?.length ?? 0) > 0 && (
-                      <button
-                        onClick={() => {
-                          if (permDialog === p.id) { setPermDialog(null); return; }
-                          closeAllPanels();
-                          setPermDialog(p.id);
-                          scrollToCard(p.id);
-                        }}
-                        title={t("plugins.permManage")}
-                        style={{
-                          padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                          border: `1px solid ${hasPending ? "var(--warning, #f59e0b)" : "var(--line)"}`,
-                          background: permDialog === p.id ? "var(--bg-subtle, var(--panel2))" : "transparent",
-                          color: hasPending ? "var(--warning, #f59e0b)" : "var(--muted)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <IconShield size={14} />
-                      </button>
-                    )}
-                    {p.has_readme && (
-                      <button
-                        onClick={() => toggleReadme(p.id)}
-                        title={t("plugins.viewDocs")}
-                        style={{
-                          padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                          border: "1px solid var(--line)",
-                          background: expandedId === p.id ? "var(--bg-subtle, var(--panel2))" : "transparent",
-                          color: "var(--muted)", cursor: "pointer",
-                        }}
-                      >
-                        <IconBook size={14} />
-                      </button>
-                    )}
-                    {p.has_config_schema && (
-                      <button
-                        onClick={() => openConfig(p.id)}
-                        title={t("plugins.settings")}
-                        style={{
-                          padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                          border: "1px solid var(--line)",
-                          background: configPanel === p.id ? "var(--bg-subtle, var(--panel2))" : "transparent",
-                          color: "var(--muted)", cursor: "pointer",
-                        }}
-                      >
-                        <IconGear size={14} />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleOpenFolder(p.id)}
-                      title={t("plugins.openFolder")}
-                      style={{
-                        padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                        border: "1px solid var(--line)", background: "transparent",
-                        color: "var(--muted)", cursor: "pointer",
-                      }}
-                    >
-                      <IconFolderOpen size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleExport(p.id)}
-                      title={t("plugins.export")}
-                      style={{
-                        padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                        border: "1px solid var(--line)", background: "transparent",
-                        color: "var(--muted)", cursor: "pointer",
-                      }}
-                    >
-                      <IconDownload size={14} />
-                    </button>
-                    <button
-                      onClick={() => toggleLogs(p.id)}
-                      title={t("plugins.viewLogs")}
-                      style={{
-                        padding: "4px 8px", borderRadius: 4, display: "inline-flex", alignItems: "center",
-                        border: "1px solid var(--line)",
-                        background: logsPanel === p.id ? "var(--bg-subtle, var(--panel2))" : "transparent",
-                        color: "var(--muted)", cursor: "pointer",
-                      }}
-                    >
-                      <IconTerminal size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleAction(p.id, p.enabled === false ? "enable" : "disable")}
-                      style={{
-                        padding: "4px 10px", borderRadius: 4,
-                        border: "1px solid var(--line)", background: "transparent",
-                        color: p.enabled === false ? "var(--ok, #22c55e)" : "var(--muted)",
-                        cursor: "pointer", fontSize: 12,
-                      }}
-                    >
-                      {p.enabled === false ? t("plugins.enable") : t("plugins.disable")}
-                    </button>
-                    <button
-                      onClick={() => handleAction(p.id, "delete")}
-                      style={{
-                        padding: "4px 10px", borderRadius: 4,
-                        border: "1px solid var(--danger, #ef4444)", background: "transparent",
-                        color: "var(--error, #f87171)", cursor: "pointer", fontSize: 12,
-                      }}
-                    >
-                      {t("plugins.remove")}
-                    </button>
-                  </div>
-                </div>
+                <Card className={cn(
+                  "gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md",
+                  hasPending && "border-amber-500/50"
+                )}>
+                  <CardHeader className="gap-3 px-6 py-4">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="flex min-w-0 gap-4">
+                        <div className={cn(
+                          "flex size-12 shrink-0 items-center justify-center rounded-2xl border bg-muted/40",
+                          hasPending && "border-amber-500/40 bg-amber-500/10"
+                        )}>
+                          <PluginIcon plugin={p} apiBase={apiBaseRef.current()} />
+                        </div>
+                        <div className="min-w-0 space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <CardTitle className="text-base leading-none">{p.name}</CardTitle>
+                            {p.permission_level && (
+                              <Badge
+                                variant="outline"
+                                className="border-0"
+                                style={badgeStyle ? { color: badgeStyle.color, backgroundColor: badgeStyle.backgroundColor } : undefined}
+                              >
+                                {levelLabel(p.permission_level, lang)}
+                              </Badge>
+                            )}
+                            {hasPending && (
+                              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-600">
+                                {t("plugins.permPending")}
+                              </Badge>
+                            )}
+                            {p.status === "failed" && (
+                              <Badge variant="destructive">{t("plugins.failed")}</Badge>
+                            )}
+                          </div>
 
-                {/* Description */}
-                {p.description && (
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 12, lineHeight: 1.5 }}>
-                    {p.description}
-                  </div>
-                )}
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <Badge variant="secondary" className="font-mono">v{p.version}</Badge>
+                            <Badge variant="outline">{categoryLabel(p.category || p.type || "tool", lang)}</Badge>
+                            {p.author && <Badge variant="outline">{p.author}</Badge>}
+                          </div>
 
-                {/* Tags */}
-                {(p.tags?.length ?? 0) > 0 && (
-                  <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {(p.tags || []).map((tag) => (
-                      <span key={tag} style={{
-                        padding: "1px 6px", borderRadius: 4, fontSize: 10,
-                        background: "var(--bg-subtle, var(--panel2))", color: "var(--muted)",
-                        border: "1px solid var(--line)",
-                      }}>
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Error (only show if no pending_permissions — else it's the perm issue) */}
-                {p.error && !hasPending && (
-                  <div style={{ marginTop: 6, color: "var(--error, #f87171)", fontSize: 12 }}>{p.error}</div>
-                )}
-
-                {/* Permission dialog */}
-                {permDialog === p.id && (
-                  <div style={{
-                    marginTop: 10, padding: "14px 16px", borderRadius: 6,
-                    background: hasPending
-                      ? "var(--warn-bg, rgba(245,158,11,0.08))"
-                      : "var(--bg-subtle, var(--panel2))",
-                    border: `1px solid ${hasPending ? "var(--warning, #f59e0b)" : "var(--line)"}`,
-                  }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--fg)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                      <IconShield size={14} style={{ color: hasPending ? "var(--warning, #f59e0b)" : "var(--ok, #22c55e)" }} />
-                      {t("plugins.permTitle")}
-                      {!hasPending && (
-                        <span style={{ fontSize: 11, fontWeight: 400, color: "var(--ok, #22c55e)" }}>
-                          {t("plugins.permAllGranted")}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-                      {t("plugins.permDesc")}
-                    </div>
-                    <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
-                      <tbody>
-                        {(p.permissions || []).map((perm) => {
-                          const isGranted = p.granted_permissions?.includes(perm) ?? false;
-                          const isPending = p.pending_permissions?.includes(perm) ?? false;
-                          const isBasic = ["tools.register","hooks.basic","config.read","config.write","data.own","log","skill"].includes(perm);
-                          return (
-                            <tr key={perm} style={{ borderBottom: "1px solid var(--line)" }}>
-                              <td style={{ padding: "4px 8px", color: "var(--fg)" }}>
-                                {permLabel(perm, lang)}
-                                <span style={{ color: "var(--muted)", marginLeft: 4 }}>({perm})</span>
-                              </td>
-                              <td style={{ padding: "4px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
-                                {isBasic ? (
-                                  <span style={{ color: "var(--ok, #22c55e)", fontSize: 11 }}>{t("plugins.permAuto")}</span>
-                                ) : isGranted ? (
-                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ color: "var(--ok, #22c55e)", fontSize: 11 }}>{t("plugins.permGranted")}</span>
-                                    <button
-                                      onClick={() => handleRevokePermission(p.id, perm)}
-                                      disabled={granting}
-                                      style={{
-                                        padding: "1px 6px", borderRadius: 3, fontSize: 10,
-                                        border: "1px solid var(--danger, #ef4444)", background: "transparent",
-                                        color: "var(--error, #f87171)", cursor: granting ? "not-allowed" : "pointer",
-                                        opacity: granting ? 0.5 : 1,
-                                      }}
-                                    >
-                                      {t("plugins.permRevoke")}
-                                    </button>
-                                  </span>
-                                ) : isPending ? (
-                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ color: "var(--warning, #f59e0b)", fontSize: 11 }}>{t("plugins.permPending")}</span>
-                                    <button
-                                      onClick={() => handleGrantPermissions(p.id, [perm])}
-                                      disabled={granting}
-                                      style={{
-                                        padding: "1px 6px", borderRadius: 3, fontSize: 10,
-                                        border: "1px solid var(--ok, #22c55e)", background: "transparent",
-                                        color: "var(--ok, #22c55e)", cursor: granting ? "not-allowed" : "pointer",
-                                        opacity: granting ? 0.5 : 1,
-                                      }}
-                                    >
-                                      {t("plugins.permGrant")}
-                                    </button>
-                                  </span>
-                                ) : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                      {hasPending && (
-                        <button
-                          onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
-                          disabled={granting}
-                          style={{
-                            padding: "6px 16px", borderRadius: 4, border: "none",
-                            background: "var(--warning, #f59e0b)", color: "#fff",
-                            cursor: granting ? "not-allowed" : "pointer", fontSize: 12,
-                            opacity: granting ? 0.6 : 1,
-                          }}
-                        >
-                          {granting ? "..." : t("plugins.grantAllAndReload")}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setPermDialog(null)}
-                        style={{
-                          padding: "6px 12px", borderRadius: 4,
-                          border: "1px solid var(--line)", background: "transparent",
-                          color: "var(--muted)", cursor: "pointer", fontSize: 12,
-                        }}
-                      >
-                        {t("common.close")}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* README panel — markdown rendered */}
-                {expandedId === p.id && (
-                  <div
-                    className="plugin-readme-content"
-                    style={{
-                      marginTop: 10, padding: "12px 16px", borderRadius: 6,
-                      background: "var(--bg-subtle, var(--panel2))", border: "1px solid var(--line)",
-                      fontSize: 13, lineHeight: 1.6, color: "var(--fg)",
-                      maxHeight: 400, overflowY: "auto",
-                    }}
-                  >
-                    {readmeCache[p.id] ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{readmeCache[p.id]}</ReactMarkdown>
-                    ) : (
-                      t("plugins.loading")
-                    )}
-                  </div>
-                )}
-
-                {/* Config panel */}
-                {configPanel === p.id && (
-                  <div style={{
-                    marginTop: 10, padding: "14px 16px", borderRadius: 6,
-                    background: "var(--bg-subtle, var(--panel2))", border: "1px solid var(--line)",
-                  }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--fg)", marginBottom: 10 }}>
-                      {t("plugins.settings")}
-                    </div>
-                    {configSchema?.properties ? (
-                      <>
-                        {Object.entries(configSchema.properties).map(([key, prop]) => {
-                          const isRequired = configSchema.required?.includes(key);
-                          const visibleWhen = prop["x-visible-when"];
-                          if (visibleWhen) {
-                            const hidden = Object.entries(visibleWhen).some(([depKey, expected]) => {
-                              const cur = configValues[depKey] ?? configSchema.properties?.[depKey]?.default;
-                              if (Array.isArray(expected)) return !expected.includes(cur);
-                              return cur !== expected;
-                            });
-                            if (hidden) return null;
-                          }
-                          return (
-                            <div key={key} style={{ marginBottom: 12 }}>
-                              <label style={{ display: "block", fontSize: 12, color: "var(--fg)", marginBottom: 4, fontWeight: 500 }}>
-                                {prop.title || key}
-                                {isRequired && <span style={{ color: "var(--danger, #ef4444)", marginLeft: 2 }}>*</span>}
-                                {prop.title && <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 4, fontWeight: 400 }}>({key})</span>}
-                              </label>
-                              {prop.description && (
-                                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
-                                  {prop.description}
-                                </div>
-                              )}
-                              {prop.enum ? (
-                                <select
-                                  value={configValues[key] ?? prop.default ?? ""}
-                                  onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.value }))}
-                                  style={{
-                                    width: "100%", padding: "6px 10px", borderRadius: 4,
-                                    border: "1px solid var(--line)", background: "var(--bg, #fff)",
-                                    color: "var(--fg)", fontSize: 13,
-                                  }}
-                                >
-                                  <option value="">--</option>
-                                  {prop.enum.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                                </select>
-                              ) : prop.type === "boolean" ? (
-                                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--fg)" }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={!!configValues[key]}
-                                    onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.checked }))}
-                                  />
-                                  {prop.title || key}
-                                </label>
-                              ) : prop.type === "integer" || prop.type === "number" ? (
-                                <input
-                                  type="number"
-                                  value={configValues[key] ?? prop.default ?? ""}
-                                  onChange={(e) => setConfigValues((v) => ({ ...v, [key]: Number(e.target.value) }))}
-                                  style={{
-                                    width: "100%", padding: "6px 10px", borderRadius: 4,
-                                    border: "1px solid var(--line)", background: "var(--bg, #fff)",
-                                    color: "var(--fg)", fontSize: 13,
-                                  }}
-                                />
-                              ) : prop.type === "array" ? (
-                                <input
-                                  type="text"
-                                  placeholder={t("plugins.arrayHint")}
-                                  value={Array.isArray(configValues[key]) ? configValues[key].join(", ") : (configValues[key] ?? "")}
-                                  onChange={(e) => setConfigValues((v) => ({
-                                    ...v,
-                                    [key]: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean),
-                                  }))}
-                                  style={{
-                                    width: "100%", padding: "6px 10px", borderRadius: 4,
-                                    border: "1px solid var(--line)", background: "var(--bg, #fff)",
-                                    color: "var(--fg)", fontSize: 13,
-                                  }}
-                                />
-                              ) : (
-                                <input
-                                  type={/password|secret|_token$|_key$|^api_key$|^access_token$/i.test(key) ? "password" : "text"}
-                                  value={configValues[key] ?? prop.default ?? ""}
-                                  placeholder={prop.default != null ? String(prop.default) : ""}
-                                  onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.value }))}
-                                  style={{
-                                    width: "100%", padding: "6px 10px", borderRadius: 4,
-                                    border: "1px solid var(--line)", background: "var(--bg, #fff)",
-                                    color: "var(--fg)", fontSize: 13,
-                                  }}
-                                />
-                              )}
-                            </div>
-                          );
-                        })}
-                        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
-                          <button
-                            onClick={() => saveConfig(p.id)}
-                            disabled={configSaving}
-                            style={{
-                              padding: "6px 16px", borderRadius: 4, border: "none",
-                              background: "var(--primary, #2563eb)", color: "#fff",
-                              cursor: configSaving ? "not-allowed" : "pointer", fontSize: 12,
-                              opacity: configSaving ? 0.6 : 1,
-                            }}
-                          >
-                            {configSaving ? t("plugins.saving") : t("plugins.saveConfig")}
-                          </button>
-                          {configMsg && (
-                            <span style={{
-                              fontSize: 12,
-                              color: configMsg === t("plugins.configSaved") ? "var(--ok, #22c55e)" : "var(--error, #f87171)",
-                            }}>
-                              {configMsg}
-                            </span>
+                          {p.description && (
+                            <CardDescription className="max-w-3xl text-sm leading-6">
+                              {p.description}
+                            </CardDescription>
                           )}
                         </div>
-                      </>
-                    ) : (
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                        {t("plugins.noConfigSchema")}
-                        <pre style={{
-                          marginTop: 8, padding: 10, borderRadius: 4,
-                          background: "var(--bg, #fff)", border: "1px solid var(--line)",
-                          fontSize: 12, whiteSpace: "pre-wrap", color: "var(--fg)",
-                        }}>
-                          {JSON.stringify(configValues, null, 2) || "{}"}
-                        </pre>
                       </div>
-                    )}
-                  </div>
-                )}
 
-                {/* Logs panel */}
-                {logsPanel === p.id && (
-                  <div style={{
-                    marginTop: 10, padding: "14px 16px", borderRadius: 6,
-                    background: "var(--bg-subtle, var(--panel2))", border: "1px solid var(--line)",
-                  }}>
-                    <div style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      marginBottom: 8,
-                    }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--fg)", display: "flex", alignItems: "center", gap: 6 }}>
-                        <IconTerminal size={14} style={{ color: "var(--muted)" }} />
-                        {t("plugins.logsTitle")}
+                      <div className="flex flex-wrap items-center gap-2 xl:max-w-[360px] xl:justify-end">
+                        {(p.permissions?.length ?? 0) > 0 && (
+                          <Button
+                            size="icon-sm"
+                            variant={permDialog === p.id ? "secondary" : "outline"}
+                            title={t("plugins.permManage")}
+                            aria-label={t("plugins.permManage")}
+                            className={hasPending ? "border-amber-500/40 text-amber-600" : undefined}
+                            onClick={() => {
+                              if (permDialog === p.id) { setPermDialog(null); return; }
+                              closeAllPanels();
+                              setPermDialog(p.id);
+                              scrollToCard(p.id);
+                            }}
+                          >
+                            <IconShield size={14} />
+                          </Button>
+                        )}
+                        {p.has_readme && (
+                          <Button
+                            size="icon-sm"
+                            variant={expandedId === p.id ? "secondary" : "outline"}
+                            title={t("plugins.viewDocs")}
+                            aria-label={t("plugins.viewDocs")}
+                            onClick={() => toggleReadme(p.id)}
+                          >
+                            <IconBook size={14} />
+                          </Button>
+                        )}
+                        {p.has_config_schema && (
+                          <Button
+                            size="icon-sm"
+                            variant={configPanel === p.id ? "secondary" : "outline"}
+                            title={t("plugins.settings")}
+                            aria-label={t("plugins.settings")}
+                            onClick={() => openConfig(p.id)}
+                          >
+                            <IconGear size={14} />
+                          </Button>
+                        )}
+                        <Button
+                          size="icon-sm"
+                          variant="outline"
+                          title={t("plugins.openFolder")}
+                          aria-label={t("plugins.openFolder")}
+                          onClick={() => handleOpenFolder(p.id)}
+                        >
+                          <IconFolderOpen size={14} />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="outline"
+                          title={t("plugins.export")}
+                          aria-label={t("plugins.export")}
+                          onClick={() => handleExport(p.id)}
+                        >
+                          <IconDownload size={14} />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant={logsPanel === p.id ? "secondary" : "outline"}
+                          title={t("plugins.viewLogs")}
+                          aria-label={t("plugins.viewLogs")}
+                          onClick={() => toggleLogs(p.id)}
+                        >
+                          <IconTerminal size={14} />
+                        </Button>
                       </div>
-                      <button
-                        onClick={() => refreshLogs(p.id)}
-                        style={{
-                          padding: "3px 10px", borderRadius: 4,
-                          border: "1px solid var(--line)", background: "transparent",
-                          color: "var(--muted)", cursor: "pointer", fontSize: 11,
-                        }}
-                      >
-                        {t("plugins.refresh")}
-                      </button>
                     </div>
-                    <pre style={{
-                      margin: 0, padding: 10, borderRadius: 4,
-                      background: "var(--bg, #1a1a2e)", border: "1px solid var(--line)",
-                      fontSize: 11, lineHeight: 1.5, color: "var(--fg)",
-                      maxHeight: 360, overflowY: "auto", whiteSpace: "pre-wrap",
-                      wordBreak: "break-all", fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-                    }}>
-                      {logsContent || t("plugins.loading")}
-                    </pre>
-                  </div>
-                )}
+                  </CardHeader>
+
+                  {showBody && (
+                    <CardContent className="space-y-4 border-t px-6 py-4">
+                      {(p.tags?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {(p.tags || []).map((tag) => (
+                            <Badge key={tag} variant="outline" className="text-xs text-muted-foreground">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {p.error && !hasPending && (
+                        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                          {p.error}
+                        </div>
+                      )}
+
+                      {permDialog === p.id && (
+                        <div className={cn(PANEL_CARD_CLASS, hasPending && "border-amber-500/40 bg-amber-500/5")}>
+                          <div className="mb-4 flex flex-wrap items-center gap-2">
+                            <IconShield size={14} style={{ color: hasPending ? "var(--warning, #f59e0b)" : "var(--ok, #22c55e)" }} />
+                            <div className="text-sm font-semibold text-foreground">{t("plugins.permTitle")}</div>
+                            {!hasPending && (
+                              <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600">
+                                {t("plugins.permAllGranted")}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="mb-4 text-sm leading-6 text-muted-foreground">
+                            {t("plugins.permDesc")}
+                          </div>
+                          <div className="space-y-2">
+                            {(p.permissions || []).map((perm) => {
+                              const isGranted = p.granted_permissions?.includes(perm) ?? false;
+                              const isPending = p.pending_permissions?.includes(perm) ?? false;
+                              const isBasic = ["tools.register", "hooks.basic", "config.read", "config.write", "data.own", "log", "skill"].includes(perm);
+                              return (
+                                <div
+                                  key={perm}
+                                  className="flex flex-col gap-2 rounded-lg border bg-background/80 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                                >
+                                  <div className="text-sm text-foreground">{permLabel(perm, lang)}</div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {isBasic ? (
+                                      <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600">
+                                        {t("plugins.permAuto")}
+                                      </Badge>
+                                    ) : isGranted ? (
+                                      <>
+                                        <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600">
+                                          {t("plugins.permGranted")}
+                                        </Badge>
+                                        <Button
+                                          size="xs"
+                                          variant="outline"
+                                          className="border-destructive/40 text-destructive hover:text-destructive"
+                                          onClick={() => handleRevokePermission(p.id, perm)}
+                                          disabled={granting}
+                                        >
+                                          {t("plugins.permRevoke")}
+                                        </Button>
+                                      </>
+                                    ) : isPending ? (
+                                      <>
+                                        <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-600">
+                                          {t("plugins.permPending")}
+                                        </Badge>
+                                        <Button
+                                          size="xs"
+                                          variant="outline"
+                                          className="border-emerald-500/40 text-emerald-600 hover:text-emerald-700"
+                                          onClick={() => handleGrantPermissions(p.id, [perm])}
+                                          disabled={granting}
+                                        >
+                                          {t("plugins.permGrant")}
+                                        </Button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {hasPending && (
+                              <Button
+                                onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
+                                disabled={granting}
+                              >
+                                {granting ? "..." : t("plugins.grantAllAndReload")}
+                              </Button>
+                            )}
+                            <Button variant="outline" onClick={() => setPermDialog(null)}>
+                              {t("common.close")}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {expandedId === p.id && (
+                        <div
+                          className={cn("plugin-readme-content overflow-y-auto text-sm leading-6 text-foreground", PANEL_CARD_CLASS)}
+                          style={{ maxHeight: 420 }}
+                        >
+                          {readmeCache[p.id] ? (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{readmeCache[p.id]}</ReactMarkdown>
+                          ) : (
+                            t("plugins.loading")
+                          )}
+                        </div>
+                      )}
+
+                      {configPanel === p.id && (
+                        <div className={PANEL_CARD_CLASS}>
+                          <div className="mb-4 text-sm font-semibold text-foreground">
+                            {t("plugins.settings")}
+                          </div>
+                          {configSchema?.properties ? (
+                            <>
+                              <div className="space-y-4">
+                                {Object.entries(configSchema.properties).map(([key, prop]) => {
+                                  const isRequired = configSchema.required?.includes(key);
+                                  const visibleWhen = prop["x-visible-when"];
+                                  if (visibleWhen) {
+                                    const hidden = Object.entries(visibleWhen).some(([depKey, expected]) => {
+                                      const cur = configValues[depKey] ?? configSchema.properties?.[depKey]?.default;
+                                      if (Array.isArray(expected)) return !expected.includes(cur);
+                                      return cur !== expected;
+                                    });
+                                    if (hidden) return null;
+                                  }
+
+                                  return (
+                                    <div key={key} className="space-y-2">
+                                      <Label className="flex flex-wrap items-center gap-1 text-sm text-foreground">
+                                        <span>{prop.title || key}</span>
+                                        {isRequired && <span className="text-destructive">*</span>}
+                                        {prop.title && <span className="text-xs font-normal text-muted-foreground">({key})</span>}
+                                      </Label>
+                                      {prop.description && (
+                                        <div className="text-xs leading-5 text-muted-foreground">
+                                          {prop.description}
+                                        </div>
+                                      )}
+                                      {prop.enum ? (
+                                        <select
+                                          value={configValues[key] ?? prop.default ?? ""}
+                                          onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.value }))}
+                                          className={FIELD_CLASS_NAME}
+                                        >
+                                          <option value="">--</option>
+                                          {prop.enum.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                                        </select>
+                                      ) : prop.type === "boolean" ? (
+                                        <Label className="flex items-center gap-3 rounded-lg border bg-background/80 px-3 py-3">
+                                          <Checkbox
+                                            checked={!!configValues[key]}
+                                            onCheckedChange={(checked) => setConfigValues((v) => ({ ...v, [key]: !!checked }))}
+                                          />
+                                          <span>{prop.title || key}</span>
+                                        </Label>
+                                      ) : prop.type === "integer" || prop.type === "number" ? (
+                                        <Input
+                                          type="number"
+                                          value={configValues[key] ?? prop.default ?? ""}
+                                          onChange={(e) => setConfigValues((v) => ({ ...v, [key]: Number(e.target.value) }))}
+                                        />
+                                      ) : prop.type === "array" ? (
+                                        <Input
+                                          type="text"
+                                          placeholder={t("plugins.arrayHint")}
+                                          value={Array.isArray(configValues[key]) ? configValues[key].join(", ") : (configValues[key] ?? "")}
+                                          onChange={(e) => setConfigValues((v) => ({
+                                            ...v,
+                                            [key]: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean),
+                                          }))}
+                                        />
+                                      ) : (
+                                        <Input
+                                          type={/password|secret|_token$|_key$|^api_key$|^access_token$/i.test(key) ? "password" : "text"}
+                                          value={configValues[key] ?? prop.default ?? ""}
+                                          placeholder={prop.default != null ? String(prop.default) : ""}
+                                          onChange={(e) => setConfigValues((v) => ({ ...v, [key]: e.target.value }))}
+                                        />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-5 flex flex-wrap items-center gap-3">
+                                <Button onClick={() => saveConfig(p.id)} disabled={configSaving}>
+                                  {configSaving ? t("plugins.saving") : t("plugins.saveConfig")}
+                                </Button>
+                                {configMsg && (
+                                  <span
+                                    className="text-sm"
+                                    style={{ color: configMsg === t("plugins.configSaved") ? "var(--ok, #22c55e)" : "var(--error, #f87171)" }}
+                                  >
+                                    {configMsg}
+                                  </span>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-sm text-muted-foreground">
+                              {t("plugins.noConfigSchema")}
+                              <pre className="mt-3 rounded-lg border bg-background p-3 text-xs text-foreground">
+                                {JSON.stringify(configValues, null, 2) || "{}"}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {logsPanel === p.id && (
+                        <div className={PANEL_CARD_CLASS}>
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                              <IconTerminal size={14} style={{ color: "var(--muted)" }} />
+                              {t("plugins.logsTitle")}
+                            </div>
+                            <Button size="sm" variant="outline" onClick={() => refreshLogs(p.id)}>
+                              {t("plugins.refresh")}
+                            </Button>
+                          </div>
+                          <pre
+                            className="max-h-[360px] overflow-y-auto rounded-lg border bg-slate-950 p-3 text-xs leading-6 text-slate-100"
+                            style={{ wordBreak: "break-all", whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace" }}
+                          >
+                            {logsContent || t("plugins.loading")}
+                          </pre>
+                        </div>
+                      )}
+                    </CardContent>
+                  )}
+
+                  <CardFooter className="flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0 text-xs text-muted-foreground">
+                      {p.id}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant={p.enabled === false ? "default" : "outline"}
+                        onClick={() => handleAction(p.id, p.enabled === false ? "enable" : "disable")}
+                      >
+                        {p.enabled === false ? t("plugins.enable") : t("plugins.disable")}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={() => handleAction(p.id, "delete")}
+                      >
+                        {t("plugins.remove")}
+                      </Button>
+                    </div>
+                  </CardFooter>
+                </Card>
               </div>
             );
           })}
 
-          {Object.keys(failed).length > 0 && (
-            <>
-              <h3 style={{ marginTop: 16, color: "var(--error, #f87171)", fontSize: 14 }}>
-                {t("plugins.failedToLoad")}
-              </h3>
-              {Object.entries(failed).map(([id, reason]) => (
-                <div
-                  key={id}
-                  style={{
-                    border: "1px solid var(--danger, #ef4444)",
-                    borderRadius: 8, padding: "10px 14px",
-                    background: "var(--err-bg, rgba(239, 68, 68, 0.15))",
-                  }}
-                >
-                  <div style={{ fontWeight: 600, fontSize: 13, color: "var(--fg)" }}>{id}</div>
-                  <div style={{ color: "var(--error, #f87171)", fontSize: 12, marginTop: 4 }}>{reason}</div>
-                </div>
-              ))}
-            </>
+          {failedEntries.length > 0 && (
+            <Card className="border-destructive/40 bg-destructive/5 shadow-sm">
+              <CardHeader className="gap-2">
+                <CardTitle className="text-base text-foreground">{t("plugins.failedToLoad")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {failedEntries.map(([id, reason]) => (
+                  <div
+                    key={id}
+                    className="rounded-xl border border-destructive/20 bg-background/80 p-4"
+                  >
+                    <div className="font-medium text-foreground">{id}</div>
+                    <div className="mt-1 text-sm leading-6 text-destructive">{reason}</div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
           )}
         </div>
       ) : null}
+
+      {/* Toast notification */}
+      {toast && (
+        <div
+          onClick={() => setToast(null)}
+          style={{
+            position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)",
+            padding: "10px 24px", borderRadius: 8, fontSize: 13, cursor: "pointer",
+            background: toast.type === "ok" ? "var(--ok, #22c55e)" : "var(--danger, #ef4444)",
+            color: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.18)", zIndex: 9999,
+            maxWidth: 420, textAlign: "center", whiteSpace: "pre-line",
+            animation: "fadeIn 0.2s ease",
+          }}
+        >
+          {toast.msg}
+        </div>
+      )}
     </div>
   );
 }

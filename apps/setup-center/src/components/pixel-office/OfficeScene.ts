@@ -264,6 +264,13 @@ export class OfficeScene extends Phaser.Scene {
 
       const agentSprite = new AgentSprite(this, config, pos.x, pos.y);
 
+      agentSprite.onAgentClick = (nodeId, cfg, sx, sy) => {
+        EventBus.emit('agent-clicked', nodeId, cfg, sx, sy);
+      };
+      agentSprite.onAgentContextMenu = (nodeId, cfg, sx, sy) => {
+        EventBus.emit('agent-context-menu', nodeId, cfg, sx, sy);
+      };
+
       if (node.status === 'offline') {
         agentSprite.setVisible(false);
       }

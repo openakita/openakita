@@ -11,7 +11,6 @@ import asyncio
 import base64
 import logging
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -22,6 +21,83 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 _KILL_WAIT_TIMEOUT = 5  # seconds to wait for process.wait() after kill
+
+# ---------------------------------------------------------------------------
+# Git Bash 自动定位（参考 CC BashTool findGitBashPath）
+# ---------------------------------------------------------------------------
+_git_bash_cache: str | None | bool = False  # False = not yet searched
+
+
+def find_git_bash_path() -> str | None:
+    """在 Windows 上自动定位 Git Bash 可执行文件。
+
+    搜索顺序（参考 CC）:
+    1. OPENAKITA_GIT_BASH_PATH 环境变量
+    2. 常见安装路径
+    3. 系统 PATH
+    """
+    global _git_bash_cache
+    if _git_bash_cache is not False:
+        return _git_bash_cache  # type: ignore[return-value]
+
+    if sys.platform != "win32":
+        _git_bash_cache = None
+        return None
+
+    env_path = os.environ.get("OPENAKITA_GIT_BASH_PATH")
+    if env_path and os.path.isfile(env_path):
+        _git_bash_cache = env_path
+        logger.info(f"[GitBash] Found via env: {env_path}")
+        return env_path
+
+    candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Git\bin\bash.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            _git_bash_cache = candidate
+            logger.info(f"[GitBash] Found at: {candidate}")
+            return candidate
+
+    which_bash = shutil.which("bash")
+    if which_bash:
+        _git_bash_cache = which_bash
+        logger.info(f"[GitBash] Found in PATH: {which_bash}")
+        return which_bash
+
+    _git_bash_cache = None
+    logger.debug("[GitBash] Not found on this system")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# UNC 路径安全检查（参考 CC isUNCPath — 防 NTLM 认证泄漏）
+# ---------------------------------------------------------------------------
+_UNC_RE = re.compile(r"^\\\\[^\\]")
+
+
+def is_unc_path(path: str) -> bool:
+    """检查是否为 UNC 路径（\\\\server\\share 形式）。
+
+    UNC 路径可能触发 Windows 自动 NTLM 认证，导致凭证泄漏。
+    """
+    return bool(_UNC_RE.match(path))
+
+
+def check_unc_safety(command: str) -> str | None:
+    """检查命令中是否包含 UNC 路径，返回警告信息或 None。"""
+    tokens = command.split()
+    for token in tokens:
+        if is_unc_path(token):
+            return (
+                f"Blocked: UNC path detected ({token}). "
+                "UNC paths can trigger automatic NTLM authentication "
+                "and leak credentials. Use mapped drive letters instead."
+            )
+    return None
 
 
 @dataclass
@@ -286,6 +362,18 @@ class ShellTool:
         """
         work_dir = cwd or self.default_cwd
         cmd_timeout = timeout or self.timeout
+
+        # UNC 路径安全检查
+        unc_warning = check_unc_safety(command)
+        if unc_warning:
+            return CommandResult(returncode=-1, stdout="", stderr=unc_warning)
+
+        if work_dir and is_unc_path(work_dir):
+            return CommandResult(
+                returncode=-1, stdout="",
+                stderr=f"Blocked: UNC working directory ({work_dir}). "
+                       "Use a local path or mapped drive letter.",
+            )
 
         # 合并环境变量
         cmd_env = os.environ.copy()

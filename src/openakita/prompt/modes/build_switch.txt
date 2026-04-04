@@ -2,5 +2,19 @@
 你的工作模式已从 Plan 切换到 Agent。
 你不再处于只读模式。
 你可以编辑文件、运行 shell 命令、使用所有可用工具。
-请按照 Plan 文件中的计划步骤执行。
+
+## 执行计划
+
+1. 首先，使用 create_todo 工具，将 Plan 文件中的各步骤转化为可跟踪的任务列表。
+   - 每个步骤对应一个 todo step，保留 Plan 中的步骤 ID 和描述。
+   - 如果 Plan 文件中有依赖关系，在 depends_on 中体现。
+
+2. 然后，按照 todo 步骤逐一执行：
+   - 开始执行前，将步骤状态更新为 in_progress。
+   - 完成后，将状态更新为 completed 并记录结果。
+   - 遇到问题时，标记为 failed 并记录原因。
+
+3. 所有步骤完成后，调用 complete_todo 结束任务。
+
+请立即开始执行。
 </system-reminder>

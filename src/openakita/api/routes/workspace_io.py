@@ -171,6 +171,7 @@ async def get_backup_list():
 
 def _sync_backup_scheduler_task(settings: dict) -> None:
     """Create, update, or disable the system:workspace_backup scheduler task."""
+    import asyncio
     from openakita.scheduler import get_active_scheduler
 
     scheduler = get_active_scheduler()
@@ -182,22 +183,28 @@ def _sync_backup_scheduler_task(settings: dict) -> None:
     enabled = settings.get("enabled", False) and bool(settings.get("backup_path"))
 
     if existing:
-        changed = False
-        if existing.enabled != enabled:
-            existing.enabled = enabled
-            changed = True
+        updates: dict = {}
         cron = settings.get("cron", "0 2 * * *")
         if existing.trigger_config.get("cron") != cron:
-            existing.trigger_config = {"cron": cron}
-            existing.trigger_type = _get_cron_trigger_type()
-            from openakita.scheduler.triggers import Trigger
-            new_trigger = Trigger.from_config("cron", {"cron": cron})
-            scheduler._triggers[task_id] = new_trigger
-            existing.next_run = new_trigger.get_next_run_time()
-            changed = True
-        if changed:
-            scheduler._save_tasks()
-            logger.info(f"[Workspace IO] Updated backup task: enabled={enabled}")
+            updates["trigger_config"] = {"cron": cron}
+            updates["trigger_type"] = _get_cron_trigger_type()
+
+        async def _apply():
+            if updates:
+                await scheduler.update_task(task_id, updates)
+            if existing.enabled != enabled:
+                if enabled:
+                    await scheduler.enable_task(task_id)
+                else:
+                    await scheduler.disable_task(task_id)
+            if updates or existing.enabled != enabled:
+                logger.info(f"[Workspace IO] Updated backup task: enabled={enabled}")
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_apply())
+        except RuntimeError:
+            asyncio.run(_apply())
     elif enabled:
         _register_backup_task(scheduler, settings)
 
@@ -220,10 +227,10 @@ def _register_backup_task(scheduler: object, settings: dict) -> None:
         deletable=False,
     )
     import asyncio
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
+    try:
+        loop = asyncio.get_running_loop()
         loop.create_task(scheduler.add_task(task))
-    else:
+    except RuntimeError:
         asyncio.run(scheduler.add_task(task))
     logger.info("[Workspace IO] Registered backup scheduler task")
 

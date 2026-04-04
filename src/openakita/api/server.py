@@ -312,6 +312,13 @@ def create_app(
         pm = getattr(agent, "_plugin_manager", None)
         if pm is not None:
             pm._host_refs["api_app"] = app
+            pending = pm._host_refs.pop("_pending_plugin_routers", [])
+            for plugin_id, router in pending:
+                try:
+                    app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
+                    logger.info("Mounted pending plugin routes for '%s'", plugin_id)
+                except Exception as e:
+                    logger.warning("Failed to mount pending routes for plugin '%s': %s", plugin_id, e)
 
     # Initialize OrgManager & OrgRuntime
     from openakita.orgs.manager import OrgManager
@@ -434,6 +441,49 @@ def create_app(
                 await to_engine(app.state.org_runtime.start())
             except Exception as e:
                 logger.warning(f"OrgRuntime startup error (non-fatal): {e}")
+
+        # Endpoint health check: detect stale/broken endpoints early
+        try:
+            _agent = getattr(app.state, "agent", None)
+            _brain = getattr(_agent, "brain", None) if _agent else None
+            _llm_client = getattr(_brain, "_llm_client", None) if _brain else None
+            if _llm_client and hasattr(_llm_client, "startup_health_check"):
+                _results = await _llm_client.startup_health_check()
+                _ok = sum(1 for v in _results.values() if v == "ok")
+                _fail = len(_results) - _ok
+                if _fail:
+                    logger.warning(
+                        f"[Startup] Endpoint health check: {_ok} ok, {_fail} failed — "
+                        f"{', '.join(f'{k}={v}' for k, v in _results.items() if v != 'ok')}"
+                    )
+                else:
+                    logger.info(f"[Startup] All {_ok} endpoints healthy")
+        except Exception as e:
+            logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+
+        # Compiler endpoint health check
+        try:
+            _agent = getattr(app.state, "agent", None)
+            _brain = getattr(_agent, "brain", None) if _agent else None
+            _compiler_client = getattr(_brain, "_compiler_client", None) if _brain else None
+            if _compiler_client and hasattr(_compiler_client, "startup_health_check"):
+                comp_result = await _compiler_client.startup_health_check()
+                comp_failed = {k: v for k, v in comp_result.items() if v != "ok"}
+                if comp_failed:
+                    for ep_name, status in comp_failed.items():
+                        _brain._compiler_on_failure(f"startup: {ep_name}={status}")
+                    logger.warning(
+                        f"[Startup] Compiler health check failed: "
+                        f"{', '.join(f'{k}={v}' for k, v in comp_failed.items())}. "
+                        f"Compiler tasks will use main model."
+                    )
+                else:
+                    logger.info(
+                        f"[Startup] Compiler endpoints all healthy: "
+                        f"{list(comp_result.keys())}"
+                    )
+        except Exception as e:
+            logger.debug(f"[Startup] Compiler health check skipped: {e}")
 
     @app.on_event("shutdown")
     async def _shutdown_org_runtime():

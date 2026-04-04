@@ -157,13 +157,19 @@ class ContextManager:
         elif isinstance(content, list):
             for item in content:
                 if isinstance(item, dict):
-                    text = item.get("text", "") or item.get("content", "")
-                    if isinstance(text, str) and text:
-                        tokens += self.estimate_tokens(text)
+                    block_type = item.get("type", "")
+                    if block_type in ("image", "image_url"):
+                        tokens += self._IMAGE_TOKEN_ESTIMATE
+                    elif block_type in ("video", "video_url"):
+                        tokens += self._VIDEO_TOKEN_ESTIMATE
                     else:
-                        tokens += self.estimate_tokens(
-                            json.dumps(item, ensure_ascii=False, default=str)
-                        )
+                        text = item.get("text", "") or item.get("content", "")
+                        if isinstance(text, str) and text:
+                            tokens += self.estimate_tokens(text)
+                        else:
+                            tokens += self.estimate_tokens(
+                                json.dumps(item, ensure_ascii=False, default=str)
+                            )
                 elif isinstance(item, str):
                     tokens += self.estimate_tokens(item)
         tokens += 10  # 每条消息的结构开销
@@ -232,6 +238,56 @@ class ContextManager:
 
         return groups
 
+    def pre_request_cleanup(self, messages: list[dict]) -> list[dict]:
+        """请求前轻量清理 (microcompact)。
+
+        零 LLM 调用成本: 过期工具结果清空、大结果预览、旧 thinking 移除。
+        在 compress_if_needed 之前调用。
+        """
+        from .microcompact import microcompact
+        return microcompact(messages)
+
+    def snip_old_segments(self, messages: list[dict]) -> tuple[list[dict], int]:
+        """直接丢弃最早的对话段 (History Snip)。
+
+        零 LLM 调用成本，适用于超长对话。
+        """
+        from .microcompact import snip_old_segments
+        return snip_old_segments(messages)
+
+    async def reactive_compact(
+        self,
+        messages: list[dict],
+        *,
+        system_prompt: str = "",
+        tools: list | None = None,
+        conversation_id: str | None = None,
+    ) -> list[dict]:
+        """API 返回 413/prompt-too-long 后的紧急压缩。
+
+        比 compress_if_needed 更激进: 先 snip 再压缩，确保能放进上下文窗口。
+        """
+        logger.warning("[ReactiveCompact] 413/overflow triggered, performing emergency compaction")
+
+        # Step 1: History snip (zero cost)
+        messages, snipped = self.snip_old_segments(messages)
+        if snipped > 0:
+            logger.info(f"[ReactiveCompact] Snipped {snipped} messages")
+
+        # Step 2: Microcompact
+        messages = self.pre_request_cleanup(messages)
+
+        # Step 3: If still too large, run full compress with tighter budget
+        max_tokens = self.get_max_context_tokens(conversation_id=conversation_id)
+        tighter_budget = int(max_tokens * 0.7)  # 30% more aggressive
+        return await self.compress_if_needed(
+            messages,
+            system_prompt=system_prompt,
+            tools=tools,
+            max_tokens=tighter_budget,
+            conversation_id=conversation_id,
+        )
+
     async def compress_if_needed(
         self,
         messages: list[dict],
@@ -243,7 +299,12 @@ class ContextManager:
         conversation_id: str | None = None,
     ) -> list[dict]:
         """
-        如果上下文接近限制，执行压缩。
+        如果上下文接近限制，执行压缩 (autocompact)。
+
+        三层压缩策略:
+        - Layer 0 (microcompact): 调用方在请求前手动调用 pre_request_cleanup()
+        - Layer 1 (autocompact): 本方法 — 阈值触发的 LLM 摘要压缩
+        - Layer 2 (reactive): API 返回 413 时调用 reactive_compact()
 
         策略:
         0. 压缩前: 快速规则提取 + 通知 MemoryManager
@@ -928,7 +989,9 @@ class ContextManager:
             rewrite_parts.append(f"原始任务: {preview}")
 
         if plan_section:
-            rewrite_parts.append(f"\n当前计划状态:\n{plan_section}")
+            # 截断保护：Plan 状态过长时只保留前 2000 字符，避免二次压缩时被丢弃
+            _ps = plan_section if len(plan_section) <= 2000 else plan_section[:2000] + "\n... (计划状态已截断)"
+            rewrite_parts.append(f"\n当前计划状态:\n{_ps}")
 
         if completed_tools:
             unique_tools = list(dict.fromkeys(completed_tools))
@@ -1017,6 +1080,8 @@ class ContextManager:
         if dropped_messages:
             logger.warning(f"[HardTruncate] Dropped {len(dropped_messages)} earliest messages")
 
+        truncated = self._sanitize_tool_pairs(truncated, dropped_messages)
+
         if dropped_messages and memory_manager is not None:
             self._enqueue_dropped_for_extraction(dropped_messages, memory_manager)
 
@@ -1055,6 +1120,72 @@ class ContextManager:
             f"(hard_limit={hard_limit}, messages={len(truncated)})"
         )
         return self._strip_oversized_payload(truncated, overhead_bytes=overhead_bytes)
+
+    @staticmethod
+    def _sanitize_tool_pairs(
+        messages: list[dict], dropped: list[dict] | None = None,
+    ) -> list[dict]:
+        """Remove unpaired tool_calls / tool-result messages to prevent API 400.
+
+        After hard truncation drops messages from the front, orphaned ``tool``
+        role messages (whose ``assistant(tool_calls)`` was removed) or orphaned
+        ``assistant(tool_calls)`` messages (whose ``tool`` results are missing)
+        will cause the LLM API to reject the request.
+        """
+        if not messages:
+            return messages
+
+        answered_ids: set[str] = set()
+        declared_ids: set[str] = set()
+
+        for msg in messages:
+            if msg.get("role") == "tool" and msg.get("tool_call_id"):
+                answered_ids.add(msg["tool_call_id"])
+            elif msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    if tc.get("id"):
+                        declared_ids.add(tc["id"])
+
+        result: list[dict] = []
+        skip_ids: set[str] = set()
+
+        for msg in messages:
+            role = msg.get("role", "")
+
+            if role == "assistant" and msg.get("tool_calls"):
+                tc_ids = [
+                    tc.get("id", "") for tc in msg["tool_calls"] if tc.get("id")
+                ]
+                missing = [tid for tid in tc_ids if tid not in answered_ids]
+                if missing:
+                    skip_ids.update(tc_ids)
+                    if dropped is not None:
+                        dropped.append(msg)
+                    logger.warning(
+                        f"[HardTruncate] Stripped assistant(tool_calls) with "
+                        f"{len(missing)} missing results"
+                    )
+                    continue
+                result.append(msg)
+            elif role == "tool":
+                tc_id = msg.get("tool_call_id", "")
+                if tc_id in skip_ids:
+                    if dropped is not None:
+                        dropped.append(msg)
+                    continue
+                if tc_id and tc_id not in declared_ids:
+                    if dropped is not None:
+                        dropped.append(msg)
+                    logger.warning(
+                        "[HardTruncate] Dropped orphaned tool message "
+                        f"(no assistant declares tool_call_id={tc_id[:20]})"
+                    )
+                    continue
+                result.append(msg)
+            else:
+                result.append(msg)
+
+        return result or [{"role": "user", "content": "（对话上下文不可用）"}]
 
     def _strip_oversized_payload(
         self, messages: list[dict], *, overhead_bytes: int = 0,

@@ -222,6 +222,11 @@ class FilesystemHandler:
         block_timeout_ms = params.get("block_timeout_ms")
         if block_timeout_ms is None:
             timeout_s = params.get("timeout", 60)
+            # 确保 timeout_s 是整数类型（防止外部传入字符串导致 TypeError）
+            try:
+                timeout_s = int(timeout_s)
+            except (ValueError, TypeError):
+                timeout_s = 60
             timeout_s = max(10, min(timeout_s, 600))
             block_timeout_ms = timeout_s * 1000
 
@@ -329,9 +334,23 @@ class FilesystemHandler:
         )
         return truncated
 
+    @staticmethod
+    def _check_unc(path: str | None) -> str | None:
+        """Block UNC paths to prevent NTLM credential leaks."""
+        if path and path.startswith("\\\\"):
+            return (
+                f"Blocked: UNC path detected ({path}). "
+                "UNC paths can trigger automatic NTLM authentication and leak "
+                "credentials. Use a local path or mapped drive letter instead."
+            )
+        return None
+
     async def _write_file(self, params: dict) -> str:
         """写入文件"""
         path = params.get("path")
+        unc_err = self._check_unc(path)
+        if unc_err:
+            return f"❌ {unc_err}"
         content = params.get("content")
         if not path:
             content_len = len(str(content)) if content else 0
@@ -378,6 +397,9 @@ class FilesystemHandler:
         path = params.get("path", "")
         if not path:
             return "❌ read_file 缺少必要参数 'path'。"
+        unc_err = self._check_unc(path)
+        if unc_err:
+            return f"❌ {unc_err}"
 
         policy = self._get_fix_policy()
         if policy:

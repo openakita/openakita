@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from ..utils.atomic_io import safe_write
+
 if TYPE_CHECKING:
     from ..core.brain import Brain
 
@@ -55,13 +57,14 @@ def _read_i18n_from_yaml(skill_dir: Path) -> dict[str, dict[str, str]]:
         if not isinstance(i18n, dict):
             return {}
         result: dict[str, dict[str, str]] = {}
+        _KNOWN_FIELDS = ("name", "description", "when_to_use", "argument_hint", "keywords")
         for lang, fields in i18n.items():
             if isinstance(fields, dict):
                 entry: dict[str, str] = {}
-                if "name" in fields:
-                    entry["name"] = str(fields["name"])
-                if "description" in fields:
-                    entry["description"] = str(fields["description"])
+                for fkey in _KNOWN_FIELDS:
+                    if fkey in fields:
+                        val = fields[fkey]
+                        entry[fkey] = str(val) if not isinstance(val, list) else ",".join(str(v) for v in val)
                 if entry:
                     result[lang] = entry
         return result
@@ -88,21 +91,27 @@ def write_i18n(skill_dir: Path, data: dict[str, dict[str, str]]) -> None:
     """将 i18n 数据写入 agents/openai.yaml。
 
     如果 agents/openai.yaml 已存在，合并 i18n 字段；否则创建新文件。
+    YAML 解析失败时中止写入以防止数据丢失。
     """
     yaml_file = skill_dir / OPENAI_YAML_PATH
     existing: dict = {}
     if yaml_file.exists():
         try:
             existing = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
-        except Exception:
-            existing = {}
+        except Exception as e:
+            logger.error(
+                "Cannot parse existing %s — aborting write_i18n to prevent data loss: %s",
+                yaml_file, e,
+            )
+            return
 
     existing["i18n"] = data
 
     yaml_file.parent.mkdir(parents=True, exist_ok=True)
-    yaml_file.write_text(
+    safe_write(
+        yaml_file,
         yaml.dump(existing, allow_unicode=True, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
+        backup=True,
     )
 
 
@@ -132,6 +141,10 @@ async def auto_translate_skill(
     name: str,
     description: str,
     brain: "Brain",
+    *,
+    when_to_use: str = "",
+    keywords: list[str] | None = None,
+    argument_hint: str = "",
 ) -> bool:
     """安装后自动翻译技能名和描述，写入 agents/openai.yaml 的 i18n 字段。
 
@@ -142,6 +155,9 @@ async def auto_translate_skill(
         name: 技能英文名 (如 "code-reviewer")
         description: 技能英文描述
         brain: Brain 实例，用于调用 LLM
+        when_to_use: 使用场景描述（可选）
+        keywords: 关键词列表（可选）
+        argument_hint: 参数提示（可选）
 
     Returns:
         True 表示成功写入翻译，False 表示跳过或失败
@@ -149,11 +165,26 @@ async def auto_translate_skill(
     if read_i18n(skill_dir):
         return False
 
+    payload: dict = {"name": name, "description": description}
+    if when_to_use:
+        payload["when_to_use"] = when_to_use
+    if keywords:
+        payload["keywords"] = ",".join(keywords)
+    if argument_hint:
+        payload["argument_hint"] = argument_hint
+
+    safe_payload = json.dumps(payload, ensure_ascii=False)
+
+    extra_fields_note = ""
+    if when_to_use or keywords or argument_hint:
+        extra_fields_note = "如果包含 when_to_use/keywords/argument_hint 字段也一并翻译。\n"
+
     prompt = (
         "将以下 AI 技能的名称和描述翻译为简体中文。\n"
         "名称应简短精炼（2-6个汉字），描述应通顺自然。\n"
+        f"{extra_fields_note}"
         "仅返回纯 JSON，不要 markdown 包裹：\n"
-        f'{{"name": "{name}", "description": "{description}"}}'
+        f"{safe_payload}"
     )
 
     try:
@@ -163,13 +194,18 @@ async def auto_translate_skill(
             logger.warning(f"LLM translation returned unexpected format for {name}")
             return False
 
-        i18n_data = {
-            "zh": {
-                "name": str(parsed["name"]),
-                "description": str(parsed["description"]),
-            }
+        zh_entry: dict[str, str] = {
+            "name": str(parsed["name"]),
+            "description": str(parsed["description"]),
         }
-        write_i18n(skill_dir, i18n_data)
+        if "when_to_use" in parsed:
+            zh_entry["when_to_use"] = str(parsed["when_to_use"])
+        if "keywords" in parsed:
+            zh_entry["keywords"] = str(parsed["keywords"])
+        if "argument_hint" in parsed:
+            zh_entry["argument_hint"] = str(parsed["argument_hint"])
+
+        write_i18n(skill_dir, {"zh": zh_entry})
         logger.info(f"Auto-translated skill {name} -> {parsed['name']}")
         return True
 

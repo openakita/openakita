@@ -273,12 +273,27 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
     ? await authFetch(url, effectiveInit, apiBase)
     : await fetch(url, effectiveInit);
   if (!res.ok) {
-    let detail = res.statusText;
+    let userMessage = res.statusText;
     try {
       const body = await res.text();
-      if (body) detail = body.slice(0, 200);
+      if (body) {
+        try {
+          const parsed = JSON.parse(body);
+          const errObj = parsed?.detail?.error ?? parsed?.detail;
+          if (typeof errObj === "object" && errObj?.message) {
+            userMessage = errObj.message;
+            if (errObj.guidance) userMessage += `\n${errObj.guidance}`;
+          } else if (typeof parsed?.detail === "string") {
+            userMessage = parsed.detail;
+          } else {
+            userMessage = body.slice(0, 200);
+          }
+        } catch {
+          userMessage = body.slice(0, 200);
+        }
+      }
     } catch { /* ignore */ }
-    throw new Error(`HTTP ${res.status}: ${detail}`);
+    throw new Error(userMessage);
   }
   return res;
 }

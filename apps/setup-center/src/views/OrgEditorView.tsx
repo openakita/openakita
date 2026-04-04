@@ -5,6 +5,7 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
+  type ComponentType,
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -58,6 +59,7 @@ import {
 import { safeFetch } from "../providers";
 import { openPopupWindow, canOpenPopupWindow, IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile } from "../platform";
 import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
+import { PanelShell } from "../components/PanelShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { OrgAvatar, AVATAR_PRESETS, AVATAR_MAP } from "../components/OrgAvatars";
 import { OrgChatPanel } from "../components/OrgChatPanel";
@@ -919,6 +921,34 @@ const nodeTypes: NodeTypes = {
   orgNode: OrgNodeComponent as any,
 };
 
+// ── Lazy markdown rendering (mirrors OrgChatPanel) ──
+
+type MdMods = {
+  ReactMarkdown: ComponentType<{ children: string; remarkPlugins?: any[]; rehypePlugins?: any[] }>;
+  remarkGfm: any;
+  rehypeHighlight: any;
+};
+let _md: MdMods | null = null;
+let _mdTried = false;
+function useMd(): MdMods | null {
+  const [m, setM] = useState<MdMods | null>(() => _md);
+  useEffect(() => {
+    if (_md) { setM(_md); return; }
+    if (_mdTried) return;
+    _mdTried = true;
+    try { new RegExp("\\p{ID_Start}", "u"); new RegExp("(?<=a)b"); } catch { return; }
+    Promise.all([
+      import("react-markdown"),
+      import("remark-gfm"),
+      import("rehype-highlight"),
+    ]).then(([md, gfm, hl]) => {
+      _md = { ReactMarkdown: md.default, remarkGfm: gfm.default, rehypeHighlight: hl.default };
+      setM(_md);
+    }).catch(() => {});
+  }, []);
+  return m;
+}
+
 // ── Main Component ──
 
 export function OrgEditorView({
@@ -929,6 +959,7 @@ export function OrgEditorView({
   visible?: boolean;
 }) {
   useTranslation();
+  const md = useMd();
 
   // State
   const [orgList, setOrgList] = useState<OrgSummary[]>([]);
@@ -939,17 +970,20 @@ export function OrgEditorView({
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef<string>("");
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const doSaveRef = useRef<(quiet?: boolean) => Promise<boolean>>(async () => false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewNodeForm, setShowNewNodeForm] = useState(false);
   const [propsTab, setPropsTab] = useState<"overview" | "identity" | "capabilities" | "tasks">("overview");
   const [fullPromptPreview, setFullPromptPreview] = useState<string | null>(null);
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
-  const [liveMode, setLiveMode] = useState(true);
+  const liveMode = currentOrg?.status === "active" || currentOrg?.status === "running";
   const [layoutLocked, setLayoutLocked] = useState(false);
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({});
-  const [inboxOpen, setInboxOpen] = useState(false);
+  type RightPanelMode = "none" | "org" | "node" | "edge" | "inbox" | "command";
+  const [rightPanel, setRightPanel] = useState<RightPanelMode>("none");
   const [nodeEvents, setNodeEvents] = useState<any[]>([]);
   const [nodeSchedules, setNodeSchedules] = useState<any[]>([]);
   const [nodeMessages, setNodeMessages] = useState<any[]>([]);
@@ -971,7 +1005,6 @@ export function OrgEditorView({
   type ActivityEvent = { id: string; time: number; event: string; data: any };
   const [activityFeed, setActivityFeed] = useState<ActivityEvent[]>([]);
   const [viewMode, setViewMode] = useState<"canvas" | "projects" | "dashboard">("canvas");
-  const [chatPanelOpen, setChatPanelOpen] = useState(false);
   const [chatPanelNode, setChatPanelNode] = useState<string | null>(null);
   const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -1025,7 +1058,7 @@ export function OrgEditorView({
   const [newNodeDept, setNewNodeDept] = useState("");
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768 || IS_CAPACITOR);
   const [showLeftPanel, setShowLeftPanel] = useState(() => !(window.innerWidth < 768 || IS_CAPACITOR));
-  const [showRightPanel, setShowRightPanel] = useState(false);
+  // rightPanel state (declared above) replaces showRightPanel / inboxOpen / chatPanelOpen
   const wasRunningRef = useRef(false);
 
   useLayoutEffect(() => {
@@ -1088,8 +1121,9 @@ export function OrgEditorView({
       setNodes(hasOverlap ? computeTreeLayout(flowNodes, flowEdges) : flowNodes);
       setEdges(flowEdges);
       setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setRightPanel("none");
       const running = data.status === "active" || data.status === "running";
-      setLiveMode(running);
       setLayoutLocked(running);
     } catch (e) {
       console.error("Failed to fetch org:", e);
@@ -1307,7 +1341,6 @@ export function OrgEditorView({
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/start`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "active" });
-      setLiveMode(true);
       setLayoutLocked(true);
       const mode = (currentOrg as any).operation_mode || "command";
       showToast(
@@ -1324,7 +1357,6 @@ export function OrgEditorView({
     try {
       await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/stop`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "dormant" });
-      setLiveMode(false);
       setLayoutLocked(false);
     } catch (e) { console.error("Failed to stop org:", e); }
   }, [currentOrg, apiBaseUrl]);
@@ -1391,7 +1423,6 @@ export function OrgEditorView({
       const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/reset`, { method: "POST" });
       const data = await res.json();
       setCurrentOrg(data);
-      setLiveMode(false);
       setLayoutLocked(false);
       setActivityFeed([]);
       setBbEntries([]);
@@ -1444,6 +1475,7 @@ export function OrgEditorView({
     const snapshot = JSON.stringify(payload);
     if (snapshot === lastSavedRef.current) return true;
     setSaving(true);
+    setSaveStatus("saving");
     try {
       const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}`, {
         method: "PUT",
@@ -1454,10 +1486,12 @@ export function OrgEditorView({
       lastSavedRef.current = snapshot;
       if (!quiet) showToast("保存成功", "ok");
       fetchOrgList();
+      setSaveStatus("saved");
       return true;
     } catch (e: any) {
       console.error("Failed to save org:", e);
       if (!quiet) showToast(e.message || "保存失败", "error");
+      setSaveStatus("error");
       return false;
     } finally {
       setSaving(false);
@@ -1466,10 +1500,18 @@ export function OrgEditorView({
 
   const handleSave = useCallback(() => doSave(false), [doSave]);
 
+  doSaveRef.current = doSave;
+
   const autoSave = useCallback(() => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => doSave(true), 300);
-  }, [doSave]);
+    autoSaveTimerRef.current = setTimeout(() => doSaveRef.current(true), 300);
+  }, []);
+
+  useEffect(() => {
+    if (saveStatus !== "saved") return;
+    const t = setTimeout(() => setSaveStatus("idle"), 2000);
+    return () => clearTimeout(t);
+  }, [saveStatus]);
 
   useEffect(() => {
     if (!currentOrg) return;
@@ -1478,6 +1520,33 @@ export function OrgEditorView({
     const snap = JSON.stringify(payload);
     if (!lastSavedRef.current) lastSavedRef.current = snap;
   }, [currentOrg, buildSavePayload]);
+
+  // ── Global ESC handler for all panels ──
+  const rightPanelRef = useRef(rightPanel);
+  rightPanelRef.current = rightPanel;
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+  const showLeftPanelRef = useRef(showLeftPanel);
+  showLeftPanelRef.current = showLeftPanel;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const rp = rightPanelRef.current;
+      if (rp !== "none") {
+        if (rp === "node" || rp === "edge") autoSave();
+        if (rp === "node") setSelectedNodeId(null);
+        if (rp === "edge") setSelectedEdgeId(null);
+        setRightPanel("none");
+        return;
+      }
+      if (isMobileRef.current && showLeftPanelRef.current) {
+        setShowLeftPanel(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [autoSave]);
 
   // ── Create org ──
 
@@ -1522,6 +1591,7 @@ export function OrgEditorView({
         setCurrentOrg(null);
         setNodes([]);
         setEdges([]);
+        setRightPanel("none");
       }
       fetchOrgList();
     } catch (e) {
@@ -1581,6 +1651,7 @@ export function OrgEditorView({
     setNodes((prev) => prev.filter((n) => n.id !== selectedNodeId));
     setEdges((prev) => prev.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId));
     setSelectedNodeId(null);
+    setRightPanel("none");
   }, [selectedNodeId, setNodes, setEdges]);
 
   // ── Edge connection ──
@@ -1607,8 +1678,9 @@ export function OrgEditorView({
         },
       };
       setEdges((prev) => addEdge(newEdge, prev));
+      autoSave();
     },
-    [setEdges],
+    [setEdges, autoSave],
   );
 
   // ── Node click ──
@@ -1619,22 +1691,25 @@ export function OrgEditorView({
     setSelectedEdgeId(null);
     setPropsTab("overview");
     setFullPromptPreview(null);
-    setShowRightPanel(true);
+    setRightPanel("node");
   }, [liveMode, selectedNodeId, autoSave]);
 
   const onEdgeClick = useCallback((_: any, edge: Edge) => {
     if (selectedNodeId || selectedEdgeId) autoSave();
     setSelectedEdgeId(edge.id);
     setSelectedNodeId(null);
-    setShowRightPanel(true);
+    setRightPanel("edge");
   }, [selectedNodeId, selectedEdgeId, autoSave]);
 
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setContextMenu(null);
-    autoSave();
-  }, [autoSave]);
+    if (rightPanel === "node" || rightPanel === "edge") {
+      autoSave();
+      setRightPanel("none");
+    }
+  }, [rightPanel, autoSave]);
 
   const onNodeDragStop = useCallback(() => {
     autoSave();
@@ -1807,6 +1882,7 @@ export function OrgEditorView({
     if (!selectedEdgeId) return;
     setEdges((prev) => prev.filter((e) => e.id !== selectedEdgeId));
     setSelectedEdgeId(null);
+    setRightPanel("none");
   }, [selectedEdgeId, setEdges]);
 
   const ctxCopyNode = useCallback((nodeId: string) => {
@@ -1818,13 +1894,19 @@ export function OrgEditorView({
   const ctxDeleteNode = useCallback((nodeId: string) => {
     setNodes((prev) => prev.filter((n) => n.id !== nodeId));
     setEdges((prev) => prev.filter((e) => e.source !== nodeId && e.target !== nodeId));
-    if (selectedNodeId === nodeId) setSelectedNodeId(null);
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+      setRightPanel("none");
+    }
     setContextMenu(null);
   }, [selectedNodeId, setNodes, setEdges]);
 
   const ctxDeleteEdge = useCallback((edgeId: string) => {
     setEdges((prev) => prev.filter((e) => e.id !== edgeId));
-    if (selectedEdgeId === edgeId) setSelectedEdgeId(null);
+    if (selectedEdgeId === edgeId) {
+      setSelectedEdgeId(null);
+      setRightPanel("none");
+    }
     setContextMenu(null);
   }, [selectedEdgeId, setEdges]);
 
@@ -1835,6 +1917,22 @@ export function OrgEditorView({
     }));
     setContextMenu(null);
   }, [setEdges]);
+
+  const ctxUnfreezeNode = useCallback(async (nodeId: string) => {
+    setContextMenu(null);
+    if (!selectedOrgId) return;
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${selectedOrgId}/nodes/${nodeId}/unfreeze`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      setNodes((prev) => prev.map((n) => {
+        if (n.id !== nodeId) return n;
+        return { ...n, data: { ...n.data, status: "idle", frozen_by: null, frozen_reason: null, frozen_at: null } };
+      }));
+      showToast("节点已解除冻结");
+    } catch (e) {
+      showToast(`解除冻结失败: ${e}`, "error");
+    }
+  }, [selectedOrgId, apiBaseUrl, setNodes, showToast]);
 
   const ctxPasteNode = useCallback(() => {
     if (!clipboardNode) return;
@@ -1907,6 +2005,11 @@ export function OrgEditorView({
             >
               {currentOrg.status}
             </span>
+            {saveStatus !== "idle" && (
+              <div className={`org-save-indicator org-save-indicator--${saveStatus}`}>
+                {saveStatus === "saving" ? "保存中..." : saveStatus === "saved" ? "已自动保存~" : <span onClick={() => doSaveRef.current()} style={{ cursor: "pointer" }}>保存失败 · 重试</span>}
+              </div>
+            )}
             {liveMode && orgStats && !isMobile && (
               <div className="org-topbar-stats">
                 <span className="org-health-dot" style={{
@@ -1951,17 +2054,13 @@ export function OrgEditorView({
                 <IconStop size={13} /> {!isMobile && "停止"}
               </button>
             )}
-            <button
+            <span
               className={`org-tb-btn${liveMode ? " org-tb-btn--active" : ""}`}
-              onClick={() => {
-                const next = !liveMode;
-                setLiveMode(next);
-                if (!next) setLayoutLocked(false);
-              }}
-              title="实时模式"
+              style={{ cursor: "default" }}
+              title={liveMode ? "实况模式（组织运行中自动开启）" : "实况模式（启动组织后自动开启）"}
             >
               <IconRadar size={13} /> {!isMobile && "实况"}
-            </button>
+            </span>
             <button
               className={`org-tb-btn${!layoutLocked ? " org-tb-btn--active" : ""}`}
               onClick={() => setLayoutLocked((v) => !v)}
@@ -1973,15 +2072,18 @@ export function OrgEditorView({
               <IconSave size={13} /> {saving ? "..." : (!isMobile && "保存")}
             </button>
             <button
-              className={`org-tb-btn${(showRightPanel && !selectedNode && !selectedEdge) ? " org-tb-btn--active" : ""}`}
-              onClick={() => { if (showRightPanel) autoSave(); setShowRightPanel(!showRightPanel); setSelectedNodeId(null); setSelectedEdgeId(null); }}
+              className={`org-tb-btn${rightPanel === "org" ? " org-tb-btn--active" : ""}`}
+              onClick={() => {
+                if (rightPanel === "node" || rightPanel === "edge") autoSave();
+                setRightPanel(rightPanel === "org" ? "none" : "org");
+              }}
               title="组织设置"
             >
               <IconLayoutGrid size={13} />
             </button>
             <button
-              className="org-tb-btn"
-              onClick={() => setInboxOpen(!inboxOpen)}
+              className={`org-tb-btn${rightPanel === "inbox" ? " org-tb-btn--active" : ""}`}
+              onClick={() => setRightPanel(rightPanel === "inbox" ? "none" : "inbox")}
               style={{ position: "relative" }}
             >
               <IconInbox size={13} />
@@ -2012,33 +2114,14 @@ export function OrgEditorView({
       {/* ── Content area: Left + Canvas + Right ── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
       {/* ── Left Panel: Org List ── */}
-      {isMobile && showLeftPanel && (
-        <div
-          onClick={() => setShowLeftPanel(false)}
-          style={{
-            position: "absolute", inset: 0, zIndex: 49,
-            background: "rgba(0,0,0,0.3)",
-          }}
-        />
-      )}
-      {showLeftPanel && (
-      <div
-        style={{
-          width: isMobile ? "80%" : 240,
-          maxWidth: isMobile ? 320 : 240,
-          borderRight: isMobile ? "none" : "1px solid var(--line)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          background: "var(--bg-app)",
-          flexShrink: 0,
-          position: isMobile ? "absolute" : "relative",
-          zIndex: isMobile ? 50 : "auto",
-          top: 0,
-          left: 0,
-          bottom: 0,
-          boxShadow: isMobile ? "4px 0 12px rgba(0,0,0,0.15)" : "none",
-        }}
+      <PanelShell
+        open={showLeftPanel}
+        onClose={() => setShowLeftPanel(false)}
+        width={240}
+        maxWidth={320}
+        side="left"
+        isMobile={isMobile}
+        style={{ overflow: "hidden" }}
       >
         <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>组织编排</span>
@@ -2108,7 +2191,7 @@ export function OrgEditorView({
           {orgList.map((org) => (
             <div
               key={org.id}
-              onClick={() => { if (selectedOrgId && selectedOrgId !== org.id) autoSave(); setSelectedOrgId(org.id); setShowLeftPanel(false); }}
+              onClick={async () => { if (selectedOrgId && selectedOrgId !== org.id) await doSave(true); setSelectedOrgId(org.id); setShowLeftPanel(false); }}
               className={`navItem ${selectedOrgId === org.id ? "navItemActive" : ""}`}
               style={{
                 padding: "8px 10px",
@@ -2161,8 +2244,7 @@ export function OrgEditorView({
             </div>
           ))}
         </div>
-      </div>
-      )}
+      </PanelShell>
 
       {/* ── Center: Canvas ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -2219,7 +2301,7 @@ export function OrgEditorView({
                   if (n) {
                     setSelectedNodeId(nodeId);
                     setSelectedEdgeId(null);
-                    setShowRightPanel(true);
+                    setRightPanel("node");
                     setPropsTab("overview");
                   }
                 }}
@@ -2327,8 +2409,13 @@ export function OrgEditorView({
               >
                 {contextMenu.type === "node" && contextMenu.id && (<>
                   {liveMode && selectedOrgId && (
-                    <button onClick={() => { setChatPanelNode(contextMenu.id); setChatPanelOpen(true); setContextMenu(null); }}>
+                    <button onClick={() => { setChatPanelNode(contextMenu.id); setRightPanel("command"); setContextMenu(null); }}>
                       <span className="org-ctx-icon">💬</span>与该节点对话
+                    </button>
+                  )}
+                  {liveMode && selectedOrgId && (nodes.find(n => n.id === contextMenu.id)?.data as any)?.status === "frozen" && (
+                    <button onClick={() => ctxUnfreezeNode(contextMenu.id!)}>
+                      <span className="org-ctx-icon">🔓</span>解除冻结
                     </button>
                   )}
                   <button onClick={() => ctxCopyNode(contextMenu.id!)}>
@@ -2396,7 +2483,7 @@ export function OrgEditorView({
                 <div className="org-live-feed">
                   {busyLines.map(b => (
                     <div key={b.key} className="org-feed-item org-feed-busy" onClick={() => {
-                      setSelectedNodeId(b.key); setSelectedEdgeId(null); setShowRightPanel(true); setPropsTab("tasks");
+                      setSelectedNodeId(b.key); setSelectedEdgeId(null); setRightPanel("node"); setPropsTab("tasks");
                     }}>
                       <span className="org-feed-dot" style={{ background: b.color, animation: "orgDotPulse 1.5s ease-in-out infinite" }} />
                       <span className="org-feed-who">{b.node}</span>
@@ -2441,9 +2528,9 @@ export function OrgEditorView({
           )}
 
           {/* ═══ Floating Chat FAB (always visible when org selected) ═══ */}
-          {selectedOrgId && !chatPanelOpen && (
+          {selectedOrgId && rightPanel !== "command" && (
             <button
-              onClick={() => { setChatPanelNode(null); setChatPanelOpen(true); }}
+              onClick={() => { setChatPanelNode(null); setRightPanel("command"); }}
               className="org-chat-fab"
               title="打开组织指挥台"
             >
@@ -2455,15 +2542,14 @@ export function OrgEditorView({
           )}
 
           {/* ═══ Slide-out Chat Panel ═══ */}
-          {/* Slide-out chat panel: always mounted when org is selected, toggled via display */}
           {selectedOrgId && (
             <>
               <div
                 className="org-chat-overlay"
-                onClick={() => setChatPanelOpen(false)}
-                style={{ display: chatPanelOpen ? undefined : "none" }}
+                onClick={() => setRightPanel("none")}
+                style={{ display: rightPanel === "command" ? undefined : "none" }}
               />
-              <div className="org-chat-slide" style={{ display: chatPanelOpen ? undefined : "none" }}>
+              <div className="org-chat-slide" style={{ display: rightPanel === "command" ? undefined : "none" }}>
                 <OrgChatPanel
                   orgId={selectedOrgId}
                   nodeId={chatPanelNode}
@@ -2472,7 +2558,7 @@ export function OrgEditorView({
                   title={chatPanelNode
                     ? `对话 · ${(nodes.find(n => n.id === chatPanelNode)?.data as any)?.role_title || chatPanelNode}`
                     : `${currentOrg?.name || "组织"} · 指挥台`}
-                  onClose={() => setChatPanelOpen(false)}
+                  onClose={() => setRightPanel("none")}
                 />
               </div>
             </>
@@ -2516,8 +2602,8 @@ export function OrgEditorView({
             .org-chat-slide {
               position: absolute; top: 0; right: 0; bottom: 0; z-index: 90;
               width: min(420px, 85%);
-              background: var(--bg-app, #0f172a);
-              border-left: 1px solid var(--line, rgba(51,65,85,0.5));
+              background: var(--bg-app);
+              border-left: 1px solid var(--line);
               box-shadow: -8px 0 30px rgba(0,0,0,0.3);
               animation: org-slide-in 0.3s cubic-bezier(0.4,0,0.2,1);
             }
@@ -2525,8 +2611,8 @@ export function OrgEditorView({
 
             .org-ctx-menu {
               min-width: 160px;
-              background: var(--card-bg, #1e293b);
-              border: 1px solid var(--line, rgba(51,65,85,0.6));
+              background: var(--card-bg);
+              border: 1px solid var(--line);
               border-radius: 10px;
               padding: 4px;
               box-shadow: 0 8px 30px rgba(0,0,0,0.35), 0 0 1px rgba(255,255,255,0.1);
@@ -2537,22 +2623,22 @@ export function OrgEditorView({
             .org-ctx-menu button {
               display: flex; align-items: center; gap: 8px; width: 100%;
               padding: 8px 12px; border: none; border-radius: 7px;
-              background: transparent; color: var(--text, #e2e8f0);
+              background: transparent; color: var(--text);
               font-size: 13px; cursor: pointer; text-align: left;
               transition: background 0.15s;
             }
-            .org-ctx-menu button:hover { background: var(--hover-bg, rgba(99,102,241,0.15)); }
+            .org-ctx-menu button:hover { background: var(--hover-bg); }
             .org-ctx-icon { width: 18px; text-align: center; flex-shrink: 0; font-size: 14px; }
 
             /* ── Top bar layout ── */
             .org-topbar {
               height: 44px;
-              border-bottom: 1px solid var(--line, rgba(51,65,85,0.5));
+              border-bottom: 1px solid var(--line);
               display: flex;
               align-items: center;
               justify-content: space-between;
               padding: 0 10px;
-              background: var(--bg-app, #0f172a);
+              background: var(--bg-app);
               flex-shrink: 0;
               gap: 8px;
             }
@@ -2564,7 +2650,7 @@ export function OrgEditorView({
               border: none; background: transparent;
               font-weight: 600; font-size: 14px;
               outline: none; width: 140px;
-              color: var(--text, #e2e8f0);
+              color: var(--text);
             }
             .org-topbar-status {
               font-size: 10px; padding: 2px 6px; border-radius: 4px;
@@ -2572,7 +2658,7 @@ export function OrgEditorView({
             }
             .org-topbar-stats {
               display: flex; gap: 5px; align-items: center;
-              font-size: 10px; color: var(--muted, #6b7280);
+              font-size: 10px; color: var(--muted);
               flex-shrink: 0;
             }
             .org-health-dot {
@@ -2591,14 +2677,14 @@ export function OrgEditorView({
               border: none; background: transparent;
               border-bottom: 2px solid transparent;
               margin-bottom: -1px;
-              color: var(--muted, #94a3b8); font-size: 13px; font-weight: 500;
+              color: var(--muted); font-size: 13px; font-weight: 500;
               cursor: pointer; white-space: nowrap;
               transition: color 0.15s, border-color 0.15s;
             }
-            .org-view-tab:hover { color: var(--text, #e2e8f0); }
+            .org-view-tab:hover { color: var(--text); }
             .org-view-tab--active {
-              color: var(--primary, #6366f1) !important; font-weight: 600;
-              border-bottom-color: var(--primary, #6366f1) !important;
+              color: var(--primary) !important; font-weight: 600;
+              border-bottom-color: var(--primary) !important;
             }
 
             /* ── Right actions ── */
@@ -2608,21 +2694,21 @@ export function OrgEditorView({
             .org-tb-btn {
               display: inline-flex; align-items: center; gap: 4px;
               height: 28px; padding: 0 8px; border-radius: 6px;
-              border: 1px solid var(--line, rgba(51,65,85,0.5));
+              border: 1px solid var(--line);
               background: transparent;
-              color: var(--text, #e2e8f0);
+              color: var(--text);
               font-size: 12px; cursor: pointer; white-space: nowrap;
               transition: background 0.15s, color 0.15s, border-color 0.15s;
               position: relative;
             }
             .org-tb-btn:hover {
-              background: var(--hover-bg, rgba(99,102,241,0.12));
+              background: var(--hover-bg);
               border-color: rgba(99,102,241,0.3);
             }
             .org-tb-btn:active { background: rgba(99,102,241,0.2); }
             .org-tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
             .org-tb-btn--active {
-              color: var(--primary, #6366f1); font-weight: 600;
+              color: var(--primary); font-weight: 600;
               background: rgba(99,102,241,0.12);
               border-color: rgba(99,102,241,0.35);
             }
@@ -2640,8 +2726,8 @@ export function OrgEditorView({
             /* ── Canvas toolbar (inside ReactFlow) ── */
             .org-canvas-toolbar {
               display: flex; align-items: center; gap: 4px;
-              background: var(--card-bg, rgba(30,41,59,0.9));
-              border: 1px solid var(--line, rgba(51,65,85,0.5));
+              background: var(--card-bg);
+              border: 1px solid var(--line);
               border-radius: 8px; padding: 3px 4px;
               box-shadow: 0 2px 8px rgba(0,0,0,0.2);
               backdrop-filter: blur(8px);
@@ -2650,7 +2736,7 @@ export function OrgEditorView({
               display: inline-flex; align-items: center; gap: 4px;
               height: 26px; padding: 0 10px; border-radius: 5px;
               border: none; background: transparent;
-              color: var(--text, #e2e8f0); font-size: 11px;
+              color: var(--text); font-size: 11px;
               cursor: pointer; white-space: nowrap;
               transition: background 0.15s;
             }
@@ -2660,7 +2746,7 @@ export function OrgEditorView({
 
             .org-tb-stats {
               display: flex; gap: 6px; align-items: center;
-              font-size: 10px; color: var(--muted, #6b7280);
+              font-size: 10px; color: var(--muted);
               padding: 0 4px;
             }
 
@@ -2668,19 +2754,19 @@ export function OrgEditorView({
             .org-live-feed {
               position: absolute; bottom: 0; left: 0; right: 0;
               z-index: 5; max-height: 140px; overflow-y: auto;
-              background: linear-gradient(to top, var(--bg-app, rgba(15,23,42,0.97)) 75%, transparent);
+              background: linear-gradient(to top, var(--bg-app) 75%, transparent);
               padding: 10px 14px 6px;
               scrollbar-width: thin;
             }
             .org-feed-item {
               display: flex; align-items: center; gap: 6px;
-              padding: 3px 0; font-size: 11px; color: var(--text, #cbd5e1);
+              padding: 3px 0; font-size: 11px; color: var(--text);
               line-height: 1.4; white-space: nowrap;
               border-bottom: 1px solid rgba(51,65,85,0.15);
             }
             .org-feed-item:last-child { border-bottom: none; }
             .org-feed-busy { cursor: pointer; }
-            .org-feed-busy:hover .org-feed-who { color: var(--primary, #6366f1); }
+            .org-feed-busy:hover .org-feed-who { color: var(--primary); }
             .org-feed-ok { }
             .org-feed-err .org-feed-label { color: #ef4444; }
             .org-feed-warn { color: #f59e0b; }
@@ -2688,23 +2774,23 @@ export function OrgEditorView({
               width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
             }
             .org-feed-time {
-              font-size: 10px; color: var(--muted, #64748b); font-family: monospace;
+              font-size: 10px; color: var(--muted); font-family: monospace;
               flex-shrink: 0; min-width: 36px;
             }
             .org-feed-icon { flex-shrink: 0; font-size: 12px; }
             .org-feed-who {
-              font-weight: 600; color: var(--text, #e2e8f0); flex-shrink: 0;
+              font-weight: 600; color: var(--text); flex-shrink: 0;
               max-width: 100px; overflow: hidden; text-overflow: ellipsis;
               transition: color 0.15s;
             }
-            .org-feed-arrow { color: var(--muted, #64748b); flex-shrink: 0; font-size: 10px; }
+            .org-feed-arrow { color: var(--muted); flex-shrink: 0; font-size: 10px; }
             .org-feed-label {
               font-size: 10px; padding: 1px 5px; border-radius: 3px;
-              background: rgba(99,102,241,0.12); color: var(--primary, #818cf8);
+              background: rgba(99,102,241,0.12); color: var(--primary);
               flex-shrink: 0;
             }
             .org-feed-text {
-              color: var(--muted, #94a3b8); font-size: 10px;
+              color: var(--muted); font-size: 10px;
               overflow: hidden; text-overflow: ellipsis; min-width: 0;
             }
             .org-feed-progress {
@@ -2732,8 +2818,8 @@ export function OrgEditorView({
               animation: org-overlay-in 0.15s ease;
             }
             .org-modal {
-              background: var(--bg-app, #0f172a);
-              border: 1px solid var(--line, rgba(51,65,85,0.6));
+              background: var(--bg-app);
+              border: 1px solid var(--line);
               border-radius: 12px;
               box-shadow: 0 12px 40px rgba(0,0,0,0.4);
               min-width: 300px; max-width: 90vw;
@@ -2742,44 +2828,93 @@ export function OrgEditorView({
             .org-modal-header {
               display: flex; justify-content: space-between; align-items: center;
               padding: 14px 16px 10px;
-              font-weight: 600; font-size: 14px; color: var(--text, #e2e8f0);
+              font-weight: 600; font-size: 14px; color: var(--text);
             }
             .org-modal-close {
-              background: none; border: none; color: var(--muted, #94a3b8);
+              background: none; border: none; color: var(--muted);
               cursor: pointer; padding: 4px; border-radius: 4px;
               transition: color 0.15s;
             }
-            .org-modal-close:hover { color: var(--text, #e2e8f0); }
+            .org-modal-close:hover { color: var(--text); }
             .org-modal-body { padding: 0 16px 12px; }
             .org-modal-label {
               display: block; font-size: 11px; font-weight: 500;
-              color: var(--muted, #94a3b8); margin-bottom: 4px;
+              color: var(--muted); margin-bottom: 4px;
             }
             .org-modal-footer {
               display: flex; justify-content: flex-end; gap: 8px;
               padding: 10px 16px 14px;
-              border-top: 1px solid var(--line, rgba(51,65,85,0.4));
+              border-top: 1px solid var(--line);
             }
             .org-modal-btn {
               height: 32px; padding: 0 16px; border-radius: 6px;
-              border: 1px solid var(--line, rgba(51,65,85,0.5));
-              background: transparent; color: var(--text, #e2e8f0);
+              border: 1px solid var(--line);
+              background: transparent; color: var(--text);
               font-size: 12px; cursor: pointer;
               transition: background 0.15s;
             }
             .org-modal-btn:hover { background: rgba(99,102,241,0.1); }
             .org-modal-btn--primary {
-              background: var(--primary, #6366f1); color: #fff;
-              border-color: var(--primary, #6366f1);
+              background: var(--primary); color: #fff;
+              border-color: var(--primary);
             }
             .org-modal-btn--primary:hover { background: #4f46e5; }
+
+            /* ── Blackboard markdown content ── */
+            .bb-entry-content { font-size: 11px; line-height: 1.5; }
+            .bb-entry-content p { margin: 0 0 4px; }
+            .bb-entry-content p:last-child { margin-bottom: 0; }
+            .bb-entry-content h1, .bb-entry-content h2, .bb-entry-content h3,
+            .bb-entry-content h4, .bb-entry-content h5, .bb-entry-content h6 {
+              margin: 4px 0 2px; font-weight: 600;
+            }
+            .bb-entry-content h1 { font-size: 14px; }
+            .bb-entry-content h2 { font-size: 13px; }
+            .bb-entry-content ul, .bb-entry-content ol {
+              margin: 2px 0; padding-left: 16px;
+            }
+            .bb-entry-content li { margin: 1px 0; }
+            .bb-entry-content li::marker { color: var(--muted); }
+            .bb-entry-content strong { font-weight: 600; }
+            .bb-entry-content em { font-style: italic; }
+            .bb-entry-content code {
+              font-size: 10px; padding: 1px 3px;
+              background: var(--hover-bg); border-radius: 2px;
+            }
+            .bb-entry-content pre {
+              margin: 4px 0; padding: 4px 6px;
+              background: var(--hover-bg); border-radius: 3px;
+              overflow-x: auto; font-size: 10px;
+            }
+            .bb-entry-content pre code { padding: 0; background: none; }
+            .bb-entry-content blockquote {
+              margin: 4px 0; padding-left: 8px;
+              border-left: 2px solid var(--line);
+              color: var(--muted);
+            }
+            .bb-entry-content table { border-collapse: collapse; margin: 4px 0; font-size: 11px; width: 100%; }
+            .bb-entry-content th, .bb-entry-content td {
+              padding: 2px 6px; border: 1px solid var(--line);
+            }
+            .bb-entry-content th { font-weight: 600; background: var(--hover-bg); }
+            .bb-entry-content hr { border: none; border-top: 1px solid var(--line); margin: 6px 0; }
+            .bb-entry-content a { color: var(--primary); text-decoration: underline; }
+
+            /* ── Auto-save status indicator ── */
+            .org-save-indicator {
+              font-size: 10px; padding: 2px 6px; border-radius: 4px;
+              transition: opacity 0.3s;
+            }
+            .org-save-indicator--saving { color: var(--muted); }
+            .org-save-indicator--saved { color: #22c55e; }
+            .org-save-indicator--error { color: #ef4444; }
           `}</style>
           </>
         ) : (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)" }}
             onClick={() => { if (isMobile) setShowLeftPanel(true); }}
           >
-            <div style={{ textAlign: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
               <IconUsers size={48} />
               <p style={{ marginTop: 12, fontSize: 14 }}>
                 {isMobile ? "点击打开组织列表" : "选择或创建一个组织开始编排"}
@@ -2790,32 +2925,14 @@ export function OrgEditorView({
       </div>
 
       {/* ── Right Panel: Node Properties ── */}
-      {isMobile && selectedNode && showRightPanel && (
-        <div
-          onClick={() => { autoSave(); setSelectedNodeId(null); }}
-          style={{
-            position: "absolute", inset: 0, zIndex: 49,
-            background: "rgba(0,0,0,0.3)",
-          }}
-        />
-      )}
-      {selectedNode && showRightPanel && (
-        <div
-          style={{
-            width: isMobile ? "85%" : 300,
-            maxWidth: isMobile ? 360 : 300,
-            borderLeft: isMobile ? "none" : "1px solid var(--line)",
-            overflowY: "auto",
-            background: "var(--bg-app)",
-            position: isMobile ? "absolute" : "relative",
-            right: 0,
-            top: 0,
-            bottom: 0,
-            zIndex: isMobile ? 50 : "auto",
-            boxShadow: isMobile ? "-4px 0 12px rgba(0,0,0,0.15)" : "none",
-            flexShrink: 0,
-          }}
-        >
+      <PanelShell
+        open={rightPanel === "node" && !!selectedNode}
+        onClose={() => { autoSave(); setSelectedNodeId(null); setRightPanel("none"); }}
+        width={300}
+        isMobile={isMobile}
+      >
+        {selectedNode && (
+        <>
           <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{selectedNode.role_title}</div>
@@ -2825,7 +2942,7 @@ export function OrgEditorView({
               {liveMode && selectedOrgId && (
                 <button
                   className="btnSmall"
-                  onClick={() => { setChatPanelNode(selectedNodeId); setChatPanelOpen(true); }}
+                  onClick={() => { setChatPanelNode(selectedNodeId); setRightPanel("command"); }}
                   style={{
                     minWidth: 36, minHeight: 36, fontSize: 12,
                     background: "linear-gradient(135deg, #3b82f6, #6366f1)",
@@ -2838,9 +2955,7 @@ export function OrgEditorView({
                   </svg>
                 </button>
               )}
-              {isMobile && (
-                <button className="btnSmall" onClick={() => { autoSave(); setSelectedNodeId(null); }} style={{ minWidth: 36, minHeight: 36 }}><IconX size={14} /></button>
-              )}
+              <button className="btnSmall" onClick={() => { autoSave(); setSelectedNodeId(null); setRightPanel("none"); }} style={{ minWidth: 36, minHeight: 36 }}><IconX size={14} /></button>
             </div>
           </div>
 
@@ -3296,12 +3411,18 @@ export function OrgEditorView({
                               {fmtTime(bb.timestamp)}
                             </span>
                           </div>
-                          <div style={{ fontSize: 10, color: "#374151", marginTop: 2, lineHeight: 1.4 }}>
-                            {bb.content}
+                          <div className="bb-entry-content" style={{ fontSize: 10, color: "#374151", marginTop: 2, lineHeight: 1.4 }}>
+                            {md ? (
+                              <md.ReactMarkdown remarkPlugins={[md.remarkGfm]} rehypePlugins={[md.rehypeHighlight]}>
+                                {bb.content}
+                              </md.ReactMarkdown>
+                            ) : (
+                              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{bb.content}</pre>
+                            )}
                           </div>
-                          {bb.tags?.length > 0 && (
+                          {Array.isArray(bb.tags) && bb.tags.length > 0 && (
                             <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
-                              {bb.tags.map((t: string) => (
+                              {Array.isArray(bb.tags) && bb.tags.map((t: string) => (
                                 <span key={t} style={{ fontSize: 8, padding: "0 3px", borderRadius: 2, background: "#f3f4f6", color: "#6b7280" }}>#{t}</span>
                               ))}
                             </div>
@@ -4153,29 +4274,22 @@ export function OrgEditorView({
               />
             )}
           </div>
-        </div>
-      )}
+        </>
+        )}
+      </PanelShell>
 
       {/* ── Right Panel: Edge Properties ── */}
-      {selectedEdge && !selectedNode && showRightPanel && (
-        <div
-          style={{
-            width: isMobile ? "85%" : 280,
-            maxWidth: isMobile ? 360 : 280,
-            borderLeft: isMobile ? "none" : "1px solid var(--line)",
-            overflowY: "auto",
-            background: "var(--bg-app)",
-            flexShrink: 0,
-            padding: 12,
-            position: isMobile ? "absolute" : "relative",
-            zIndex: isMobile ? 50 : "auto",
-            right: 0, top: 0, bottom: 0,
-            boxShadow: isMobile ? "-4px 0 12px rgba(0,0,0,0.15)" : "none",
-          }}
-        >
+      <PanelShell
+        open={rightPanel === "edge" && !!selectedEdge}
+        onClose={() => { autoSave(); setSelectedEdgeId(null); setRightPanel("none"); }}
+        width={280}
+        isMobile={isMobile}
+      >
+        {selectedEdge && (
+        <div style={{ padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontWeight: 600, fontSize: 13 }}>连线属性</div>
-            <button className="btnSmall" onClick={() => setSelectedEdgeId(null)} style={{ fontSize: 10 }}>
+            <button className="btnSmall" onClick={() => { autoSave(); setSelectedEdgeId(null); setRightPanel("none"); }} style={{ fontSize: 10 }}>
               <IconX size={12} />
             </button>
           </div>
@@ -4284,21 +4398,24 @@ export function OrgEditorView({
             </button>
           </div>
         </div>
-      )}
+        )}
+      </PanelShell>
 
-      {/* ── Right Panel: Org Settings (when no node/edge selected) ── */}
-      {currentOrg && !selectedNode && !selectedEdge && !isMobile && showRightPanel && (
-        <div
-          style={{
-            width: 300,
-            borderLeft: "1px solid var(--line)",
-            overflowY: "auto",
-            background: "var(--bg-app)",
-            flexShrink: 0,
-            padding: 12,
-          }}
-        >
-          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>组织设置</div>
+      {/* ── Right Panel: Org Settings ── */}
+      <PanelShell
+        open={rightPanel === "org" && !!currentOrg}
+        onClose={() => { autoSave(); setRightPanel("none"); }}
+        width={300}
+        isMobile={isMobile}
+      >
+        {currentOrg && (
+        <div style={{ padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>组织设置</div>
+            <button className="btnSmall" onClick={() => { autoSave(); setRightPanel("none"); }} style={{ fontSize: 10 }}>
+              <IconX size={12} />
+            </button>
+          </div>
 
           {/* ── 运行模式 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
@@ -4603,12 +4720,18 @@ export function OrgEditorView({
                           ×
                         </button>
                       </div>
-                      <div style={{ lineHeight: 1.5, wordBreak: "break-word" }}>
-                        {entry.content}
+                      <div className="bb-entry-content" style={{ lineHeight: 1.5, wordBreak: "break-word" }}>
+                        {md ? (
+                          <md.ReactMarkdown remarkPlugins={[md.remarkGfm]} rehypePlugins={[md.rehypeHighlight]}>
+                            {entry.content}
+                          </md.ReactMarkdown>
+                        ) : (
+                          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content}</pre>
+                        )}
                       </div>
-                      {entry.tags && entry.tags.length > 0 && (
+                      {Array.isArray(entry.tags) && entry.tags.length > 0 && (
                         <div style={{ marginTop: 3, display: "flex", gap: 3, flexWrap: "wrap" }}>
-                          {entry.tags.map((t: string) => (
+                          {Array.isArray(entry.tags) && entry.tags.map((t: string) => (
                             <span key={t} style={{
                               fontSize: 9, padding: "0 4px", borderRadius: 3,
                               background: "#f3f4f6", color: "#6b7280",
@@ -4627,17 +4750,25 @@ export function OrgEditorView({
             )}
           </div>
         </div>
-      )}
+        )}
+      </PanelShell>
 
       {/* Inbox Sidebar */}
-      {currentOrg && (
-        <OrgInboxSidebar
-          apiBaseUrl={apiBaseUrl}
-          orgId={currentOrg.id}
-          visible={inboxOpen}
-          onClose={() => setInboxOpen(false)}
-        />
-      )}
+      <PanelShell
+        open={rightPanel === "inbox" && !!currentOrg}
+        onClose={() => setRightPanel("none")}
+        width={380}
+        isMobile={isMobile}
+      >
+        {currentOrg && (
+          <OrgInboxSidebar
+            apiBaseUrl={apiBaseUrl}
+            orgId={currentOrg.id}
+            visible={true}
+            onClose={() => setRightPanel("none")}
+          />
+        )}
+      </PanelShell>
       </div>{/* close content area */}
 
       {/* Toast notification */}

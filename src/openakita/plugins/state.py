@@ -23,12 +23,16 @@ class PluginStateEntry:
     last_error_time: float = 0.0
 
 
+_SCHEMA_VERSION = 2
+
+
 @dataclass
 class PluginState:
     """Persistent plugin state, stored in data/plugin_state.json."""
 
+    schema_version: int = _SCHEMA_VERSION
     plugins: dict[str, PluginStateEntry] = field(default_factory=dict)
-    active_backends: dict[str, str] = field(default_factory=dict)
+    active_backends: dict[str, str] = field(default_factory=dict)  # reserved for future memory/search backend switching
 
     def get_entry(self, plugin_id: str) -> PluginStateEntry | None:
         return self.plugins.get(plugin_id)
@@ -76,6 +80,7 @@ class PluginState:
 
     def save(self, path: Path) -> None:
         data = {
+            "schema_version": _SCHEMA_VERSION,
             "plugins": {
                 pid: {
                     "enabled": e.enabled,
@@ -91,7 +96,9 @@ class PluginState:
             "active_backends": self.active_backends,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(path)
 
     @classmethod
     def load(cls, path: Path) -> PluginState:
@@ -104,7 +111,14 @@ class PluginState:
             return cls()
 
         state = cls()
-        for pid, pdata in data.get("plugins", {}).items():
+        file_version = data.get("schema_version", 1)
+        if file_version < _SCHEMA_VERSION:
+            logger.info("Migrating plugin_state.json from v%d to v%d", file_version, _SCHEMA_VERSION)
+        plugins_data = data.get("plugins", {})
+        if not isinstance(plugins_data, dict):
+            logger.warning("Corrupt plugin_state.json: 'plugins' is not a dict, starting fresh")
+            return cls()
+        for pid, pdata in plugins_data.items():
             state.plugins[pid] = PluginStateEntry(
                 plugin_id=pid,
                 enabled=pdata.get("enabled", True),

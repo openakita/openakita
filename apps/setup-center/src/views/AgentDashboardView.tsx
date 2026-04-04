@@ -1005,7 +1005,7 @@ export function AgentDashboardView({
           visCount++;
           const el = children[idx] as HTMLElement | undefined;
           if (el) {
-            el.style.transform = `translate(${n.x}px, ${n.y}px)`;
+            el.style.transform = `translate(${n.x}px, ${n.y + 24}px) translateX(-50%)`;
             el.style.opacity = String(n.opacity);
           }
           idx++;
@@ -1331,8 +1331,6 @@ function NeuralStyles() {
         background: rgba(15,15,25,0.7);
         border: 1px solid rgba(255,255,255,0.06);
         transform-origin: center center;
-        margin-left: -40px;
-        margin-top: 24px;
         transition: border-color 0.3s, box-shadow 0.3s;
         white-space: nowrap;
       }

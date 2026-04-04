@@ -1275,6 +1275,7 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
         )
 
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        _validate_zip_members(zf)
         tmp_extract = Path(tempfile.mkdtemp(prefix="openakita_zip_"))
         try:
             zf.extractall(tmp_extract)
@@ -1283,6 +1284,17 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
             shutil.copytree(str(src), str(dest_dir))
         finally:
             shutil.rmtree(str(tmp_extract), ignore_errors=True)
+
+
+def _validate_zip_members(zf: "zipfile.ZipFile") -> None:
+    """Reject ZIP archives containing path-traversal members (Zip Slip)."""
+    import os
+    for name in zf.namelist():
+        normalized = os.path.normpath(name)
+        if (name.startswith("/") or name.startswith("\\")
+                or normalized.startswith("..")
+                or os.path.isabs(normalized)):
+            raise RuntimeError(f"Zip Slip detected: dangerous member '{name}'")
 
 
 def _git_clone(args: list[str]) -> None:
@@ -1360,6 +1372,7 @@ def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None
         )
 
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        _validate_zip_members(zf)
         tmp_extract = Path(tempfile.mkdtemp(prefix="openakita_gitee_"))
         try:
             zf.extractall(tmp_extract)
@@ -1575,8 +1588,16 @@ def install_skill(workspace_dir: str, url: str) -> None:
         finally:
             shutil.rmtree(str(tmp_parent), ignore_errors=True)
     else:
-        # Local path
+        # Local path — only allowed from within the workspace
         src = Path(url).expanduser().resolve()
+        ws = Path(workspace_dir).resolve()
+        try:
+            src.relative_to(ws)
+        except ValueError:
+            raise ValueError(
+                f"安全限制: 本地路径必须位于工作区目录内 ({ws})。"
+                f"如需从外部安装，请使用 Git URL 或 GitHub 简写。"
+            )
         if not src.exists():
             raise ValueError(f"源路径不存在: {url}")
         import shutil
@@ -1671,17 +1692,14 @@ def get_skill_config(workspace_dir: str, skill_name: str) -> None:
     loader = SkillLoader()
     loader.load_all(base_path=wd)
 
-    skills = loader.registry.list_all()
-    for s in skills:
-        if s.name == skill_name:
-            config = getattr(s, "config", None) or getattr(s, "config_schema", None) or []
-            _json_print({
-                "name": s.name,
-                "config": config,
-            })
-            return
+    entry = loader.registry.get(skill_name)
+    if entry is None:
+        raise ValueError(f"技能未找到: {skill_name}")
 
-    raise ValueError(f"技能未找到: {skill_name}")
+    _json_print({
+        "name": entry.name,
+        "config": entry.config or [],
+    })
 
 
 def main(argv: list[str] | None = None) -> None:

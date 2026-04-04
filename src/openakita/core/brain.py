@@ -41,7 +41,12 @@ from ..llm.types import (
     VideoBlock,
     VideoContent,
 )
-from .token_tracking import record_usage as _record_token_usage
+from .token_tracking import (
+    TokenTrackingContext,
+    record_usage as _record_token_usage,
+    reset_tracking_context,
+    set_tracking_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,12 @@ class Brain:
         model: str | None = None,
         max_tokens: int | None = None,
     ):
+        # Compiler 熔断器 —— 实例级，避免跨实例共享状态
+        self._compiler_fail_count: int = 0
+        self._compiler_circuit_open: bool = False
+        self._compiler_circuit_open_at: float = 0.0
+        self._compiler_auth_failed: bool = False
+
         # max_tokens=0 表示"使用合理默认值"：
         # - 对 OpenAI 兼容 API：使用端点配置值或兜底 16384（部分 API 如 NVIDIA NIM 默认极低）
         # - 对 Anthropic API：使用端点配置值或兜底 16384（该 API 强制要求此参数）
@@ -101,12 +112,10 @@ class Brain:
         self._compiler_client: LLMClient | None = None
         self._init_compiler_client()
 
-        # Compiler 熔断器状态
-        self._compiler_fail_count: int = 0
-        self._compiler_circuit_open: bool = False
-        self._compiler_circuit_open_at: float = 0.0
+        # Compiler 熔断器常量（实例级，允许测试覆盖）
         self._COMPILER_FAIL_THRESHOLD: int = 5
         self._COMPILER_CIRCUIT_RESET_S: float = 300.0
+        self._COMPILER_AUTH_CIRCUIT_RESET_S: float = 1800.0
 
         # 公开属性（从 LMClient 获取）
         self._update_public_attrs()
@@ -174,9 +183,15 @@ class Brain:
             return True
         import time
         elapsed = time.monotonic() - self._compiler_circuit_open_at
-        if elapsed >= self._COMPILER_CIRCUIT_RESET_S:
+        reset_s = (
+            self._COMPILER_AUTH_CIRCUIT_RESET_S
+            if self._compiler_auth_failed
+            else self._COMPILER_CIRCUIT_RESET_S
+        )
+        if elapsed >= reset_s:
             self._compiler_circuit_open = False
             self._compiler_fail_count = 0
+            self._compiler_auth_failed = False
             logger.info("[Brain] Compiler circuit breaker reset, will retry compiler endpoint")
             return True
         return False
@@ -187,8 +202,29 @@ class Brain:
             self._compiler_circuit_open = False
             logger.info("[Brain] Compiler circuit breaker closed (success)")
 
-    def _compiler_on_failure(self) -> None:
+    def _compiler_on_failure(self, error_str: str = "") -> None:
         self._compiler_fail_count += 1
+
+        _is_auth = any(
+            kw in error_str.lower()
+            for kw in (
+                "invalid_api_key", "authentication", "unauthorized",
+                "401", "api key", "auth_failed",
+            )
+        ) if error_str else False
+
+        if _is_auth:
+            import time
+            self._compiler_auth_failed = True
+            self._compiler_circuit_open = True
+            self._compiler_circuit_open_at = time.monotonic()
+            logger.error(
+                f"[Brain] Compiler circuit breaker OPEN (auth failure), "
+                f"skipping compiler for {self._COMPILER_AUTH_CIRCUIT_RESET_S}s. "
+                f"Fix the API key in settings to restore."
+            )
+            return
+
         if (
             not self._compiler_circuit_open
             and self._compiler_fail_count >= self._COMPILER_FAIL_THRESHOLD
@@ -217,12 +253,19 @@ class Brain:
             else:
                 self._compiler_client = None
                 logger.info("Compiler endpoints cleared (none configured)")
+            # 重载配置后重置熔断器，允许用户修复 API key 后恢复
+            self._compiler_circuit_open = False
+            self._compiler_fail_count = 0
+            self._compiler_auth_failed = False
+            self._compiler_circuit_open_at = 0.0
             return True
         except Exception as e:
             logger.warning(f"Failed to reload compiler client: {e}")
             return False
 
-    async def compiler_think(self, prompt: str, system: str = "") -> Response:
+    async def compiler_think(
+        self, prompt: str, system: str = "", max_tokens: int = 512,
+    ) -> Response:
         """
         Prompt Compiler 专用 LLM 调用。
 
@@ -233,35 +276,48 @@ class Brain:
         Args:
             prompt: 用户消息
             system: 系统提示词
+            max_tokens: 最大输出 token（默认 512，调用方可按需调大）
 
         Returns:
             Response 对象
         """
         messages = [Message(role="user", content=[TextBlock(text=prompt)])]
 
+        _source = "compiler"
         if self._compiler_available():
             try:
                 response = await self._compiler_client.chat(
                     messages=messages,
                     system=system,
                     enable_thinking=False,
-                    max_tokens=2048,
+                    max_tokens=max_tokens,
                 )
                 self._compiler_on_success()
                 self._record_usage(response)
-                return self._llm_response_to_response(response)
+                result = self._llm_response_to_response(response)
+                self._dump_llm_request(system, messages, [], caller="compiler_think")
+                self._dump_llm_response(
+                    response, caller="compiler_think",
+                    request_id=f"compiler_{_source}",
+                )
+                return result
             except Exception as e:
-                self._compiler_on_failure()
+                self._compiler_on_failure(str(e))
                 logger.warning(f"Compiler LLM failed, falling back to main model: {e}")
 
         # 回退到主模型（同样禁用思考，以节省时间）
+        _source = "main_fallback"
         response = await self._llm_client.chat(
             messages=messages,
             system=system,
             enable_thinking=False,
-            max_tokens=2048,
+            max_tokens=max_tokens,
         )
         self._record_usage(response)
+        req_id = self._dump_llm_request(system, messages, [], caller="compiler_think")
+        self._dump_llm_response(
+            response, caller=f"compiler_think({_source})", request_id=req_id,
+        )
         return self._llm_response_to_response(response)
 
     async def think_lightweight(
@@ -309,7 +365,7 @@ class Brain:
             logger.info(f"[LLM] think_lightweight completed via {client_name} endpoint")
         except Exception as e:
             if use_compiler:
-                self._compiler_on_failure()
+                self._compiler_on_failure(str(e))
                 logger.warning(f"[LLM] think_lightweight: compiler failed ({e}), falling back to main")
                 response = await self._llm_client.chat(
                     messages=messages,
@@ -356,11 +412,27 @@ class Brain:
         logger.info(f"Thinking mode {'enabled' if enabled else 'disabled'}")
 
     def is_thinking_enabled(self) -> bool:
-        """检查 thinking 模式是否启用"""
+        """检查 thinking 模式是否启用
+
+        先检查全局配置 (always/never)，再检查模型能力是否支持 thinking，
+        最后使用运行时开关。不支持 thinking 的模型始终返回 False。
+        """
         thinking_mode = settings.thinking_mode
         if thinking_mode == "always":
+            from ..llm.model_registry import get_model_capabilities
+            caps = get_model_capabilities(self.model)
+            if not caps.supports_thinking:
+                logger.debug(
+                    f"[Brain] thinking_mode=always but model={self.model} "
+                    f"does not support thinking, disabled"
+                )
+                return False
             return True
         if thinking_mode == "never":
+            return False
+        from ..llm.model_registry import get_model_capabilities
+        caps = get_model_capabilities(self.model)
+        if not caps.supports_thinking:
             return False
         return self._thinking_enabled
 
@@ -508,6 +580,58 @@ class Brain:
         self._record_usage(response)
 
         return self._convert_response_to_anthropic(response)
+
+    async def messages_create_stream(
+        self,
+        use_thinking: bool = None,
+        thinking_depth: str | None = None,
+        **kwargs,
+    ):
+        """流式版本的 messages_create，yield Provider 原始流事件 (dict)。
+
+        参数准备与 messages_create_async 一致，但调用 LLMClient.chat_stream()
+        逐事件 yield，供 StreamAccumulator 消费。Token 用量由调用方在流结束后
+        通过 StreamAccumulator 获取的 usage 信息自行记录。
+        """
+        if use_thinking is None:
+            use_thinking = self.is_thinking_enabled()
+
+        llm_messages = self._convert_messages_to_llm(kwargs.get("messages", []))
+        system = kwargs.get("system", "")
+        llm_tools = self._convert_tools_to_llm(kwargs.get("tools", []))
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+        conversation_id = kwargs.get("conversation_id")
+        extra_params = kwargs.get("extra_params")
+
+        logger.info(
+            f"[Brain] messages_create_stream called: msg_count={len(llm_messages)}, "
+            f"max_tokens={max_tokens}, use_thinking={use_thinking}, "
+            f"tools_count={len(llm_tools) if llm_tools else 0}, model_kwarg={kwargs.get('model', 'N/A')}"
+        )
+
+        self._dump_llm_request(system, llm_messages, llm_tools, caller="messages_create_stream")
+
+        _tt = set_tracking_context(TokenTrackingContext(
+            session_id=kwargs.get("conversation_id", ""),
+            operation_type="chat_react_iteration_stream",
+            channel="api",
+            iteration=kwargs.get("iteration", 0),
+            agent_profile_id=kwargs.get("agent_profile_id", "default"),
+        ))
+        try:
+            async for event in self._llm_client.chat_stream(
+                messages=llm_messages,
+                system=system,
+                tools=llm_tools,
+                max_tokens=max_tokens,
+                enable_thinking=use_thinking,
+                thinking_depth=thinking_depth,
+                conversation_id=conversation_id,
+                extra_params=extra_params,
+            ):
+                yield event
+        finally:
+            reset_tracking_context(_tt)
 
     # ========================================================================
     # Token 用量记录
@@ -756,8 +880,8 @@ class Brain:
                         Message(role=role, content=blocks, reasoning_content=reasoning_content)
                     )
                 else:
-                    result.append(
-                        Message(role=role, content="", reasoning_content=reasoning_content)
+                    logger.debug(
+                        f"[Brain] Skipping message with empty content blocks (role={role})"
                     )
             else:
                 result.append(
@@ -769,8 +893,8 @@ class Brain:
     def _convert_tools_to_llm(self, tools: list[ToolParam] | None) -> list[Tool] | None:
         """将工具定义转换为 LLMClient Tool，兼容 Anthropic / OpenAI 两种格式。
 
-        防御性设计：插件可能提交非标准格式的工具定义，此方法在边界层
-        做格式兼容和无效过滤，确保不会因为坏工具定义导致 LLM 调用失败。
+        支持 defer_loading：标记 _deferred=True 的工具只传 name + description，
+        不传 input_schema，减少 token 消耗。模型通过 tool_search 按需获取完整 schema。
 
         支持的格式：
         - Anthropic (内部): {"name": ..., "description": ..., "input_schema": {...}}
@@ -781,10 +905,12 @@ class Brain:
 
         result: list[Tool] = []
         skipped = 0
+        deferred = 0
         for tool in tools:
             name = tool.get("name", "")
             description = tool.get("detail") or tool.get("description", "")
             schema = tool.get("input_schema", {})
+            is_deferred = tool.get("_deferred", False)
 
             if not name:
                 func = tool.get("function")
@@ -797,12 +923,29 @@ class Brain:
                 skipped += 1
                 continue
 
-            result.append(Tool(name=name, description=description, input_schema=schema))
+            if is_deferred:
+                # Deferred: only pass name + short description, empty schema
+                short_desc = description.split("\n")[0][:200] if description else ""
+                result.append(Tool(
+                    name=name,
+                    description=f"[use tool_search to see full params] {short_desc}",
+                    input_schema={"type": "object", "properties": {}},
+                ))
+                deferred += 1
+            else:
+                result.append(Tool(
+                    name=name, description=description, input_schema=schema,
+                ))
 
         if skipped:
             logger.warning(
                 "[Brain] _convert_tools_to_llm: skipped %d tool(s) with empty name "
                 "(total=%d, valid=%d)", skipped, len(tools), len(result),
+            )
+        if deferred:
+            logger.debug(
+                "[Brain] defer_loading: %d/%d tools deferred (schema omitted)",
+                deferred, len(result),
             )
 
         return result if result else None

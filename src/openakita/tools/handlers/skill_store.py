@@ -121,7 +121,7 @@ class SkillStoreHandler:
             return f"❌ Skill `{skill_id}` 没有安装地址，无法自动安装。"
 
         try:
-            skill_dir = await client.install_skill(install_url)
+            skill_dir = await client.install_skill(install_url, skill_id=skill_id)
         except Exception as e:
             return (
                 f"❌ 安装失败: {e}\n\n"
@@ -147,7 +147,19 @@ class SkillStoreHandler:
             if loader:
                 from ...config import settings
                 loader.load_all(settings.project_root)
-                logger.info("Skills reloaded after Store install")
+
+            catalog = getattr(self.agent, "skill_catalog", None)
+            if catalog:
+                catalog.invalidate_cache()
+                self.agent._skill_catalog_text = catalog.generate_catalog()
+
+            if hasattr(self.agent, "_update_skill_tools"):
+                self.agent._update_skill_tools()
+
+            from ...skills.events import notify_skills_changed, SkillEvent
+            notify_skills_changed(SkillEvent.STORE_INSTALL)
+
+            logger.info("Skills reloaded after Store install")
         except Exception as e:
             logger.warning(f"Skill reload after Store install failed (non-blocking): {e}")
 

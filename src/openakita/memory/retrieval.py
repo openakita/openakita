@@ -54,6 +54,8 @@ class RetrievalEngine:
     W_IMPORTANCE = 0.20
     W_ACCESS = 0.20
 
+    MIN_RERANK_SCORE = 0.35
+
     QUERY_DECOMPOSE_PROMPT = (
         "从用户消息中提取用于记忆检索的搜索关键词。\n\n"
         "用户消息: {query}\n"
@@ -96,7 +98,7 @@ class RetrievalEngine:
 
         semantic_results = self._search_semantic(enhanced_query)
         episode_results = self._search_episodes(enhanced_query)
-        recent_results = self._search_recent(days=3)
+        recent_results = self._search_recent(days=3, query=enhanced_query)
         attachment_results = self._search_attachments(
             query, search_keywords, intent,
         )
@@ -130,7 +132,7 @@ class RetrievalEngine:
 
         semantic = self._search_semantic(enhanced)
         episodes = self._search_episodes(enhanced)
-        recent = self._search_recent(days=3)
+        recent = self._search_recent(days=3, query=enhanced)
         attachments = self._search_attachments(query, search_keywords, intent)
 
         candidates = self._merge_and_deduplicate(semantic, episodes, recent, attachments)
@@ -224,18 +226,19 @@ class RetrievalEngine:
     # ==================================================================
 
     def _search_semantic(self, query: str, limit: int = 15) -> list[RetrievalCandidate]:
-        memories = self.store.search_semantic(query, limit=limit)
+        scored_results = self.store.search_semantic_scored(query, limit=limit)
         now = datetime.now()
         candidates = []
-        for mem in memories:
+        for mem, raw_score in scored_results:
             if mem.expires_at and mem.expires_at < now:
                 continue
+            relevance = max(0.0, min(1.0, raw_score))
             candidates.append(RetrievalCandidate(
                 memory_id=mem.id,
                 content=mem.to_markdown(),
                 memory_type=mem.type.value,
                 source_type="semantic",
-                relevance=0.8,
+                relevance=relevance,
                 recency_score=self._compute_recency(mem.updated_at),
                 importance_score=mem.importance_score,
                 access_frequency_score=self._compute_access_score(mem.access_count),
@@ -266,11 +269,14 @@ class RetrievalEngine:
             ))
         return candidates
 
-    def _search_recent(self, days: int = 3, limit: int = 5) -> list[RetrievalCandidate]:
+    def _search_recent(
+        self, days: int = 3, limit: int = 5, query: str = "",
+    ) -> list[RetrievalCandidate]:
         memories = self.store.query_semantic(
             min_importance=0.6, limit=limit
         )
         now = datetime.now()
+        query_tokens = set(query.lower().split()) if query else set()
         candidates = []
         for mem in memories:
             if mem.expires_at and mem.expires_at < now:
@@ -278,12 +284,22 @@ class RetrievalEngine:
             recency = self._compute_recency(mem.updated_at)
             if recency < 0.3:
                 continue
+
+            relevance = 0.5
+            if query_tokens:
+                content_lower = mem.content.lower()
+                overlap = sum(1 for t in query_tokens if t in content_lower)
+                if overlap == 0:
+                    relevance = 0.2
+                else:
+                    relevance = min(0.7, 0.3 + 0.1 * overlap)
+
             candidates.append(RetrievalCandidate(
                 memory_id=mem.id,
                 content=mem.to_markdown(),
                 memory_type=mem.type.value,
                 source_type="recent",
-                relevance=0.5,
+                relevance=relevance,
                 recency_score=recency,
                 importance_score=mem.importance_score,
                 access_frequency_score=self._compute_access_score(mem.access_count),
@@ -623,7 +639,8 @@ class RetrievalEngine:
             if c.memory_type == "fact" and any(w in c.content[:30] for w in self._ACTION_WORDS):
                 c.score *= 0.3
 
-        return sorted(candidates, key=lambda c: c.score, reverse=True)
+        ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
+        return [c for c in ranked if c.score >= self.MIN_RERANK_SCORE]
 
     # ==================================================================
     # Scoring Helpers

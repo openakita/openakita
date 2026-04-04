@@ -49,6 +49,7 @@ function StepDot({ stepId: sid }: { stepId: StepId }) {
 }
 
 type NavGroupId = "capabilities" | "monitor" | "multiAgent" | "store";
+const GROUP_ICON_SIZE = 16;
 
 const BETA_SUP = <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup>;
 
@@ -167,7 +168,7 @@ export function Sidebar({
         </div>
 
         {/* ── Group: Capabilities ── */}
-        <NavGroupHeader collapsed={collapsed} icon={<IconPuzzle size={14} />} label={t("sidebar.groupCapabilities")} expanded={capExpanded} onToggle={() => toggleGroup("capabilities")} />
+        <NavGroupHeader collapsed={collapsed} icon={<IconPuzzle size={GROUP_ICON_SIZE} />} label={t("sidebar.groupCapabilities")} expanded={capExpanded} onToggle={() => toggleGroup("capabilities")} />
         {(collapsed || capExpanded) && (
           <div className="navGroupItems">
             {!disabledViews.includes("skills") && (
@@ -193,7 +194,7 @@ export function Sidebar({
         )}
 
         {/* ── Group: Monitor ── */}
-        <NavGroupHeader collapsed={collapsed} icon={<IconRadar size={14} />} label={t("sidebar.groupMonitor")} expanded={monExpanded} onToggle={() => toggleGroup("monitor")} />
+        <NavGroupHeader collapsed={collapsed} icon={<IconRadar size={GROUP_ICON_SIZE} />} label={t("sidebar.groupMonitor")} expanded={monExpanded} onToggle={() => toggleGroup("monitor")} />
         {(collapsed || monExpanded) && (
           <div className="navGroupItems">
             <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
@@ -208,7 +209,7 @@ export function Sidebar({
         {/* ── Group: Multi-Agent ── */}
         {multiAgentEnabled && (
           <>
-            <NavGroupHeader collapsed={collapsed} icon={<IconBot size={14} />} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
+            <NavGroupHeader collapsed={collapsed} icon={<IconBot size={GROUP_ICON_SIZE} />} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
             {(collapsed || maExpanded) && (
               <div className="navGroupItems">
                 <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
@@ -231,7 +232,7 @@ export function Sidebar({
         {/* ── Group: Store ── */}
         {storeVisible && (
           <>
-            <NavGroupHeader collapsed={collapsed} icon={<IconStorefront size={14} />} label={t("sidebar.groupStore")} expanded={stExpanded} onToggle={() => toggleGroup("store")} />
+            <NavGroupHeader collapsed={collapsed} icon={<IconStorefront size={GROUP_ICON_SIZE} />} label={t("sidebar.groupStore")} expanded={stExpanded} onToggle={() => toggleGroup("store")} />
             {(collapsed || stExpanded) && (
               <div className="navGroupItems">
                 <div className={`navItem ${view === "agent_store" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_store")} role="button" tabIndex={0} title={t("sidebar.agentStore")}>

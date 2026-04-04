@@ -25,6 +25,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .types import normalize_tags
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 2
@@ -497,7 +499,7 @@ class MemoryStorage:
                         memory.get("source", ""),
                         memory.get("importance_score", 0.5),
                         memory.get("access_count", 0),
-                        json.dumps(memory.get("tags", []), ensure_ascii=False),
+                        json.dumps(normalize_tags(memory.get("tags")), ensure_ascii=False),
                         memory.get("created_at", now),
                         now,
                         memory.get("expires_at"),
@@ -545,7 +547,7 @@ class MemoryStorage:
                             m.get("source", ""),
                             m.get("importance_score", 0.5),
                             m.get("access_count", 0),
-                            json.dumps(m.get("tags", []), ensure_ascii=False),
+                            json.dumps(normalize_tags(m.get("tags")), ensure_ascii=False),
                             m.get("created_at", now),
                             now,
                             m.get("expires_at"),
@@ -631,8 +633,8 @@ class MemoryStorage:
         if not filtered:
             return False
 
-        if "tags" in filtered and isinstance(filtered["tags"], list):
-            filtered["tags"] = json.dumps(filtered["tags"], ensure_ascii=False)
+        if "tags" in filtered:
+            filtered["tags"] = json.dumps(normalize_tags(filtered["tags"]), ensure_ascii=False)
         if "metadata" in filtered and isinstance(filtered["metadata"], dict):
             filtered["metadata"] = json.dumps(filtered["metadata"], ensure_ascii=False)
 
@@ -741,26 +743,44 @@ class MemoryStorage:
     # FTS5 Search
     # ======================================================================
 
-    def search_fts(self, query: str, limit: int = 10) -> list[dict]:
+    def search_fts(
+        self,
+        query: str,
+        limit: int = 10,
+        scope: str | None = None,
+        scope_owner: str | None = None,
+    ) -> list[dict]:
         """Full-text search using FTS5 with BM25 ranking, with LIKE fallback for CJK.
 
-        TODO: Add scope filtering. FTS5 virtual tables don't support easy
-        column-based filtering; post-filter or JOIN with scope columns needed.
+        Args:
+            scope: If provided, restrict results to this scope (e.g. 'global').
+            scope_owner: If provided, restrict results to this scope_owner.
         """
         if not self._conn or not query.strip():
             return []
+
+        scope_clauses: list[str] = []
+        scope_params: list[Any] = []
+        if scope is not None:
+            scope_clauses.append("(m.scope IS NULL OR m.scope = ?)")
+            scope_params.append(scope)
+        if scope_owner is not None:
+            scope_clauses.append("(m.scope_owner IS NULL OR m.scope_owner = ?)")
+            scope_params.append(scope_owner)
+        scope_where = (" AND " + " AND ".join(scope_clauses)) if scope_clauses else ""
+
         try:
             safe_query = self._sanitize_fts_query(query)
             cursor = self._conn.execute(
-                """
+                f"""
                 SELECT m.*, bm25(memories_fts) AS rank
                 FROM memories_fts fts
                 JOIN memories m ON m.rowid = fts.rowid
-                WHERE memories_fts MATCH ?
+                WHERE memories_fts MATCH ?{scope_where}
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (safe_query, limit),
+                [safe_query] + scope_params + [limit],
             )
             results = self._rows_to_dicts(cursor)
             if results:
@@ -773,11 +793,19 @@ class MemoryStorage:
             keywords = query.strip().split()
             if not keywords:
                 return []
-            conditions = " OR ".join(["content LIKE ?"] * len(keywords))
-            params = [f"%{kw}%" for kw in keywords] + [limit]
+            like_conditions = " OR ".join(["content LIKE ?"] * len(keywords))
+            like_params: list[Any] = [f"%{kw}%" for kw in keywords]
+            where = f"({like_conditions})"
+            if scope is not None:
+                where += " AND (scope IS NULL OR scope = ?)"
+                like_params.append(scope)
+            if scope_owner is not None:
+                where += " AND (scope_owner IS NULL OR scope_owner = ?)"
+                like_params.append(scope_owner)
+            like_params.append(limit)
             cursor = self._conn.execute(
-                f"SELECT * FROM memories WHERE {conditions} LIMIT ?",
-                params,
+                f"SELECT * FROM memories WHERE {where} LIMIT ?",
+                like_params,
             )
             return self._rows_to_dicts(cursor)
         except Exception as e:
@@ -835,7 +863,7 @@ class MemoryStorage:
                         json.dumps(episode.get("entities", []), ensure_ascii=False),
                         json.dumps(episode.get("tools_used", []), ensure_ascii=False),
                         json.dumps(episode.get("linked_memory_ids", []), ensure_ascii=False),
-                        json.dumps(episode.get("tags", []), ensure_ascii=False),
+                        json.dumps(normalize_tags(episode.get("tags")), ensure_ascii=False),
                         episode.get("importance_score", 0.5),
                         episode.get("access_count", 0),
                         episode.get("source", "session_end"),
@@ -1397,9 +1425,7 @@ class MemoryStorage:
     def save_attachment(self, data: dict) -> None:
         if not self._conn:
             return
-        tags_val = data.get("tags", [])
-        if isinstance(tags_val, list):
-            tags_val = json.dumps(tags_val, ensure_ascii=False)
+        tags_val = json.dumps(normalize_tags(data.get("tags")), ensure_ascii=False)
         linked_val = data.get("linked_memory_ids", [])
         if isinstance(linked_val, list):
             linked_val = json.dumps(linked_val, ensure_ascii=False)
@@ -1617,5 +1643,7 @@ class MemoryStorage:
                         d[jf] = json.loads(d[jf])
                     except (json.JSONDecodeError, TypeError):
                         pass
+            if "tags" in d:
+                d["tags"] = normalize_tags(d["tags"])
             results.append(d)
         return results

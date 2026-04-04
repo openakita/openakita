@@ -13,9 +13,23 @@ The permission system is layered on top of existing tool filtering
 
 import fnmatch
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+_FAIL_CLOSED_TOOL_PREFIXES = (
+    "run_",
+    "delete_",
+    "edit_",
+    "write_",
+    "rename_",
+    "delegate_",
+    "spawn_",
+    "create_agent",
+    "call_mcp_",
+    "browser_",
+    "desktop_",
+)
 
 # Tools whose permission maps to the "edit" permission category
 EDIT_TOOLS = frozenset({
@@ -185,6 +199,169 @@ def merge(*rulesets: Ruleset) -> Ruleset:
     return [rule for rs in rulesets for rule in rs]
 
 
+# check_tool_permission() 和 _is_dangerous_command() 已废弃并移除（P1-4）。
+# 内容级安全检查现由 PolicyEngine._check_shell_command() 统一处理。
+
+
+# ==================== P2: 统一权限决策 ====================
+
+_MODE_LABELS = {"plan": "计划", "ask": "问答", "agent": "执行", "coordinator": "协调"}
+
+
+@dataclass
+class PermissionDecision:
+    """统一权限检查结果（P2）。
+
+    behavior: "allow" / "deny" / "confirm"
+    reason: 用户可见的中文原因说明
+    reason_detail: 技术细节（仅日志）
+    policy_name: 命中的策略名称
+    decision_chain: 决策经过（审计用）
+    """
+    behavior: str
+    reason: str = ""
+    reason_detail: str = ""
+    policy_name: str = ""
+    metadata: dict = field(default_factory=dict)
+    decision_chain: list = field(default_factory=list)
+
+
+def _should_fail_closed(tool_name: str) -> bool:
+    if tool_name in EDIT_TOOLS:
+        return True
+    return tool_name.startswith(_FAIL_CLOSED_TOOL_PREFIXES)
+
+
+def check_permission(
+    tool_name: str,
+    tool_input: dict,
+    mode: str = "agent",
+    extra_rules: Ruleset | None = None,
+) -> PermissionDecision:
+    """统一权限检查入口 — 先检查模式规则，再查询 PolicyEngine。
+
+    Args:
+        tool_name: 工具名称
+        tool_input: 工具参数
+        mode: 当前模式（plan / ask / agent）
+        extra_rules: 额外规则集（如 AgentProfile.permission_rules），
+                     在 mode rules 之后、PolicyEngine 之前评估。
+
+    Returns:
+        PermissionDecision: 权限检查结果
+    """
+    chain: list[dict] = []
+
+    # Step 1: 模式规则
+    mode_decision = check_mode_permission(tool_name, tool_input, mode=mode)
+    if mode_decision is not None:
+        chain.extend(mode_decision.decision_chain)
+        if mode_decision.behavior == "deny":
+            return mode_decision
+
+    # Step 1b: 额外规则（如 AgentProfile.permission_rules）
+    if extra_rules:
+        permission = _tool_to_permission(tool_name)
+        pattern = "*"
+        if tool_name in EDIT_TOOLS:
+            file_path = tool_input.get("path", tool_input.get("file_path", ""))
+            pattern = str(file_path) if file_path else "*"
+        rule = evaluate(permission, pattern, extra_rules)
+        chain.append({"layer": "extra_rules", "action": rule.action})
+        if rule.action == "deny":
+            return PermissionDecision(
+                behavior="deny",
+                reason=f"智能体配置规则禁止使用工具 {tool_name}。",
+                reason_detail=f"extra_rule={rule}",
+                policy_name="AgentProfileRules",
+                decision_chain=chain,
+            )
+
+    # Step 2: PolicyEngine（仅 agent 模式 / mode 规则放行后）
+    try:
+        from .policy import get_policy_engine
+        pe = get_policy_engine()
+        pr = pe.assert_tool_allowed(tool_name, tool_input)
+        chain.append({
+            "layer": "policy_engine",
+            "decision": pr.decision.value,
+            "policy": pr.policy_name,
+        })
+        return PermissionDecision(
+            behavior=pr.decision.value,
+            reason=pr.reason,
+            reason_detail=f"policy={pr.policy_name}",
+            policy_name=pr.policy_name,
+            metadata=pr.metadata,
+            decision_chain=chain,
+        )
+    except Exception as e:
+        chain.append({"layer": "policy_engine", "error": str(e)})
+        if _should_fail_closed(tool_name):
+            logger.error(f"[Permission] PolicyEngine unavailable, fail-closed for {tool_name}: {e}")
+            return PermissionDecision(
+                behavior="deny",
+                reason="安全策略暂时不可用，已阻止高风险操作，请稍后重试。",
+                reason_detail=f"PolicyEngine not available for risky tool: {e}",
+                policy_name="PolicyEngineUnavailable",
+                decision_chain=chain,
+            )
+        logger.warning(f"[Permission] PolicyEngine unavailable, fail-open for safe read path: {e}")
+        return PermissionDecision(
+            behavior="allow",
+            reason="",
+            reason_detail=f"PolicyEngine not available: {e}",
+            decision_chain=chain,
+        )
+
+
+def check_mode_permission(
+    tool_name: str,
+    tool_input: dict,
+    mode: str = "agent",
+) -> PermissionDecision | None:
+    """Only evaluate plan/ask/coordinator mode restrictions, without PolicyEngine."""
+    if mode not in ("plan", "ask", "coordinator"):
+        return None
+
+    ruleset = (
+        PLAN_MODE_RULESET if mode == "plan"
+        else COORDINATOR_MODE_RULESET if mode == "coordinator"
+        else ASK_MODE_RULESET
+    )
+    permission = _tool_to_permission(tool_name)
+
+    if tool_name in EDIT_TOOLS:
+        file_path = tool_input.get("path", tool_input.get("file_path", ""))
+        pattern = str(file_path) if file_path else "*"
+    else:
+        pattern = "*"
+
+    rule = evaluate(permission, pattern, ruleset)
+    chain = [{"layer": "mode_ruleset", "mode": mode, "action": rule.action}]
+    if rule.action != "deny":
+        return PermissionDecision(
+            behavior="allow",
+            policy_name="ModeRuleset",
+            decision_chain=chain,
+        )
+
+    mode_label = _MODE_LABELS.get(mode, mode)
+    if tool_name in EDIT_TOOLS and mode == "plan":
+        reason = f"当前处于{mode_label}模式，只能编辑 data/plans/ 下的计划文件。如需执行其他操作，请建议用户切换到执行模式。"
+    elif mode == "ask":
+        reason = f"当前处于{mode_label}模式，只能查看和搜索，不能修改文件或执行命令。"
+    else:
+        reason = f"工具 {tool_name} 在当前{mode_label}模式下不可用。"
+    return PermissionDecision(
+        behavior="deny",
+        reason=reason,
+        reason_detail=f"mode={mode}, rule={rule}",
+        policy_name="ModeRuleset",
+        decision_chain=chain,
+    )
+
+
 # ==================== Preset Rulesets ====================
 
 DEFAULT_RULESET: Ruleset = from_config({
@@ -252,4 +429,40 @@ ASK_MODE_RULESET: Ruleset = from_config({
     "list_directory": "allow",
     "grep": "allow",
     "glob": "allow",
+})
+
+COORDINATOR_MODE_RULESET: Ruleset = from_config({
+    "*": "deny",
+    "delegate_to_agent": "allow",
+    "delegate_parallel": "allow",
+    "spawn_agent": "allow",
+    "create_agent": "allow",
+    "task_stop": "allow",
+    "send_agent_message": "allow",
+    "create_todo": "allow",
+    "update_todo_step": "allow",
+    "get_todo_status": "allow",
+    "complete_todo": "allow",
+    "create_plan_file": "allow",
+    "exit_plan_mode": "allow",
+    "web_search": "allow",
+    "news_search": "allow",
+    "search_memory": "allow",
+    "add_memory": "allow",
+    "get_chat_history": "allow",
+    "list_skills": "allow",
+    "get_skill_info": "allow",
+    "get_tool_info": "allow",
+    "ask_user": "allow",
+    "read": "allow",
+    "read_file": "allow",
+    "list_directory": "allow",
+    "grep": "allow",
+    "glob": "allow",
+    "get_workspace_map": "allow",
+    "list_mcp_servers": "allow",
+    "get_mcp_instructions": "allow",
+    "get_session_logs": "allow",
+    "get_user_profile": "allow",
+    "get_persona_profile": "allow",
 })

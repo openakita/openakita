@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class ValidationResult(str, Enum):
     """验证结果"""
     PASS = "pass"
+    WARN = "warn"
     FAIL = "fail"
     SKIP = "skip"  # 验证器不适用于当前场景
 
@@ -46,7 +47,7 @@ class ValidationReport:
     @property
     def all_passed(self) -> bool:
         applicable = [o for o in self.outputs if o.result != ValidationResult.SKIP]
-        return all(o.result == ValidationResult.PASS for o in applicable) if applicable else True
+        return all(o.result in (ValidationResult.PASS, ValidationResult.WARN) for o in applicable) if applicable else True
 
     @property
     def any_failed(self) -> bool:
@@ -70,7 +71,7 @@ class ValidationReport:
         for o in self.outputs:
             if o.result == ValidationResult.SKIP:
                 continue
-            icon = "✓" if o.result == ValidationResult.PASS else "✗"
+            icon = "✓" if o.result == ValidationResult.PASS else ("⚠" if o.result == ValidationResult.WARN else "✗")
             parts.append(f"{icon} {o.name}: {o.reason}")
         return "\n".join(parts) if parts else "No applicable validators"
 
@@ -128,8 +129,10 @@ class PlanValidator(BaseValidator):
 
             steps = plan.get("steps", [])
             total = len(steps)
-            completed = sum(1 for s in steps if s.get("status") in ("completed", "skipped"))
+            _TERMINAL = ("completed", "skipped", "failed", "cancelled")
+            terminal = sum(1 for s in steps if s.get("status") in _TERMINAL)
             pending = sum(1 for s in steps if s.get("status") in ("pending", "in_progress"))
+            failed = sum(1 for s in steps if s.get("status") == "failed")
 
             if pending > 0:
                 pending_ids = [s.get("id", "?") for s in steps if s.get("status") in ("pending", "in_progress")]
@@ -139,10 +142,18 @@ class PlanValidator(BaseValidator):
                     reason=f"{pending}/{total} steps pending: {pending_ids[:3]}",
                 )
 
+            if failed > 0:
+                failed_ids = [s.get("id", "?") for s in steps if s.get("status") == "failed"]
+                return ValidatorOutput(
+                    name=self.name,
+                    result=ValidationResult.WARN,
+                    reason=f"All steps resolved but {failed} failed: {failed_ids[:3]}",
+                )
+
             return ValidatorOutput(
                 name=self.name,
                 result=ValidationResult.PASS,
-                reason=f"All {total} steps completed",
+                reason=f"All {total} steps completed ({terminal} terminal)",
             )
 
         except Exception as e:
@@ -208,13 +219,12 @@ class ToolSuccessValidator(BaseValidator):
                 reason="No tools executed",
             )
 
-        error_indicators = ["❌", "⚠️ 工具执行错误", "错误类型:", "Error:"]
         error_results = []
         for tr in context.tool_results:
-            content = str(tr.get("content", "")) if isinstance(tr, dict) else str(tr)
-            if any(indicator in content for indicator in error_indicators):
-                tool_id = tr.get("tool_use_id", "?") if isinstance(tr, dict) else "?"
-                error_results.append(tool_id)
+            if not isinstance(tr, dict):
+                continue
+            if tr.get("is_error", False):
+                error_results.append(tr.get("tool_use_id", "?"))
 
         if error_results:
             total = len(context.tool_results)

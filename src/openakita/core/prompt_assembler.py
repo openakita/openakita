@@ -139,6 +139,7 @@ class PromptAssembler:
         session_context: dict | None = None,
         mode: str = "agent",
         model_id: str = "",
+        skip_catalogs: bool = False,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -156,6 +157,7 @@ class PromptAssembler:
             session_context: 会话元数据（session_id、通道、类型等）
             mode: 当前模式 (ask/plan/agent)
             model_id: 模型标识（用于 per-model 基础 prompt）
+            skip_catalogs: 是否跳过 Catalogs 层（CHAT 意图使用）
 
         Returns:
             编译后的系统提示词
@@ -190,6 +192,7 @@ class PromptAssembler:
             session_context=session_context,
             mode=mode,
             model_id=model_id,
+            skip_catalogs=skip_catalogs,
         )
 
     def _build_compiled_sync(

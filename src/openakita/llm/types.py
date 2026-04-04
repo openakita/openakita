@@ -372,7 +372,10 @@ class Message:
             return {"role": self.role, "content": self.content}
         return {
             "role": self.role,
-            "content": [block.to_dict() for block in self.content],
+            "content": [
+                block.to_dict() if hasattr(block, "to_dict") else block
+                for block in self.content
+            ],
         }
 
 
@@ -455,7 +458,10 @@ class LLMResponse:
     def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "content": [block.to_dict() for block in self.content],
+            "content": [
+                block.to_dict() if hasattr(block, "to_dict") else block
+                for block in self.content
+            ],
             "stop_reason": self.stop_reason.value,
             "usage": {
                 "input_tokens": self.usage.input_tokens,
@@ -632,7 +638,9 @@ class EndpointConfig:
 class LLMError(Exception):
     """LLM 相关错误基类"""
 
-    pass
+    def __init__(self, message: str = "", *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class UnsupportedMediaError(LLMError):

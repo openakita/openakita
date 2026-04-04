@@ -404,6 +404,58 @@ export function canOpenPopupWindow(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Global Shortcut
+// ---------------------------------------------------------------------------
+
+/**
+ * Register a global shortcut (desktop only).
+ * Returns an unregister function. No-op in web mode.
+ */
+export async function registerGlobalShortcut(
+  shortcut: string,
+  handler: () => void,
+): Promise<() => void> {
+  if (!IS_TAURI) return () => {};
+  try {
+    const mod = await import("@tauri-apps/plugin-global-shortcut");
+    await mod.register(shortcut, handler);
+    return () => { mod.unregister(shortcut).catch(() => {}); };
+  } catch (e) {
+    console.warn("[GlobalShortcut] Failed to register:", e);
+    return () => {};
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Notification
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a desktop notification (Tauri plugin-notification).
+ * No-op in web mode.
+ */
+export async function sendNotification(options: {
+  title: string;
+  body?: string;
+  icon?: string;
+}): Promise<void> {
+  if (!IS_TAURI) return;
+  try {
+    const mod = await import("@tauri-apps/plugin-notification");
+    let granted = await mod.isPermissionGranted();
+    if (!granted) {
+      const perm = await mod.requestPermission();
+      granted = perm === "granted";
+    }
+    if (granted) {
+      mod.sendNotification(options);
+    }
+  } catch (e) {
+    console.warn("[Notification] Failed:", e);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Re-exports from sub-modules
 // ---------------------------------------------------------------------------
 

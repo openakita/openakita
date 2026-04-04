@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")
     max_iterations: int = Field(
-        default=300,
-        ge=15,
-        description="Ralph 循环最大迭代次数（最小值 15，推荐 100~300）",
+        default=30,
+        ge=5,
+        description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
     )
 
     # 自检配置
@@ -63,14 +63,14 @@ class Settings(BaseSettings):
     # 设为 0 可完全关闭该行为（推荐 IM 闲聊/客服式对话场景）。
     force_tool_call_max_retries: int = Field(
         default=1,
-        description="当模型未调用工具时，最多追问要求调用工具的次数（0=禁用）",
+        description="当模型未调用工具时，最多追问要求调用工具的次数（0=禁用，信任模型自主判断）",
     )
     force_tool_call_im_floor: int = Field(
         default=1,
         description="IM 通道的 ForceToolCall 最低重试次数（0=与全局一致，不强制下限）",
     )
     confirmation_text_max_retries: int = Field(
-        default=2,
+        default=1,
         description="工具执行后无可见文本时的最大追问次数（0=禁用）",
     )
 
@@ -362,6 +362,10 @@ class Settings(BaseSettings):
         default=False,
         description="多Agent模式 (Beta)，开启后支持多Agent协作、专用Agent、IM多Bot等",
     )
+    coordinator_mode_enabled: bool = Field(
+        default=False,
+        description="协调者模式 (CC-3)：启用后，role=coordinator 的 Agent 仅能委派/规划，不能直接执行文件/命令操作",
+    )
 
     # IM 多 Bot 配置（多Agent模式下支持同一通道类型多个Bot实例）
     im_bots: list[dict] = Field(default_factory=list)
@@ -472,9 +476,9 @@ class Settings(BaseSettings):
     supervisor_enabled: bool = Field(default=True, description="是否启用运行时监督器 (RuntimeSupervisor)")
     task_budget_tokens: int = Field(default=0, description="单次任务最大 token 消耗 (0=不限制)")
     task_budget_cost: float = Field(default=0.0, description="单次任务最大成本 USD (0=不限制)")
-    task_budget_duration: int = Field(default=0, description="单次任务最大时长秒 (0=不限制)")
-    task_budget_iterations: int = Field(default=0, description="单次任务最大迭代次数 (0=不限制)")
-    task_budget_tool_calls: int = Field(default=0, description="单次任务最大工具调用次数 (0=不限制)")
+    task_budget_duration: int = Field(default=600, description="单次任务最大时长秒 (0=不限制，默认 600=10分钟)")
+    task_budget_iterations: int = Field(default=50, description="单次任务最大迭代次数 (0=不限制，默认 50)")
+    task_budget_tool_calls: int = Field(default=30, description="单次任务最大工具调用次数 (0=不限制，默认 30)")
 
     # === 追踪配置 ===
     tracing_enabled: bool = Field(default=True, description="是否启用 Agent 追踪（轻量模式默认开启）")

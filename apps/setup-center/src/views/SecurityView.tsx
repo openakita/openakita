@@ -4,6 +4,7 @@ import {
   IconShield, IconRefresh, IconPlus, IconX, IconTrash,
   IconChevronDown, IconChevronRight, IconClock, IconSave, IconAlertCircle,
 } from "../icons";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,8 +13,13 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, RotateCw, Save, ShieldAlert } from "lucide-react";
 
 type SecurityViewProps = {
   apiBaseUrl: string;
@@ -58,11 +64,11 @@ type CheckpointEntry = {
   file_count: number;
 };
 
-const ZONE_META: Record<string, { color: string }> = {
-  workspace: { color: "#22c55e" },
-  controlled: { color: "#3b82f6" },
-  protected: { color: "#f59e0b" },
-  forbidden: { color: "#ef4444" },
+const ZONE_META: Record<string, { color: string; tw: string }> = {
+  workspace: { color: "#22c55e", tw: "bg-emerald-500" },
+  controlled: { color: "#3b82f6", tw: "bg-blue-500" },
+  protected: { color: "#f59e0b", tw: "bg-amber-500" },
+  forbidden: { color: "#ef4444", tw: "bg-red-500" },
 };
 
 const BACKEND_OPTIONS = [
@@ -154,7 +160,7 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   if (!serviceRunning) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-        <IconAlertCircle size={32} className="mb-3 opacity-50" />
+        <ShieldAlert size={32} className="mb-3 opacity-50" />
         <p className="text-sm">{t("security.backendOff")}</p>
       </div>
     );
@@ -169,199 +175,260 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   ];
 
   return (
-    <div className="mx-auto max-w-[900px]">
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold">{t("security.title")}</h2>
-        <p className="text-sm text-muted-foreground">{t("security.desc")}</p>
+    <div className="mx-auto max-w-[1080px] space-y-5 px-6 py-5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1.5 min-w-0">
+          <h2 className="text-lg font-bold tracking-tight">
+            {t("security.title", "安全控制")}
+          </h2>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {t("security.desc", "配置系统安全策略，包括文件访问区域、命令拦截和沙箱环境。")}
+          </p>
+        </div>
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: "flex", borderBottom: "1px solid var(--line)", marginBottom: 16 }}>
-        {TABS.map((tb) => {
-          const active = tab === tb.id;
-          return (
-            <button
+      <div className="flex items-center justify-between flex-shrink-0">
+        <ToggleGroup
+          type="single"
+          value={tab}
+          onValueChange={(v) => { if (v) setTab(v as TabId); }}
+          variant="outline"
+        >
+          {TABS.map((tb) => (
+            <ToggleGroupItem
               key={tb.id}
-              onClick={() => setTab(tb.id)}
-              className="text-sm font-medium transition-colors"
-              style={{
-                padding: "8px 16px",
-                borderBottom: active ? "2px solid var(--accent, #3b82f6)" : "2px solid transparent",
-                color: active ? "var(--accent, #3b82f6)" : "var(--muted)",
-                marginBottom: -1,
-                background: "none",
-                border: "none",
-                borderBottomWidth: 2,
-                borderBottomStyle: "solid",
-                borderBottomColor: active ? "var(--accent, #3b82f6)" : "transparent",
-                cursor: "pointer",
-              }}
+              value={tb.id}
+              className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
             >
               {t(tb.labelKey)}
-            </button>
-          );
-        })}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       </div>
 
       {/* Zones */}
       {tab === "zones" && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">{t("security.zonesDesc")}</p>
-          {(["workspace", "controlled", "protected", "forbidden"] as const).map((zone) => (
-            <ZonePanel
-              key={zone}
-              zone={zone}
-              color={ZONE_META[zone].color}
-              paths={zones[zone] || []}
-              onChange={(paths) => setZones((prev) => ({ ...prev, [zone]: paths }))}
-            />
-          ))}
-          <Button onClick={() => doSave("/api/config/security/zones", zones, "zonesSaved")} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <IconSave size={14} />}
-            {t("security.save")}
-          </Button>
-        </div>
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+            <CardTitle className="text-sm font-semibold">{t("security.zones", "安全区域")}</CardTitle>
+          </CardHeader>
+          <CardContent className="px-5 pt-4 pb-5 space-y-4">
+            <p className="text-sm text-muted-foreground">{t("security.zonesDesc")}</p>
+            <div className="grid grid-cols-1 gap-3">
+              {(["workspace", "controlled", "protected", "forbidden"] as const).map((zone) => (
+                <ZonePanel
+                  key={zone}
+                  zone={zone}
+                  paths={zones[zone] || []}
+                  onChange={(paths) => setZones((prev) => ({ ...prev, [zone]: paths }))}
+                />
+              ))}
+            </div>
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => doSave("/api/config/security/zones", zones, "zonesSaved")} disabled={saving}>
+                {saving ? <Loader2 className="size-4 animate-spin mr-2" /> : <Save size={14} className="mr-2" />}
+                {t("security.save")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Commands */}
       {tab === "commands" && (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">{t("security.commandsDesc")}</p>
-          <TagEditor
-            label={t("security.criticalPatterns")}
-            items={commands.custom_critical}
-            onChange={(v) => setCommands((p) => ({ ...p, custom_critical: v }))}
-            placeholder={`e.g. rm\\s+-rf\\s+/`}
-          />
-          <TagEditor
-            label={t("security.highPatterns")}
-            items={commands.custom_high}
-            onChange={(v) => setCommands((p) => ({ ...p, custom_high: v }))}
-            placeholder="e.g. Remove-Item.*-Recurse"
-          />
-          <TagEditor
-            label={t("security.excludedPatterns")}
-            items={commands.excluded_patterns}
-            onChange={(v) => setCommands((p) => ({ ...p, excluded_patterns: v }))}
-            placeholder={t("security.excludedPh")}
-          />
-          <TagEditor
-            label={t("security.blockedCommands")}
-            items={commands.blocked_commands}
-            onChange={(v) => setCommands((p) => ({ ...p, blocked_commands: v }))}
-            placeholder="e.g. diskpart"
-          />
-          <Button onClick={() => doSave("/api/config/security/commands", commands, "commandsSaved")} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <IconSave size={14} />}
-            {t("security.save")}
-          </Button>
-        </div>
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+            <CardTitle className="text-sm font-semibold">{t("security.commands", "命令拦截")}</CardTitle>
+          </CardHeader>
+          <CardContent className="px-5 pt-4 pb-5 space-y-5">
+            <p className="text-sm text-muted-foreground">{t("security.commandsDesc")}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <TagEditor
+                label={t("security.criticalPatterns")}
+                items={commands.custom_critical}
+                onChange={(v) => setCommands((p) => ({ ...p, custom_critical: v }))}
+                placeholder={`e.g. rm\\s+-rf\\s+/`}
+              />
+              <TagEditor
+                label={t("security.highPatterns")}
+                items={commands.custom_high}
+                onChange={(v) => setCommands((p) => ({ ...p, custom_high: v }))}
+                placeholder="e.g. Remove-Item.*-Recurse"
+              />
+              <TagEditor
+                label={t("security.excludedPatterns")}
+                items={commands.excluded_patterns}
+                onChange={(v) => setCommands((p) => ({ ...p, excluded_patterns: v }))}
+                placeholder={t("security.excludedPh")}
+              />
+              <TagEditor
+                label={t("security.blockedCommands")}
+                items={commands.blocked_commands}
+                onChange={(v) => setCommands((p) => ({ ...p, blocked_commands: v }))}
+                placeholder="e.g. diskpart"
+              />
+            </div>
+            <div className="flex justify-end pt-2 border-t border-border/50 mt-6 pt-4">
+              <Button onClick={() => doSave("/api/config/security/commands", commands, "commandsSaved")} disabled={saving}>
+                {saving ? <Loader2 className="size-4 animate-spin mr-2" /> : <Save size={14} className="mr-2" />}
+                {t("security.save")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Sandbox */}
       {tab === "sandbox" && (
-        <div className="space-y-5">
-          <p className="text-sm text-muted-foreground">{t("security.sandboxDesc")}</p>
-          <div className="flex items-center gap-3">
-            <Switch
-              checked={sandbox.enabled}
-              onCheckedChange={(v) => setSandbox((p) => ({ ...p, enabled: v }))}
-            />
-            <Label className="text-sm">{t("security.sandboxEnabled")}</Label>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">{t("security.sandboxBackend")}</Label>
-            <Select
-              value={sandbox.backend}
-              onValueChange={(v) => setSandbox((p) => ({ ...p, backend: v }))}
-            >
-              <SelectTrigger className="w-[260px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BACKEND_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button onClick={() => doSave("/api/config/security/sandbox", sandbox, "sandboxSaved")} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <IconSave size={14} />}
-            {t("security.save")}
-          </Button>
-        </div>
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+            <CardTitle className="text-sm font-semibold">{t("security.sandbox", "沙箱配置")}</CardTitle>
+          </CardHeader>
+          <CardContent className="px-5 pt-4 pb-5 space-y-5">
+            <p className="text-sm text-muted-foreground">{t("security.sandboxDesc")}</p>
+            <div className="space-y-4 max-w-md">
+              <div className="flex items-center justify-between border border-border/50 p-4 rounded-lg bg-muted/20">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">{t("security.sandboxEnabled")}</Label>
+                  <p className="text-xs text-muted-foreground">启用或禁用命令执行沙箱</p>
+                </div>
+                <Switch
+                  checked={sandbox.enabled}
+                  onCheckedChange={(v) => setSandbox((p) => ({ ...p, enabled: v }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">{t("security.sandboxBackend")}</Label>
+                <Select
+                  value={sandbox.backend}
+                  onValueChange={(v) => setSandbox((p) => ({ ...p, backend: v }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BACKEND_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground pt-1">选择用于隔离执行环境的后端技术</p>
+              </div>
+            </div>
+            <div className="flex justify-end pt-2 border-t border-border/50 mt-6 pt-4">
+              <Button onClick={() => doSave("/api/config/security/sandbox", sandbox, "sandboxSaved")} disabled={saving}>
+                {saving ? <Loader2 className="size-4 animate-spin mr-2" /> : <Save size={14} className="mr-2" />}
+                {t("security.save")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Audit */}
       {tab === "audit" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">
-              {t("security.auditCount", { count: audit.length })}
-            </span>
-            <Button variant="outline" size="sm" onClick={loadAudit}>
-              <IconRefresh size={14} /> {t("security.refresh")}
+        <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
+          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50 flex flex-row items-center justify-between space-y-0">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-semibold">{t("security.audit", "审计日志")}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {t("security.auditCount", { count: audit.length })}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={loadAudit} className="h-8">
+              <RotateCw size={14} className="mr-1.5" /> {t("security.refresh")}
             </Button>
-          </div>
-          {audit.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground text-sm">
-              <IconShield size={28} className="mx-auto mb-2 opacity-30" />
-              {t("security.noAudit")}
-            </div>
-          ) : (
-            <div className="rounded-md border max-h-[420px] overflow-auto">
-              {[...audit].reverse().map((e, i) => (
-                <div key={i} className="flex items-start gap-2.5 px-3 py-2.5 border-b last:border-b-0 text-sm">
-                  <DecisionBadge decision={e.decision} />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-medium">{e.tool}</span>
-                    <span className="ml-2 text-muted-foreground text-xs">{e.reason}</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {new Date(e.ts * 1000).toLocaleTimeString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {audit.length === 0 ? (
+              <div className="py-16 text-center text-muted-foreground text-sm flex flex-col items-center">
+                <IconShield size={32} className="mb-3 opacity-20" />
+                {t("security.noAudit")}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader className="bg-muted/30">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[100px] text-xs h-10 px-5 font-medium">{t("security.auditDecision")}</TableHead>
+                    <TableHead className="text-xs h-10 px-4 font-medium">{t("security.auditTool")}</TableHead>
+                    <TableHead className="hidden sm:table-cell text-xs h-10 px-4 font-medium">{t("security.auditReason")}</TableHead>
+                    <TableHead className="w-[120px] text-right text-xs h-10 px-5 font-medium">{t("security.auditTime")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...audit].reverse().map((e, i) => (
+                    <TableRow key={i} className="border-b-border/50 transition-colors hover:bg-muted/20">
+                      <TableCell className="px-5 py-3"><DecisionBadge decision={e.decision} /></TableCell>
+                      <TableCell className="px-4 py-3 font-medium text-sm">{e.tool}</TableCell>
+                      <TableCell className="hidden sm:table-cell px-4 py-3 text-muted-foreground text-xs max-w-[300px] truncate" title={e.reason}>{e.reason}</TableCell>
+                      <TableCell className="px-5 py-3 text-right text-xs text-muted-foreground whitespace-nowrap font-mono">
+                        {new Date(e.ts * 1000).toLocaleTimeString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Checkpoints */}
       {tab === "checkpoints" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">
-              {t("security.checkpointCount", { count: checkpoints.length })}
-            </span>
-            <Button variant="outline" size="sm" onClick={loadCheckpoints}>
-              <IconRefresh size={14} /> {t("security.refresh")}
+        <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
+          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50 flex flex-row items-center justify-between space-y-0">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-semibold">{t("security.checkpoints", "安全检查点")}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {t("security.checkpointCount", { count: checkpoints.length })}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={loadCheckpoints} className="h-8">
+              <RotateCw size={14} className="mr-1.5" /> {t("security.refresh")}
             </Button>
-          </div>
-          {checkpoints.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground text-sm">
-              <IconClock size={28} className="mx-auto mb-2 opacity-30" />
-              {t("security.noCheckpoints")}
-            </div>
-          ) : (
-            <div className="rounded-md border">
-              {checkpoints.map((cp) => (
-                <div key={cp.checkpoint_id} className="flex items-center gap-3 px-3 py-2.5 border-b last:border-b-0">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium font-mono truncate">{cp.checkpoint_id}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {cp.tool_name} — {cp.file_count} {t("security.files")}
-                      <span className="ml-2">{new Date(cp.timestamp * 1000).toLocaleString()}</span>
-                    </div>
-                  </div>
-                  <Button variant="outline" size="xs" onClick={() => rewindCheckpoint(cp.checkpoint_id)}>
-                    {t("security.rewind")}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {checkpoints.length === 0 ? (
+              <div className="py-16 text-center text-muted-foreground text-sm flex flex-col items-center">
+                <IconClock size={32} className="mb-3 opacity-20" />
+                {t("security.noCheckpoints")}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader className="bg-muted/30">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="text-xs h-10 px-5 font-medium">ID</TableHead>
+                    <TableHead className="text-xs h-10 px-4 font-medium">{t("security.checkpointTool")}</TableHead>
+                    <TableHead className="hidden sm:table-cell text-xs h-10 px-4 font-medium">{t("security.checkpointFiles")}</TableHead>
+                    <TableHead className="hidden sm:table-cell text-xs h-10 px-4 font-medium">{t("security.checkpointTime")}</TableHead>
+                    <TableHead className="w-[100px] text-right text-xs h-10 px-5 font-medium" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {checkpoints.map((cp) => (
+                    <TableRow key={cp.checkpoint_id} className="border-b-border/50 transition-colors hover:bg-muted/20">
+                      <TableCell className="px-5 py-3 font-mono text-xs truncate max-w-[180px]" title={cp.checkpoint_id}>{cp.checkpoint_id}</TableCell>
+                      <TableCell className="px-4 py-3 text-sm">{cp.tool_name}</TableCell>
+                      <TableCell className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground">
+                        <Badge variant="outline" className="font-mono">{cp.file_count}</Badge> {t("security.files")}
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap font-mono">
+                        {new Date(cp.timestamp * 1000).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="px-5 py-3 text-right">
+                        <Button variant="outline" size="sm" onClick={() => rewindCheckpoint(cp.checkpoint_id)} className="h-7 text-xs">
+                          {t("security.rewind")}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       )}
     </div>
   );
@@ -378,13 +445,14 @@ function DecisionBadge({ decision }: { decision: string }) {
   );
 }
 
-function ZonePanel({ zone, color, paths, onChange }: {
-  zone: string; color: string;
+function ZonePanel({ zone, paths, onChange }: {
+  zone: string;
   paths: string[]; onChange: (v: string[]) => void;
 }) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [expanded, setExpanded] = useState(zone === "workspace" || zone === "controlled");
+  const meta = ZONE_META[zone];
 
   const add = () => {
     const v = input.trim();
@@ -393,51 +461,53 @@ function ZonePanel({ zone, color, paths, onChange }: {
   };
 
   return (
-    <div className="rounded-lg border overflow-hidden">
+    <Card className="p-0 gap-0 overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-accent/50 transition-colors"
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-accent/50 transition-colors"
       >
-        <span className="size-2.5 rounded-full shrink-0" style={{ background: color }} />
+        <span className={cn("size-3 rounded-full shrink-0", meta.tw)} />
         <span className="flex-1 text-sm font-semibold">{t(`security.zone_${zone}`)}</span>
-        <span className="text-xs text-muted-foreground">{paths.length}</span>
-        {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+        <Badge variant="secondary" className="text-xs font-mono">{paths.length}</Badge>
+        {expanded ? <IconChevronDown size={16} className="text-muted-foreground" /> : <IconChevronRight size={16} className="text-muted-foreground" />}
       </button>
       {expanded && (
-        <div className="px-3.5 pb-3 pt-1 space-y-1.5">
+        <CardContent className="pt-0 pb-4 space-y-2">
           {paths.map((p, i) => (
-            <div key={i} className="flex items-center gap-1.5 group">
-              <code className="flex-1 text-xs px-2 py-1 bg-muted rounded">{p}</code>
+            <div key={i} className="flex items-center gap-2 group bg-muted/30 rounded-md border border-transparent hover:border-border transition-colors px-2 py-1">
+              <code className="flex-1 text-xs font-mono">{p}</code>
               <Button
-                variant="ghost" size="icon-xs"
-                className="opacity-0 group-hover:opacity-100 text-destructive"
+                variant="ghost" size="icon"
+                className="size-7 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => onChange(paths.filter((_, j) => j !== i))}
               >
-                <IconX size={12} />
+                <IconX size={14} />
               </Button>
             </div>
           ))}
-          <div className="flex gap-1.5 mt-2">
+          <div className="flex gap-2 mt-3">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && add()}
               placeholder="D:/path/to/dir/**"
-              className="h-7 text-xs"
+              className="h-9 text-sm font-mono"
             />
-            <Button variant="outline" size="xs" onClick={add}>
-              <IconPlus size={12} />
+            <Button variant="secondary" size="sm" onClick={add} className="h-9 px-4">
+              <IconPlus size={14} className="mr-1.5" />
+              {t("common.add", "添加")}
             </Button>
           </div>
-        </div>
+        </CardContent>
       )}
-    </div>
+    </Card>
   );
 }
 
 function TagEditor({ label, items, onChange, placeholder }: {
   label: string; items: string[]; onChange: (v: string[]) => void; placeholder?: string;
 }) {
+  const { t } = useTranslation();
   const [input, setInput] = useState("");
 
   const add = () => {
@@ -447,33 +517,34 @@ function TagEditor({ label, items, onChange, placeholder }: {
   };
 
   return (
-    <div className="space-y-2">
-      <Label className="text-sm">{label}</Label>
+    <div className="space-y-3">
+      <Label className="text-sm font-medium">{label}</Label>
       {items.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-2">
           {items.map((item, i) => (
-            <Badge key={i} variant="secondary" className="gap-1 pr-1 font-mono text-xs">
+            <Badge key={i} variant="secondary" className="gap-1.5 pl-2.5 pr-1 py-1 font-mono text-xs border-transparent hover:border-border transition-colors">
               {item}
               <button
                 onClick={() => onChange(items.filter((_, j) => j !== i))}
-                className="ml-0.5 rounded-sm hover:bg-destructive/20 transition-colors"
+                className="ml-0.5 rounded-sm hover:bg-destructive/20 transition-colors p-0.5"
               >
-                <IconX size={10} className="text-muted-foreground hover:text-destructive" />
+                <IconX size={12} className="text-muted-foreground hover:text-destructive" />
               </button>
             </Badge>
           ))}
         </div>
       )}
-      <div className="flex gap-1.5">
+      <div className="flex gap-2">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
           placeholder={placeholder}
-          className="h-8 text-xs"
+          className="h-9 text-sm font-mono"
         />
-        <Button variant="outline" size="sm" onClick={add}>
-          <IconPlus size={12} />
+        <Button variant="secondary" size="sm" onClick={add} className="h-9 px-4">
+          <IconPlus size={14} className="mr-1.5" />
+          {t("common.add", "添加")}
         </Button>
       </div>
     </div>

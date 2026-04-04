@@ -333,7 +333,12 @@ class SkillLoader:
             return True
         return _CURRENT_PLATFORM in supported_os
 
-    def load_skill(self, skill_dir: Path) -> ParsedSkill | None:
+    def load_skill(
+        self,
+        skill_dir: Path,
+        *,
+        plugin_source: str | None = None,
+    ) -> ParsedSkill | None:
         """
         加载单个技能
 
@@ -358,19 +363,28 @@ class SkillLoader:
                 )
                 return None
 
-            # 验证
+            # 验证: hard errors block registration, warnings are logged
             errors = self.parser.validate(skill)
-            if errors:
-                for error in errors:
-                    logger.warning(f"Skill validation warning: {error}")
+            hard_errors = [e for e in (errors or []) if e.startswith("ERROR:")]
+            warnings = [e for e in (errors or []) if not e.startswith("ERROR:")]
+            for w in warnings:
+                logger.warning(f"Skill validation warning: {w}")
+            if hard_errors:
+                for e in hard_errors:
+                    logger.error(f"Skill validation error: {e}")
+                logger.error(f"Skill '{skill_dir.name}' rejected due to validation errors")
+                return None
 
-            # 用目录名作为 skill_id（天然唯一，不依赖加载顺序）
             sid = skill_dir.name
 
-            # 注册到 registry
-            self.registry.register(skill, skill_id=sid)
-            self._loaded_skills[sid] = skill
+            registered = self.registry.register(
+                skill, skill_id=sid, plugin_source=plugin_source,
+            )
+            if not registered:
+                logger.warning(f"Skill '{sid}' registration rejected (conflict)")
+                return None
 
+            self._loaded_skills[sid] = skill
             logger.info(f"Loaded skill: {sid} (name={skill.metadata.name})")
             return skill
 
@@ -550,15 +564,23 @@ class SkillLoader:
 
         很多外部技能（如 Anthropic 的 xlsx、pdf 等）把脚本直接放在技能根目录
         而非 scripts/ 子目录，因此需要双重查找。
+
+        安全: 解析后的路径必须仍在技能目录内，防止 ``../`` 穿越。
         """
-        if skill.scripts_dir:
-            candidate = skill.scripts_dir / script_name
+        for base in (skill.scripts_dir, skill.skill_dir):
+            if base is None:
+                continue
+            candidate = (base / script_name).resolve()
+            try:
+                candidate.relative_to(skill.skill_dir.resolve())
+            except ValueError:
+                logger.warning(
+                    "Script path traversal blocked: %s resolves outside skill dir %s",
+                    script_name, skill.skill_dir,
+                )
+                return None
             if candidate.exists():
                 return candidate
-        # Fallback: 技能根目录
-        candidate = skill.skill_dir / script_name
-        if candidate.exists():
-            return candidate
         return None
 
     def run_script(
@@ -643,25 +665,42 @@ class SkillLoader:
             extra: dict = {}
             if sys.platform == "win32":
                 extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-            result = subprocess.run(
+
+            MAX_OUTPUT_BYTES = 1 * 1024 * 1024  # 1 MB
+
+            proc = subprocess.Popen(
                 cmd,
                 cwd=cwd or skill.skill_dir,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 **extra,
             )
+            try:
+                raw_stdout, raw_stderr = proc.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return False, "Script execution timed out"
+            except Exception as comm_err:
+                proc.kill()
+                proc.wait()
+                return False, f"Script communication failed: {comm_err}"
 
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR:\n{result.stderr}"
+            truncated = False
+            stdout_bytes = raw_stdout[:MAX_OUTPUT_BYTES] if raw_stdout else b""
+            stderr_bytes = raw_stderr[:MAX_OUTPUT_BYTES] if raw_stderr else b""
+            if (raw_stdout and len(raw_stdout) > MAX_OUTPUT_BYTES) or \
+               (raw_stderr and len(raw_stderr) > MAX_OUTPUT_BYTES):
+                truncated = True
 
-            return result.returncode == 0, output
+            output = stdout_bytes.decode("utf-8", errors="replace")
+            if stderr_bytes:
+                output += f"\nSTDERR:\n{stderr_bytes.decode('utf-8', errors='replace')}"
+            if truncated:
+                output += "\n\n[OUTPUT TRUNCATED — exceeded 1 MB limit]"
 
-        except subprocess.TimeoutExpired:
-            return False, "Script execution timed out"
+            return proc.returncode == 0, output
+
         except Exception as e:
             return False, f"Script execution failed: {e}"
 
@@ -670,19 +709,27 @@ class SkillLoader:
         获取技能参考文档
 
         Args:
-            name: 技能名称
+            name: 技能名称（接受 skill_id 或 display name）
             ref_name: 参考文档名称 (如 REFERENCE.md)
 
         Returns:
             文档内容或 None
         """
-        skill = self._loaded_skills.get(name)
+        skill = self._resolve_skill(name)
         if not skill or not skill.references_dir:
             return None
 
-        ref_path = skill.references_dir / ref_name
+        ref_path = (skill.references_dir / ref_name).resolve()
+        try:
+            ref_path.relative_to(skill.references_dir.resolve())
+        except ValueError:
+            logger.warning(
+                "Reference path traversal blocked: %s resolves outside references dir %s",
+                ref_name, skill.references_dir,
+            )
+            return None
         if ref_path.exists():
-            return ref_path.read_text(encoding="utf-8")
+            return ref_path.read_text(encoding="utf-8", errors="replace")
 
         return None
 
@@ -702,8 +749,12 @@ class SkillLoader:
             return None
 
         skill_dir = skill.skill_dir
+        plugin_source = None
+        entry = self.registry.get(name)
+        if entry:
+            plugin_source = entry.plugin_source
         self.unload_skill(name)
-        return self.load_skill(skill_dir)
+        return self.load_skill(skill_dir, plugin_source=plugin_source)
 
     @property
     def loaded_count(self) -> int:

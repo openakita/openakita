@@ -12,6 +12,8 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ..utils.atomic_io import safe_json_write
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,15 +34,21 @@ class ConsolidationTracker:
         if self.tracker_file.exists():
             try:
                 with open(self.tracker_file, encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    logger.warning(
+                        f"Consolidation tracker file contains {type(data).__name__}, "
+                        f"expected dict. Using empty state."
+                    )
+                    return {}
+                return data
             except Exception as e:
                 logger.error(f"Failed to load consolidation tracker: {e}")
         return {}
 
     def _save(self) -> None:
         try:
-            with open(self.tracker_file, "w", encoding="utf-8") as f:
-                json.dump(self._state, f, ensure_ascii=False, indent=2)
+            safe_json_write(self.tracker_file, self._state)
         except Exception as e:
             logger.error(f"Failed to save consolidation tracker: {e}")
 

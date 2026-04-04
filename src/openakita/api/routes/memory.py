@@ -15,6 +15,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from openakita.memory.types import MemoryType, SemanticMemory
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/memories", tags=["memory"])
@@ -112,6 +114,34 @@ def _serialize(mem: Any) -> dict:
         "last_accessed_at": mem.last_accessed_at.isoformat() if mem.last_accessed_at else None,
         "expires_at": mem.expires_at.isoformat() if mem.expires_at else None,
     }
+
+
+@router.post("")
+async def create_memory(request: Request, body: MemoryCreateRequest):
+    """Create a new memory entry from the chat UI."""
+    store = _get_store(request)
+    if not store:
+        raise HTTPException(503, "Memory store not available")
+    try:
+        mem_type = MemoryType.FACT
+        try:
+            mem_type = MemoryType(body.type)
+        except ValueError:
+            pass
+        mem = SemanticMemory(
+            type=mem_type,
+            content=body.content,
+            source="chat_ui",
+            subject=body.subject or "",
+            predicate=body.predicate or "",
+            importance_score=body.importance_score,
+            tags=body.tags or [],
+        )
+        mem_id = store.save_semantic(mem)
+        _sync_json(request)
+        return {"status": "ok", "id": mem_id}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to save memory: {e}")
 
 
 @router.get("")

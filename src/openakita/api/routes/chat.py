@@ -26,6 +26,110 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/api/commands")
+async def list_commands():
+    """Return available slash commands for the Desktop UI."""
+    from ...commands.registry import CommandScope, get_commands
+
+    return [
+        {
+            "name": c.name,
+            "label": c.label,
+            "description": c.description,
+            "argsHint": c.args_hint,
+        }
+        for c in get_commands()
+        if CommandScope.DESKTOP in c.scope
+    ]
+
+
+@router.post("/api/chat/clear")
+async def clear_chat(request: Request):
+    """Clear session context for a conversation."""
+    body = await request.json()
+    conversation_id = body.get("conversation_id", "")
+    if not conversation_id:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "missing conversation_id"},
+        )
+
+    session_manager = getattr(request.app.state, "session_manager", None)
+    if not session_manager:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "session manager not available"},
+        )
+
+    cleared = session_manager.clear_history(
+        channel="desktop",
+        chat_id=conversation_id,
+        user_id="desktop_user",
+    )
+    if cleared:
+        _cleanup_chat_runtime_state(request, conversation_id)
+        return {"ok": True}
+
+    # Fallback: search by Session.id (handles wrapped IDs from API clients)
+    session = session_manager.get_session_by_id(conversation_id)
+    if session:
+        session.context.clear_messages()
+        session_manager.mark_dirty()
+        _cleanup_chat_runtime_state(request, conversation_id)
+        return {"ok": True}
+
+    return JSONResponse(
+        status_code=404,
+        content={"ok": False, "error": "session not found"},
+    )
+
+
+def _cleanup_chat_runtime_state(request: Request, conversation_id: str) -> None:
+    """Clear runtime state that should not survive /api/chat/clear."""
+    try:
+        from ...core.policy import get_policy_engine
+
+        get_policy_engine().cleanup_session(conversation_id)
+    except Exception:
+        pass
+
+    try:
+        from ...tools.handlers.plan import clear_session_todo_state
+
+        clear_session_todo_state(conversation_id)
+    except Exception:
+        pass
+
+    # Clear pending tool confirmations in the ToolExecutor
+    try:
+        brain = getattr(request.app.state, "brain", None)
+        if brain and hasattr(brain, "_tool_executor"):
+            brain._tool_executor.clear_confirm_cache()
+    except Exception:
+        pass
+
+    try:
+        orchestrators = []
+
+        app_orchestrator = getattr(request.app.state, "orchestrator", None)
+        if app_orchestrator is not None:
+            orchestrators.append(app_orchestrator)
+
+        try:
+            from openakita.main import _orchestrator as global_orchestrator
+
+            if global_orchestrator is not None and global_orchestrator not in orchestrators:
+                orchestrators.append(global_orchestrator)
+        except Exception:
+            pass
+
+        for orchestrator in orchestrators:
+            if hasattr(orchestrator, "purge_session_states"):
+                orchestrator.purge_session_states(conversation_id)
+    except Exception:
+        pass
+
+
 async def _broadcast_chat_event(event: str, data: dict) -> None:
     """Broadcast a chat event via WebSocket to all connected clients."""
     try:
@@ -254,13 +358,19 @@ async def _stream_chat(
                 )
             except (UnicodeEncodeError, OSError):
                 pass
-        payload = {"type": event_type, **(data or {})}
+        from ...events import normalize_stream_event
+
+        payload = normalize_stream_event({"type": event_type, **(data or {})})
         if event_type == "text_delta" and data and "content" in data:
             chunk = data["content"]
             _reply_chars += len(chunk)
             _full_reply += chunk
             if len(_reply_preview) < 120:
                 _reply_preview += chunk
+        elif event_type == "text_replace" and data and "content" in data:
+            _full_reply = data["content"]
+            _reply_chars = len(_full_reply)
+            _reply_preview = _full_reply[:120]
         elif event_type == "chain_text" and data and "content" in data:
             chunk = data["content"]
             _reply_chars += len(chunk)
@@ -328,6 +438,7 @@ async def _stream_chat(
                     session=session,
                     gateway=None,
                     plan_mode=chat_request.plan_mode,
+                    mode=chat_request.mode,
                     endpoint_override=chat_request.endpoint,
                     attachments=chat_request.attachments,
                     thinking_mode=chat_request.thinking_mode,
@@ -408,7 +519,8 @@ async def _stream_chat(
             if event_type == "__agent_error__":
                 _agent_errored = True
                 if not _client_disconnected:
-                    yield _sse("error", {"message": event.get("__exc_msg__", "Unknown error")})
+                    _err_msg = event.get("__exc_msg__") or "Unknown error"
+                    yield _sse("error", {"message": _err_msg})
                     yield _sse("done")
                 break
 
@@ -639,7 +751,8 @@ async def _stream_chat(
     except Exception as e:
         logger.error(f"Chat stream error: {e}", exc_info=True)
         if not _client_disconnected:
-            yield _sse("error", {"message": str(e)[:500]})
+            err_msg = str(e)[:500] or f"{type(e).__name__}: unknown error"
+            yield _sse("error", {"message": err_msg})
             yield _sse("done")
     finally:
         # ── Wait for agent task to finish (deferred save if SSE gen was interrupted) ──
@@ -727,19 +840,35 @@ async def chat(request: Request, body: ChatRequest):
     Each conversation gets its own Agent instance via AgentInstancePool
     to support concurrent streaming without shared-state corruption.
 
-    Returns Server-Sent Events with the following event types:
-    - thinking_start / thinking_delta / thinking_end
+    Returns Server-Sent Events with the following event types
+    (canonical definitions in openakita.events.StreamEventType):
+    - heartbeat / iteration_start
+    - thinking_start / thinking_delta / thinking_end / chain_text
     - text_delta
     - tool_call_start / tool_call_end
-    - plan_created / plan_step_updated
-    - ask_user
-    - agent_switch
-    - agent_handoff
+    - context_compressed
+    - security_confirm / ask_user
+    - todo_created / todo_step_updated / todo_completed / todo_cancelled
+    - agent_handoff / user_insert
+    - artifact / ui_preference
     - error
-    - done
+    - done (with optional usage payload)
     """
     import uuid as _uuid
-    conversation_id = body.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
+
+    pool = getattr(request.app.state, "agent_pool", None)
+    if not body.conversation_id:
+        if pool is not None:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "missing_conversation_id",
+                    "message": "conversation_id is required in pool mode to avoid agent instance leaks",
+                },
+            )
+        body.conversation_id = f"api_{_uuid.uuid4().hex[:12]}"
+
+    conversation_id = body.conversation_id
     client_id = body.client_id or ""
 
     # ── Busy-lock check (via lifecycle manager) ──
@@ -774,6 +903,22 @@ async def chat(request: Request, body: ChatRequest):
 
     msg_preview = (body.message or "")[:100]
     att_count = len(body.attachments) if body.attachments else 0
+
+    # Detect likely client-side encoding corruption: if the message is mostly
+    # '?' characters mixed with sparse ASCII, the client probably encoded
+    # Chinese/CJK text as ASCII with errors="replace" before sending.
+    _msg = body.message or ""
+    if len(_msg) > 2:
+        _q = _msg.count("?")
+        _non_ascii = sum(1 for c in _msg if ord(c) > 127)
+        if _q > len(_msg) * 0.4 and _non_ascii == 0:
+            logger.warning(
+                "[Chat API] 疑似编码损坏: 消息含 %d/%d 个问号且无非ASCII字符, "
+                "客户端可能在发送前将中文编码为ASCII(errors=replace)。"
+                "请确认客户端使用 UTF-8 编码 JSON body | conv=%s",
+                _q, len(_msg), conversation_id,
+            )
+
     logger.info(
         f"[Chat API] 收到消息: \"{msg_preview}\""
         + (f" (+{att_count}个附件)" if att_count else "")
@@ -889,6 +1034,8 @@ async def chat_insert(request: Request, body: ChatControlRequest):
         _conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
         logger.info(f"[Chat API] Insert -> STOP: reason={reason!r}, conv_id={_conv_id!r}")
         actual_agent.cancel_current_task(reason, session_id=_conv_id)
+        if _conv_id:
+            await get_lifecycle_manager().finish(_conv_id)
         logger.info("[Chat API] Insert -> STOP 执行完成")
         return {"status": "ok", "action": "cancel", "reason": reason}
 
@@ -946,3 +1093,24 @@ async def get_sub_agent_records(request: Request, conversation_id: str = ""):
     except Exception as e:
         logger.warning(f"[Chat API] sub-records query error: {e}")
     return []
+
+
+@router.post("/api/plan/dismiss")
+async def dismiss_plan_approval(request: Request):
+    """用户关闭审批面板时清除后端 pending 状态"""
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False, "error": "invalid JSON body"}
+    conversation_id = body.get("conversation_id", "")
+    if not conversation_id:
+        return {"ok": False, "error": "missing conversation_id"}
+
+    agent = _get_existing_agent(request, conversation_id)
+    if agent is None:
+        return {"ok": True}
+
+    pending_map = getattr(agent, "_plan_exit_pending", None)
+    if isinstance(pending_map, dict):
+        pending_map.pop(conversation_id, None)
+    return {"ok": True}

@@ -101,10 +101,16 @@ class PromptCompiler:
 
             if compiled and compiled.strip():
                 output_path.write_text(compiled, encoding="utf-8")
-                results[target] = output_path
                 logger.info(
                     f"[Compiler] LLM compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}"
                 )
+            else:
+                fallback = source_content[: config.get("max_tokens", 500)]
+                output_path.write_text(fallback, encoding="utf-8")
+                logger.info(
+                    f"[Compiler] LLM compilation empty for {target}, wrote truncated source"
+                )
+            results[target] = output_path
 
         (runtime_dir / ".compiled_at").write_text(datetime.now().isoformat(), encoding="utf-8")
         return results
@@ -159,8 +165,14 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
 
         if compiled and compiled.strip():
             output_path.write_text(compiled, encoding="utf-8")
-            results[target] = output_path
             logger.info(f"[Compiler] Rule compiled {_SOURCE_MAP[target]} -> {_OUTPUT_MAP[target]}")
+        else:
+            fallback = source_content[: config.get("max_tokens", 500)]
+            output_path.write_text(fallback, encoding="utf-8")
+            logger.info(
+                f"[Compiler] Rule extraction empty for {target}, wrote truncated source"
+            )
+        results[target] = output_path
 
     _cleanup_orphan_files(runtime_dir)
 
@@ -270,10 +282,23 @@ def _compile_with_rules(content: str, config: dict) -> str:
     """Rule-based compilation with HTML cleanup and code block skipping.
 
     Falls back to static templates if extraction produces poor results.
+
+    ADR (EV3): For targets listed in ``_STATIC_FALLBACKS`` (currently
+    ``agent_core``), this *sync* path always returns the hand-crafted static
+    template and never parses ``AGENT.md``.  This is intentional:
+
+    * The sync path is used at import time / first prompt build when no event
+      loop is available.  It must be fast and deterministic.
+    * The *async* ``compile()`` path (which calls the LLM) is the canonical
+      route for incorporating live ``AGENT.md`` edits.  It writes compiled
+      output to ``identity/runtime/agent.core.md``.
+    * On startup, ``PromptBuilder`` should call ``check_compiled_outdated``
+      and, when stale, schedule an async ``compile_all`` so that the runtime
+      prompt reflects the latest ``AGENT.md``.  Until that finishes, the
+      static fallback provides a safe, well-tested default.
     """
     target = config.get("target", "")
 
-    # Try static fallback first — guaranteed quality
     if target in _STATIC_FALLBACKS:
         return _STATIC_FALLBACKS[target]
 
@@ -379,7 +404,11 @@ _STATIC_FALLBACKS: dict[str, str] = {
 - 删除用户数据（除非明确要求）
 - 放弃任务（除非用户明确取消）
 - 只回复文字而不调用工具（任务场景下）
-- 说"做不到" — 应该搜索/安装/创建能力""",
+- 说"做不到" — 应该搜索/安装/创建能力
+
+### 铁律例外
+- 例外：在多 Agent 模式下，如果任务明显更适合由专业 Agent 处理，允许主动委派
+- 委派不是放弃，而是为了更高质量完成任务；委派后仍需对最终结果负责""",
     "agent_tooling": """\
 ## 工具使用原则
 

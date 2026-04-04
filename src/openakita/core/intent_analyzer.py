@@ -64,6 +64,7 @@ class IntentResult:
     force_tool: bool = False
     todo_required: bool = False
     suggest_plan: bool = False
+    suppress_plan: bool = False
     complexity: ComplexitySignal = field(default_factory=ComplexitySignal)
     raw_output: str = ""
     fast_reply: bool = False
@@ -76,11 +77,17 @@ _DEFAULT_RESULT = IntentResult(
     force_tool=True,
 )
 
-INTENT_ANALYZER_SYSTEM = """【角色】
-你是 Intent Analyzer，负责分析用户消息的意图并生成结构化任务定义。
+INTENT_ANALYZER_SYSTEM = """\
+你是 Intent Analyzer。根据用户消息判断意图，只输出 YAML，不要解释。
 
-【输入】
-用户的原始请求。
+意图类型：
+- task: 需要执行操作（写文件、搜索、查看目录、创建、发送消息、运行命令等）
+- query: 知识问答，不需要工具就能回答
+- chat: 纯闲聊、寒暄、感谢、告别
+- follow_up: 追问或修改上一轮结果
+- command: 以 / 开头的系统指令
+
+task_type 可选值: question/action/creation/analysis/reminder/compound/other
 
 【目标】
 1. 判断用户意图类型
@@ -89,9 +96,9 @@ INTENT_ANALYZER_SYSTEM = """【角色】
 4. 提取记忆检索关键词
 5. 评估任务复杂度和风险
 
-【输出结构】
-请用以下 YAML 格式输出：
+tool_hints 可选值: File System, Browser, Web Search, IM Channel, Desktop, Agent, Organization, Config（空列表=仅基础工具）
 
+输出格式（严格遵循，不要添加多余字段）：
 ```yaml
 intent: [意图类型: chat/query/task/follow_up/command]
 task_type: [任务类型: question/action/creation/analysis/reminder/compound/other]
@@ -110,12 +117,13 @@ complexity:
   suggest_plan: [true/false]
 ```
 
-【意图类型说明】
-- chat: 闲聊、寒暄、感谢、告别、简短确认（如"好的""收到""你好"）
-- query: 信息查询，可能不需要工具就能回答（如"Python的GIL是什么"）
-- task: 需要通过工具执行的任务（如"帮我写个脚本""搜索一下""创建文件"）
-- follow_up: 对上一轮结果的追问或修改要求（如"改成UTF-8编码""再加一个功能"）
-- command: 系统指令（以 / 开头的命令，如 /stop /plan）
+示例：
+用户: "帮我查看项目里有哪些Python文件" → intent: task, task_type: action, goal: 列出项目中的Python文件, tool_hints: [File System]
+用户: "搜索一下最新的AI新闻" → intent: task, task_type: action, goal: 搜索AI新闻, tool_hints: [Web Search]
+用户: "Python的GIL是什么" → intent: query, task_type: question, goal: 解释Python GIL机制, tool_hints: []
+用户: "推荐3本产品经理的书" → intent: query, task_type: question, goal: 推荐产品经理书籍, tool_hints: []
+用户: "你好" → intent: chat, task_type: other, goal: 用户打招呼, tool_hints: []
+用户: "改成UTF-8编码" → intent: follow_up, task_type: action, goal: 修改编码为UTF-8, tool_hints: [File System]
 
 【complexity 判断标准】
 - destructive: true — 请求涉及不可逆操作：删除数据/文件、清空内容、覆盖未备份的内容、重置配置、终止进程、发送不可撤回的消息等
@@ -205,7 +213,9 @@ complexity:
   destructive: true
   scope: local
   suggest_plan: true
-```"""
+```
+
+重要：你必须分析用户的实际消息内容来判断意图，不要复制上面的示例。"""
 
 
 def _strip_thinking_tags(text: str) -> str:
@@ -308,9 +318,10 @@ class IntentAnalyzer:
     ) -> IntentResult:
         """Analyze user message intent. Rule-based shortcut for obvious greetings,
         LLM analysis for everything else."""
-        fast_result = _try_fast_chat_shortcut(message, has_history=has_history)
-        if fast_result is not None:
-            return fast_result
+        # fast_reply 快捷路径已禁用，所有消息统一走 LLM 意图分析
+        # fast_result = _try_fast_chat_shortcut(message, has_history=has_history)
+        # if fast_result is not None:
+        #     return fast_result
 
         try:
             response = await self.brain.compiler_think(
@@ -419,9 +430,11 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         raw_output=raw_output,
     )
 
-    # Complexity — parsed from LLM output
     result.complexity = _parse_complexity(extracted)
     result.suggest_plan = result.complexity.should_suggest_plan
+    if result.complexity.score < 2:
+        result.todo_required = False
+        result.suppress_plan = True
     logger.info(
         f"[IntentAnalyzer] Complexity: destructive={result.complexity.destructive_potential}, "
         f"score={result.complexity.score}, suggest_plan={result.suggest_plan}"

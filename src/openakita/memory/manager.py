@@ -155,6 +155,9 @@ class MemoryManager:
         # Global store fallback for isolated agents (set by AgentFactory)
         self._global_store_ref: UnifiedStore | None = None
 
+        # Plugin-provided memory backends (shared dict from host_refs)
+        self._plugin_backends: dict | None = None
+
         # Load existing memories
         self._load_memories()
 
@@ -325,6 +328,11 @@ class MemoryManager:
             self._turn_offset = 0
         if self._turn_offset > 0:
             logger.info(f"[Memory] start_session({session_id}): resuming at turn_offset={self._turn_offset}")
+
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.start_session(session_id))
         else:
             logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
 
@@ -341,6 +349,11 @@ class MemoryManager:
                 filename, mime_type, local_path, url, description,
                 transcription, extracted_text, tags, direction, file_size
         """
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.record_turn(role, content))
+
         turn = ConversationTurn(
             role=role,
             content=content,
@@ -421,6 +434,8 @@ class MemoryManager:
     async def extract_on_topic_change(self) -> int:
         """主题切换时，从已积累的对话中提取记忆，然后重置 turns 缓冲。
 
+        带 30s 超时保护，防止后台提取任务挂起。
+
         Returns:
             提取并保存的记忆条数
         """
@@ -430,7 +445,10 @@ class MemoryManager:
 
         try:
             cited = self._consume_cited_memories()
-            items, scores = await self.extractor.extract_from_conversation(turns, cited_memories=cited or None)
+            items, scores = await asyncio.wait_for(
+                self.extractor.extract_from_conversation(turns, cited_memories=cited or None),
+                timeout=30.0,
+            )
 
             if scores:
                 self._apply_citation_scores(scores)
@@ -444,6 +462,10 @@ class MemoryManager:
             # Reset turn buffer — new topic starts fresh
             self._session_turns.clear()
             return saved
+        except TimeoutError:
+            logger.warning("[Memory] Topic-change extraction timed out (30s), skipping")
+            self._session_turns.clear()
+            return 0
         except Exception as e:
             logger.warning(f"[Memory] Topic-change extraction failed: {e}")
             return 0
@@ -636,6 +658,11 @@ class MemoryManager:
         if not self._current_session_id:
             return
 
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.end_session())
+
         session_id = self._current_session_id
         turns = list(self._session_turns)
         cited = self._consume_cited_memories()
@@ -663,8 +690,11 @@ class MemoryManager:
 
                 # Track 1: User profile extraction (+ citation scoring in same LLM call)
                 try:
-                    items, scores = await self.extractor.extract_from_conversation(
-                        turns, cited_memories=cited or None,
+                    items, scores = await asyncio.wait_for(
+                        self.extractor.extract_from_conversation(
+                            turns, cited_memories=cited or None,
+                        ),
+                        timeout=30.0,
                     )
                     if scores:
                         useful = self._apply_citation_scores(scores)
@@ -682,7 +712,10 @@ class MemoryManager:
 
                 # Track 2: Task experience extraction
                 try:
-                    exp_items = await self.extractor.extract_experience_from_conversation(turns)
+                    exp_items = await asyncio.wait_for(
+                        self.extractor.extract_experience_from_conversation(turns),
+                        timeout=30.0,
+                    )
                     exp_saved = 0
                     for item in exp_items:
                         mid = await self._save_extracted_item(item, episode_id=ep_id)
@@ -962,6 +995,11 @@ class MemoryManager:
             sem.expires_at = memory.expires_at
         self.store.save_semantic(self._stamp_agent_id(sem), scope=scope, scope_owner=scope_owner)
 
+        replace = self._get_replace_backend()
+        if replace is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_event_loop().create_task(replace.store(sem.to_dict()))
+
         logger.debug(f"Added memory: {memory.id} - {memory.content}")
         return memory.id
 
@@ -1011,6 +1049,21 @@ class MemoryManager:
                 return True
             return False
 
+    # ==================== Plugin Memory Backends ====================
+
+    def set_plugin_backends(self, backends: dict) -> None:
+        """Bind the shared plugin memory_backends dict from host_refs."""
+        self._plugin_backends = backends
+
+    def _get_replace_backend(self):
+        """Return the active replace-mode plugin backend, if any."""
+        if not self._plugin_backends:
+            return None
+        for entry in self._plugin_backends.values():
+            if isinstance(entry, dict) and entry.get("replace"):
+                return entry.get("backend")
+        return None
+
     # ==================== Injection (v1 compat) ====================
 
     def get_injection_context(
@@ -1021,6 +1074,21 @@ class MemoryManager:
         scope_owner: str = "",
     ) -> str:
         """v1 compat — prefer using builder.py's three-layer injection"""
+        replace = self._get_replace_backend()
+        if replace is not None:
+            try:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        replace.get_injection_context(task_description, 700),
+                    )
+                    return future.result(timeout=10)
+            except Exception:
+                logger.warning(
+                    "Replace-mode memory backend failed, falling back to built-in",
+                    exc_info=True,
+                )
         return self.retrieval_engine.retrieve(
             query=task_description,
             recent_messages=self._recent_messages,
@@ -1030,9 +1098,21 @@ class MemoryManager:
     async def get_injection_context_async(
         self, task_description: str = "", scope: str = "global", scope_owner: str = ""
     ) -> str:
+        replace = self._get_replace_backend()
+        if replace is not None:
+            try:
+                return await asyncio.wait_for(
+                    replace.get_injection_context(task_description, 700),
+                    timeout=10,
+                )
+            except Exception:
+                logger.warning(
+                    "Replace-mode memory backend failed, falling back to built-in",
+                    exc_info=True,
+                )
         return await asyncio.to_thread(
-            self.get_injection_context, task_description,
-            scope=scope, scope_owner=scope_owner,
+            self.retrieval_engine.retrieve,
+            task_description, self._recent_messages, None, 700,
         )
 
     def _keyword_search(self, query: str, limit: int = 5) -> list[Memory]:

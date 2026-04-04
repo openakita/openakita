@@ -357,6 +357,45 @@ keys 是按键数组，如 ['ctrl', 'c']""",
             "required": [],
         },
     },
+    {
+        "name": "desktop_batch",
+        "category": "Desktop",
+        "description": (
+            "Execute multiple desktop automation actions atomically in sequence. "
+            "Use when you need to perform several quick operations (click, type, hotkey) "
+            "without screenshots between each step. Each action is a dict with 'tool' "
+            "and 'params' keys. Reduces round-trips for multi-step UI interactions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": {
+                                "type": "string",
+                                "enum": [
+                                    "desktop_click", "desktop_type",
+                                    "desktop_hotkey", "desktop_scroll",
+                                    "desktop_wait",
+                                ],
+                                "description": "The desktop tool to execute.",
+                            },
+                            "params": {
+                                "type": "object",
+                                "description": "Parameters for the tool.",
+                            },
+                        },
+                        "required": ["tool", "params"],
+                    },
+                    "description": "Array of actions to execute in sequence.",
+                },
+            },
+            "required": ["actions"],
+        },
+    },
 ]
 
 
@@ -412,6 +451,8 @@ class DesktopToolHandler:
                 return await self._handle_wait(params)
             elif tool_name == "desktop_inspect":
                 return self._handle_inspect(params)
+            elif tool_name == "desktop_batch":
+                return await self._handle_batch(params)
             else:
                 return {"error": f"Unknown tool: {tool_name}"}
         except Exception as e:
@@ -588,6 +629,39 @@ class DesktopToolHandler:
             "success": True,
             "tree": tree,
             "text": text,
+        }
+
+    async def _handle_batch(self, params: dict) -> dict:
+        """Execute multiple desktop actions atomically in sequence.
+
+        参考 CC computer_batch：原子化批量执行。
+        """
+        actions = params.get("actions", [])
+        if not actions:
+            return {"error": "desktop_batch requires a non-empty 'actions' array."}
+        if len(actions) > 20:
+            return {"error": "desktop_batch supports at most 20 actions per call."}
+
+        allowed = {"desktop_click", "desktop_type", "desktop_hotkey",
+                    "desktop_scroll", "desktop_wait"}
+        results = []
+        for i, action in enumerate(actions):
+            tool = action.get("tool", "")
+            action_params = action.get("params", {})
+            if tool not in allowed:
+                results.append({"step": i, "error": f"Tool '{tool}' not allowed in batch."})
+                continue
+            try:
+                result = await self.handle(tool, action_params)
+                results.append({"step": i, "result": result})
+            except Exception as e:
+                results.append({"step": i, "error": str(e)})
+                break  # abort on first failure for atomicity
+
+        return {
+            "success": all("error" not in r for r in results),
+            "steps_completed": len(results),
+            "results": results,
         }
 
 

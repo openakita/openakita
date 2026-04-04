@@ -7,6 +7,7 @@ Skills route: GET /api/skills, POST /api/skills/config, GET /api/skills/marketpl
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -212,8 +213,20 @@ async def list_skills(request: Request):
         sid = getattr(skill, "skill_id", skill.name)
         is_enabled = is_system or effective_allowlist is None or sid in effective_allowlist
 
+        relative_path = None
+        if skill.skill_path:
+            try:
+                relative_path = str(Path(skill.skill_path).relative_to(base_path))
+            except (ValueError, TypeError):
+                relative_path = sid
+
         skills.append({
             "skill_id": sid,
+            "capability_id": getattr(skill, "capability_id", ""),
+            "namespace": getattr(skill, "namespace", ""),
+            "origin": getattr(skill, "origin", "project"),
+            "visibility": getattr(skill, "visibility", "public"),
+            "permission_profile": getattr(skill, "permission_profile", ""),
             "name": skill.name,
             "description": skill.description,
             "name_i18n": skill.name_i18n or None,
@@ -223,7 +236,7 @@ async def list_skills(request: Request):
             "category": skill.category,
             "tool_name": skill.tool_name,
             "config": config,
-            "path": skill.skill_path,
+            "path": relative_path,
             "source_url": getattr(skill, "source_url", None),
         })
 
@@ -247,13 +260,36 @@ async def list_skills(request: Request):
 
 @router.post("/api/skills/config")
 async def update_skill_config(request: Request):
-    """Update skill configuration."""
+    """Persist skill configuration to data/skill_configs.json."""
     body = await request.json()
     skill_name = body.get("skill_name", "")
-    config = body.get("config", {})
+    config_values = body.get("config", {})
 
-    # TODO: Apply config to the skill and persist to .env
-    return {"status": "ok", "skill": skill_name, "config": config}
+    if not skill_name:
+        raise HTTPException(status_code=400, detail="skill_name is required")
+
+    try:
+        from openakita.config import settings
+        config_file = settings.project_root / "data" / "skill_configs.json"
+    except Exception:
+        config_file = Path.cwd() / "data" / "skill_configs.json"
+
+    existing: dict = {}
+    if config_file.exists():
+        try:
+            raw = config_file.read_text(encoding="utf-8")
+            existing = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            pass
+
+    existing[skill_name] = config_values
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    return {"status": "ok", "skill": skill_name, "config": config_values}
 
 
 @router.post("/api/skills/install")
@@ -502,9 +538,15 @@ async def get_skill_content(skill_name: str, request: Request):
     except Exception as e:
         return {"error": f"Failed to read SKILL.md: {e}"}
 
+    safe_path = skill_name
+    try:
+        safe_path = str(Path(skill.path).relative_to(base_path))
+    except (ValueError, TypeError):
+        pass
+
     return {
         "content": content,
-        "path": str(skill.path),
+        "path": safe_path,
         "system": skill.metadata.system,
     }
 
@@ -513,7 +555,7 @@ async def get_skill_content(skill_name: str, request: Request):
 async def update_skill_content(skill_name: str, request: Request):
     """更新技能的 SKILL.md 内容并热重载。
 
-    POST body: { "content": "完整的 SKILL.md 内容" }
+    PUT body: { "content": "完整的 SKILL.md 内容" }
 
     流程:
     1. 校验新内容能被正确解析（frontmatter + body）
@@ -573,6 +615,7 @@ async def update_skill_content(skill_name: str, request: Request):
             logger.warning(f"Skill reload after edit failed: {e}")
 
     _invalidate_skills_cache()
+    _notify_skills_changed("content_update")
     return {
         "status": "ok",
         "reloaded": reloaded,

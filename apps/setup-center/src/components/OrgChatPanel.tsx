@@ -60,6 +60,24 @@ function sessionId(orgId: string, nodeId?: string | null): string {
 let _seq = 0;
 function genId() { return `orgchat-${Date.now()}-${++_seq}`; }
 
+const LS_PREFIX = "orgchat_msgs_";
+
+function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
+  try {
+    const slim = msgs
+      .filter(m => !m.streaming)
+      .map(({ id, role, content, timestamp }) => ({ id, role, content, timestamp }));
+    localStorage.setItem(LS_PREFIX + cid, JSON.stringify(slim));
+  } catch { /* quota exceeded */ }
+}
+
+function loadFromLocalStorage(cid: string): ChatMsg[] {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + cid);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
 export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose }: OrgChatPanelProps) {
   const md = useMd();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -78,7 +96,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
 
   useEffect(scrollToBottom, [messages, scrollToBottom]);
 
-  // Load history from backend session on mount / org+node change
+  // Load history: backend first, localStorage fallback
   useEffect(() => {
     let cancelled = false;
     setLoaded(false);
@@ -94,11 +112,26 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           content: m.content || "",
           timestamp: m.timestamp || Date.now(),
         }));
-        console.log(`[OrgChat] Loaded ${msgs.length} messages for ${convId}`);
-        setMessages(msgs);
+        if (msgs.length > 0) {
+          console.log(`[OrgChat] Loaded ${msgs.length} messages from backend for ${convId}`);
+          setMessages(msgs);
+          saveToLocalStorage(convId, msgs);
+        } else {
+          const local = loadFromLocalStorage(convId);
+          if (local.length > 0) {
+            console.log(`[OrgChat] Backend empty, restored ${local.length} messages from localStorage for ${convId}`);
+            setMessages(local);
+          } else {
+            setMessages([]);
+          }
+        }
       } catch (err) {
-        console.warn(`[OrgChat] Failed to load history for ${convId}:`, err);
-        if (!cancelled) setMessages([]);
+        console.warn(`[OrgChat] Backend load failed for ${convId}:`, err);
+        if (!cancelled) {
+          const local = loadFromLocalStorage(convId);
+          console.log(`[OrgChat] Falling back to localStorage: ${local.length} messages for ${convId}`);
+          setMessages(local);
+        }
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -106,12 +139,38 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     return () => { cancelled = true; };
   }, [convId, apiBaseUrl]);
 
-  // Push messages to backend session (standalone fetch, survives component unmount)
-  const persistRef = useRef({ apiBaseUrl, convId });
-  persistRef.current = { apiBaseUrl, convId };
+  // Debounced localStorage write on every messages change
+  useEffect(() => {
+    if (!loaded) return;
+    const t = setTimeout(() => saveToLocalStorage(convId, messages), 300);
+    return () => clearTimeout(t);
+  }, [messages, convId, loaded]);
 
-  const persistMessages = useCallback(async (msgs: { role: string; content: string }[], replace = false) => {
-    const { apiBaseUrl: base, convId: cid } = persistRef.current;
+  // Flush localStorage immediately on page hide / close
+  const messagesRef = useRef<ChatMsg[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  const convIdRef = useRef(convId);
+  useEffect(() => { convIdRef.current = convId; }, [convId]);
+
+  useEffect(() => {
+    const flush = () => saveToLocalStorage(convIdRef.current, messagesRef.current);
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      flush();
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  // Push messages to backend session (explicit params to avoid stale-ref bugs)
+  const persistToBackend = useCallback(async (
+    base: string, cid: string,
+    msgs: { role: string; content: string }[],
+    replace = false,
+  ) => {
     const url = `${base}/api/sessions/${encodeURIComponent(cid)}/messages`;
     try {
       const res = await fetch(url, {
@@ -126,14 +185,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     }
   }, []);
 
-  const messagesRef = useRef<ChatMsg[]>([]);
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
-
-  const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
-
   const handleClear = useCallback(async () => {
     setMessages([]);
+    try { localStorage.removeItem(LS_PREFIX + convId); } catch {}
     try {
       await safeFetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}`, {
         method: "DELETE",
@@ -251,20 +305,14 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     } finally {
       unsubProgress();
       setSending(false);
-      // Persist full conversation to backend (replace mode) so history
-      // survives component unmount.  Only if still mounted — when unmounted,
-      // messagesRef is stale and would overwrite the server bridge's correct data.
-      if (mountedRef.current) {
-        setTimeout(() => {
-          if (!mountedRef.current) return;
-          const all = messagesRef.current.filter(m => !m.streaming);
-          if (all.length > 0) {
-            persistMessages(all.map(m => ({ role: m.role, content: m.content })), true);
-          }
-        }, 100);
+      // Sync full conversation to backend (replace mode).
+      // Uses closure-captured apiBaseUrl/convId — immune to stale-ref bugs.
+      const all = messagesRef.current.filter(m => !m.streaming);
+      if (all.length > 0) {
+        persistToBackend(apiBaseUrl, convId, all.map(m => ({ role: m.role, content: m.content })), true);
       }
     }
-  }, [input, sending, orgId, nodeId, apiBaseUrl, persistMessages]);
+  }, [input, sending, orgId, nodeId, apiBaseUrl, persistToBackend]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -284,14 +332,14 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             {messages.length > 0 && (
-              <button className="ocp-close" onClick={handleClear} title="清空历史">
+              <button className="ocp-close" data-slot="ocp" onClick={handleClear} title="清空历史">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
                 </svg>
               </button>
             )}
             {onClose && (
-              <button className="ocp-close" onClick={onClose}>
+              <button className="ocp-close" data-slot="ocp" onClick={onClose}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -346,6 +394,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       {!showHeader && messages.length > 0 && (
         <div style={{ display: "flex", justifyContent: "center", padding: "2px 0", flexShrink: 0 }}>
           <button
+            data-slot="ocp"
             onClick={handleClear}
             style={{
               fontSize: 10, color: "var(--muted, #64748b)", background: "none",
@@ -368,6 +417,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           className="ocp-textarea"
         />
         <button
+          data-slot="ocp"
           onClick={handleSend}
           disabled={sending || !input.trim()}
           className={`ocp-send ${sending ? "ocp-send-busy" : ""}`}
@@ -390,7 +440,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
 const CHAT_CSS = `
 .ocp-root {
   display: flex; flex-direction: column; height: 100%; overflow: hidden;
-  background: var(--bg-app, #0f172a); color: var(--text, #e2e8f0);
+  background: var(--bg-app); color: var(--text);
 }
 
 /* ─── Header ─── */
@@ -450,8 +500,8 @@ const CHAT_CSS = `
 }
 .ocp-msg-assistant .ocp-msg-bubble {
   background: var(--bg-subtle, rgba(30,41,59,0.8));
-  border: 1px solid var(--line, rgba(51,65,85,0.4));
-  color: var(--text, #e2e8f0);
+  border: 1px solid var(--line, rgba(100,116,139,0.2));
+  color: var(--text);
   border-bottom-left-radius: 4px;
 }
 .ocp-msg-streaming .ocp-msg-bubble {
@@ -480,16 +530,16 @@ const CHAT_CSS = `
   padding: 10px 12px;
   border-top: 1px solid var(--line, rgba(51,65,85,0.5));
   display: flex; gap: 8px; align-items: flex-end;
-  background: var(--bg-app, #0f172a);
+  background: var(--bg-app);
   flex-shrink: 0;
 }
 .ocp-compact { padding: 8px 10px; }
 .ocp-textarea {
-  flex: 1; resize: none; border: 1px solid var(--line, rgba(51,65,85,0.5));
+  flex: 1; resize: none; border: 1px solid var(--line, rgba(100,116,139,0.2));
   border-radius: 10px; padding: 10px 14px;
   font-size: 13px; font-family: inherit; line-height: 1.5;
-  background: var(--bg-app, #0f172a);
-  color: var(--text, #e2e8f0);
+  background: var(--bg-app);
+  color: var(--text);
   outline: none; max-height: 100px; overflow-y: auto;
   transition: border-color 0.2s;
 }

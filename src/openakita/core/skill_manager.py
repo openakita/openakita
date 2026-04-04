@@ -9,6 +9,7 @@
 - 外部技能 allowlist 管理
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -69,6 +70,7 @@ class SkillManager:
         self._catalog_text: str = ""
         self._failure_class_streaks: dict[str, int] = {}
         self._failure_class_last_seen: dict[str, float] = {}
+        self._install_lock: asyncio.Lock | None = None
 
     @property
     def catalog_text(self) -> str:
@@ -97,8 +99,8 @@ class SkillManager:
                 if isinstance(al, list):
                     external_allowlist = {str(x).strip() for x in al if str(x).strip()}
             effective = self._loader.compute_effective_allowlist(external_allowlist)
-            from openakita.core.agent import _collect_preset_referenced_skills
-            agent_skills = _collect_preset_referenced_skills()
+            from openakita.skills.preset_utils import collect_preset_referenced_skills
+            agent_skills = collect_preset_referenced_skills()
             removed = self._loader.prune_external_by_allowlist(
                 effective, agent_referenced_skills=agent_skills,
             )
@@ -136,6 +138,18 @@ class SkillManager:
         Returns:
             安装结果消息
         """
+        if self._install_lock is None:
+            self._install_lock = asyncio.Lock()
+        async with self._install_lock:
+            return await self._install_skill_impl(source, name, subdir, extra_files)
+
+    async def _install_skill_impl(
+        self,
+        source: str,
+        name: str | None = None,
+        subdir: str | None = None,
+        extra_files: list[str] | None = None,
+    ) -> str:
         skills_dir = settings.skills_path
         skills_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,7 +373,11 @@ class SkillManager:
             target_dir = skills_dir / skill_name
             if target_dir.exists():
                 shutil.rmtree(target_dir)
-            shutil.copytree(skill_source_dir, target_dir)
+            try:
+                shutil.copytree(skill_source_dir, target_dir)
+            except Exception as copy_err:
+                self._cleanup_broken_skill_dir(target_dir)
+                raise RuntimeError(f"copytree failed: {copy_err}") from copy_err
             self._ensure_skill_structure(target_dir)
 
             try:
@@ -527,13 +545,12 @@ class SkillManager:
         return name or "custom-skill"
 
     def _find_skill_md(self, search_dir: Path) -> Path | None:
-        """在目录中查找 SKILL.md"""
+        """在目录中查找 SKILL.md，优先根目录，其次按路径深度确定性选择。"""
         skill_md = search_dir / "SKILL.md"
         if skill_md.exists():
             return skill_md
-        for path in search_dir.rglob("SKILL.md"):
-            return path
-        return None
+        candidates = sorted(search_dir.rglob("SKILL.md"), key=lambda p: len(p.parts))
+        return candidates[0] if candidates else None
 
     def _list_skill_candidates(self, base_dir: Path) -> list[str]:
         """列出可能包含技能的目录"""

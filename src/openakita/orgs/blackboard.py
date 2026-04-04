@@ -16,6 +16,14 @@ from .models import MemoryScope, MemoryType, OrgMemoryEntry
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_float(v: object, default: float = 0.0) -> float:
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return default
+
+
 MAX_ORG_MEMORIES = 200
 MAX_DEPT_MEMORIES = 100
 MAX_NODE_MEMORIES = 50
@@ -295,8 +303,8 @@ class OrgBlackboard:
                 entries.append(e)
         except Exception as exc:
             logger.warning(f"Failed to read memory {path}: {exc}")
-        entries.sort(key=lambda e: e.importance, reverse=True)
-        return entries[:limit]
+        entries.sort(key=lambda e: _safe_float(e.importance), reverse=True)
+        return entries[:int(limit)]
 
     @staticmethod
     def _is_duplicate(path: Path, content: str, prefix_len: int = 100) -> bool:
@@ -342,7 +350,7 @@ class OrgBlackboard:
                 if self._is_expired(entry):
                     expired_count += 1
                     continue
-                live_entries.append((d.get("importance", 0.5), line))
+                live_entries.append((_safe_float(entry.importance), line))
             except Exception:
                 continue
 

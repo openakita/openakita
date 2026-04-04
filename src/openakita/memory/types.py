@@ -22,6 +22,23 @@ from datetime import datetime
 from enum import Enum
 
 
+def normalize_tags(val: object) -> list[str]:
+    """Ensure *val* is always ``list[str]``.
+
+    LLMs sometimes return tags as a comma-separated string instead of an
+    array.  This helper gracefully coerces any input into a safe list so
+    that downstream ``.map()`` / iteration never crashes.
+    """
+    if isinstance(val, list):
+        return [str(t) for t in val if t]
+    if isinstance(val, str) and val:
+        return [t.strip() for t in val.replace("\u3001", ",").split(",") if t.strip()]
+    return []
+
+
+_normalize_tags = normalize_tags
+
+
 class MemoryType(Enum):
     """记忆类型"""
 
@@ -166,6 +183,9 @@ class SemanticMemory:
     # v2: retention / TTL
     expires_at: datetime | None = None
 
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
+
     def to_dict(self) -> dict:
         d = {
             "id": self.id,
@@ -306,6 +326,9 @@ class Episode:
     importance_score: float = 0.5
     access_count: int = 0
     source: str = "session_end"  # session_end / context_compress / daily_consolidation
+
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
 
     def to_dict(self) -> dict:
         return {
@@ -465,6 +488,9 @@ class Attachment:
     linked_memory_ids: list[str] = field(default_factory=list)
 
     created_at: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self):
+        self.tags = normalize_tags(self.tags)
 
     def to_dict(self) -> dict:
         return {

@@ -411,6 +411,70 @@ def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean, tool_calls
 
 
+# ── <tool_call><function=...> 格式 ─────────────────────────
+#
+# 部分模型以如下格式输出工具调用：
+# <tool_call>
+# <function=tool_name>
+# <parameter=key>value</parameter>
+# </function>
+# </tool_call>
+
+_FUNC_PARAM_COMPLETE_RE = re.compile(
+    r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE,
+)
+_FUNC_PARAM_INCOMPLETE_RE = re.compile(
+    r"<tool_call>\s*(.*?)$", re.DOTALL | re.IGNORECASE,
+)
+_FUNC_NAME_RE = re.compile(
+    r"<function=([^>]+)>", re.IGNORECASE,
+)
+_FUNC_PARAM_RE = re.compile(
+    r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """解析 <tool_call><function=name><parameter=key>value</parameter></function></tool_call> 格式。"""
+    blocks = _FUNC_PARAM_COMPLETE_RE.findall(text) or _FUNC_PARAM_INCOMPLETE_RE.findall(text)
+    if not blocks:
+        return text, []
+
+    has_func_tag = any(_FUNC_NAME_RE.search(b) for b in blocks)
+    if not has_func_tag:
+        return text, []
+
+    tool_calls: list[ToolUseBlock] = []
+    for body in blocks:
+        fn_match = _FUNC_NAME_RE.search(body)
+        if not fn_match:
+            continue
+        tool_name = fn_match.group(1).strip()
+
+        params: dict = {}
+        for pm in _FUNC_PARAM_RE.finditer(body):
+            key = pm.group(1).strip()
+            val = pm.group(2).strip()
+            try:
+                params[key] = json.loads(val)
+            except (json.JSONDecodeError, ValueError):
+                params[key] = val
+
+        tool_calls.append(ToolUseBlock(
+            id=f"func_param_{uuid.uuid4().hex[:8]}",
+            name=tool_name,
+            input=params,
+        ))
+        logger.info(
+            f"[FUNC_PARAM_PARSE] Extracted tool call: {tool_name} "
+            f"with params: {list(params.keys())}"
+        )
+
+    clean = _FUNC_PARAM_COMPLETE_RE.sub("", text).strip()
+    clean = _FUNC_PARAM_INCOMPLETE_RE.sub("", clean).strip()
+    return clean, tool_calls
+
+
 # ── GLM 格式 ──────────────────────────────────────────
 
 _GLM_COMPLETE_RE = re.compile(
@@ -458,9 +522,7 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
             f"with params: {list(params.keys())}"
         )
 
-    if not tool_calls:
-        return text, []
-
+    # 即使未提取到工具也清理标签，防止原始标签泄漏到用户界面
     clean = _GLM_COMPLETE_RE.sub("", text).strip()
     clean = _GLM_INCOMPLETE_RE.sub("", clean).strip()
     return clean, tool_calls
@@ -1078,6 +1140,11 @@ _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
         "kimi_k2",
         re.compile(r"<<\|tool_calls_section_begin\|>>"),
         _parse_kimi_k2,
+    ),
+    _TextToolFormat(
+        "func_param",
+        re.compile(r"<tool_call>", re.IGNORECASE),
+        _parse_function_param,
     ),
     _TextToolFormat(
         "glm",

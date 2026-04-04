@@ -73,16 +73,12 @@ class OnceTrigger(Trigger):
     """
 
     def __init__(self, run_at: datetime):
-        """
-        Args:
-            run_at: 执行时间
-        """
         self.run_at = run_at
         self._fired = False
 
     def get_next_run_time(self, last_run: datetime | None = None) -> datetime | None:
         if last_run is not None or self._fired:
-            return None  # 已执行，不再运行
+            return None
         return self.run_at
 
     def should_run(self, last_run: datetime | None = None) -> bool:
@@ -91,7 +87,6 @@ class OnceTrigger(Trigger):
         return datetime.now() >= self.run_at
 
     def mark_fired(self) -> None:
-        """标记已触发"""
         self._fired = True
 
     @classmethod
@@ -274,30 +269,73 @@ class CronTrigger(Trigger):
         return result
 
     def get_next_run_time(self, last_run: datetime | None = None) -> datetime:
-        """计算下一次运行时间"""
-        # 从当前时间或上次运行后开始搜索
-        # 注意：总是从下一分钟开始，避免立即执行
+        """计算下一次运行时间（层级跳跃搜索，避免逐分钟遍历）"""
         if last_run:
             start = last_run + timedelta(minutes=1)
         else:
-            # 首次运行：从下一分钟开始搜索，不立即执行
             start = datetime.now() + timedelta(minutes=1)
 
-        # 向上取整到分钟
         start = start.replace(second=0, microsecond=0)
 
-        # 最多搜索 2 年
-        max_iterations = 365 * 2 * 24 * 60  # 分钟数
-
         current = start
-        for _ in range(max_iterations):
-            if self._matches(current):
-                return current
-            current += timedelta(minutes=1)
+        # 每次迭代最少前进 1 分钟，最多搜索约 4 年（48 月 × 31 天）
+        max_iterations = 48 * 31
 
-        # 如果找不到，返回明年同一时间
+        for _ in range(max_iterations):
+            if current.month not in self.month_spec:
+                # 跳到下一个匹配的月份
+                current = self._next_matching_month(current)
+                if current is None:
+                    break
+                continue
+
+            if current.day not in self.day_spec or \
+               current.weekday() not in self._convert_weekday(self.weekday_spec):
+                # 跳到下一天
+                current = (current + timedelta(days=1)).replace(hour=0, minute=0)
+                if current > start + timedelta(days=max_iterations):
+                    break
+                continue
+
+            if current.hour not in self.hour_spec:
+                # 跳到下一个匹配的小时
+                next_hour = self._next_in_set(current.hour, self.hour_spec)
+                if next_hour is not None and next_hour > current.hour:
+                    current = current.replace(hour=next_hour, minute=0)
+                else:
+                    current = (current + timedelta(days=1)).replace(hour=0, minute=0)
+                continue
+
+            if current.minute not in self.minute_spec:
+                next_min = self._next_in_set(current.minute, self.minute_spec)
+                if next_min is not None and next_min > current.minute:
+                    current = current.replace(minute=next_min)
+                else:
+                    # 跳到下一小时
+                    current = (current + timedelta(hours=1)).replace(minute=0)
+                continue
+
+            return current
+
         logger.warning(f"Could not find next run time for cron: {self.expression}")
         return start + timedelta(days=365)
+
+    @staticmethod
+    def _next_in_set(current_val: int, spec: set[int]) -> int | None:
+        """找到 spec 中 > current_val 的最小值"""
+        candidates = [v for v in spec if v > current_val]
+        return min(candidates) if candidates else None
+
+    def _next_matching_month(self, current: datetime) -> datetime | None:
+        """跳到下一个匹配 month_spec 的月份首日"""
+        for _ in range(48):
+            if current.month == 12:
+                current = current.replace(year=current.year + 1, month=1, day=1, hour=0, minute=0)
+            else:
+                current = current.replace(month=current.month + 1, day=1, hour=0, minute=0)
+            if current.month in self.month_spec:
+                return current
+        return None
 
     def _matches(self, dt: datetime) -> bool:
         """检查时间是否匹配 cron 表达式"""

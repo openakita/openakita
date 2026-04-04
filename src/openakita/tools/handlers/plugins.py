@@ -38,7 +38,7 @@ class PluginsHandler:
     def _list_plugins(self) -> str:
         pm = self._get_pm()
         if pm is None:
-            return "Plugin system not initialized."
+            return "插件系统未初始化。"
 
         loaded = pm.list_loaded()
         failed = pm.list_failed()
@@ -53,9 +53,9 @@ class PluginsHandler:
                     disabled_ids.append(entry.plugin_id)
 
         if not loaded and not failed and not disabled_ids:
-            return "No plugins installed."
+            return "当前未安装任何插件。"
 
-        lines: list[str] = ["# Installed Plugins", ""]
+        lines: list[str] = ["# 已安装插件", ""]
 
         if loaded:
             by_category: dict[str, list[dict]] = {}
@@ -70,15 +70,15 @@ class PluginsHandler:
                     skills = self._get_plugin_skills(p["id"])
                     provides_parts = []
                     if tools:
-                        provides_parts.append(f"tools: {', '.join(tools)}")
+                        provides_parts.append(f"工具: {', '.join(tools)}")
                     if skills:
-                        provides_parts.append(f"skills: {', '.join(skills)}")
-                    provides_str = f" | Provides: {'; '.join(provides_parts)}" if provides_parts else ""
+                        provides_parts.append(f"技能: {', '.join(skills)}")
+                    provides_str = f" | 提供: {'; '.join(provides_parts)}" if provides_parts else ""
 
                     pending = p.get("pending_permissions", [])
-                    status = "loaded"
+                    status = "已加载"
                     if pending:
-                        status += f" (pending permissions: {', '.join(pending)})"
+                        status += f"（待授权: {', '.join(pending)}）"
 
                     lines.append(
                         f"- **{p.get('name', p['id'])}** (`{p['id']}`) "
@@ -87,13 +87,13 @@ class PluginsHandler:
                 lines.append("")
 
         if failed:
-            lines.append("## Failed")
+            lines.append("## 加载失败")
             for pid, err in failed.items():
                 lines.append(f"- `{pid}`: {err}")
             lines.append("")
 
         if disabled_ids:
-            lines.append("## Disabled")
+            lines.append("## 已禁用")
             for pid in disabled_ids:
                 lines.append(f"- `{pid}`")
             lines.append("")
@@ -103,58 +103,58 @@ class PluginsHandler:
     def _get_plugin_info(self, params: dict[str, Any]) -> str:
         plugin_id = params.get("plugin_id", "")
         if not plugin_id:
-            return "Error: plugin_id is required."
+            return "错误: 需要提供 plugin_id 参数。"
 
         pm = self._get_pm()
         if pm is None:
-            return "Plugin system not initialized."
+            return "插件系统未初始化。"
 
         loaded = pm.get_loaded(plugin_id)
         if loaded is None:
             failed = pm.list_failed()
             if plugin_id in failed:
                 return (
-                    f"# Plugin: {plugin_id}\n\n"
-                    f"**Status**: failed\n"
-                    f"**Error**: {failed[plugin_id]}"
+                    f"# 插件: {plugin_id}\n\n"
+                    f"**状态**: 加载失败\n"
+                    f"**错误**: {failed[plugin_id]}"
                 )
-            return f"Plugin '{plugin_id}' not found."
+            return f"未找到插件 '{plugin_id}'。"
 
         manifest = loaded.manifest
         lines: list[str] = [
-            f"# Plugin: {manifest.name}",
+            f"# 插件: {manifest.name}",
             "",
             f"- **ID**: {manifest.id}",
-            f"- **Version**: {manifest.version}",
-            f"- **Type**: {manifest.plugin_type}",
-            f"- **Category**: {manifest.category}",
-            f"- **Author**: {manifest.author or 'N/A'}",
-            f"- **Status**: loaded",
+            f"- **版本**: {manifest.version}",
+            f"- **类型**: {manifest.plugin_type}",
+            f"- **分类**: {manifest.category}",
+            f"- **作者**: {manifest.author or '未知'}",
+            f"- **状态**: 已加载",
         ]
 
         if manifest.description:
-            lines += ["", f"## Description", "", manifest.description]
+            lines += ["", "## 描述", "", manifest.description]
 
         tools = self._get_plugin_tools(plugin_id)
         if tools:
-            lines += ["", "## Registered Tools", ""]
+            lines += ["", "## 注册的工具", ""]
             for t in tools:
                 lines.append(f"- `{t}`")
 
         skills = self._get_plugin_skills(plugin_id)
         if skills:
-            lines += ["", "## Provided Skills", ""]
+            lines += ["", "## 提供的技能", ""]
             for s in skills:
                 lines.append(f"- `{s}`")
 
         granted = list(loaded.api._granted_permissions)
         pending = list(loaded.api._pending_permissions) if loaded.api._pending_permissions else []
         if granted or pending:
-            lines += ["", "## Permissions"]
+            lines += ["", "## 权限"]
             if granted:
-                lines.append(f"- **Granted**: {', '.join(granted)}")
+                lines.append(f"- **已授权**: {', '.join(granted)}")
             if pending:
-                lines.append(f"- **Pending**: {', '.join(pending)}")
+                lines.append(f"- **待授权**: {', '.join(pending)}")
 
         readme_path = loaded.plugin_dir / "README.md"
         if readme_path.exists():
@@ -166,10 +166,34 @@ class PluginsHandler:
 
         config = loaded.api.get_config()
         if config:
-            lines += ["", "## Current Configuration", ""]
-            lines.append(f"```json\n{json.dumps(config, indent=2, ensure_ascii=False)}\n```")
+            safe_config = self._mask_sensitive(config, loaded.plugin_dir)
+            lines += ["", "## 当前配置", ""]
+            lines.append(f"```json\n{json.dumps(safe_config, indent=2, ensure_ascii=False)}\n```")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _mask_sensitive(config: dict, plugin_dir) -> dict:
+        """Mask fields marked sensitive in config_schema.json."""
+        sensitive_keys: set[str] = set()
+        schema_path = plugin_dir / "config_schema.json"
+        if schema_path.is_file():
+            try:
+                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                props = schema.get("properties", {})
+                for key, prop in props.items():
+                    if prop.get("sensitive") or prop.get("x-sensitive"):
+                        sensitive_keys.add(key)
+            except Exception:
+                pass
+        _SENSITIVE_PATTERNS = {"key", "secret", "token", "password", "credential"}
+        result = {}
+        for k, v in config.items():
+            if k in sensitive_keys or any(p in k.lower() for p in _SENSITIVE_PATTERNS):
+                result[k] = "****" if v else ""
+            else:
+                result[k] = v
+        return result
 
     def _get_plugin_tools(self, plugin_id: str) -> list[str]:
         pm = self._get_pm()

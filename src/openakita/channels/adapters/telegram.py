@@ -283,6 +283,7 @@ class TelegramAdapter(ChannelAdapter):
         "get_chat_members": False,
         "get_recent_messages": False,
         "markdown": True,
+        "add_reaction": True,
     }
 
     def __init__(
@@ -1537,6 +1538,27 @@ class TelegramAdapter(ChannelAdapter):
             return True
         except Exception as e:
             logger.error(f"Failed to delete message: {e}")
+            return False
+
+    async def add_reaction(
+        self,
+        chat_id: str,
+        message_id: str,
+        emoji: str = "👀",
+    ) -> bool:
+        """Telegram Bot API setMessageReaction (API 7.0+)."""
+        if not self._bot:
+            return False
+        try:
+            from telegram import ReactionTypeEmoji
+            await self._bot.set_message_reaction(
+                chat_id=int(chat_id),
+                message_id=int(message_id),
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+            )
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to add reaction: {e}")
             return False
 
     async def edit_message(

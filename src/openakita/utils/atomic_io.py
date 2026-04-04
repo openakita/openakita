@@ -49,13 +49,17 @@ def atomic_json_write(path: Path, data: Any, *, indent: int = 2) -> None:
 # Enhanced: atomic write with .bak backup + Windows PermissionError retry
 # ---------------------------------------------------------------------------
 
-def safe_write(path: Path, content: str, *, backup: bool = True, retries: int = 3) -> None:
+def safe_write(
+    path: Path, content: str, *, backup: bool = True, retries: int = 3, fsync: bool = False
+) -> None:
     """Atomic text write with optional .bak backup and Windows retry.
 
-    Flow: backup existing → write to .tmp → rename .tmp → target.
+    Flow: backup existing → write to .tmp → (fsync) → rename .tmp → target.
     On Windows, PermissionError on rename is retried up to *retries* times
     before falling back to a direct (non-atomic) write.
     """
+    import os
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -67,7 +71,11 @@ def safe_write(path: Path, content: str, *, backup: bool = True, retries: int = 
             logger.warning("Failed to create backup %s: %s", bak, e)
 
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+        if fsync:
+            f.flush()
+            os.fsync(f.fileno())
 
     last_err: Exception | None = None
     for attempt in range(retries):
@@ -87,10 +95,25 @@ def safe_write(path: Path, content: str, *, backup: bool = True, retries: int = 
     tmp.unlink(missing_ok=True)
 
 
-def safe_json_write(path: Path, data: Any, *, indent: int = 2, backup: bool = True) -> None:
+def safe_json_write(
+    path: Path, data: Any, *, indent: int = 2, backup: bool = True, fsync: bool = False
+) -> None:
     """Atomic JSON write with .bak backup (convenience wrapper around safe_write)."""
     content = json.dumps(data, ensure_ascii=False, indent=indent) + "\n"
-    safe_write(path, content, backup=backup)
+    safe_write(path, content, backup=backup, fsync=fsync)
+
+
+def append_jsonl(path: Path, obj: dict, *, fsync: bool = False) -> None:
+    """Append a single JSON object as one line to a JSONL file (append-only)."""
+    import os
+
+    line = json.dumps(obj, ensure_ascii=False, default=str) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
+        if fsync:
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def read_json_safe(path: Path) -> dict | None:

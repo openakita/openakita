@@ -108,7 +108,7 @@ def _convert_single_message_to_openai(
                     converted["reasoning_content"] = extracted
                     converted["content"] = clean
                 else:
-                    converted["reasoning_content"] = ""
+                    converted["reasoning_content"] = "..."
         elif msg.role == "assistant" and provider == "openrouter" and enable_thinking:
             # OpenRouter 使用 reasoning 字段（非 reasoning_content）
             _rc = msg.reasoning_content
@@ -178,9 +178,10 @@ def _convert_single_message_to_openai(
                     reasoning_content, text_content = _extract_thinking_content(text_content)
 
                 # 缺失时注入占位符，避免 API 400
-                # DeepSeek 要求所有 assistant 消息都携带，Kimi 至少在有 tool_calls 时需要
-                if reasoning_content is None:
-                    reasoning_content = "..." if tool_uses else ""
+                # DeepSeek/DashScope 要求所有 assistant 消息都携带 reasoning_content，
+                # 空字符串在 enable_thinking=true 时可能被拒绝，统一使用 "..." 占位
+                if not reasoning_content:
+                    reasoning_content = "..."
 
                 assistant_msg["reasoning_content"] = reasoning_content
             elif provider == "openrouter" and enable_thinking:
@@ -192,7 +193,7 @@ def _convert_single_message_to_openai(
             elif msg.reasoning_content:
                 assistant_msg["reasoning_content"] = msg.reasoning_content
 
-            assistant_msg["content"] = text_content if text_content else None
+            assistant_msg["content"] = text_content if text_content else ""
 
             # 工具调用
             if tool_uses:

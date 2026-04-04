@@ -57,6 +57,7 @@ from ..tools.handlers.config import create_handler as create_config_handler
 from ..tools.handlers.desktop import create_handler as create_desktop_handler
 from ..tools.handlers.filesystem import create_handler as create_filesystem_handler
 from ..tools.handlers.im_channel import create_handler as create_im_channel_handler
+from ..tools.handlers.lsp import create_handler as create_lsp_handler
 from ..tools.handlers.mcp import create_handler as create_mcp_handler
 from ..tools.handlers.memory import create_handler as create_memory_handler
 from ..tools.handlers.mode import create_handler as create_mode_handler
@@ -66,15 +67,20 @@ from ..tools.handlers.opencli import is_available as opencli_available
 from ..tools.handlers.persona import create_handler as create_persona_handler
 from ..tools.handlers.plan import create_todo_handler
 from ..tools.handlers.plugins import create_handler as create_plugins_handler
+from ..tools.handlers.powershell import create_handler as create_powershell_handler
 from ..tools.handlers.profile import create_handler as create_profile_handler
 from ..tools.handlers.scheduled import create_handler as create_scheduled_handler
 from ..tools.handlers.search import create_handler as create_search_handler
 from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
+from ..tools.handlers.sleep import create_handler as create_sleep_handler
+from ..tools.handlers.structured_output import create_handler as create_structured_output_handler
 from ..tools.handlers.sticker import create_handler as create_sticker_handler
 from ..tools.handlers.system import create_handler as create_system_handler
+from ..tools.handlers.tool_search import create_handler as create_tool_search_handler
 from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handler
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
+from ..tools.handlers.worktree import create_handler as create_worktree_handler
 
 # MCP 系统
 from ..tools.mcp import mcp_client
@@ -211,18 +217,6 @@ risks_or_ambiguities:
   - 未指定如何处理包含非数值数据的列
   - 未指定输出格式（打印到控制台还是保存到文件）
 ```"""
-
-
-def _collect_preset_referenced_skills() -> set[str]:
-    """Collect all skill names referenced by system preset agents."""
-    try:
-        from openakita.agents.presets import SYSTEM_PRESETS
-        skills: set[str] = set()
-        for preset in SYSTEM_PRESETS:
-            skills.update(preset.skills)
-        return skills
-    except Exception:
-        return set()
 
 
 class Agent:
@@ -364,7 +358,22 @@ class Agent:
         # 初始化技能系统 (SKILL.md 规范)
         self.skill_registry = SkillRegistry()
         self.skill_loader = SkillLoader(self.skill_registry)
-        self.skill_catalog = SkillCatalog(self.skill_registry)
+
+        # F6/F9: usage tracker + watcher (created early, wired after load)
+        from ..skills.usage import SkillUsageTracker
+        self._skill_usage_tracker = SkillUsageTracker(
+            settings.project_root / "data" / "skill_usage.json"
+        )
+        self.skill_catalog = SkillCatalog(
+            self.skill_registry, usage_tracker=self._skill_usage_tracker,
+        )
+
+        # F8: conditional activation manager
+        from ..skills.activation import SkillActivationManager
+        self._skill_activation = SkillActivationManager()
+
+        # F9: skill file watcher (started after skills are loaded)
+        self._skill_watcher = None
 
         # 延迟导入自进化系统（避免循环导入）
         from ..evolution.generator import SkillGenerator
@@ -601,12 +610,13 @@ class Agent:
             response_handler=self.response_handler,
             agent_state=self.agent_state,
             memory_manager=self.memory_manager,
+            plan_exit_pending=self._plan_exit_pending,
         )
 
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
     # Categories that must always remain available regardless of intent filtering.
-    # These are infrastructure tools that any task may need.
+    # Infrastructure tools always included regardless of intent filtering.
     _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
         "System",       # ask_user, enable_thinking, get_tool_info, etc.
         "Memory",       # search_memory, add_memory — context recall
@@ -614,19 +624,28 @@ class Agent:
         "Plan",         # create_plan_file, exit_plan_mode — plan mode tools
         "File System",  # read_file, write_file, list_directory — fundamental I/O
         "Skills",       # list_skills, run_skill_script — capability discovery
-        "Plugin",       # list_plugins, get_plugin_info — plugin discovery
-        "Skill Store",  # search/install skills from store
-        "MCP",          # call_mcp_tool, list_mcp_servers — external integrations
+    })
+    # Individual tool names to always keep even when their category is deferred
+    _ALWAYS_KEEP_TOOLS: frozenset[str] = frozenset({
+        "tool_search",  # meta-tool to discover deferred tools
+        "ask_user",     # always need to be able to ask the user
     })
 
-    # Categories deferred from first few turns to reduce token overhead.
-    # These tools are included once intent hints or explicit user request is detected.
+    # Categories deferred by default to reduce token overhead (~40 tools saved).
+    # The model can discover deferred tools via `tool_search` when needed.
     _DEFERRED_CATEGORIES: frozenset[str] = frozenset({
+        "Browser",         # 15 tools — loaded when user needs web interaction
+        "Desktop",         # 10 tools — loaded when user needs desktop automation
+        "MCP",             # 8 tools — loaded when user needs MCP server interaction
         "IM Channel",      # IM platform tools — only needed for channel operations
         "Scheduled",       # scheduler tools — only needed when setting up schedules
         "Agent Package",   # agent packaging — rarely needed in normal conversation
-        "Persona",         # persona traits — deferred until personality discussion
+        "Profile",         # persona traits — deferred until personality discussion
         "Config",          # config management — rarely needed
+        "Plugin",          # plugin management — rarely needed
+        "Advanced",        # powershell, lsp, notebook, worktree, etc.
+        "OpenCLI",         # CLI management tools
+        "Platform",        # platform-specific tools
     })
 
     @property
@@ -634,15 +653,13 @@ class Agent:
         """Tools available for the current call context.
 
         Filtering layers (applied in order):
-        0. Sanity: drop entries without a valid name (e.g. malformed plugin defs)
+        0. Sanity: drop entries without a valid name
         1. Sub-agent restriction: remove delegation tools
-        2. Tiered loading: exclude _DEFERRED_CATEGORIES when no intent hints
-           request them (saves ~20 tool definitions on first turn)
-        3. Intent-driven: filter by IntentResult.tool_hints (category-based),
-           but always keep infrastructure categories (System, Memory, Plan,
-           Skills, Skill Store, MCP) so the LLM can recall context, orchestrate
-           plans, invoke skills/MCP, and use meta tools regardless of intent.
-        4. Context window: reduce set for small models
+        2. Tiered loading: exclude _DEFERRED_CATEGORIES (saves ~50 tools)
+           - Intent hints can un-defer specific categories
+           - IM sessions auto-include IM Channel category
+           - _ALWAYS_KEEP_TOOLS are never deferred
+        3. Context window: reduce set for small models
         """
         tools = [t for t in self._tools if t.get("name")]
         dropped = len(self._tools) - len(tools)
@@ -658,9 +675,14 @@ class Agent:
         intent = getattr(self, "_current_intent", None)
         intent_hints = set(intent.tool_hints) if intent and intent.tool_hints else set()
 
+        # IM sessions always need IM Channel tools
+        session_type = getattr(self, "_current_session_type", "cli")
+        if session_type == "im":
+            intent_hints.add("IM Channel")
+
         if intent_hints and hasattr(self, "tool_catalog"):
             tool_groups = self.tool_catalog.get_tool_groups()
-            allowed: set[str] = set()
+            allowed: set[str] = set(self._ALWAYS_KEEP_TOOLS)
             for cat in self._ALWAYS_KEEP_CATEGORIES:
                 allowed |= tool_groups.get(cat, set())
             for hint in intent_hints:
@@ -673,16 +695,18 @@ class Agent:
                 deferred_names: set[str] = set()
                 for cat in deferred_cats:
                     deferred_names |= tool_groups.get(cat, set())
+                deferred_names -= self._ALWAYS_KEEP_TOOLS
                 if deferred_names:
                     before = len(tools)
                     tools = [
                         t for t in tools if t.get("name") not in deferred_names
                     ]
                     if len(tools) < before:
-                        logger.debug(
-                            "[Agent] tiered loading: deferred %d tools from %s",
+                        logger.info(
+                            "[Agent] tiered loading: deferred %d tools from %s (remaining=%d)",
                             before - len(tools),
                             sorted(deferred_cats),
+                            len(tools),
                         )
 
         ctx = self._get_raw_context_window()
@@ -738,13 +762,17 @@ class Agent:
         capture_delivery_receipts: bool = False,
     ) -> tuple[list[dict], list[str], list | None]:
         """
-        执行一批工具调用，并返回 tool_results（顺序与 tool_calls 一致）。
+        [DEPRECATED] 请使用 self.tool_executor.execute_batch() 代替。
 
-        并行策略：
-        - 默认串行（settings.tool_max_parallel=1 或启用中断检查时）
-        - 当 tool_max_parallel>1 且不需要“工具间中断检查”时，允许并行执行
-        - browser/desktop/mcp handler 默认互斥锁（即使并行也不会并发执行同 handler）
+        此方法绕过 PolicyEngine 安全检查，仅作为临时兼容保留。
+        所有新代码路径已迁移到 ToolExecutor.execute_batch()。
         """
+        import warnings
+        warnings.warn(
+            "_execute_tool_calls_batch is deprecated, use self.tool_executor.execute_batch()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         executed_tool_names: list[str] = []
         delivery_receipts: list | None = None
 
@@ -1056,6 +1084,23 @@ class Agent:
         except Exception as e:
             logger.debug(f"[Persona] trait loading skipped: {e}")
 
+        # --- Todo 状态恢复 + 防抖保存循环 ---
+        try:
+            from ..tools.handlers.plan import register_active_todo, register_plan_handler
+            plan_handle_fn = self.handler_registry.get_handler("plan")
+            plan_handler = getattr(plan_handle_fn, "__self__", None) if plan_handle_fn else None
+            if plan_handler and hasattr(plan_handler, '_store'):
+                restored = plan_handler._store.load()
+                for conv_id, plan_data in restored.items():
+                    if plan_data.get("status") == "in_progress":
+                        plan_handler._todos_by_session[conv_id] = plan_data
+                        register_active_todo(conv_id, plan_data.get("id", plan_data.get("plan_id", "")))
+                        register_plan_handler(conv_id, plan_handler)
+                        logger.info(f"[TodoStore] Restored plan {plan_data.get('id')} for {conv_id}")
+                self._todo_save_task = asyncio.create_task(plan_handler._store.start_save_loop())
+        except Exception as e:
+            logger.debug(f"[TodoStore] Restore/save-loop failed: {e}")
+
         self._initialized = True
         total_mcp = self.mcp_catalog.server_count + self._builtin_mcp_count
         logger.info(
@@ -1074,6 +1119,9 @@ class Agent:
 
         memory_backends: dict = {}
         search_backends: dict = {}
+
+        if self.memory_manager:
+            self.memory_manager.set_plugin_backends(memory_backends)
 
         host_refs: dict = {
             "brain": self.brain,
@@ -1203,10 +1251,30 @@ class Agent:
         # Agent 包（导入/导出）
         self.handler_registry.register("agent_package", create_agent_package_handler(self))
 
+        # LSP（代码智能）
+        self.handler_registry.register("lsp", create_lsp_handler(self))
+
+        # Sleep（可中断等待）
+        self.handler_registry.register("sleep", create_sleep_handler(self))
+
+        # Structured Output（结构化输出）
+        self.handler_registry.register("structured_output", create_structured_output_handler(self))
+
+        # Tool Search（工具搜索）
+        self.handler_registry.register("tool_search", create_tool_search_handler(self))
+
+        # Worktree（Git 工作树）
+        self.handler_registry.register("worktree", create_worktree_handler(self))
+
         # Agent Hub + Skill Store（平台交互，仅在 hub_enabled 时注册）
         if settings.hub_enabled:
             self.handler_registry.register("agent_hub", create_agent_hub_handler(self))
             self.handler_registry.register("skill_store", create_skill_store_handler(self))
+
+        # PowerShell（仅 Windows 平台注册）
+        import platform
+        if platform.system() == "Windows":
+            self.handler_registry.register("powershell", create_powershell_handler(self))
 
         # 桌面工具（仅 Windows 且依赖可用时注册，与 _tools/ToolCatalog 保持一致）
         if _ensure_desktop():
@@ -1240,39 +1308,78 @@ class Agent:
         - skills/ (项目级别)
         - .cursor/skills/ (Cursor 兼容)
         """
-        # 从所有标准目录加载
-        loaded = self.skill_loader.load_all(settings.project_root)
-        logger.info(f"Loaded {loaded} skills from standard directories")
-
-        # 外部技能启用/禁用（系统技能永远启用）
-        # 配置文件：<workspace>/data/skills.json
-        # - 存在且有 external_allowlist => 使用用户显式选择
-        # - 不存在 => 应用 DEFAULT_DISABLED_SKILLS 默认禁用列表
-        try:
-            cfg_path = settings.project_root / "data" / "skills.json"
-            external_allowlist: set[str] | None = None
-            if cfg_path.exists():
-                raw = cfg_path.read_text(encoding="utf-8")
-                cfg = json.loads(raw) if raw.strip() else {}
-                al = cfg.get("external_allowlist", None)
-                if isinstance(al, list):
-                    external_allowlist = {str(x).strip() for x in al if str(x).strip()}
-            effective = self.skill_loader.compute_effective_allowlist(external_allowlist)
-            agent_skills = _collect_preset_referenced_skills()
-            removed = self.skill_loader.prune_external_by_allowlist(
-                effective, agent_referenced_skills=agent_skills,
-            )
-            if removed:
-                logger.info(f"External skills filtered: {removed} disabled")
-        except Exception as e:
-            logger.warning(f"Failed to apply skills allowlist: {e}")
-
-        # 生成技能清单 (用于系统提示)
-        self._skill_catalog_text = self.skill_catalog.generate_catalog()
-        logger.info(f"Generated skill catalog with {self.skill_catalog.skill_count} skills")
+        await self.skill_manager.load_installed_skills()
+        self._skill_catalog_text = self.skill_manager.catalog_text
 
         # 更新工具列表，添加技能工具
         self._update_skill_tools()
+
+        # F8: register conditional skills
+        for skill in self.skill_registry.list_enabled():
+            if skill.paths:
+                self._skill_activation.register_conditional(skill)
+
+        # F9: start skill file watcher
+        self._start_skill_watcher()
+
+        # 通知首次加载完成，让 API/WS 层同步
+        try:
+            from ..skills.events import notify_skills_changed, SkillEvent
+            notify_skills_changed(SkillEvent.LOAD)
+        except Exception:
+            pass
+
+    def _start_skill_watcher(self) -> None:
+        """F9: Start watching skill directories for hot-reload."""
+        try:
+            from ..skills.watcher import SkillWatcher
+            watch_dirs = [
+                settings.skills_path,
+                settings.project_root / ".cursor" / "skills",
+            ]
+            self._skill_watcher = SkillWatcher(
+                directories=watch_dirs,
+                on_change=self._on_skills_dir_changed,
+            )
+            self._skill_watcher.start()
+        except Exception as e:
+            logger.debug("Failed to start skill watcher: %s", e)
+
+    def _on_skills_dir_changed(self) -> None:
+        """F9: Callback when skill files change on disk."""
+        try:
+            from ..skills.watcher import clear_all_skill_caches
+            clear_all_skill_caches()
+            loaded = self.skill_loader.load_all(settings.project_root)
+            self.skill_catalog.invalidate_cache()
+            self._skill_catalog_text = self.skill_catalog.generate_catalog()
+            self._update_skill_tools()
+
+            # F8: refresh conditional activation registry
+            if hasattr(self, "_skill_activation"):
+                self._skill_activation.clear()
+                for skill in self.skill_registry.list_enabled():
+                    if skill.paths:
+                        self._skill_activation.register_conditional(skill)
+
+            from ..skills.events import notify_skills_changed, SkillEvent
+            notify_skills_changed(SkillEvent.HOT_RELOAD)
+            logger.info("Hot-reloaded %d skills after file change", loaded)
+        except Exception as e:
+            logger.warning("Skill hot-reload failed: %s", e)
+
+    def _cleanup_skill_resources(self) -> None:
+        """F9: Release all skill-related resources on shutdown."""
+        if self._skill_watcher:
+            self._skill_watcher.stop()
+            self._skill_watcher = None
+        if hasattr(self, "_skill_activation"):
+            self._skill_activation.clear()
+        try:
+            from .policy import get_policy_engine
+            get_policy_engine().clear_skill_allowlists()
+        except Exception:
+            pass
 
     def _update_shell_tool_description(self) -> None:
         """在 run_shell 描述末尾追加当前操作系统信息（不覆盖原始描述）"""
@@ -1506,13 +1613,58 @@ class Agent:
                 executor=self._task_executor.execute,
             )
 
-            # 启动调度器
-            await self.task_scheduler.start()
+            # 注册自动禁用通知回调
+            executor_ref = self._task_executor
+
+            async def _on_auto_disabled(task):
+                if task.channel_id and task.chat_id and executor_ref.gateway:
+                    try:
+                        await executor_ref.gateway.send(
+                            channel=task.channel_id,
+                            chat_id=task.chat_id,
+                            text=(
+                                f"⚠️ 任务「{task.name}」已被自动暂停\n\n"
+                                f"原因：连续失败 {task.fail_count} 次\n"
+                                f"如需恢复，请告诉我「恢复任务 {task.id}」"
+                            ),
+                        )
+                    except Exception as e:
+                        logger.debug(f"Auto-disable notification failed: {e}")
+
+            self.task_scheduler.on_task_auto_disabled = _on_auto_disabled
+
+            async def _on_missed_tasks(missed_list):
+                if not missed_list or not executor_ref.gateway:
+                    return
+                targets = executor_ref._find_all_im_targets()
+                if not targets:
+                    return
+                lines = []
+                for t in missed_list[:10]:
+                    missed_at = t.metadata.get("missed_at") or t.metadata.get("last_missed_at", "")
+                    lines.append(f"  · {t.name}（原定 {missed_at[:16]}）")
+                if len(missed_list) > 10:
+                    lines.append(f"  ...共 {len(missed_list)} 个")
+                msg = (
+                    f"⚠️ 在我休息期间，有 {len(missed_list)} 个任务/提醒错过了执行时间：\n"
+                    + "\n".join(lines)
+                    + "\n\n周期性任务已自动调整到下一次执行时间，一次性任务已标记为错过。"
+                )
+                ch, cid = targets[0]
+                try:
+                    await executor_ref.gateway.send(channel=ch, chat_id=cid, text=msg)
+                except Exception as e:
+                    logger.debug(f"Missed tasks notification failed: {e}")
+
+            self.task_scheduler.on_missed_tasks_summary = _on_missed_tasks
 
             if hasattr(self, "_plugin_manager") and self._plugin_manager:
                 self.task_scheduler._plugin_hooks = (
                     self._plugin_manager.hook_registry
                 )
+
+            # 启动调度器
+            await self.task_scheduler.start()
 
             # 注册内置系统任务（每日记忆整理 + 每日自检）
             await self._register_system_tasks()
@@ -1602,18 +1754,15 @@ class Agent:
                     changed = True
                 # 适应期 ↔ 正常期切换时，更新触发器
                 if existing_memory_task.trigger_type != desired_trigger:
-                    existing_memory_task.trigger_type = desired_trigger
-                    existing_memory_task.trigger_config = desired_config
-                    existing_memory_task.description = desired_desc
-                    changed = True
-                    # 同步更新内存中的 trigger 实例
-                    from ..scheduler.triggers import Trigger
-                    new_trigger = Trigger.from_config(desired_trigger.value, desired_config)
-                    self.task_scheduler._triggers[memory_task_id] = new_trigger
-                    existing_memory_task.next_run = new_trigger.get_next_run_time()
+                    await self.task_scheduler.update_task(memory_task_id, {
+                        "trigger_type": desired_trigger,
+                        "trigger_config": desired_config,
+                        "description": desired_desc,
+                    })
+                    changed = False  # update_task 已保存
                     logger.info(f"Switched memory task trigger to {desired_trigger.value}: {desired_desc}")
                 if changed:
-                    self.task_scheduler._save_tasks()
+                    await self.task_scheduler.save()
 
         # 任务 2: 系统自检（凌晨 4:00）
         if "system_daily_selfcheck" not in existing_ids:
@@ -1642,7 +1791,7 @@ class Agent:
                     existing_task.action = "system:daily_selfcheck"
                     changed = True
                 if changed:
-                    self.task_scheduler._save_tasks()
+                    await self.task_scheduler.save()
 
         # 任务 3: 活人感心跳（每 30 分钟触发）
         try:
@@ -1693,8 +1842,10 @@ class Agent:
             else:
                 existing_bt = self.task_scheduler.get_task(backup_task_id)
                 if existing_bt and existing_bt.enabled != backup_enabled:
-                    existing_bt.enabled = backup_enabled
-                    self.task_scheduler._save_tasks()
+                    if backup_enabled:
+                        await self.task_scheduler.enable_task(backup_task_id)
+                    else:
+                        await self.task_scheduler.disable_task(backup_task_id)
         except Exception as e:
             logger.warning(f"Failed to register workspace_backup task: {e}")
 
@@ -1786,6 +1937,12 @@ class Agent:
 
         _effective_mode = getattr(self.tool_executor, "_current_mode", "agent")
         _model_id = getattr(self.brain, "model", "")
+        _skip_catalogs = False
+        if intent:
+            from .intent_analyzer import IntentType
+            if intent.intent == IntentType.CHAT:
+                _effective_mode = "ask"
+                _skip_catalogs = True
 
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description, session_type=session_type, context_window=ctx_window,
@@ -1796,6 +1953,7 @@ class Agent:
             session_context=session_context,
             mode=_effective_mode,
             model_id=_model_id,
+            skip_catalogs=_skip_catalogs,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -1841,14 +1999,13 @@ class Agent:
             identity_section = "你是默认通用助手。"
             my_id = "default"
 
-        # Roster — only persistent agents (system + custom)
+        # Roster — compact format (no skill lists to save tokens)
         agents_lines = []
         for p in SYSTEM_PRESETS:
             if p.id == my_id:
                 continue
-            skills_desc = f"技能: {', '.join(p.skills)}" if p.skills else "技能: 全部"
             agents_lines.append(
-                f"  - {p.icon} **{p.name}** (`{p.id}`) — {p.description} ({skills_desc})"
+                f"  - {p.icon} **{p.name}** (`{p.id}`) — {p.description}"
             )
 
         try:
@@ -1868,124 +2025,34 @@ class Agent:
 
         roster = "\n".join(agents_lines) if agents_lines else "  （暂无其他可用 Agent）"
 
-        # Available skills list
-        skills_lines = []
-        try:
-            catalog = getattr(self, "skill_catalog", None)
-            if catalog:
-                reg = getattr(catalog, "registry", None)
-                if reg:
-                    for entry in reg.list_all():
-                        skills_lines.append(f"`{entry.name}`")
-        except Exception:
-            pass
-        skills_list = ", ".join(skills_lines) if skills_lines else "（系统会自动分配默认技能）"
+        # Skills list omitted from prompt to save tokens; use list_skills tool to discover
 
         return f"""
 
-## 多Agent协作系统（重要 — 你必须严格遵循）
+## 多Agent协作
 
 {identity_section}
+你有一支 Agent 团队，优先委派给专业 Agent，自己只处理简单通用问答。
 
-你拥有一支专业 Agent 团队。你的工具优先级如下（**必须严格按此顺序选择**）：
-
-### 🔴 绝对禁止
-
-- **严禁**为每个新任务都创建全新 Agent — 系统已有丰富的专业 Agent 可直接使用
-- **严禁**在能用 `delegate_to_agent` 直接委派时使用 `spawn_agent` 或 `create_agent`
-- **严禁**在能用 `spawn_agent` 继承时使用 `create_agent` 从零创建
-
-### 可用的 Agent 团队
+### Agent 团队
 
 {roster}
 
-### ⚡ 工具选择优先级（必须严格遵循，从上到下判断）
+### 委派优先级（从高到低）
 
-**Level 1 — 直接委派 `delegate_to_agent`（首选，单个任务用这个）**
+1. `delegate_to_agent(agent_id, message, reason)` — 首选，直接委派
+2. `spawn_agent(inherit_from, message, ...)` — 需要定制或并行副本时
+3. `delegate_parallel(tasks=[...])` — 多个独立任务同时执行
+4. `create_agent(...)` — 最后手段，系统中完全没有相关 Agent 时才用
 
-已有 Agent 能处理该任务 → 直接委派，不需要任何修改。
+### 规则
 
-```
-delegate_to_agent(agent_id="browser-agent", message="详细任务描述", reason="原因")
-```
-
-**Level 2 — 继承定制 `spawn_agent`（需要定制或多个并行副本时使用）**
-
-- 已有 Agent 基本匹配但需要微调 → 继承并追加技能/提示词
-- **需要同类 Agent 的多个独立副本并行工作** → 用 spawn_agent 为每个任务创建独立实例
-- 每次 spawn 生成唯一 ID，天然支持并行，**任务完成后自动销毁**
-
-```
-spawn_agent(inherit_from="browser-agent", message="任务描述", extra_skills=["额外技能"], custom_prompt_overlay="补充提示", reason="原因")
-```
-
-**Level 3 — 并行委派 `delegate_parallel`（多个独立任务同时执行）**
-
-多个独立任务可同时执行时 → 并行委派。
-⚠️ 同类任务（如多个调研）→ 所有任务用**同一个 agent_id**，系统自动创建独立副本：
-
-```
-delegate_parallel(tasks=[
-  {{"agent_id": "browser-agent", "message": "调研项目A..."}},
-  {{"agent_id": "browser-agent", "message": "调研项目B..."}}
-])
-```
-
-**Level 4 — 全新创建 `create_agent`（最后手段，极少使用）**
-
-**仅当以上 3 种方式都不适用**（系统中完全没有相关 Agent 可用或继承）时才使用。
-
-```
-create_agent(name="名称", description="描述", skills=["技能"], custom_prompt="提示词")
-```
-
-### 🔴 任务分配原则（严格遵守）
-
-1. **专业对口**：只把任务分配给**专业对口**的 Agent。调研任务→网探/浏览器Agent，代码任务→码哥，文档任务→文助。**严禁**把调研任务分给代码助手，或把编码任务分给文档助手。
-2. **同类任务并行**：当需要多个 Agent **同时做同类事情**（如"用多个 Agent 同时调研"），应使用 `spawn_agent` 创建**同一个最合适 Agent 的多个副本**，而不是把任务分配给不相关的 Agent 凑数。例如：3 个调研任务 → spawn 3 个网探副本，而不是分给网探+码哥+数析。
-3. **异类任务并行**：当多个任务**性质不同**时（如同时需要调研+写代码+分析数据），才分配给不同专业的 Agent。
-
-- 默认创建临时 Agent（ephemeral），任务结束自动清理
-- 仅当用户明确要求"记住这个Agent"时才设 `persistent=true`
-- 如果系统检测到已有类似 Agent，会建议使用 spawn_agent 代替
-- 可用技能列表: {skills_list}
-- 每会话最多 5 个动态 Agent
-
-### 委派判断规则
-
-在执行任何工具之前，先判断当前任务是否应该委派：
-
-1. **涉及文档处理**（PPT/Word/Excel/PDF） → `delegate_to_agent(agent_id="office-doc", ...)`
-2. **涉及编写代码或调试** → `delegate_to_agent(agent_id="code-assistant", ...)`
-3. **涉及网络搜索、浏览网页、项目调研、信息采集** → `delegate_to_agent(agent_id="browser-agent", ...)`
-4. **涉及数据分析或可视化** → `delegate_to_agent(agent_id="data-analyst", ...)`
-5. **已有 Agent 接近但需微调** → `spawn_agent(inherit_from="最接近的agent", ...)`
-6. **多个独立同类任务并行**（如同时调研3个项目） → `delegate_parallel` 且所有任务用**同一个 agent_id**
-7. **多个独立异类任务并行**（如调研+编码+分析） → `delegate_parallel` 用不同 agent_id
-8. **完全没有相关 Agent** → `create_agent(...)`（极少使用）
-
-只有当任务是**简单通用问答**、**不涉及上述任何专业领域**、或**用户明确要你亲自做**时，才自己处理。
-
-### 关键规则
-
-1. `message` 必须包含充分上下文（用户原始需求、相关数据、前序结论），让目标 Agent 能独立完成
-2. 结果返回后，你**整合**并**用你自己的语气**回复用户
-3. 委派深度上限 5 层
-4. 如果委派失败或超时，告知用户并尝试自己处理
-5. **有依赖的任务串行委派**（B 需要 A 的结果 → 先 A 再 B）
-6. **独立任务必须用 `delegate_parallel` 并行**，不要逐个串行浪费时间
-7. 对话历史中可能包含以下标记，它们记录了你之前**实际执行**过的操作：
-   - **[子Agent工作总结]**：子Agent的任务、完成状态、交付的文件路径和结果摘要
-   - **[执行摘要]**：你自己调用的工具及其结果
-   你必须仔细阅读这些内容，把它们当作已发生的事实。不要否认已完成的操作，不要说"我没有做过"，不要重复执行已经成功完成的工作。当用户提到相关产出（文件、报告、分析结果）时，直接引用历史记录中的信息。
-
-### 协作行为准则
-
-- 你是协调者，主动告知用户你在调度团队（如"我让数据分析师来处理..."）
-- 永远优先复用已有 Agent，避免创建不必要的新 Agent
-- spawn_agent 创建的临时 Agent 任务完成即消失，放心使用
-- 不要对同一任务反复试不同 Agent
-- 如果所有 Agent 都处理不了，诚实告知用户"""
+- 专业对口：文档→office-doc，代码→code-assistant，浏览→browser-agent，数据→data-analyst
+- 独立任务用 `delegate_parallel` 并行，有依赖的串行
+- message 必须包含充分上下文，让目标 Agent 独立完成
+- 结果返回后整合并用你自己的语气回复用户
+- 委派深度上限 5 层，每会话最多 5 个动态 Agent
+- 对话历史中的 [子Agent工作总结] 和 [执行摘要] 是已完成的事实，不要重复执行"""
 
     def _generate_tools_text(self) -> str:
         """
@@ -3026,7 +3093,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         if mode in ("plan", "ask"):
             from ..tools.handlers.plan import require_todo_for_session
             require_todo_for_session(conversation_id, False)
-        elif intent_result.todo_required and mode == "agent":
+        elif mode == "agent":
             from ..tools.handlers.plan import require_todo_for_session, should_require_todo
             has_multi_actions = should_require_todo(message)
             if intent_result.todo_required or has_multi_actions:
@@ -3074,13 +3141,27 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     f"[Session:{session_id}] Topic change detected, "
                     f"inserted context boundary"
                 )
-                # Extract memories from the previous topic before starting new one
+                # Fire-and-forget: schedule extraction in background, never block the response path
                 try:
-                    saved = await self.memory_manager.extract_on_topic_change()
-                    if saved:
-                        logger.info(f"[Session:{session_id}] Topic-change extraction: {saved} memories")
+                    import asyncio as _aio
+                    _loop = _aio.get_running_loop()
+                    _extraction_task = _loop.create_task(
+                        self.memory_manager.extract_on_topic_change()
+                    )
+                    _extraction_task.add_done_callback(
+                        lambda t: (
+                            logger.info(f"[Session:{session_id}] Topic-change extraction: {t.result()} memories")
+                            if not t.cancelled() and t.exception() is None and t.result()
+                            else (
+                                logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {t.exception()}")
+                                if not t.cancelled() and t.exception()
+                                else None
+                            )
+                        )
+                    )
+                    logger.info(f"[Session:{session_id}] Topic-change extraction scheduled (background)")
                 except Exception as _tc_err:
-                    logger.debug(f"[Session:{session_id}] Topic-change extraction failed: {_tc_err}")
+                    logger.debug(f"[Session:{session_id}] Topic-change extraction scheduling failed: {_tc_err}")
 
         # 9.7 同步更新 Scratchpad 当前任务 (skip for CHAT intent to avoid overwriting task focus)
         _new_task = compiler_summary or message[:200]
@@ -3109,6 +3190,22 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         history_messages = session_messages
         if history_messages and history_messages[-1].get("role") == "user":
             history_messages = history_messages[:-1]
+
+        # Dedup: remove consecutive messages with identical role+content
+        # (can occur from session persistence across retries or restarts)
+        if len(history_messages) >= 2:
+            deduped: list[dict] = [history_messages[0]]
+            for hm in history_messages[1:]:
+                prev = deduped[-1]
+                if hm.get("role") == prev.get("role") and hm.get("content") == prev.get("content"):
+                    continue
+                deduped.append(hm)
+            if len(deduped) < len(history_messages):
+                logger.warning(
+                    f"[Session:{session_id}] Removed {len(history_messages) - len(deduped)} "
+                    f"duplicate messages from history"
+                )
+            history_messages = deduped
 
         _STRIP_MARKERS = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"]
         _RE_TIME_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}\]\s")
@@ -3287,7 +3384,18 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
 
         # Desktop Chat 附件处理（与 IM 的 pending_images 对齐）
         if attachments and not pending_images:
+            _desk_llm_client = getattr(self.brain, "_llm_client", None)
+            _desk_has_vision = (
+                _desk_llm_client
+                and _desk_llm_client.has_any_endpoint_with_capability("vision")
+            )
+            _desk_has_video = (
+                _desk_llm_client
+                and _desk_llm_client.has_any_endpoint_with_capability("video")
+            )
+
             content_blocks: list[dict] = []
+            _degraded_notices: list[str] = []
             if compiled_message:
                 content_blocks.append({"type": "text", "text": compiled_message})
             for att in attachments:
@@ -3308,9 +3416,19 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 )
 
                 if is_image and att_url:
-                    content_blocks.append({"type": "image_url", "image_url": {"url": att_url}})
+                    if _desk_has_vision:
+                        content_blocks.append({"type": "image_url", "image_url": {"url": att_url}})
+                    else:
+                        _degraded_notices.append(
+                            f"[用户发送了图片 {att_name}，当前模型不支持图片输入]"
+                        )
                 elif is_video and att_url:
-                    content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
+                    if _desk_has_video:
+                        content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
+                    else:
+                        _degraded_notices.append(
+                            f"[用户发送了视频 {att_name}，当前模型不支持视频输入]"
+                        )
                 elif att_type == "document" and att_url:
                     content_blocks.append({
                         "type": "text",
@@ -3321,6 +3439,17 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                         "type": "text",
                         "text": f"[附件: {att_name} ({att_mime})] URL: {att_url}",
                     })
+
+            if _degraded_notices:
+                content_blocks.append({
+                    "type": "text",
+                    "text": "\n".join(_degraded_notices),
+                })
+                logger.info(
+                    "[Session:%s] Desktop attachments degraded: vision=%s video=%s, %d notice(s)",
+                    session_id, _desk_has_vision, _desk_has_video, len(_degraded_notices),
+                )
+
             if content_blocks:
                 messages.append({"role": "user", "content": content_blocks})
             elif compiled_message:
@@ -3471,7 +3600,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             session_id=session_id,
             timeout_seconds=settings.progress_timeout_seconds,
             hard_timeout_seconds=settings.hard_timeout_seconds,
-            retrospect_threshold=60,
+            retrospect_threshold=180,
             fallback_model=self.brain.get_fallback_model(session_id),
         )
         task_monitor.start(self.brain.model)
@@ -3539,12 +3668,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             f"trace_iterations={len(_trace)}"
         )
         outbound_attachments = self._extract_outbound_attachments(_all_tool_calls, _all_tool_results)
-        self.memory_manager.record_turn(
-            "assistant", response_text,
-            tool_calls=_all_tool_calls,
-            tool_results=_all_tool_results,
-            attachments=outbound_attachments or None,
-        )
+        if response_text and response_text.strip():
+            self.memory_manager.record_turn(
+                "assistant", response_text,
+                tool_calls=_all_tool_calls,
+                tool_results=_all_tool_results,
+                attachments=outbound_attachments or None,
+            )
+        else:
+            logger.debug(f"[Session:{session_id}] Skipping record_turn for empty response")
         try:
             logger.info(f"[Session:{session_id}] Agent: {response_text}")
         except (UnicodeEncodeError, OSError):
@@ -3611,6 +3743,18 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 _ct_key = _ct.session_id or _ct.task_id
                 self.agent_state.reset_task(session_id=_ct_key)
 
+        # P1-7: 清理 PolicyEngine 会话状态 + ToolExecutor 待确认缓存
+        try:
+            from .policy import get_policy_engine
+            _pe = get_policy_engine()
+            for _clean_id in (_sid, _conv_id):
+                if _clean_id:
+                    _pe.cleanup_session(_clean_id)
+        except Exception:
+            pass
+        if hasattr(self, 'tool_executor') and hasattr(self.tool_executor, '_pending_confirms'):
+            self.tool_executor._pending_confirms.clear()
+
         # Clean up task-local session references to prevent dict growth
         if _sid:
             self._pending_cancels.pop(_sid, None)
@@ -3618,6 +3762,15 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             self._pending_cancels.pop(self._current_conversation_id, None)
         self._current_session_id = None
         self._current_conversation_id = None
+
+        # 清理 Plan/Todo 模块级状态，防止 handler 内存泄漏
+        for _clean_id in (_sid, _conv_id):
+            if _clean_id:
+                try:
+                    from ..tools.handlers.plan import clear_session_todo_state
+                    clear_session_todo_state(_clean_id)
+                except Exception:
+                    pass
 
         # 释放推理引擎中残留的大对象（working_messages / checkpoints），
         # working_messages 可能持有数十 MB 的工具结果（截图 base64、网页内容等）
@@ -3634,6 +3787,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
         session: Any = None,
         gateway: Any = None,
         *,
+        mode: str = "agent",
         endpoint_override: str | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
@@ -3650,6 +3804,7 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             session_id: 会话 ID
             session: Session 对象
             gateway: MessageGateway 对象
+            mode: 交互模式 (ask/plan/agent)，默认 agent
             endpoint_override: 端点覆盖（为 None 时使用 _preferred_endpoint）
             thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
             thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
@@ -3762,46 +3917,35 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             from .intent_analyzer import IntentType as _IT
             _intent = getattr(self, "_current_intent", None)
 
-            if _intent and _intent.intent == _IT.CHAT:
-                if getattr(_intent, "fast_reply", False):
-                    # Ultra-fast path: compiler model for obvious greetings
-                    try:
-                        _identity_snippet = ""
-                        if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                            _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+            if (
+                _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
+                # Ultra-fast path: rule-based greeting only, use lightweight model
+                try:
+                    _identity_snippet = ""
+                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                        _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
 
-                        _fast_system = (
-                            f"{_identity_snippet}\n\n"
-                            "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
-                            "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
-                        ).strip()
+                    _fast_system = (
+                        f"{_identity_snippet}\n\n"
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                    ).strip()
 
-                        _fast_resp = await self.brain.think_lightweight(
-                            prompt=message,
-                            system=_fast_system,
-                        )
-                        response_text = clean_llm_response(
-                            _fast_resp.content if _fast_resp.content else ""
-                        ) or "你好！有什么我可以帮你的吗？"
-                    except Exception as e:
-                        logger.error(f"[FastReply] Failed: {e}")
-                        response_text = "你好！有什么我可以帮你的吗？"
-                else:
-                    # Normal CHAT path: no tools, slim system prompt
-                    response_text = await self._chat_lightweight(
-                        messages, session_type=session_type,
-                        endpoint_override=endpoint_override,
+                    _fast_resp = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_fast_system,
                     )
-            elif _intent and _intent.intent == _IT.COMMAND:
-                response_text = await self._chat_with_tools_and_context(
-                    messages, task_monitor=task_monitor, session_type=session_type,
-                    thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
-                    progress_callback=_progress_cb,
-                    session=session,
-                    endpoint_override=endpoint_override,
-                )
+                    response_text = clean_llm_response(
+                        _fast_resp.content if _fast_resp.content else ""
+                    ) or "你好！有什么我可以帮你的吗？"
+                except Exception as e:
+                    logger.error(f"[FastReply] Failed: {e}")
+                    response_text = "你好！有什么我可以帮你的吗？"
             else:
-                # TASK / QUERY / FOLLOW_UP → full ReasoningEngine
+                # All non-fast paths (CHAT/TASK/QUERY/COMMAND/FOLLOW_UP) → ReasoningEngine
                 response_text = await self._chat_with_tools_and_context(
                     messages, task_monitor=task_monitor, session_type=session_type,
                     thinking_mode=_thinking_mode, thinking_depth=_thinking_depth,
@@ -4007,82 +4151,45 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 elif _intent.force_tool:
                     pass
                 else:
-                    _force_tool_retries = max(0, settings.max_no_tool_retries - 1) if hasattr(settings, "max_no_tool_retries") else None
+                    _force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 1) - 1)
 
             _agent_profile_id = "default"
             if session and hasattr(session, "context"):
                 _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
 
-            if _intent and _intent.intent == _IT.CHAT:
-                if getattr(_intent, "fast_reply", False):
-                    # Ultra-fast path: use compiler/lightweight model for obvious greetings
-                    try:
-                        _identity_snippet = ""
-                        if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                            _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
-
-                        _fast_system = (
-                            f"{_identity_snippet}\n\n"
-                            "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
-                            "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
-                        ).strip()
-
-                        _fast_response = await self.brain.think_lightweight(
-                            prompt=message,
-                            system=_fast_system,
-                        )
-                        _reply_text = clean_llm_response(
-                            _fast_response.content if _fast_response.content else ""
-                        )
-                        if _reply_text:
-                            yield {"type": "text_delta", "content": _reply_text}
-                        else:
-                            yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                            _reply_text = "你好！有什么我可以帮你的吗？"
-                    except Exception as e:
-                        logger.error(f"[FastReply] Failed: {e}")
-                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                        _reply_text = "你好！有什么我可以帮你的吗？"
-                    yield {"type": "done"}
-
-                    await self._finalize_session(
-                        response_text=_reply_text,
-                        session=session,
-                        session_id=session_id,
-                        task_monitor=task_monitor,
-                    )
-                    return
-
-                # Normal CHAT path (non-fast): uses main model, no tools
-                _chat_prompt = await self._build_system_prompt_compiled(
-                    task_description="", session_type=session_type, tools_enabled=False,
-                    session=session,
-                )
+            if (
+                _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
+                # Ultra-fast path: rule-based greeting only, use lightweight model
                 try:
-                    response = await self.brain.messages_create_async(
-                        system=_chat_prompt,
-                        messages=messages,
-                        tools=[],
-                        max_tokens=self.brain.max_tokens,
-                        endpoint_override=endpoint_override,
+                    _identity_snippet = ""
+                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                        _identity_snippet = (self.identity.get_system_prompt(include_active_task=False) or "")[:500]
+
+                    _fast_system = (
+                        f"{_identity_snippet}\n\n"
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                    ).strip()
+
+                    _fast_response = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_fast_system,
                     )
-                    content = getattr(response, "content", None)
-                    _raw_parts: list[str] = []
-                    if isinstance(content, list):
-                        for block in content:
-                            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
-                            if text:
-                                _raw_parts.append(text)
-                    elif content:
-                        _raw_parts.append(str(content))
-                    _raw_text = "".join(_raw_parts)
-                    _reply_text = clean_llm_response(_raw_text)
+                    _reply_text = clean_llm_response(
+                        _fast_response.content if _fast_response.content else ""
+                    )
                     if _reply_text:
                         yield {"type": "text_delta", "content": _reply_text}
+                    else:
+                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                        _reply_text = "你好！有什么我可以帮你的吗？"
                 except Exception as e:
-                    logger.error(f"[ChatLightweight/Stream] LLM call failed: {e}")
-                    yield {"type": "text_delta", "content": "抱歉，暂时无法回复，请稍后再试。"}
-                    _reply_text = "抱歉，暂时无法回复，请稍后再试。"
+                    logger.error(f"[FastReply] Failed: {e}")
+                    yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                    _reply_text = "你好！有什么我可以帮你的吗？"
                 yield {"type": "done"}
 
                 await self._finalize_session(
@@ -4092,6 +4199,9 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                     task_monitor=task_monitor,
                 )
                 return
+
+            # LLM-classified CHAT (non-fast_reply) falls through to reason_stream
+            # with force_tool_retries=0, so tools are available but not forced.
 
             # Complexity detection: force ask_user for complex tasks
             if (
@@ -4110,13 +4220,13 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 yield {
                     "type": "ask_user",
                     "question": (
-                        f"⚠️ 检测到复杂任务（复杂度: {_score}/10）\n\n"
-                        "此任务涉及多文件修改、跨模块调整或破坏性操作。\n"
-                        "建议先在 Plan 模式下进行详细规划，再执行。"
+                        "⚠️ 这个任务比较复杂\n\n"
+                        "涉及多个步骤，"
+                        "建议先制定计划再动手，避免遗漏。"
                     ),
                     "options": [
-                        {"id": "plan", "label": "切换到 Plan 模式详细规划（推荐）"},
-                        {"id": "execute", "label": "直接在 Agent 模式执行"},
+                        {"id": "plan", "label": "先制定计划再执行（推荐）"},
+                        {"id": "execute", "label": "直接执行"},
                     ],
                 }
                 yield {"type": "done"}
@@ -4515,10 +4625,11 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             context = task_monitor.get_retrospect_context()
             prompt = RETROSPECT_PROMPT.format(context=context)
 
-            # 使用 Brain 进行复盘分析（独立上下文）
-            response = await self.brain.think(
+            # 使用 think_lightweight 进行复盘（禁用思考链，节省 token）
+            response = await self.brain.think_lightweight(
                 prompt=prompt,
                 system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
+                max_tokens=512,
             )
 
             result = strip_thinking_tags(response.content).strip() if response.content else ""
@@ -4849,9 +4960,10 @@ MISSING: 缺失的内容（如有）
 NEXT: 建议的下一步（如有）"""
 
         try:
-            response = await self.brain.think(
+            response = await self.brain.think_lightweight(
                 prompt=verify_prompt,
                 system="你是一个任务完成度判断助手。请分析任务是否完成，并说明证据和缺失项。",
+                max_tokens=512,
             )
 
             result = response.content.strip().upper() if response.content else ""
@@ -5041,6 +5153,7 @@ NEXT: 建议的下一步（如有）"""
                 )
 
                 content = getattr(response, "content", None)
+                _has_tool_use = False
                 if isinstance(content, list):
                     text_parts = []
                     for block in content:
@@ -5048,6 +5161,9 @@ NEXT: 建议的下一步（如有）"""
                             text_parts.append(block.text)
                         elif isinstance(block, dict) and "text" in block:
                             text_parts.append(block["text"])
+                        block_type = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                        if block_type == "tool_use":
+                            _has_tool_use = True
                     raw = "\n".join(text_parts) or ""
                 else:
                     raw = str(content or "")
@@ -5055,6 +5171,9 @@ NEXT: 建议的下一步（如有）"""
                 cleaned = clean_llm_response(raw)
                 if cleaned:
                     return cleaned
+
+                if _has_tool_use:
+                    return "好的，已收到你的信息。"
 
                 if attempt < self._LIGHTWEIGHT_EMPTY_MAX_RETRIES:
                     logger.warning(
@@ -5158,888 +5277,6 @@ NEXT: 建议的下一步（如有）"""
             is_sub_agent=getattr(self, "_is_sub_agent_call", False),
         )
 
-        # ==================== 以下为旧代码（保留参考，后续完全清理） ====================
-        max_iterations = settings.max_iterations
-
-        # === 关键：保存原始用户消息，用于模型切换时重置上下文 ===
-        # 只提取“人类用户消息”（不包含 tool_result 证据链），并保留多模态 content（list blocks）
-        def _is_human_user_message(msg: dict) -> bool:
-            if msg.get("role") != "user":
-                return False
-            content = msg.get("content")
-            if isinstance(content, str):
-                return True
-            if isinstance(content, list):
-                # tool_result 在本项目中通常以 role=user + content=[{type:"tool_result",...}] 形式出现
-                part_types = {
-                    part.get("type")
-                    for part in content
-                    if isinstance(part, dict) and part.get("type")
-                }
-                return "tool_result" not in part_types
-            return False
-
-        original_user_messages = [msg for msg in messages if _is_human_user_message(msg)]
-
-        # 复制消息避免修改原始列表
-        working_messages = list(messages)
-
-        # 用于 memory 检索的 query（必须非空，且尽量短）
-        # 优先用 compiler 的短摘要（可复用、噪声更小），退化为最后一条用户请求
-        task_description = self._get_last_user_request(messages).strip()
-        if not task_description:
-            task_description = (getattr(self, "_current_task_query", "") or "").strip()
-
-        # 选择 System Prompt
-        if use_session_prompt:
-            system_prompt = await self._build_system_prompt_compiled(
-                task_description=task_description,
-                session_type=session_type,
-                session=session or self._current_session,
-            )
-        else:
-            system_prompt = self._context.system
-
-        # 注入 TaskDefinition（developer 段，避免污染 user messages）
-        task_def = (getattr(self, "_current_task_definition", "") or "").strip()
-        if task_def:
-            system_prompt += f"\n\n## Developer: TaskDefinition\n{task_def}\n"
-
-        # === Plan 持久化：保存不含 Plan 的基础提示词，循环内动态追加 ===
-        base_system_prompt = system_prompt
-
-        def _build_effective_system_prompt() -> str:
-            """在 base_system_prompt 基础上动态追加活跃 Plan 段落（每轮刷新最新状态）"""
-            from ..tools.handlers.plan import get_active_todo_prompt
-
-            _cid = getattr(self, "_current_conversation_id", None) or getattr(
-                self, "_current_session_id", None
-            )
-            prompt = base_system_prompt
-            if _cid:
-                plan_section = get_active_todo_prompt(_cid)
-                if plan_section:
-                    prompt += f"\n\n{plan_section}\n"
-            return prompt
-
-        # 获取当前模型
-        current_model = self.brain.model
-
-        # 追问计数器：当 LLM 没有调用工具时，最多追问几次
-        no_tool_call_count = 0
-        im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
-        configured = int(getattr(settings, "force_tool_call_max_retries", 1))
-        if session_type == "im":
-            base_force_retries = max(im_floor, configured)
-        else:
-            base_force_retries = max(0, configured)
-
-        def _effective_force_retries() -> int:
-            """
-            计算本任务的“有效 ForceToolCall 重试次数”。
-
-            规则：
-            - 默认取 settings.force_tool_call_max_retries
-            - 一旦 session 存在活跃 Plan（多步骤任务），至少提升到 1，避免“空输出”直接结束
-            """
-            retries = base_force_retries
-            try:
-                from ..tools.handlers.plan import has_active_todo, is_todo_required
-
-                sid = getattr(self, "_current_conversation_id", None) or getattr(
-                    self, "_current_session_id", None
-                )
-                if sid and (has_active_todo(sid) or is_todo_required(sid)):
-                    retries = max(retries, 1)
-            except Exception:
-                pass
-            return max(0, int(retries))
-
-        max_no_tool_retries = _effective_force_retries()  # 建议22: 降低强制追问次数
-        tools_executed_in_task = False  # 本轮任务是否已执行过工具
-
-        # TaskVerify incomplete counter (prevent infinite loop)
-        verify_incomplete_count = 0
-        max_verify_retries = 3
-
-        # 工具已执行但 LLM 没给任何可见文本确认：额外再试（不计入 ForceToolCall 配额）
-        no_confirmation_text_count = 0
-        max_confirmation_text_retries = max(0, int(getattr(settings, "confirmation_text_max_retries", 2)))
-
-        # Track executed tool names for task completion verification
-        executed_tool_names: list[str] = []
-        # Track deliver_artifacts receipts as delivery evidence
-        delivery_receipts: list[dict] = []
-
-        # === 模型切换熔断（与 ReasoningEngine.MAX_MODEL_SWITCHES 对齐） ===
-        MAX_TASK_MODEL_SWITCHES = 2
-        _task_switch_count = 0  # 模型切换次数计数器
-        _total_llm_retries = 0  # 全局重试计数（跨模型切换）
-        MAX_TOTAL_LLM_RETRIES = 3
-
-        # === C7: 重构循环检测 ===
-        # 不设硬上限，改为 LLM 自检 + 真正重复模式检测 + 极端安全阈值（提醒用户）
-        consecutive_tool_rounds = 0           # 连续有工具调用的轮次计数
-        recent_tool_signatures: list[str] = []  # 最近 N 轮的工具签名（名 + 参数哈希）
-        tool_pattern_window = 8               # 模式检测窗口大小
-        llm_self_check_interval = 10          # 每 N 轮触发一次 LLM 自检提示
-        extreme_safety_threshold = 50         # 极端安全阈值：不终止，而是提醒用户
-        _last_browser_url = ""                # 最近一次 browser_navigate 的 URL（用于区分不同页面）
-
-        # 浏览器"读页面状态"工具：参数可能为空但页面不同，需要额外区分
-        _browser_page_read_tools = frozenset({
-            "browser_get_content", "browser_screenshot",
-        })
-
-        def _make_tool_signature(tc: dict) -> str:
-            """
-            生成工具签名：名称 + 参数哈希。不同参数的同名工具视为不同调用。
-
-            对浏览器"读页面"类工具（如 browser_get_content），当参数为空时
-            将最近导航的 URL 纳入哈希，避免在不同页面上的同名空参数调用
-            被误判为重复循环。
-            """
-            nonlocal _last_browser_url
-            import hashlib
-            name = tc.get("name", "")
-            inp = tc.get("input", {})
-
-            # 跟踪最近的 browser_navigate URL
-            if name == "browser_navigate":
-                _last_browser_url = inp.get("url", "")
-
-            # 对参数做稳定的 JSON 序列化后取 hash
-            try:
-                import json as _json
-                param_str = _json.dumps(inp, sort_keys=True, ensure_ascii=False)
-            except Exception:
-                param_str = str(inp)
-
-            # 对浏览器读页面工具，参数为空/极少时纳入最近 URL 作为区分因子
-            if name in _browser_page_read_tools and len(param_str) <= 20 and _last_browser_url:
-                param_str = f"{param_str}|url={_last_browser_url}"
-
-            param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
-            return f"{name}({param_hash})"
-
-        def _resolve_endpoint_name(model_or_endpoint: str) -> str | None:
-            """将 'endpoint_name' 或 'model' 解析为 endpoint_name（最小兼容）。"""
-            try:
-                llm_client = getattr(self.brain, "_llm_client", None)
-                if not llm_client:
-                    return None
-
-                # 1) 直接当作 endpoint_name
-                available = [m.name for m in llm_client.list_available_models()]
-                if model_or_endpoint in available:
-                    return model_or_endpoint
-
-                # 2) 当作 model 名映射到第一个匹配的 endpoint
-                for m in llm_client.list_available_models():
-                    if m.model == model_or_endpoint:
-                        return m.name
-
-                return None
-            except Exception:
-                return None
-
-        def _switch_llm_endpoint(model_or_endpoint: str, reason: str = "") -> bool:
-            """
-            真正执行“切模/切端点”。
-            注意：LLMClient.override 当前是全局的；这里用短有效期止血，后续会改为 per-conversation。
-            """
-            llm_client = getattr(self.brain, "_llm_client", None)
-            if not llm_client:
-                return False
-
-            endpoint_name = _resolve_endpoint_name(model_or_endpoint)
-            if not endpoint_name:
-                logger.warning(f"[ModelSwitch] Cannot resolve endpoint for '{model_or_endpoint}'")
-                return False
-
-            ok, msg = llm_client.switch_model(
-                endpoint_name=endpoint_name,
-                hours=0.05,  # 约 3 分钟：止血用，避免长时间影响并发会话
-                reason=reason,
-                conversation_id=getattr(self, "_current_conversation_id", None) or None,
-            )
-            if not ok:
-                logger.warning(f"[ModelSwitch] switch_model failed: {msg}")
-                return False
-
-            try:
-                current = llm_client.get_current_model()
-                if current and current.model:
-                    self.brain.model = current.model  # 仅用于日志/可读性
-            except Exception:
-                pass
-
-            logger.info(f"[ModelSwitch] {msg}")
-            return True
-
-        # 获取 cancel_event（用于 LLM / 工具调用竞速取消）
-        _cancel_event = (
-            self.agent_state.current_task.cancel_event
-            if self.agent_state and self.agent_state.current_task
-            else asyncio.Event()
-        )
-
-        for iteration in range(max_iterations):
-            # C8: 每轮迭代开始时检查任务是否已被取消
-            if self._task_cancelled:
-                logger.info(
-                    f"[StopTask] Task cancelled at iteration start: {self._cancel_reason}"
-                )
-                return "✅ 任务已停止。"
-
-            # 任务监控：开始迭代
-            if task_monitor:
-                task_monitor.begin_iteration(iteration + 1, current_model)
-
-                # === 安全模型切换检查 ===
-                # 检查是否超时且重试次数已用尽
-                if task_monitor.should_switch_model:
-                    _task_switch_count += 1
-                    if _task_switch_count > MAX_TASK_MODEL_SWITCHES:
-                        logger.error(
-                            f"[ModelSwitch] Exceeded max model switches "
-                            f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
-                        )
-                        return (
-                            "❌ 任务失败：所有模型均不可用，已达到最大切换次数。\n"
-                            "💡 建议：请检查 API Key 是否正确、账户余额是否充足、网络连接是否正常。"
-                            "如果是配额耗尽，充值后即可恢复。"
-                        )
-
-                    new_model = task_monitor.fallback_model
-                    if not new_model:
-                        logger.warning("[ModelSwitch] No fallback model available, aborting task")
-                        return (
-                            "任务失败：所有模型端点均不可用。\n"
-                            "建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
-                        )
-                    switch_ok = _switch_llm_endpoint(new_model, reason="task_monitor timeout fallback")
-                    if not switch_ok:
-                        logger.error(
-                            f"[ModelSwitch] switch_model failed for '{new_model}', aborting task"
-                        )
-                        return (
-                            "任务失败：模型切换失败，无可用模型。\n"
-                            "建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
-                        )
-
-                    task_monitor.switch_model(
-                        new_model,
-                        f"任务执行超过 {task_monitor.timeout_seconds} 秒，重试 {task_monitor.retry_count} 次后切换",
-                        reset_context=True,
-                    )
-                    # 更新 current_model（用于日志与 task_monitor 展示）
-                    try:
-                        llm_client = getattr(self.brain, "_llm_client", None)
-                        current = llm_client.get_current_model() if llm_client else None
-                        current_model = current.model if current else new_model
-                    except Exception:
-                        current_model = new_model
-
-                    # === 关键：重置上下文，废弃工具调用历史 ===
-                    logger.warning(
-                        f"[ModelSwitch] Switching to {new_model}, resetting context. "
-                        f"Discarding {len(working_messages) - len(original_user_messages)} tool-related messages"
-                    )
-                    working_messages = list(original_user_messages)
-                    # 切模后必须重置跨迭代控制变量（否则会继承旧模型的“强制追问/verify”节奏）
-                    no_tool_call_count = 0
-                    tools_executed_in_task = False
-                    verify_incomplete_count = 0
-                    executed_tool_names = []
-                    consecutive_tool_rounds = 0
-                    recent_tool_signatures = []
-                    no_confirmation_text_count = 0
-
-                    # 添加模型切换说明，让新模型了解情况
-                    working_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
-                                "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
-                                "请从头开始处理上面的用户请求。"
-                            ),
-                        }
-                    )
-
-            try:
-                # 每次迭代前检查上下文大小
-                if iteration > 0:
-                    working_messages = await self._compress_context(
-                        working_messages, system_prompt=_build_effective_system_prompt()
-                    )
-
-                # 调用 Brain，传递工具列表（可被 cancel_event 中断）
-                response = await self._cancellable_llm_call(
-                    _cancel_event,
-                    model=current_model,
-                    max_tokens=self.brain.max_tokens,
-                    system=_build_effective_system_prompt(),
-                    tools=self._effective_tools,
-                    messages=working_messages,
-                    conversation_id=getattr(self, "_current_conversation_id", None),
-                )
-
-                # 成功调用，重置重试计数
-                if task_monitor:
-                    task_monitor.reset_retry_count()
-
-            except UserCancelledError:
-                logger.info("[StopTask] LLM call interrupted by user cancel event")
-                return await self._handle_cancel_farewell(
-                    working_messages, _build_effective_system_prompt(), current_model
-                )
-
-            except Exception as e:
-                logger.error(f"[LLM] Brain call failed: {e}")
-
-                # ── 全局重试计数 ──
-                _total_llm_retries += 1
-                if _total_llm_retries > MAX_TOTAL_LLM_RETRIES:
-                    logger.error(
-                        f"[CLI] Global retry limit reached ({_total_llm_retries}/{MAX_TOTAL_LLM_RETRIES}), "
-                        f"aborting: {str(e)[:200]}"
-                    )
-                    return (
-                        f"❌ 调用失败，已重试 {MAX_TOTAL_LLM_RETRIES} 次仍无法恢复。\n"
-                        f"错误: {str(e)[:200]}\n"
-                        "💡 你可以直接重新发送消息来重试。"
-                    )
-
-                # ── 结构性错误快速熔断 ──
-                from ..llm.types import AllEndpointsFailedError as _Aefe
-                from .reasoning_engine import ReasoningEngine
-                if isinstance(e, _Aefe) and e.is_structural:
-                    _already = getattr(self, '_cli_structural_stripped', False)
-                    if not _already:
-                        stripped, did_strip = ReasoningEngine._strip_heavy_content(working_messages)
-                        if did_strip:
-                            logger.warning("[CLI] Structural error: stripping heavy content, retrying once")
-                            self._cli_structural_stripped = True
-                            working_messages.clear()
-                            working_messages.extend(stripped)
-                            llm_client = getattr(self.brain, "_llm_client", None)
-                            if llm_client:
-                                llm_client.reset_all_cooldowns(include_structural=True)
-                            continue
-                    logger.error(f"[CLI] Structural error, aborting: {str(e)[:200]}")
-                    return (
-                        f"❌ API 请求格式错误，无法恢复。请检查附件大小或格式。\n"
-                        f"错误: {str(e)[:200]}\n"
-                        "💡 你可以直接重新发送消息来重试。"
-                    )
-
-                # 记录错误并判断是否应该重试
-                if task_monitor:
-                    should_retry = task_monitor.record_error(str(e))
-
-                    if should_retry:
-                        logger.info(
-                            f"[LLM] Will retry (attempt {task_monitor.retry_count}, "
-                            f"global {_total_llm_retries}/{MAX_TOTAL_LLM_RETRIES})"
-                        )
-                        try:
-                            await self._cancellable_await(asyncio.sleep(2), _cancel_event)
-                        except UserCancelledError:
-                            return await self._handle_cancel_farewell(
-                                working_messages, _build_effective_system_prompt(), current_model
-                            )
-                        continue
-                    else:
-                        # 重试次数用尽，切换模型
-                        _task_switch_count += 1
-                        if _task_switch_count > MAX_TASK_MODEL_SWITCHES:
-                            logger.error(
-                                f"[ModelSwitch] Exceeded max model switches "
-                                f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
-                            )
-                            return (
-                                "❌ 调用失败，已尝试多个模型仍无法恢复。\n"
-                                f"错误: {str(e)[:200]}\n"
-                                "💡 你可以直接重新发送消息来重试。"
-                            )
-
-                        new_model = task_monitor.fallback_model
-                        if not new_model:
-                            logger.warning("[ModelSwitch] No fallback model available, aborting task")
-                            return (
-                                "任务失败：所有模型端点均不可用。\n"
-                                "建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
-                            )
-                        switch_ok = _switch_llm_endpoint(new_model, reason=f"LLM call failed fallback: {e}")
-                        if not switch_ok:
-                            logger.error(
-                                f"[ModelSwitch] switch_model failed for '{new_model}', aborting task"
-                            )
-                            return (
-                                "任务失败：模型切换失败，无可用模型。\n"
-                                "建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
-                            )
-
-                        task_monitor.switch_model(
-                            new_model,
-                            f"LLM 调用失败，重试 {task_monitor.retry_count} 次后切换: {e}",
-                            reset_context=True,
-                        )
-                        try:
-                            llm_client = getattr(self.brain, "_llm_client", None)
-                            current = llm_client.get_current_model() if llm_client else None
-                            current_model = current.model if current else new_model
-                        except Exception:
-                            current_model = new_model
-
-                        # 重置上下文
-                        logger.warning(
-                            f"[ModelSwitch] Switching to {new_model} due to errors, resetting context"
-                        )
-                        working_messages = list(original_user_messages)
-                        no_tool_call_count = 0
-                        tools_executed_in_task = False
-                        verify_incomplete_count = 0
-                        executed_tool_names = []
-                        consecutive_tool_rounds = 0
-                        recent_tool_signatures = []
-                        no_confirmation_text_count = 0
-                        working_messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
-                                    "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
-                                    "请从头开始处理上面的用户请求。"
-                                ),
-                            }
-                        )
-                        continue
-                else:
-                    # 没有 task_monitor，直接抛出异常
-                    raise
-
-            # 检测 max_tokens 截断
-            _stop_reason = getattr(response, "stop_reason", "")
-            if str(_stop_reason) == "max_tokens":
-                logger.warning(
-                    f"[Agent] ⚠️ LLM output truncated (stop_reason=max_tokens). "
-                    f"The response hit the max_tokens limit ({self.brain.max_tokens}). "
-                    f"Tool call JSON may be incomplete."
-                )
-
-            # 处理响应
-            tool_calls = []
-            text_content = ""
-            _thinking_content = ""
-
-            for block in response.content:
-                if block.type == "text":
-                    text_content += block.text
-                elif block.type == "tool_use":
-                    tool_calls.append(
-                        {
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
-                elif getattr(block, "type", None) == "thinking":
-                    _thinking_content += getattr(block, "thinking", "") or ""
-
-            # 防御层：如果 provider 层未能从 thinking 内容中提取嵌入的工具调用
-            if not tool_calls and _thinking_content:
-                try:
-                    from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
-                    if has_text_tool_calls(_thinking_content):
-                        _, _embedded = parse_text_tool_calls(_thinking_content)
-                        if _embedded:
-                            for tc in _embedded:
-                                tool_calls.append({"id": tc.id, "name": tc.name, "input": tc.input})
-                            logger.warning(
-                                f"[Agent] Recovered {len(_embedded)} tool calls from thinking content"
-                            )
-                except Exception:
-                    pass
-
-            # 任务监控：结束迭代
-            if task_monitor:
-                task_monitor.end_iteration(text_content if text_content else "")
-
-            # 如果没有工具调用，检查是否需要强制要求调用工具
-            if not tool_calls:
-                # LLM 返回了纯文本（无工具调用），重置连续工具轮次计数
-                consecutive_tool_rounds = 0
-
-                # 如果本轮任务已经执行过工具
-                if tools_executed_in_task:
-                    # 只有当 LLM 返回了有意义的文本确认时才检查是否真正完成
-                    cleaned_text = strip_thinking_tags(text_content)
-                    _, cleaned_text = parse_intent_tag(cleaned_text)
-                    if cleaned_text and len(cleaned_text.strip()) > 0:
-                        # === 任务完成度复核 ===
-                        # 让 LLM 判断任务是否真正完成用户意图
-                        is_completed = await self._verify_task_completion(
-                            user_request=self._get_last_user_request(messages),
-                            assistant_response=cleaned_text,
-                            executed_tools=executed_tool_names,
-                            delivery_receipts=delivery_receipts,
-                        )
-
-                        if is_completed:
-                            logger.info("[ForceToolCall] Skipped - task verified as completed")
-                            return cleaned_text
-                        else:
-                            verify_incomplete_count += 1
-
-                            # 检查是否有活跃 Plan 且仍有 pending steps
-                            # 使用与 _verify_task_completion 相同的方式访问 PlanHandler
-                            has_active_todo_pending = False
-                            try:
-                                from ..tools.handlers.plan import (
-                                    get_todo_handler_for_session,
-                                    has_active_todo,
-                                )
-                                conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
-                                    self, "_current_session_id", None
-                                )
-                                if conversation_id and has_active_todo(conversation_id):
-                                    handler = get_todo_handler_for_session(conversation_id)
-                                    _plan = handler.get_plan_for(conversation_id) if handler else None
-                                    if _plan:
-                                        steps = _plan.get("steps", [])
-                                        pending = [s for s in steps if s.get("status") in ("pending", "in_progress")]
-                                        if pending:
-                                            has_active_todo_pending = True
-                                            logger.info(
-                                                f"[ForceToolCall] Active plan has {len(pending)} pending steps, "
-                                                f"increasing verify tolerance"
-                                            )
-                            except Exception as e:
-                                logger.debug(f"[ForceToolCall] Plan check failed: {e}")
-
-                            # 有活跃 Plan 时，提高容忍度（Plan 本身就是多步骤任务，不应过早放弃）
-                            effective_max_retries = max_verify_retries * 2 if has_active_todo_pending else max_verify_retries
-
-                            if verify_incomplete_count >= effective_max_retries:
-                                logger.warning(
-                                    f"[ForceToolCall] TaskVerify returned incomplete {verify_incomplete_count} times "
-                                    f"(max={effective_max_retries}, todo_pending={has_active_todo_pending}); "
-                                    f"stopping without claiming completion"
-                                )
-                                return cleaned_text
-                            logger.info(
-                                f"[ForceToolCall] Task not completed (attempt {verify_incomplete_count}/{effective_max_retries}), continuing..."
-                            )
-                            # 任务未完成，追加提示让 LLM 继续
-                            working_messages.append(
-                                {
-                                    "role": "assistant",
-                                    "content": [{"type": "text", "text": text_content}],
-                                }
-                            )
-
-                            # 有活跃 Plan 时，给更明确的继续指令
-                            if has_active_todo_pending:
-                                working_messages.append(
-                                    {
-                                        "role": "user",
-                                        "content": (
-                                            "[系统提示] 当前 Plan 仍有未完成的步骤。"
-                                            "请立即继续执行下一个 pending 步骤，不要停下来询问用户。"
-                                            "只有在所有步骤完成并交付后才结束任务。"
-                                        ),
-                                    }
-                                )
-                            else:
-                                working_messages.append(
-                                    {
-                                        "role": "user",
-                                        "content": "[系统提示] 根据复核判断，用户请求可能还有未完成的部分。如果你认为已经完成，请直接给用户一个总结回复；如果确实还有剩余步骤，请继续执行。",
-                                    }
-                                )
-                            continue
-                    else:
-                        # LLM 没有返回任何可见文本：强制再问，让模型给出用户可见的确认/总结
-                        logger.info(
-                            "[ForceToolCall] Tools executed but no confirmation text, requesting confirmation..."
-                        )
-                        no_confirmation_text_count += 1
-                        if no_confirmation_text_count <= max_confirmation_text_retries:
-                            if no_confirmation_text_count == 1:
-                                _retry_prompt = (
-                                    "[系统] 你已执行过工具，但你刚才没有输出任何用户可见的文字确认。"
-                                    "请基于已产生的 tool_result 证据，给出最终答复/交付物说明；"
-                                    "若仍需工具，请直接调用，不要空回复。"
-                                )
-                            else:
-                                _retry_prompt = (
-                                    "[系统] 警告：你已连续多次未输出可见文字。"
-                                    "请立即用一两句话简要总结你完成了什么，不要调用任何工具，不要输出思考过程。"
-                                )
-                            working_messages.append(
-                                {"role": "user", "content": _retry_prompt}
-                            )
-                            continue
-                        # 所有重试用尽，尝试从工具执行记录构建 fallback
-                        _fallback = self._build_tool_fallback_summary(
-                            executed_tool_names, delivery_receipts
-                        )
-                        if _fallback:
-                            logger.warning(
-                                "[ForceToolCall] LLM returned empty confirmation; using fallback summary"
-                            )
-                            return _fallback
-                        logger.error(
-                            "[ForceToolCall] LLM returned empty confirmation after tools executed; aborting"
-                        )
-                        return (
-                            "⚠️ 大模型返回异常：工具已执行，但多次未返回任何可见文本确认，任务已中断。"
-                            "请重试、或切换到更稳定的端点/模型后再继续。"
-                        )
-
-                # 未执行过工具 — 解析意图声明标记
-                intent, stripped_text = parse_intent_tag(text_content or "")
-                logger.info(
-                    f"[IntentTag] intent={intent or 'NONE'}, "
-                    f"has_tool_calls=False, tools_executed_in_task=False, "
-                    f"text_preview=\"{(stripped_text or '')[:80].replace(chr(10), ' ')}\""
-                )
-
-                # REPLY / ACTION / 无标记 → 统一走配置的 ForceToolCall 重试次数
-                max_no_tool_retries = _effective_force_retries()
-                no_tool_call_count += 1
-
-                if no_tool_call_count <= max_no_tool_retries:
-                    if stripped_text:
-                        working_messages.append(
-                            {
-                                "role": "assistant",
-                                "content": [{"type": "text", "text": stripped_text}],
-                            }
-                        )
-                    if intent == "ACTION":
-                        logger.warning(
-                            "[IntentTag] ACTION intent declared but no tool calls — "
-                            "hallucination detected, forcing retry"
-                        )
-                        retry_msg = (
-                            "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
-                            "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
-                        )
-                    else:
-                        logger.info(
-                            f"[IntentTag] No intent tag, ForceToolCall retry "
-                            f"({no_tool_call_count}/{max_no_tool_retries})"
-                        )
-                        retry_msg = "[系统] 若确实需要工具，请调用相应工具；若不需要工具，请用 [REPLY] 标记直接回答。"
-                    working_messages.append({"role": "user", "content": retry_msg})
-                    continue
-
-                # 追问次数用尽，接受响应
-                cleaned_text = clean_llm_response(stripped_text)
-                return cleaned_text or (
-                    "⚠️ 大模型返回异常：未产生可用输出（无工具调用且无文本）。任务已中断。"
-                    "请重试、或更换端点/模型后再执行。"
-                )
-
-            # 有工具调用，添加助手消息
-            # MiniMax M2.1 Interleaved Thinking 支持：
-            # 必须完整保留 thinking 块以保持思维链连续性
-            assistant_content = []
-            for block in response.content:
-                if block.type == "thinking":
-                    # 保留 thinking 块（MiniMax M2.1 要求）
-                    assistant_content.append(
-                        {
-                            "type": "thinking",
-                            "thinking": block.thinking
-                            if hasattr(block, "thinking")
-                            else str(block),
-                        }
-                    )
-                elif block.type == "text":
-                    assistant_content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    assistant_content.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
-
-            working_messages.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_content,
-                }
-            )
-
-            # 执行工具调用（支持中断检查和任务取消）
-
-            # === 工具执行前检查取消 ===
-            if self._task_cancelled:
-                logger.info(
-                    f"[StopTask] Task cancelled before tool execution: {self._cancel_reason}"
-                )
-                return "✅ 任务已停止。"
-
-            # 会话模式默认启用“工具间中断检查”；如用户关闭中断检查且配置允许，可启用并行
-            tool_results, executed, receipts = await self._execute_tool_calls_batch(
-                tool_calls,
-                task_monitor=task_monitor,
-                allow_interrupt_checks=self._interrupt_enabled,
-                capture_delivery_receipts=True,
-            )
-            if executed:
-                tools_executed_in_task = True
-                executed_tool_names.extend(executed)
-            if receipts:
-                delivery_receipts = receipts
-
-            # C8: 工具执行后再次检查取消（网关可能在工具执行期间收到停止指令）
-            if self._task_cancelled:
-                logger.info(
-                    f"[StopTask] Task cancelled after tool execution: {self._cancel_reason}"
-                )
-                # 将已有的工具结果添加到上下文中，让 LLM 知道执行进度
-                working_messages.append({"role": "user", "content": tool_results})
-                return await self._handle_cancel_farewell(
-                    working_messages, _build_effective_system_prompt(), current_model
-                )
-
-            # 添加工具结果
-            working_messages.append(
-                {
-                    "role": "user",
-                    "content": tool_results,
-                }
-            )
-
-            # === 统一处理 skip 反思 + 用户插入消息 ===
-            if self.agent_state and self.agent_state.current_task:
-                await self.agent_state.current_task.process_post_tool_signals(working_messages)
-
-            # === C7: 重构循环检测 ===
-            consecutive_tool_rounds += 1
-
-            # (a) stop_reason 检查：LLM 明确表示结束
-            if getattr(response, "stop_reason", None) == "end_turn":
-                cleaned_text = strip_thinking_tags(text_content)
-                _, cleaned_text = parse_intent_tag(cleaned_text)
-                if cleaned_text and cleaned_text.strip():
-                    logger.info(
-                        f"[LoopGuard] LLM stop_reason=end_turn with text after {consecutive_tool_rounds} tool rounds, ending."
-                    )
-                    return cleaned_text
-
-            # (b) 工具调用签名检测：名称 + 参数哈希（区分不同参数的同名工具调用）
-            round_signatures = [_make_tool_signature(tc) for tc in tool_calls]
-            round_sig_str = "+".join(sorted(round_signatures))
-            recent_tool_signatures.append(round_sig_str)
-            if len(recent_tool_signatures) > tool_pattern_window:
-                recent_tool_signatures = recent_tool_signatures[-tool_pattern_window:]
-
-            # 检测真正的重复调用（完全相同的工具 + 完全相同的参数）
-            if len(recent_tool_signatures) >= 3:
-                from collections import Counter
-                sig_counts = Counter(recent_tool_signatures)
-                most_common_sig, most_common_count = sig_counts.most_common(1)[0]
-
-                if most_common_count >= 3:
-                    # 真正的循环：相同工具 + 相同参数重复 3+ 次
-                    logger.warning(
-                        f"[LoopGuard] True loop detected: '{most_common_sig}' repeated "
-                        f"{most_common_count} times in last {len(recent_tool_signatures)} rounds."
-                    )
-                    working_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                                "这通常意味着陷入了循环。请评估：\n"
-                                "1. 如果任务已完成，请停止调用工具，直接回复结果。\n"
-                                "2. 如果遇到困难，请换一种思路或工具来解决。\n"
-                                "3. 如果确认需要重复操作（如轮询等待），请说明原因。"
-                            ),
-                        }
-                    )
-                    # 如果重复 >= 5 次且参数完全一致，几乎确定是死循环
-                    if most_common_count >= 5:
-                        logger.error(
-                            f"[LoopGuard] Confirmed dead loop ({most_common_count} identical repeats). Force terminating."
-                        )
-                        cleaned_text = strip_thinking_tags(text_content)
-                        _, cleaned_text = parse_intent_tag(cleaned_text)
-                        return cleaned_text or "⚠️ 检测到工具调用陷入死循环（完全相同的调用重复了 5 次以上），任务已自动终止。请重新描述您的需求。"
-
-            # (c) 定期 LLM 自检提示（每 N 轮）
-            if consecutive_tool_rounds > 0 and consecutive_tool_rounds % llm_self_check_interval == 0:
-                logger.info(
-                    f"[LoopGuard] Round {consecutive_tool_rounds}: triggering LLM self-check."
-                )
-                # 检查是否有活跃 Plan：有的话用更温和的提示，避免打断正常执行
-                _self_check_has_plan = False
-                try:
-                    from ..tools.handlers.plan import get_todo_handler_for_session
-                    from ..tools.handlers.plan import has_active_todo as _has_active_todo
-                    _sc_conv_id = getattr(self, "_current_conversation_id", None) or getattr(
-                        self, "_current_session_id", None
-                    )
-                    if _sc_conv_id and _has_active_todo(_sc_conv_id):
-                        _self_check_has_plan = True
-                except Exception:
-                    pass
-
-                if _self_check_has_plan:
-                    # 有活跃 Plan：提示简短，鼓励继续执行
-                    working_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                f"[系统提示] 已连续执行 {consecutive_tool_rounds} 轮工具调用，当前 Plan 仍有未完成步骤。"
-                                "如果遇到困难（如某个工具反复失败），请换一种方法继续推进，不要停下来。"
-                            ),
-                        }
-                    )
-                else:
-                    working_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                f"[系统提示] 你已连续执行了 {consecutive_tool_rounds} 轮工具调用。请自我评估：\n"
-                                "1. 当前任务进度如何？预计还需要多少轮？\n"
-                                "2. 是否陷入了循环或遇到了无法解决的问题？\n"
-                                "3. 如果任务已完成，请停止工具调用，直接回复用户结果。\n"
-                                "如果确实需要继续，请简要说明原因后继续执行。"
-                            ),
-                        }
-                    )
-
-            # (d) 极端安全阈值：不终止，而是提醒用户，并禁用 ForceToolCall 防止覆盖
-            if consecutive_tool_rounds == extreme_safety_threshold:
-                logger.warning(
-                    f"[LoopGuard] Reached extreme safety threshold ({extreme_safety_threshold} rounds). "
-                    f"Disabling ForceToolCall to allow user-facing response."
-                )
-                max_no_tool_retries = 0  # 禁用 ForceToolCall，让 LLM 能直接回复用户
-                working_messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"[系统提示] 当前任务已连续执行了 {extreme_safety_threshold} 轮工具调用，耗时较长。"
-                            "请向用户简要汇报当前进度和剩余工作，询问用户是否希望继续执行。"
-                            "如果用户没有回应，请在完成当前步骤后暂停等待用户指示。"
-                        ),
-                    }
-                )
-
-        return "已达到最大工具调用次数，请重新描述您的需求。"
-
     # ==================== 取消状态代理属性 ====================
 
     @property
@@ -6123,8 +5360,8 @@ NEXT: 建议的下一步（如有）"""
                 if cancel_todo(session_id):
                     logger.info(f"[StopTask] Cancelled active todo for session {session_id}")
             else:
-                from ..tools.handlers.plan import _session_active_todos
-                for sid in list(_session_active_todos.keys()):
+                from ..tools.handlers.plan import iter_active_todo_sessions
+                for sid in list(iter_active_todo_sessions().keys()):
                     if cancel_todo(sid):
                         logger.info(f"[StopTask] Cancelled active todo for session {sid}")
         except Exception as e:
@@ -6429,9 +5666,10 @@ NEXT: 建议的下一步（如有）"""
 
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # 执行工具并收集结果（默认启用工具间中断检查；关闭中断检查时可并行）
-            tool_results, _, _ = await self._execute_tool_calls_batch(
+            # P0-1: 统一走 ToolExecutor（含 PolicyEngine 检查 + skip/cancel 竞速）
+            tool_results, _, _ = await self.tool_executor.execute_batch(
                 tool_calls,
+                state=self.agent_state.current_task if self.agent_state else None,
                 task_monitor=None,
                 allow_interrupt_checks=self._interrupt_enabled,
                 capture_delivery_receipts=False,
@@ -6464,18 +5702,16 @@ NEXT: 建议的下一步（如有）"""
 
     async def _execute_tool(self, tool_name: str, tool_input: dict) -> str:
         """
-        执行工具调用
+        [DEPRECATED] 请使用 self.tool_executor.execute_tool() 代替。
 
-        优先使用 handler_registry 执行，不支持的工具使用旧的 if-elif 兜底
-        执行后自动附加 WARNING/ERROR 日志到返回结果
-
-        Args:
-            tool_name: 工具名称
-            tool_input: 工具输入参数
-
-        Returns:
-            工具执行结果（包含执行期间的警告/错误日志）
+        此方法绕过 PolicyEngine 安全检查，仅作为临时兼容保留。
         """
+        import warnings
+        warnings.warn(
+            "_execute_tool is deprecated, use self.tool_executor.execute_tool()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ============================================
@@ -6520,8 +5756,15 @@ NEXT: 建议的下一步（如有）"""
             if self.handler_registry.has_tool(tool_name):
                 result = await self.handler_registry.execute_by_tool(tool_name, tool_input)
             else:
-                # 未注册的工具
-                return f"❌ 未知工具: {tool_name}。请检查工具名称是否正确。"
+                all_tools = self.handler_registry.list_tools()
+                name_lower = tool_name.lower()
+                similar = [
+                    t for t in all_tools
+                    if name_lower in t.lower() or t.lower() in name_lower
+                    or set(name_lower.split("_")) & set(t.lower().split("_"))
+                ][:5]
+                hint = f" 你是否想使用: {', '.join(similar)}？" if similar else " 请检查工具名称是否正确。"
+                return f"❌ 未知工具: {tool_name}。{hint}"
 
             # 获取执行期间产生的新日志（WARNING/ERROR/CRITICAL）
             all_logs = log_buffer.get_logs(count=500)
@@ -6577,7 +5820,7 @@ NEXT: 建议的下一步（如有）"""
             session_id=task.session_id,
             timeout_seconds=settings.progress_timeout_seconds,
             hard_timeout_seconds=settings.hard_timeout_seconds,
-            retrospect_threshold=60,  # 复盘阈值：60秒
+            retrospect_threshold=180,  # 复盘阈值：180秒
             fallback_model=self.brain.get_fallback_model(task.session_id),  # 动态获取备用模型
             retry_before_switch=3,  # 切换前重试 3 次
         )
@@ -6922,7 +6165,10 @@ NEXT: 建议的下一步（如有）"""
                     # 只有在没有工具调用时才保存文本作为最终响应
                     # 如果有工具调用，这个文本可能是 LLM 的思考过程
                     if not tool_calls and cleaned_text:
-                        final_response = cleaned_text
+                        # ForceToolCall 重试时，LLM 常返回短确认（"好的，已完成"），
+                        # 不能用它覆盖前一轮已生成的完整内容（如新闻/热搜等）。
+                        if not final_response or len(cleaned_text) >= len(final_response):
+                            final_response = cleaned_text
 
                 # 如果没有工具调用，检查是否需要强制要求调用工具
                 if not tool_calls:
@@ -7007,8 +6253,9 @@ NEXT: 建议的下一步（如有）"""
 
                 # 执行每个工具并收集结果
                 # execute_task() 场景没有“工具间中断检查”的强需求，可按配置启用并行
-                tool_results, executed_names, _ = await self._execute_tool_calls_batch(
+                tool_results, executed_names, _ = await self.tool_executor.execute_batch(
                     tool_calls,
+                    state=self.agent_state.current_task if self.agent_state else None,
                     task_monitor=task_monitor,
                     allow_interrupt_checks=False,
                     capture_delivery_receipts=False,
@@ -7021,15 +6268,23 @@ NEXT: 建议的下一步（如有）"""
                     await self.agent_state.current_task.process_post_tool_signals(messages)
 
                 # 注意：不在工具执行后检查 stop_reason，让循环继续获取 LLM 的最终总结
-            # 循环结束后，如果 final_response 为空，尝试让 LLM 生成一个总结
-            if not final_response or len(final_response.strip()) < 10:
-                logger.info("Task completed but no final response, requesting summary...")
+            # 循环结束后，如果 final_response 内容不够充实，让 LLM 生成详细总结
+            # 阈值 30：中文单字=1 char，大多数"状态确认"型回复 <20 chars
+            if not final_response or len(final_response.strip()) < 30:
+                logger.info(
+                    f"Task completed but final_response too short "
+                    f"({len(final_response.strip()) if final_response else 0} chars), "
+                    f"requesting detailed summary..."
+                )
                 try:
-                    # 请求 LLM 生成任务完成总结
                     messages.append(
                         {
                             "role": "user",
-                            "content": "任务执行完毕。请简要总结一下执行结果和完成情况。",
+                            "content": (
+                                "任务已执行完毕，但你的回复内容太简短了。"
+                                "请把具体的执行结果完整地告诉用户——"
+                                "用户将直接看到你返回的文字，确保包含关键数据和结论。"
+                            ),
                         }
                     )
                     _tt_sum = set_tracking_context(TokenTrackingContext(
@@ -7256,6 +6511,41 @@ NEXT: 建议的下一步（如有）"""
         """
         logger.info("Shutting down agent...")
 
+        # 插件系统清理：dispatch on_shutdown → unload → 清全局 map
+        pm = getattr(self, "_plugin_manager", None)
+        if pm is not None:
+            try:
+                await pm.hook_registry.dispatch("on_shutdown", agent=self)
+            except Exception as e:
+                logger.debug(f"on_shutdown hook dispatch error: {e}")
+            for pid in list(pm.loaded_plugins.keys()):
+                try:
+                    await pm.unload_plugin(pid)
+                except Exception as e:
+                    logger.warning(f"Plugin '{pid}' unload error during shutdown: {e}")
+            try:
+                from ..plugins import PLUGIN_PROVIDER_MAP, PLUGIN_REGISTRY_MAP
+                PLUGIN_PROVIDER_MAP.clear()
+                PLUGIN_REGISTRY_MAP.clear()
+            except Exception:
+                pass
+            try:
+                from ..prompt.builder import set_prompt_hook_registry
+                set_prompt_hook_registry(None)
+            except Exception:
+                pass
+
+        # F9: 清理技能相关资源
+        self._cleanup_skill_resources()
+
+        # 关闭 SkillStoreClient (如有)
+        skill_store_client = getattr(self, "_skill_store_client", None)
+        if skill_store_client and hasattr(skill_store_client, "close"):
+            try:
+                await skill_store_client.close()
+            except Exception:
+                pass
+
         # 结束记忆会话
         self.memory_manager.end_session(
             task_description=task_description,
@@ -7268,6 +6558,22 @@ NEXT: 建议的下一步（如有）"""
             await self.memory_manager.await_pending_tasks(timeout=15.0)
         except Exception as e:
             logger.warning(f"Failed to await memory pending tasks: {e}")
+
+        # Flush TodoStore 并停止防抖循环
+        try:
+            todo_save_task = getattr(self, '_todo_save_task', None)
+            if todo_save_task and not todo_save_task.done():
+                todo_save_task.cancel()
+                try:
+                    await todo_save_task
+                except asyncio.CancelledError:
+                    pass
+            plan_handle_fn = self.handler_registry.get_handler("plan")
+            plan_handler = getattr(plan_handle_fn, "__self__", None) if plan_handle_fn else None
+            if plan_handler and hasattr(plan_handler, '_store'):
+                await plan_handler._store.flush()
+        except Exception as e:
+            logger.debug(f"[TodoStore] Shutdown flush failed: {e}")
 
         self._running = False
         logger.info("Agent shutdown complete")

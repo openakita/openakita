@@ -48,6 +48,13 @@
         { "url": "http://localhost" },
         { "url": "http://localhost:*" }
       ]
-    }
+    },
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-request-permission",
+    "notification:allow-is-permission-granted"
   ]
 }
