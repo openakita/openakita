@@ -2255,12 +2255,12 @@ export function ChatView({
                 break;
               case "security_confirm": {
                 const newConfirm: SecurityConfirmData = {
-                  tool: event.tool_name || event.tool,
-                  args: event.args,
-                  reason: event.reason,
-                  riskLevel: event.risk_level,
-                  needsSandbox: event.needs_sandbox,
-                  toolId: event.confirm_id || event.call_id || event.id,
+                  tool: (event.tool_name || event.tool) as string,
+                  args: event.args as Record<string, unknown>,
+                  reason: event.reason as string,
+                  riskLevel: event.risk_level as string,
+                  needsSandbox: event.needs_sandbox as boolean,
+                  toolId: ((event.confirm_id || event.call_id || event.id) ?? "") as string,
                   countdown: 120,
                 };
                 setSecurityConfirm((prev) => {

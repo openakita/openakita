@@ -244,7 +244,7 @@ function ChainGroupItem({ group, onToggle, isLast, streaming, onSkipStep }: {
       </div>
       {showContent && (
         <div className="chainNarrFlow">
-          {group.entries.map((entry, i) => (
+          {group.entries.map((entry: ChainEntry, i: number) => (
             <ChainEntryLine key={i} entry={entry} onSkipStep={onSkipStep} />
           ))}
           {isActive && group.entries.length > 0 && (

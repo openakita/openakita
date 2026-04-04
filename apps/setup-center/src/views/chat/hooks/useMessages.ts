@@ -48,7 +48,7 @@ function messageReducer(state: ChatMessage[], action: MessageAction): ChatMessag
   }
 }
 
-const __DEV__ = import.meta.env.DEV;
+const __DEV__ = typeof globalThis !== "undefined" && (globalThis as Record<string, unknown>).__DEV__ === true || import.meta.env?.DEV === true;
 
 // ── Conversation Actions ──
 

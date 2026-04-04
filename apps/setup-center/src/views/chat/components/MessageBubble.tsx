@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChatMessage, MdModules } from "../utils/chatTypes";
+import type { ChatMessage, ChatAttachment, MdModules } from "../utils/chatTypes";
 import { stripLegacySummary } from "../utils/chatHelpers";
 import { formatTime } from "../../../utils";
 import { ThinkingChain, ThinkingBlock, ToolCallsGroup } from "./ThinkingChain";
@@ -63,7 +63,7 @@ export const MessageBubble = memo(function MessageBubble({
       >
         {msg.attachments && msg.attachments.length > 0 && (
           <div style={{ marginBottom: 8 }}>
-            {msg.attachments.map((att, i) => (
+            {msg.attachments.map((att: ChatAttachment, i: number) => (
               <AttachmentPreview key={i} att={att} />
             ))}
           </div>

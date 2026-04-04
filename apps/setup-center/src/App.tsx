@@ -4712,20 +4712,18 @@ export function App() {
       return disabledViews.includes("skills") ? (
             <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
           <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「工具与技能」配置中启用</p>
-            </div>
-          ) : (
-            <SkillManager
-              venvDir={venvDir}
-              currentWorkspaceId={currentWorkspaceId}
-              envDraft={envDraft}
-              onEnvChange={setEnvDraft}
-              onSaveEnvKeys={async (keys) => {
-                await saveEnvKeys(keys);
-              }}
-              apiBaseUrl={apiBaseUrl}
-              serviceRunning={!!serviceStatus?.running}
-              dataMode={dataMode}
-            />
+        </div>
+      ) : (
+        <SkillManager
+          venvDir={venvDir}
+          currentWorkspaceId={currentWorkspaceId}
+          envDraft={envDraft}
+          onEnvChange={setEnvDraft}
+          onSaveEnvKeys={async (keys: string[]) => { await saveEnvKeys(keys); }}
+          apiBaseUrl={apiBaseUrl}
+          serviceRunning={!!serviceStatus?.running}
+          dataMode={dataMode}
+        />
       );
     }
     if (view === "im") {

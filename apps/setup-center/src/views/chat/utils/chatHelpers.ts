@@ -223,7 +223,7 @@ export function buildChainFromSummary(summary: ChainSummaryItem[]): ChainGroup[]
       durationMs: s.thinking_duration_ms,
       hasThinking: !!s.thinking_preview,
       collapsed: true,
-      toolCalls: s.tools.map((t) => ({
+      toolCalls: s.tools.map((t: { name: string; input_preview: string; result_preview?: string }) => ({
         toolId: `restored-${s.iteration}-${t.name}`,
         tool: t.name,
         args: {},
@@ -299,7 +299,7 @@ export function formatAskUserAnswer(answer: string, askUser: ChatAskUser): strin
         const vals = Array.isArray(val) ? val : [val];
         const labels = vals.map((v: string) => {
           if (v.startsWith("OTHER:")) return v.slice(6);
-          return q.options?.find((o) => o.id === v)?.label ?? v;
+          return q.options?.find((o: { id: string; label: string }) => o.id === v)?.label ?? v;
         });
         return `${q.prompt}: ${labels.join(", ")}`;
       }).filter(Boolean).join(" | ");
@@ -307,14 +307,14 @@ export function formatAskUserAnswer(answer: string, askUser: ChatAskUser): strin
     }
   } catch { /* not JSON */ }
   const options = askUser.options || questions[0]?.options;
-  const opt = options?.find((o) => o.id === answer);
+  const opt = options?.find((o: { id: string; label: string }) => o.id === answer);
   if (opt) return opt.label;
   if (answer.includes(",") && options) {
     const ids = answer.split(",");
-    if (ids.every((id) => id.startsWith("OTHER:") || options.some((o) => o.id === id))) {
-      return ids.map((id) => {
+    if (ids.every((id: string) => id.startsWith("OTHER:") || options.some((o: { id: string; label: string }) => o.id === id))) {
+      return ids.map((id: string) => {
         if (id.startsWith("OTHER:")) return id.slice(6);
-        return options.find((o) => o.id === id)?.label ?? id;
+        return options.find((o: { id: string; label: string }) => o.id === id)?.label ?? id;
       }).join(", ");
     }
   }
@@ -341,13 +341,13 @@ export function patchMessagesWithBackend(
       patches.content = backend.content;
     }
 
-    const hasBrokenChain = m.thinkingChain?.some((g) => !g.entries.length && !g.durationMs);
+    const hasBrokenChain = m.thinkingChain?.some((g: ChainGroup) => !g.entries.length && !g.durationMs);
     if (backend.chain_summary?.length && (!m.thinkingChain?.length || hasBrokenChain)) {
       patches.thinkingChain = buildChainFromSummary(backend.chain_summary);
     }
 
     if (m.thinkingChain && !patches.thinkingChain) {
-      const cleaned = m.thinkingChain.filter((g) => g.entries.length > 0 || g.durationMs);
+      const cleaned = m.thinkingChain.filter((g: ChainGroup) => g.entries.length > 0 || g.durationMs);
       if (cleaned.length !== m.thinkingChain.length) {
         patches.thinkingChain = cleaned.length > 0 ? cleaned : undefined;
       }
