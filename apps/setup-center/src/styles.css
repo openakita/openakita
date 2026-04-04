@@ -2280,6 +2280,12 @@ button.btnApplyRestart:hover {
   color: var(--fg);
   transition: all 0.15s;
 }
+.planApprovalDismiss svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+}
 .planApprovalDismiss:hover {
   opacity: 1;
   background: var(--nav-active);
