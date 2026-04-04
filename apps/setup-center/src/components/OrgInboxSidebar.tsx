@@ -151,18 +151,10 @@ export function OrgInboxSidebar({
 
   return (
     <div style={{
-      position: "fixed",
-      right: 0,
-      top: 0,
-      bottom: 0,
-      width: 380,
-      maxWidth: "100vw",
-      background: "var(--card-bg, #fff)",
-      borderLeft: "1px solid var(--border, #e5e7eb)",
       display: "flex",
       flexDirection: "column",
-      zIndex: 1200,
-      boxShadow: "-4px 0 16px rgba(0,0,0,0.08)",
+      height: "100%",
+      background: "var(--card-bg, var(--bg-app, #fff))",
     }}>
       {/* Header */}
       <div style={{

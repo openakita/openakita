@@ -22,6 +22,7 @@ import { WechatQRModal } from "../components/WechatQRModal";
 import { PluginOnboardModal } from "../components/PluginOnboardModal";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -229,9 +230,9 @@ export function IMView({
 
   if (!serviceRunning) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+      <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-center h-full text-muted-foreground">
         <IconIM size={48} />
-        <div className="mt-3 font-semibold">{t("im.channels")}</div>
+        <div className="mt-3 font-semibold">{t("im.title", "消息与群聊")}</div>
         <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
       </div>
     );
@@ -240,32 +241,46 @@ export function IMView({
   const [activeTab, setActiveTab] = useState<"messages" | "groupPolicy">("messages");
 
   return (
-    <div className="flex flex-col h-full">
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
-        <ToggleGroup
-          type="single"
-          value={activeTab}
-          onValueChange={(v) => { if (v) setActiveTab(v as "messages" | "groupPolicy"); }}
-          variant="outline"
-        >
-          <ToggleGroupItem
-            value="messages"
-            className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-6 h-full overflow-hidden">
+      {/* 统一的页面头部 */}
+      <div className="flex items-center justify-between shrink-0">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <IconIM className="text-primary" size={28} />
+            {t("im.title", "消息与群聊")}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {t("im.description", "管理各个 IM 平台的机器人、会话与消息记录")}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ToggleGroup
+            type="single"
+            value={activeTab}
+            onValueChange={(v) => { if (v) setActiveTab(v as "messages" | "groupPolicy"); }}
+            variant="outline"
+            className="bg-background shadow-sm"
           >
-            {t("im.tabMessages")}
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="groupPolicy"
-            className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
-          >
-            {t("im.tabGroupPolicy")}
-          </ToggleGroupItem>
-        </ToggleGroup>
-          </div>
-      <div className="flex-1 min-h-0 overflow-auto">
+            <ToggleGroupItem
+              value="messages"
+              className="text-sm px-4 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+            >
+              {t("im.tabMessages")}
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="groupPolicy"
+              className="text-sm px-4 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+            >
+              {t("im.tabGroupPolicy")}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      </div>
+
+      <Card className="flex-1 flex overflow-hidden border-border/80 shadow-sm bg-background">
         {activeTab === "messages" && <MessagesTab serviceRunning={serviceRunning} apiBase={api} />}
         {activeTab === "groupPolicy" && <GroupPolicyTab apiBase={api} />}
-      </div>
+      </Card>
     </div>
   );
 }
@@ -645,9 +660,9 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
 
   return (
     <>
-    <div className="imView">
+    <div className="imView w-full">
         {/* ── Left sidebar: channels + sessions ── */}
-      <div className="imLeft">
+      <div className="imLeft bg-muted/10">
           {/* Channel list header */}
           <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
             <span className="text-sm font-semibold text-foreground">{t("im.channels")}</span>
@@ -1132,9 +1147,9 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
   }, [t]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full w-full">
       {/* Left: channel list */}
-      <div className="w-56 shrink-0 border-r overflow-y-auto">
+      <div className="w-56 shrink-0 border-r overflow-y-auto bg-muted/10">
         <div className="px-3 pt-2.5 pb-1.5">
           <span className="text-sm font-semibold text-foreground">{t("im.groupPolicyTitle")}</span>
         </div>
@@ -1170,7 +1185,7 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
       </div>
 
       {/* Right: per-group mode config */}
-      <div className="flex-1 min-w-0 overflow-y-auto p-4">
+      <div className="flex-1 min-w-0 overflow-y-auto p-4 bg-background">
         {!selectedChannel ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm">
             <IconUsers size={40} />
@@ -1182,38 +1197,42 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
             <p className="mt-2">{t("im.groupAllowlistEmpty")}</p>
           </div>
         ) : (
-          <div className="space-y-2 max-w-2xl">
-            <p className="text-xs text-muted-foreground mb-3">{t("im.groupPolicyDesc")}</p>
-            {groupSessions.map((g) => (
-              <div key={g.chatId} className="flex items-center justify-between rounded-lg border px-3 py-2.5 gap-3">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <IconUsers size={14} className="shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <span className={cn("text-sm font-medium truncate block", g.alias && "text-primary")}>{g.alias || g.chatName}</span>
-                    {(g.alias || g.chatName !== g.chatId) && (
-                      <span className="text-[11px] text-muted-foreground truncate block">{g.alias ? g.chatName : g.chatId}</span>
-                    )}
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{t("im.groupPolicyDesc")}</p>
+            <div className="grid grid-cols-1 gap-3">
+              {groupSessions.map((g) => (
+                <div key={g.chatId} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm transition-all hover:shadow-md">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                      <IconUsers size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className={cn("text-[15px] font-semibold truncate block text-foreground", g.alias && "text-primary")}>{g.alias || g.chatName}</span>
+                      {(g.alias || g.chatName !== g.chatId) && (
+                        <span className="text-xs text-muted-foreground truncate block mt-0.5 font-mono">{g.alias ? g.chatName : g.chatId}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0 ml-4">
+                    {savingChat === g.chatId && <Loader2 className="animate-spin size-4 text-muted-foreground" />}
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      value={g.responseMode || "global"}
+                      onValueChange={(v) => handleSetMode(g, v)}
+                      className="bg-muted/30 p-1 rounded-lg [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground [&_[data-state=on]]:shadow-sm"
+                    >
+                      {RESPONSE_MODES.map((m) => (
+                        <ToggleGroupItem key={m.value} value={m.value} className="text-xs h-7 px-3 rounded-md transition-all">
+                          {t(m.labelKey)}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {savingChat === g.chatId && <Loader2 className="animate-spin size-3.5 text-muted-foreground" />}
-                  <ToggleGroup
-                    type="single"
-                    variant="outline"
-                    size="sm"
-                    value={g.responseMode || "global"}
-                    onValueChange={(v) => handleSetMode(g, v)}
-                    className="[&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground"
-                  >
-                    {RESPONSE_MODES.map((m) => (
-                      <ToggleGroupItem key={m.value} value={m.value} className="text-[11px] h-6 px-2">
-                        {t(m.labelKey)}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>

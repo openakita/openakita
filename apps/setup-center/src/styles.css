@@ -1531,14 +1531,12 @@ button.btnApplyRestart:hover {
 
 /* IM status row */
 .imStatusRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(0,0,0,0.04);
 }
-.imStatusRow:last-child { border-bottom: none; }
-.imStatusLabel { font-size: 11px; color: var(--muted); }
+.imStatusLabel { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 /* Status metrics */
 .statusMetric {
@@ -4545,6 +4543,66 @@ button.btnApplyRestart:hover {
     padding-right: 0 !important;
     padding-bottom: 8px;
   }
+}
+
+/* ── PanelShell ── */
+.ps-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 49;
+  background: rgba(0, 0, 0, 0.3);
+  animation: psFadeIn 0.15s ease-out;
+}
+.ps-panel {
+  overflow-y: auto;
+  background: var(--bg-app);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ps-mobile {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+  width: 85%;
+}
+.ps-mobile.ps-right {
+  right: 0;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
+  animation: psSlideRight 0.2s ease-out;
+}
+.ps-mobile.ps-left {
+  left: 0;
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.15);
+  animation: psSlideLeft 0.2s ease-out;
+}
+.ps-desktop {
+  position: relative;
+}
+.ps-desktop.ps-right {
+  border-left: 1px solid var(--line);
+  animation: psRevealRight 0.15s ease-out;
+}
+.ps-desktop.ps-left {
+  border-right: 1px solid var(--line);
+}
+
+@keyframes psFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes psSlideRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes psSlideLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes psRevealRight {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 /* ── Org Editor animations ── */

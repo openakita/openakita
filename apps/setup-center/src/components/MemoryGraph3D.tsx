@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D from "react-force-graph-3d";
 import * as THREE from "three";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { safeFetch } from "../providers";
 import { Loader2, X, Zap, Monitor, BatteryLow } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export type GraphQuality = "high" | "medium" | "low";
 
@@ -99,7 +103,7 @@ export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qual
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const bloomRef = useRef<UnrealBloomPass | null>(null);
   const bloomAdded = useRef(false);
 
@@ -113,19 +117,50 @@ export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qual
     onQualityChange?.(q);
   }, [onQualityChange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const obs = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        setDimensions({ width: Math.floor(width), height: Math.floor(height) });
+
+    let frameId = 0;
+
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      const next = {
+        width: Math.max(0, Math.floor(rect.width)),
+        height: Math.max(0, Math.floor(rect.height)),
+      };
+      setDimensions((prev) => (
+        prev.width === next.width && prev.height === next.height ? prev : next
+      ));
+      return next;
+    };
+
+    const measureWithRetry = (attempt = 0) => {
+      const next = measure();
+      if ((next.width === 0 || next.height === 0) && attempt < 12) {
+        frameId = window.requestAnimationFrame(() => measureWithRetry(attempt + 1));
       }
+    };
+
+    const observer = new ResizeObserver(() => {
+      measureWithRetry();
     });
-    obs.observe(el);
-    setDimensions({ width: el.clientWidth, height: el.clientHeight });
-    return () => obs.disconnect();
-  }, []);
+    const handleWindowResize = () => {
+      measureWithRetry();
+    };
+
+    measureWithRetry();
+    observer.observe(el);
+    window.addEventListener("resize", handleWindowResize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", handleWindowResize);
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [loading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -349,6 +384,29 @@ export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qual
     });
   }, [hoveredNode, neighborSet, matchedNodeIds]);
 
+  // Adjust force engine parameters for better layout
+  useEffect(() => {
+    if (fgRef.current) {
+      const charge = fgRef.current.d3Force("charge");
+      if (charge) charge.strength(-150);
+      const link = fgRef.current.d3Force("link");
+      if (link) link.distance(60);
+    }
+  }, [graphData]);
+
+  // After layout stabilizes, fit the graph into view so it doesn't stay biased left.
+  useEffect(() => {
+    if (!graphData || !fgRef.current || dimensions.width <= 0 || dimensions.height <= 0) return;
+    const timer = setTimeout(() => {
+      try {
+        fgRef.current?.zoomToFit?.(600, 80);
+      } catch {
+        /* ignore fit errors */
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [graphData, dimensions.width, dimensions.height, quality]);
+
   const linkColor = useCallback((link: GraphLink) => {
     return DIMENSION_COLORS[link.dimension] || "#444";
   }, []);
@@ -374,83 +432,105 @@ export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qual
   }
 
   return (
-    <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative", background: "#0a0a12", borderRadius: 8, overflow: "hidden" }}>
+    <div ref={containerRef} className="memory-graph-surface relative w-full h-full bg-slate-950 overflow-hidden flex flex-col">
+      <style>{`
+        .memory-graph-surface .graph-viewport {
+          width: 100%;
+          height: 100%;
+          min-width: 0;
+          min-height: 0;
+        }
+        .memory-graph-surface .graph-viewport > div {
+          width: 100% !important;
+          height: 100% !important;
+          min-width: 0 !important;
+          min-height: 0 !important;
+        }
+        .memory-graph-surface .graph-viewport canvas {
+          display: block !important;
+          width: 100% !important;
+          height: 100% !important;
+        }
+      `}</style>
       {/* Legend + Quality selector */}
-      <div style={{
-        position: "absolute", top: 10, left: 10, right: 10, zIndex: 10,
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-      }}>
-        <div style={{
-          background: "rgba(10,10,18,0.85)", borderRadius: 8, padding: "8px 12px",
-          display: "flex", gap: 12, fontSize: 11, color: "#ccc",
-        }}>
+      <div className="absolute top-3 left-3 right-3 z-10 flex justify-between items-start pointer-events-none">
+        <div className="flex flex-wrap gap-3 items-center bg-slate-950/80 backdrop-blur-md border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 pointer-events-auto shadow-sm max-w-[60%]">
           {Object.entries(NODE_COLORS).map(([type, color]) => (
-            <span key={type} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
+            <span key={type} className="flex items-center gap-1.5 shrink-0">
+              <span className="w-2 h-2 rounded-full" style={{ background: color }} />
               {NODE_TYPE_LABELS[type] || type}
             </span>
           ))}
-          <span style={{ borderLeft: "1px solid #333", paddingLeft: 10, color: "#888" }}>
+          <span className="border-l border-slate-700 pl-3 text-slate-400 shrink-0">
             {graphData.meta.total_nodes} 节点 · {graphData.meta.total_edges} 边 · {graphData.meta.mode}
           </span>
           {matchedNodeIds && (
-            <span style={{ borderLeft: "1px solid #333", paddingLeft: 10, color: "#f59e0b", fontWeight: 600 }}>
+            <span className="border-l border-slate-700 pl-3 font-semibold text-amber-500 shrink-0">
               搜索匹配: {matchedNodeIds.size} 个节点
             </span>
           )}
         </div>
-        <div style={{
-          background: "rgba(10,10,18,0.85)", borderRadius: 8, padding: "4px",
-          display: "flex", gap: 2,
-        }}>
-          {QUALITY_ORDER.map((q) => {
-            const Icon = QUALITY_ICONS[q];
-            const active = quality === q;
-            return (
-              <button
-                key={q}
-                onClick={() => handleQualityChange(q)}
-                title={`画质: ${QUALITY_LABELS[q]}`}
-                style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "4px 10px", borderRadius: 6, border: "none",
-                  fontSize: 11, fontWeight: active ? 600 : 400, cursor: "pointer",
-                  background: active ? "rgba(99,102,241,0.3)" : "transparent",
-                  color: active ? "#a5b4fc" : "#888",
-                  transition: "all 0.15s",
-                }}
-              >
-                <Icon size={12} />
-                {QUALITY_LABELS[q]}
-              </button>
-            );
-          })}
+        <div className="flex gap-1 bg-slate-950/80 backdrop-blur-md border border-slate-800 rounded-lg p-1 pointer-events-auto shadow-sm shrink-0">
+          <TooltipProvider delayDuration={200}>
+            {QUALITY_ORDER.map((q) => {
+              const Icon = QUALITY_ICONS[q];
+              const active = quality === q;
+              return (
+                <Tooltip key={q}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => handleQualityChange(q)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs transition-colors ${
+                        active ? "bg-indigo-500/20 text-indigo-400 font-medium" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                      }`}
+                    >
+                      <Icon size={12} />
+                      {QUALITY_LABELS[q]}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    {q === "high" ? "高画质：开启发光特效和粒子动画" : q === "medium" ? "中画质：关闭发光特效，保留少量粒子" : "低画质：关闭所有特效，最流畅"}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </TooltipProvider>
         </div>
       </div>
 
-      <ForceGraph3D
-        ref={fgRef}
-        graphData={graphData}
-        width={dimensions.width}
-        height={dimensions.height}
-        backgroundColor="#0a0a12"
-        nodeThreeObject={nodeThreeObject}
-        nodeThreeObjectExtend={false}
-        nodeLabel={(node: any) => `${node.content?.slice(0, 60) || node.id}`}
-        onNodeClick={handleNodeClick as any}
-        onNodeHover={handleNodeHover as any}
-        linkColor={linkColor as any}
-        linkWidth={(link: any) => Math.max(0.3, (link.weight || 0.5) * 1.5)}
-        linkOpacity={0.4}
-        linkDirectionalParticles={preset.particles}
-        linkDirectionalParticleWidth={preset.particleWidth}
-        linkDirectionalParticleSpeed={0.005}
-        d3AlphaDecay={preset.alphaDecay}
-        d3VelocityDecay={0.3}
-        warmupTicks={preset.warmupTicks}
-        cooldownTicks={preset.cooldownTicks}
-        enablePointerInteraction={true}
-      />
+      <div className="graph-viewport flex-1 w-full h-full min-w-0 min-h-0 relative">
+        {dimensions.width > 0 && dimensions.height > 0 ? (
+          <ForceGraph3D
+            key={`${dimensions.width}x${dimensions.height}`}
+            ref={fgRef}
+            graphData={graphData}
+            width={dimensions.width}
+            height={dimensions.height}
+            backgroundColor="#020617"
+            nodeThreeObject={nodeThreeObject}
+            nodeThreeObjectExtend={false}
+            nodeLabel={(node: any) => `${node.content?.slice(0, 60) || node.id}`}
+            onNodeClick={handleNodeClick as any}
+            onNodeHover={handleNodeHover as any}
+            linkColor={linkColor as any}
+            linkWidth={(link: any) => Math.max(0.3, (link.weight || 0.5) * 1.5)}
+            linkOpacity={0.4}
+            linkDirectionalParticles={preset.particles}
+            linkDirectionalParticleWidth={preset.particleWidth}
+            linkDirectionalParticleSpeed={0.005}
+            d3AlphaDecay={preset.alphaDecay}
+            d3VelocityDecay={0.3}
+            warmupTicks={preset.warmupTicks}
+            cooldownTicks={preset.cooldownTicks}
+            enablePointerInteraction={true}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-slate-400">
+            <Loader2 size={20} className="animate-spin text-indigo-400" />
+            <span className="ml-2">正在初始化图谱画布...</span>
+          </div>
+        )}
+      </div>
 
       {/* Node detail panel */}
       {selectedNode && (
@@ -496,99 +576,81 @@ function NodeDetailPanel({
   const color = NODE_COLORS[node.node_type] || "#6b7280";
 
   return (
-    <div style={{
-      position: "absolute", top: 0, right: 0, bottom: 0, width: 320,
-      background: "rgba(15,15,25,0.95)", borderLeft: "1px solid #222",
-      overflowY: "auto", zIndex: 20, padding: 16,
-      animation: "slideIn 0.2s ease-out",
-    }}>
-      <style>{`@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }`}</style>
-
-      <div className="flex items-center justify-between mb-4">
-        <span style={{
-          padding: "3px 10px", borderRadius: 12, fontSize: 12, fontWeight: 600,
-          background: `${color}20`, color, border: `1px solid ${color}40`,
-        }}>
+    <Card className="absolute top-0 right-0 bottom-0 w-80 rounded-none border-y-0 border-r-0 border-l border-slate-800 bg-slate-950/95 backdrop-blur-md overflow-y-auto z-20 shadow-2xl animate-in slide-in-from-right-full duration-200">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+        <Badge variant="outline" style={{ backgroundColor: `${color}15`, color, borderColor: `${color}30` }}>
           {NODE_TYPE_LABELS[node.node_type] || node.node_type}
-        </span>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} className="text-gray-400 hover:text-white">
+        </Badge>
+        <Button variant="ghost" size="icon-sm" onClick={onClose} className="text-slate-400 hover:text-slate-100 hover:bg-slate-800">
           <X size={16} />
         </Button>
-      </div>
-
-      <div style={{ fontSize: 13, lineHeight: 1.7, color: "#e0e0e0", marginBottom: 16, wordBreak: "break-word" }}>
-        {node.content}
-      </div>
-
-      <div style={{ fontSize: 11, color: "#888", display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-        {node.occurred_at && (
-          <div>
-            <span style={{ color: "#666" }}>时间: </span>
-            {new Date(node.occurred_at).toLocaleString("zh-CN")}
-          </div>
-        )}
-        <div>
-          <span style={{ color: "#666" }}>重要性: </span>
-          <span style={{ color, fontWeight: 600 }}>{node.importance.toFixed(2)}</span>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="text-sm leading-relaxed text-slate-200 break-words whitespace-pre-wrap">
+          {node.content}
         </div>
-        {node.action_category && (
-          <div><span style={{ color: "#666" }}>动作: </span>{node.action_category}</div>
-        )}
-        {node.project && (
-          <div><span style={{ color: "#666" }}>项目: </span>{node.project}</div>
-        )}
-      </div>
 
-      {node.entities.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 6 }}>实体</div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {node.entities.map((e, i) => (
-              <span key={i} style={{
-                padding: "2px 8px", borderRadius: 10, fontSize: 10,
-                background: "rgba(99,102,241,0.15)", color: "#818cf8",
-                border: "1px solid rgba(99,102,241,0.25)",
-              }}>
-                {e.name}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {related.length > 0 && (
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 6 }}>
-            关联节点 ({related.length})
-          </div>
-          {related.map((r, i) => (
-            <div
-              key={i}
-              onClick={() => onNavigate(r.id)}
-              style={{
-                padding: "6px 8px", borderRadius: 6, fontSize: 11,
-                cursor: "pointer", marginBottom: 4,
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.06)",
-                transition: "background 0.15s",
-                display: "flex", alignItems: "center", gap: 6,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
-            >
-              <span style={{
-                width: 6, height: 6, borderRadius: "50%",
-                background: DIMENSION_COLORS[r.dimension] || "#666",
-                flexShrink: 0,
-              }} />
-              <span style={{ color: "#aaa" }}>{r.edge_type}</span>
-              <span style={{ color: "#666", marginLeft: "auto", fontFamily: "monospace", fontSize: 10 }}>
-                {r.id.slice(0, 8)}
-              </span>
+        <div className="space-y-2 text-xs text-slate-400">
+          {node.occurred_at && (
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-12 shrink-0">时间:</span>
+              <span className="text-slate-300">{new Date(node.occurred_at).toLocaleString("zh-CN")}</span>
             </div>
-          ))}
+          )}
+          <div className="flex gap-2">
+            <span className="text-slate-500 w-12 shrink-0">重要性:</span>
+            <span className="font-semibold" style={{ color }}>{node.importance.toFixed(2)}</span>
+          </div>
+          {node.action_category && (
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-12 shrink-0">动作:</span>
+              <span className="text-slate-300">{node.action_category}</span>
+            </div>
+          )}
+          {node.project && (
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-12 shrink-0">项目:</span>
+              <span className="text-slate-300">{node.project}</span>
+            </div>
+          )}
         </div>
-      )}
-    </div>
+
+        {node.entities.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">实体</div>
+            <div className="flex flex-wrap gap-1.5">
+              {node.entities.map((e, i) => (
+                <Badge key={i} variant="outline" className="bg-indigo-500/10 text-indigo-400 border-indigo-500/20 text-[10px] px-2 py-0">
+                  {e.name}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {related.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              关联节点 ({related.length})
+            </div>
+            <div className="space-y-1.5">
+              {related.map((r, i) => (
+                <div
+                  key={i}
+                  onClick={() => onNavigate(r.id)}
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-md bg-slate-900/50 border border-slate-800/50 cursor-pointer hover:bg-slate-800 hover:border-slate-700 transition-colors"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: DIMENSION_COLORS[r.dimension] || "#666" }} />
+                  <span className="text-xs text-slate-300 truncate">{r.edge_type}</span>
+                  <span className="text-[10px] text-slate-500 font-mono ml-auto shrink-0">
+                    {r.id.slice(0, 8)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

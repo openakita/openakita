@@ -46,6 +46,21 @@ class SubAgentStatus(enum.StrEnum):
 
 logger = logging.getLogger(__name__)
 
+_VALID_TRANSITIONS: dict[SubAgentStatus, frozenset[SubAgentStatus]] = {
+    SubAgentStatus.STARTING: frozenset({
+        SubAgentStatus.RUNNING, SubAgentStatus.CANCELLED,
+        SubAgentStatus.ERROR, SubAgentStatus.TIMEOUT,
+    }),
+    SubAgentStatus.RUNNING: frozenset({
+        SubAgentStatus.COMPLETED, SubAgentStatus.CANCELLED,
+        SubAgentStatus.TIMEOUT, SubAgentStatus.ERROR,
+        SubAgentStatus.INTERRUPTED,
+    }),
+    SubAgentStatus.IDLE: frozenset({
+        SubAgentStatus.RUNNING, SubAgentStatus.CANCELLED,
+    }),
+}
+
 MAX_DELEGATION_DEPTH = 5
 CHECK_INTERVAL = 3.0    # how often to poll progress (matches frontend polling)
 
@@ -176,6 +191,9 @@ class AgentOrchestrator:
         # Delegation log directory (fixed path for easy debugging)
         self._log_dir: Path | None = None
 
+        # Per-session semaphore to serialize concurrent messages within one session
+        self._session_semaphores: dict[str, asyncio.Semaphore] = {}
+
         # Live sub-agent states for frontend polling
         # Key: "{session_id}:{agent_profile_id}", Value: state dict
         self._sub_agent_states: dict[str, dict] = {}
@@ -212,7 +230,7 @@ class AgentOrchestrator:
             if self._pool is None:
                 from openakita.agents.factory import AgentFactory, AgentInstancePool
 
-                self._pool = AgentInstancePool(AgentFactory())
+                self._pool = AgentInstancePool(AgentFactory(), profile_store=self._profile_store)
 
             if self._fallback is None:
                 from openakita.agents.fallback import FallbackResolver
@@ -330,24 +348,26 @@ class AgentOrchestrator:
         sid = session.id
         agent_profile_id = getattr(session.context, "agent_profile_id", "default")
 
-        task = asyncio.create_task(
-            self._dispatch(
-                session=session,
-                message=message,
-                agent_profile_id=agent_profile_id,
-                depth=0,
+        sem = self._session_semaphores.setdefault(sid, asyncio.Semaphore(1))
+        async with sem:
+            task = asyncio.create_task(
+                self._dispatch(
+                    session=session,
+                    message=message,
+                    agent_profile_id=agent_profile_id,
+                    depth=0,
+                )
             )
-        )
-        self._active_tasks.setdefault(sid, []).append(task)
-        try:
-            return await task
-        finally:
-            self._cancelled_sessions.discard(sid)
-            tasks = self._active_tasks.get(sid, [])
-            if task in tasks:
-                tasks.remove(task)
-            if not tasks:
-                self._active_tasks.pop(sid, None)
+            self._active_tasks.setdefault(sid, []).append(task)
+            try:
+                return await task
+            finally:
+                self._cancelled_sessions.discard(sid)
+                tasks = self._active_tasks.get(sid, [])
+                if task in tasks:
+                    tasks.remove(task)
+                if not tasks:
+                    self._active_tasks.pop(sid, None)
 
     # ------------------------------------------------------------------
     # Dispatch with timeout / fallback / error handling
@@ -361,6 +381,7 @@ class AgentOrchestrator:
         depth: int,
         from_agent: str | None = None,
         isolated_browser: Any = None,
+        pre_state_key: str | None = None,
     ) -> str:
         """Dispatch a message to a specific agent with progress-aware timeout."""
         if depth >= MAX_DELEGATION_DEPTH:
@@ -397,6 +418,7 @@ class AgentOrchestrator:
                 pass_gateway=(depth == 0),
                 depth=depth,
                 isolated_browser=isolated_browser,
+                pre_state_key=pre_state_key,
             )
             elapsed_ms = (time.monotonic() - start) * 1000
             health.successful += 1
@@ -513,6 +535,7 @@ class AgentOrchestrator:
         pass_gateway: bool = False,
         depth: int = 0,
         isolated_browser: Any = None,
+        pre_state_key: str | None = None,
     ) -> str:
         """Run an agent with progress-aware timeout instead of a hard wall-clock limit.
 
@@ -576,7 +599,7 @@ class AgentOrchestrator:
         last_fingerprint: tuple[int, str, int] = (-1, "", 0)
         last_progress_time = start
 
-        state_key = f"{session.id}:{agent_profile_id}:{uuid.uuid4().hex[:8]}"
+        state_key = pre_state_key or f"{session.id}:{agent_profile_id}:{uuid.uuid4().hex[:8]}"
         existing_state = self._sub_agent_states.get(state_key, {})
         self._sub_agent_states[state_key] = {
             **existing_state,
@@ -684,6 +707,19 @@ class AgentOrchestrator:
 
         state_entry = self._sub_agent_states.get(key)
         if state_entry:
+            old_status = state_entry.get("status", "")
+            try:
+                old_e = SubAgentStatus(old_status)
+                new_e = SubAgentStatus(status) if canonical else None
+                if new_e is not None:
+                    valid = _VALID_TRANSITIONS.get(old_e, frozenset())
+                    if valid and new_e not in valid:
+                        logger.warning(
+                            "[Orchestrator] Unexpected state transition: %s -> %s (key=%s)",
+                            old_status, status, key,
+                        )
+            except ValueError:
+                pass
             state_entry["status"] = status
             state_entry["elapsed_s"] = round(elapsed)
 
@@ -851,103 +887,101 @@ class AgentOrchestrator:
         Top-level agents (depth == 0) keep _is_sub_agent_call = False so they
         CAN use delegation tools (delegate_to_agent, spawn_agent, etc.).
         """
-        agent._is_sub_agent_call = is_sub_agent
+        if not hasattr(agent, '_execution_lock'):
+            agent._execution_lock = asyncio.Lock()
 
-        # Coordinator mode: if the agent's profile has role="coordinator"
-        # and the feature is enabled, override the reasoning engine's mode
-        # so it uses COORDINATOR_MODE_RULESET for tool filtering.
-        _coordinator_applied = False
-        try:
-            from openakita.config import settings as _cfg
-            _profile = getattr(agent, "_agent_profile", None)
-            if (
-                _profile
-                and getattr(_profile, "role", "worker") == "coordinator"
-                and getattr(_cfg, "coordinator_mode_enabled", False)
-                and hasattr(agent, "reasoning_engine")
-            ):
-                agent.reasoning_engine._forced_mode = "coordinator"
-                _coordinator_applied = True
-        except Exception:
-            pass
+        async with agent._execution_lock:
+            agent._is_sub_agent_call = is_sub_agent
 
-        _start = time.time()
-        exit_reason = "completed"
-        try:
-            session_messages = session.context.get_messages()
-            result = await agent.chat_with_session(
-                message=message,
-                session_messages=session_messages,
-                session_id=session.id,
-                session=session,
-                gateway=gateway,
-            )
-            # Persist sub-agent work record into parent session
+            _mode = "agent"
             try:
-                _persist_sub_agent_record(agent, session, message, result, _start)
-            except Exception as e:
-                logger.warning(f"[Orchestrator] Failed to persist sub-agent record: {e}")
-
-            # Detect exit reason from reasoning engine
-            re_engine = getattr(agent, "reasoning_engine", None)
-            if re_engine:
-                _last_reason = getattr(re_engine, "_last_exit_reason", "normal")
-                if _last_reason == "max_iterations":
-                    exit_reason = "max_turns"
-                elif _last_reason != "normal":
-                    exit_reason = _last_reason
-
-            # Collect tools used from agent state
-            tools_used: list[str] = []
-            try:
-                _state = getattr(agent, "agent_state", None)
-                if _state:
-                    _task = _state.get_task_for_session(session.id)
-                    if _task is None:
-                        _task = _state.current_task
-                    if _task and _task.tools_executed:
-                        tools_used = list(dict.fromkeys(_task.tools_executed))
+                from openakita.config import settings as _cfg
+                _profile = getattr(agent, "_agent_profile", None)
+                if (
+                    _profile
+                    and getattr(_profile, "role", "worker") == "coordinator"
+                    and getattr(_cfg, "coordinator_mode_enabled", False)
+                ):
+                    _mode = "coordinator"
             except Exception:
                 pass
 
-            # Forward artifact delivery receipts from sub-agent so the parent
-            # SSE stream can emit artifact events to the frontend.
-            artifacts: list[dict] = []
+            _start = time.time()
+            exit_reason = "completed"
             try:
-                receipts = getattr(re_engine, "_last_delivery_receipts", None) if re_engine else None
-                if receipts:
-                    delivered = [
-                        r for r in receipts
-                        if isinstance(r, dict)
-                        and r.get("status") == "delivered"
-                        and r.get("file_url")
-                    ]
-                    if delivered:
-                        artifacts = delivered
-                    else:
-                        logger.debug(
-                            f"[Orchestrator] Sub-agent had {len(receipts)} receipts "
-                            f"but none with status=delivered + file_url"
-                        )
-            except Exception as e:
-                logger.warning(f"[Orchestrator] Failed to forward artifact receipts: {e}")
+                session_messages = session.context.get_messages()
+                result = await agent.chat_with_session(
+                    message=message,
+                    session_messages=session_messages,
+                    session_id=session.id,
+                    session=session,
+                    gateway=gateway,
+                    mode=_mode,
+                )
+                # Persist sub-agent work record into parent session
+                try:
+                    _persist_sub_agent_record(agent, session, message, result, _start)
+                except Exception as e:
+                    logger.warning(f"[Orchestrator] Failed to persist sub-agent record: {e}")
 
-            profile = getattr(agent, "_agent_profile", None)
-            delegation_result = DelegationResult(
-                agent_id=getattr(profile, "id", "unknown"),
-                profile_id=getattr(profile, "id", "unknown"),
-                text=result or "",
-                tools_used=tools_used,
-                artifacts=artifacts,
-                elapsed_s=round(time.time() - _start, 2),
-                exit_reason=exit_reason,
-            )
-            return delegation_result.to_tool_response()
-        finally:
-            agent._is_sub_agent_call = False
-            if _coordinator_applied and hasattr(agent, "reasoning_engine"):
-                agent.reasoning_engine._forced_mode = None
-            _cleanup_sub_agent_resources(agent, session)
+                # Detect exit reason from reasoning engine
+                re_engine = getattr(agent, "reasoning_engine", None)
+                if re_engine:
+                    _last_reason = getattr(re_engine, "_last_exit_reason", "normal")
+                    if _last_reason == "max_iterations":
+                        exit_reason = "max_turns"
+                    elif _last_reason != "normal":
+                        exit_reason = _last_reason
+
+                # Collect tools used from agent state
+                tools_used: list[str] = []
+                try:
+                    _state = getattr(agent, "agent_state", None)
+                    if _state:
+                        _task = _state.get_task_for_session(session.id)
+                        if _task is None:
+                            _task = _state.current_task
+                        if _task and _task.tools_executed:
+                            tools_used = list(dict.fromkeys(_task.tools_executed))
+                except Exception:
+                    pass
+
+                # Forward artifact delivery receipts from sub-agent so the parent
+                # SSE stream can emit artifact events to the frontend.
+                artifacts: list[dict] = []
+                try:
+                    receipts = getattr(re_engine, "_last_delivery_receipts", None) if re_engine else None
+                    if receipts:
+                        delivered = [
+                            r for r in receipts
+                            if isinstance(r, dict)
+                            and r.get("status") == "delivered"
+                            and r.get("file_url")
+                        ]
+                        if delivered:
+                            artifacts = delivered
+                        else:
+                            logger.debug(
+                                f"[Orchestrator] Sub-agent had {len(receipts)} receipts "
+                                f"but none with status=delivered + file_url"
+                            )
+                except Exception as e:
+                    logger.warning(f"[Orchestrator] Failed to forward artifact receipts: {e}")
+
+                profile = getattr(agent, "_agent_profile", None)
+                delegation_result = DelegationResult(
+                    agent_id=getattr(profile, "id", "unknown"),
+                    profile_id=getattr(profile, "id", "unknown"),
+                    text=result or "",
+                    tools_used=tools_used,
+                    artifacts=artifacts,
+                    elapsed_s=round(time.time() - _start, 2),
+                    exit_reason=exit_reason,
+                )
+                return delegation_result.to_tool_response()
+            finally:
+                agent._is_sub_agent_call = False
+                _cleanup_sub_agent_resources(agent, session)
 
     # ------------------------------------------------------------------
     # Sub-agent state persistence
@@ -1094,6 +1128,7 @@ class AgentOrchestrator:
         return await self._dispatch(
             session, message, to_agent, depth + 1, from_agent=from_agent,
             isolated_browser=isolated_browser,
+            pre_state_key=state_key,
         )
 
     # ------------------------------------------------------------------
@@ -1251,6 +1286,37 @@ def _cleanup_sub_agent_resources(agent: Any, session: Any) -> None:
                     pass
     except Exception as e:
         logger.debug(f"[Orchestrator] Sub-agent cleanup: attr clear failed: {e}")
+
+    # 3. Clear trace buffers (finalized trace lives on agent; others on reasoning engine)
+    try:
+        agent._last_finalized_trace = []
+    except Exception as e:
+        logger.debug(f"[Orchestrator] Sub-agent cleanup: finalized trace: {e}")
+    try:
+        re = getattr(agent, "reasoning_engine", None)
+        if re:
+            re._last_delivery_receipts = []
+            re._last_react_trace = []
+    except Exception as e:
+        logger.debug(f"[Orchestrator] Sub-agent cleanup: re trace buffers: {e}")
+
+    # 4. Reset supervisor counters to prevent residual state affecting next call
+    try:
+        re = getattr(agent, "reasoning_engine", None)
+        if re and hasattr(re, "_supervisor"):
+            re._supervisor.reset()
+    except Exception as e:
+        logger.debug(f"[Orchestrator] Sub-agent cleanup: supervisor reset: {e}")
+
+    # 5. Clear terminal task state for this session in agent_state
+    try:
+        astate = getattr(agent, "agent_state", None)
+        if astate and sid:
+            task = astate.get_task_for_session(sid)
+            if task and task.status.is_terminal:
+                astate.reset_task(sid)
+    except Exception as e:
+        logger.debug(f"[Orchestrator] Sub-agent cleanup: agent_state task: {e}")
 
     logger.debug(
         "[Orchestrator] Sub-agent resource cleanup done for session %s", sid

@@ -278,9 +278,9 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
   const totalTools = servers.reduce((sum, server) => sum + (server.connected ? server.tool_count : server.catalog_tool_count), 0);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
-      <Card className="overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background shadow-sm">
-        <CardHeader className="gap-4">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
+      <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
+        <CardHeader className="gap-3 px-6 py-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex min-w-0 items-start gap-4">
               <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -317,7 +317,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-3 border-t pt-6 sm:grid-cols-3">
+        <CardContent className="grid gap-3 border-t px-6 py-4 sm:grid-cols-3">
           <div className="rounded-xl border bg-background/80 p-4">
             <div className="text-xs text-muted-foreground">MCP Servers</div>
             <div className="mt-2 text-2xl font-semibold">{servers.length}</div>
@@ -334,8 +334,8 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
       </Card>
 
       {showAdd && (
-        <Card className="border-border/80 shadow-sm">
-          <CardHeader className="gap-2">
+        <Card className="gap-0 border-border/80 py-0 shadow-sm">
+          <CardHeader className="gap-2 px-6 py-4">
             <CardTitle className="text-base">{t("mcp.addServerTitle")}</CardTitle>
             <CardDescription>
               {form.transport === "stdio"
@@ -345,7 +345,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                   : "使用 Streamable HTTP 端点接入远程 MCP 服务。"}
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
+          <CardContent className="grid gap-4 px-6 py-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label>{t("mcp.serverName")} *</Label>
               <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder={t("mcp.serverNamePlaceholder")} />
@@ -405,7 +405,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
               />
             </div>
           </CardContent>
-          <CardFooter className="flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
+          <CardFooter className="flex flex-col gap-3 border-t px-6 py-4 md:flex-row md:items-center md:justify-between">
             <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
               <Checkbox checked={form.auto_connect} onCheckedChange={(v) => setForm({ ...form, auto_connect: !!v })} />
               {t("mcp.autoConnect")}
@@ -439,8 +439,8 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
       ) : (
         <div className="flex flex-col gap-4">
           {servers.map((s) => (
-            <Card key={s.name} className="overflow-hidden border-border/80 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="gap-4">
+            <Card key={s.name} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="gap-3 px-6 py-4">
                 <div
                   className="flex cursor-pointer flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"
                   onClick={() => toggleExpand(s.name)}
@@ -532,7 +532,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
               </CardHeader>
 
               {expandedServer === s.name && (
-                <CardContent className="space-y-4 border-t pt-4">
+                <CardContent className="space-y-4 border-t px-6 py-4">
                   <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
                     <div className="mb-1 flex items-center gap-2 font-medium text-foreground">
                       <Server size={14} />
@@ -577,8 +577,8 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                   )}
 
                   {s.has_instructions && instructions[s.name] && (
-                    <Card className="gap-0 border-border/70 bg-muted/20 shadow-none">
-                      <CardHeader className="gap-2">
+                    <Card className="gap-0 border-border/70 bg-muted/20 py-0 shadow-none">
+                      <CardHeader className="gap-2 px-4 py-3">
                         <CardTitle className="text-sm">{t("mcp.instructions")}</CardTitle>
                       </CardHeader>
                       <CardContent>

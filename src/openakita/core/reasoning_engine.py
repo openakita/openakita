@@ -822,11 +822,6 @@ class ReasoningEngine:
             param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
             return f"{name}({param_hash})"
 
-        # Coordinator mode override: orchestrator sets _forced_mode on the engine
-        _forced = getattr(self, "_forced_mode", None)
-        if _forced and mode == "agent":
-            mode = _forced
-
         # Mode-based tool filtering (same as reason_stream)
         tools = _filter_tools_by_mode(tools, mode)
         _allowed_tool_names = {t.get("name", "") for t in tools} if mode != "agent" else None
@@ -1883,11 +1878,6 @@ class ReasoningEngine:
                     return _base_sp
 
             effective_prompt = _build_effective_prompt()
-
-            # Coordinator mode override: orchestrator sets _forced_mode on the engine
-            _forced = getattr(self, "_forced_mode", None)
-            if _forced and mode == "agent":
-                mode = _forced
 
             # Backward compat: plan_mode bool → mode string
             _effective_mode = mode

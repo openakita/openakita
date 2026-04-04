@@ -469,9 +469,9 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   if (!visible) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
-      <Card className="overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background shadow-sm">
-        <CardHeader className="gap-3">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
+      <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
+        <CardHeader className="gap-3 px-6 py-5">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div className="flex min-w-0 items-start gap-4">
               <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -491,7 +491,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-3 border-t pt-6 sm:grid-cols-3">
+        <CardContent className="grid gap-3 border-t px-6 py-4 sm:grid-cols-3">
           <div className="rounded-xl border bg-background/80 p-4">
             <div className="text-xs text-muted-foreground">{t("plugins.title")}</div>
             <div className="mt-2 text-2xl font-semibold">{plugins.length}</div>
@@ -507,12 +507,12 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         </CardContent>
       </Card>
 
-      <Card className="border-border/80 shadow-sm">
-        <CardHeader className="gap-2">
+      <Card className="gap-0 border-border/80 py-0 shadow-sm">
+        <CardHeader className="gap-2 px-6 py-4">
           <CardTitle className="text-base">{t("plugins.install")}</CardTitle>
           <CardDescription>{t("plugins.installPlaceholder")}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 px-6 py-4">
           <div className="flex flex-col gap-3 lg:flex-row">
             <Input
               type="text"
@@ -583,15 +583,15 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       )}
 
       {pluginsWithPending.length > 0 && (
-        <Card className="border-amber-500/40 bg-amber-500/5 shadow-sm">
-          <CardHeader className="gap-2">
+        <Card className="gap-0 border-amber-500/40 bg-amber-500/5 py-0 shadow-sm">
+          <CardHeader className="gap-2 px-6 py-4">
             <div className="flex items-center gap-2 text-amber-600">
               <IconShield size={16} />
               <CardTitle className="text-base text-foreground">{t("plugins.permPendingTitle")}</CardTitle>
             </div>
             <CardDescription>{t("plugins.permPendingDesc")}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 px-6 py-4">
             {pluginsWithPending.map((p) => (
               <div
                 key={p.id}
@@ -647,10 +647,10 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                 ref={(el) => { cardRefs.current[p.id] = el; }}
               >
                 <Card className={cn(
-                  "gap-0 overflow-hidden border-border/80 shadow-sm transition-shadow hover:shadow-md",
+                  "gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md",
                   hasPending && "border-amber-500/50"
                 )}>
-                  <CardHeader className="gap-4">
+                  <CardHeader className="gap-3 px-6 py-4">
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                       <div className="flex min-w-0 gap-4">
                         <div className={cn(
@@ -767,7 +767,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                   </CardHeader>
 
                   {showBody && (
-                    <CardContent className="space-y-4 border-t pt-4">
+                    <CardContent className="space-y-4 border-t px-6 py-4">
                       {(p.tags?.length ?? 0) > 0 && (
                         <div className="flex flex-wrap gap-2">
                           {(p.tags || []).map((tag) => (

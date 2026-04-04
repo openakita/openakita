@@ -61,10 +61,10 @@ export function SecurityConfirmModal({
         const token = getAccessToken();
         if (token) headers["Authorization"] = `Bearer ${token}`;
       }
-      await safeFetch(`${apiBase}/api/security/decision`, {
+      await safeFetch(`${apiBase}/api/chat/security-confirm`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ tool_call_id: data.toolId, decision }),
+        body: JSON.stringify({ confirm_id: data.toolId, decision }),
       });
       onClose();
     } catch (err) {

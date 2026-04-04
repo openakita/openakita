@@ -439,9 +439,11 @@ class AgentInstancePool:
         self,
         factory: AgentFactory | None = None,
         idle_timeout: float = _IDLE_TIMEOUT_SECONDS,
+        profile_store=None,
     ):
         self._factory = factory or AgentFactory()
         self._idle_timeout = idle_timeout
+        self._profile_store = profile_store
         # Key: "{session_id}::{profile_id}"
         self._pool: dict[str, _PoolEntry] = {}
         # Per-composite-key locks for concurrent creation
@@ -602,16 +604,15 @@ class AgentInstancePool:
             ],
         }
 
-    @staticmethod
-    def _get_shared_profile_store():
-        """Get the orchestrator's ProfileStore to share the _ephemeral dict."""
+    def _get_shared_profile_store(self):
+        """Get the ProfileStore — prefer the injected reference, fallback to module singleton."""
+        if self._profile_store is not None:
+            return self._profile_store
         try:
-            from openakita.main import _orchestrator
-            if _orchestrator and hasattr(_orchestrator, "_profile_store"):
-                return _orchestrator._profile_store
-        except (ImportError, AttributeError):
-            pass
-        return None
+            from openakita.agents.profile import get_profile_store
+            return get_profile_store()
+        except Exception:
+            return None
 
     async def _reap_loop(self) -> None:
         while True:

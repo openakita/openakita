@@ -90,13 +90,19 @@ function fmtCost(n: number): string {
 function MiniBar({ value, max, color = "hsl(var(--primary))" }: { value: number; max: number; color?: string }) {
   const pct = max > 0 ? Math.min(value / max, 1) * 100 : 0;
   return (
-    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+    <div className="h-2 w-full overflow-hidden rounded-full bg-muted/60">
       <div
         className="h-full rounded-full transition-[width] duration-300"
         style={{ width: `${pct}%`, background: color }}
       />
     </div>
   );
+}
+
+function fmtPct(value: number, total: number): string {
+  if (!total || total <= 0) return "0%";
+  const pct = (value / total) * 100;
+  return pct >= 10 ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
 }
 
 const STAT_COLORS = ["hsl(var(--primary))", "#3b82f6", "#10b981", "#8b5cf6", "#f59e0b"];
@@ -168,7 +174,7 @@ export function TokenStatsView({
   }
 
   return (
-    <div className="mx-auto max-w-[960px] space-y-6 px-6 py-5">
+    <div className="mx-auto max-w-[1080px] space-y-6 px-6 py-5">
       {/* ── Header: title + toggle ── */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1.5 min-w-0">
@@ -222,7 +228,7 @@ export function TokenStatsView({
 
           {/* ── Summary cards ── */}
           {total && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
               {[
                 { label: t("tokenStats.totalTokens", "总 Token"), value: fmtNum(total.total_tokens), color: STAT_COLORS[0] },
                 { label: t("tokenStats.inputTokens", "输入"), value: fmtNum(total.total_input), color: STAT_COLORS[1] },
@@ -230,12 +236,12 @@ export function TokenStatsView({
                 { label: t("tokenStats.requests", "请求数"), value: fmtNum(total.request_count), color: STAT_COLORS[3] },
                 { label: t("tokenStats.estimatedCost", "预估费用"), value: fmtCost(total.total_cost), color: STAT_COLORS[4] },
               ].map((card) => (
-                <Card key={card.label} className="py-4 gap-1">
-                  <CardHeader className="py-0 px-4">
-                    <CardDescription className="text-[11px]">{card.label}</CardDescription>
+                <Card key={card.label} className="p-0 gap-0 overflow-hidden border-border/50 shadow-sm">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 px-5">
+                    <CardTitle className="text-xs font-medium text-muted-foreground">{card.label}</CardTitle>
                   </CardHeader>
-                  <CardContent className="px-4 py-0">
-                    <span className="text-xl font-bold" style={{ color: card.color }}>{card.value}</span>
+                  <CardContent className="px-5 pb-4 pt-0">
+                    <div className="text-2xl font-bold tracking-tight" style={{ color: card.color }}>{card.value}</div>
                   </CardContent>
                 </Card>
               ))}
@@ -244,39 +250,43 @@ export function TokenStatsView({
 
           {/* ── Timeline bar chart ── */}
           {timeline.length > 0 && (
-            <Card className="py-4 gap-3">
-              <CardHeader className="py-0 px-4">
-                <CardTitle className="text-sm">{t("tokenStats.timeline", "时间线")}</CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-0 space-y-2">
-                <div className="flex items-end gap-[2px] h-24 rounded-lg bg-muted/40 px-1">
+            <Card className="p-0 gap-0 border-border/50 shadow-sm">
+              <div className="px-5 py-3 border-b border-border/50">
+                <div className="text-sm font-semibold">{t("tokenStats.timeline", "时间线")}</div>
+              </div>
+              <CardContent className="px-5 pt-4 pb-5 space-y-3">
+                <div className="flex items-end gap-[3px] h-32 rounded-lg bg-muted/20 p-2 border border-border/50">
                   {timeline.map((r, i) => {
-                    const h = (r.total_tokens / maxTl) * 90;
-                    const inH = (r.total_input / maxTl) * 90;
+                    const h = (r.total_tokens / maxTl) * 100;
+                    const inH = (r.total_input / maxTl) * 100;
                     return (
                       <div
                         key={i}
-                        className="flex-1 flex flex-col justify-end items-center h-full"
+                        className="flex-1 flex flex-col justify-end items-center h-full group relative"
                         title={`${utcToLocal(r.time_bucket)}\nInput: ${fmtNum(r.total_input)}\nOutput: ${fmtNum(r.total_output)}\nTotal: ${fmtNum(r.total_tokens)}`}
                       >
-                        <div className="w-full flex flex-col justify-end">
-                          <div className="rounded-t-sm min-w-[3px]" style={{ height: Math.max(h - inH, 1), background: "#10b981" }} />
-                          <div className="rounded-b-sm min-w-[3px]" style={{ height: Math.max(inH, 1), background: "#3b82f6" }} />
+                        <div className="w-full h-full flex flex-col justify-end opacity-80 group-hover:opacity-100 transition-opacity">
+                          {h > 0 && (
+                            <>
+                              <div className="rounded-t-sm w-full min-h-[2px]" style={{ height: `${Math.max(h - inH, 0)}%`, background: "#10b981" }} />
+                              <div className="rounded-b-sm w-full min-h-[2px]" style={{ height: `${Math.max(inH, 0)}%`, background: "#3b82f6" }} />
+                            </>
+                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
-                <div className="flex justify-between text-[9px] text-muted-foreground px-1">
+                <div className="flex justify-between text-[11px] text-muted-foreground px-1">
                   <span>{utcToLocal(timeline[0]?.time_bucket || "")}</span>
                   <span>{utcToLocal(timeline[timeline.length - 1]?.time_bucket || "")}</span>
                 </div>
-                <div className="flex gap-3 text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-sm bg-[#3b82f6]" />Input
+                <div className="flex gap-4 text-xs text-muted-foreground pt-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-[#3b82f6]" />Input
                   </span>
-                  <span className="flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-sm bg-[#10b981]" />Output
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-[#10b981]" />Output
                   </span>
                 </div>
               </CardContent>
@@ -285,53 +295,56 @@ export function TokenStatsView({
 
           {/* ── Distribution: by endpoint + by operation type ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="py-4 gap-3">
-              <CardHeader className="py-0 px-4">
-                <CardTitle className="text-sm">{t("tokenStats.byEndpoint", "按端点")}</CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-0 space-y-2.5">
+            <Card className="p-0 gap-0 border-border/50 shadow-sm">
+              <div className="px-5 py-3 border-b border-border/50">
+                <div className="text-sm font-semibold">{t("tokenStats.byEndpoint", "按端点")}</div>
+              </div>
+              <CardContent className="px-5 pt-4 pb-5 space-y-4">
                 {byEndpoint.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/50">{t("tokenStats.noData", "暂无数据")}</p>
+                  <p className="text-sm text-muted-foreground/50 py-4 text-center">{t("tokenStats.noData", "暂无数据")}</p>
                 ) : byEndpoint.map((row) => {
-                  const maxRow = byEndpoint[0]?.total_tokens || 1;
+                  const totalTokens = total?.total_tokens || 1;
                   return (
-                    <div key={row.group_key} className="space-y-1">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold truncate mr-2">{row.group_key || "(unknown)"}</span>
-                        <span className="text-muted-foreground shrink-0">
-                          {fmtNum(row.total_tokens)}
+                    <div key={row.group_key} className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium truncate mr-2">{row.group_key || "(unknown)"}</span>
+                        <span className="text-muted-foreground shrink-0 font-mono">
+                          {fmtNum(row.total_tokens)} · {fmtPct(row.total_tokens, totalTokens)}
                           {row.total_cost > 0 && (
-                            <Badge variant="secondary" className="ml-1.5 text-[9px] px-1 py-0 text-amber-500">
+                            <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0 text-amber-500 bg-amber-500/10 hover:bg-amber-500/20 border-transparent">
                               {fmtCost(row.total_cost)}
                             </Badge>
                           )}
                         </span>
                       </div>
-                      <MiniBar value={row.total_tokens} max={maxRow} />
+                      <MiniBar value={row.total_tokens} max={totalTokens} color="#3b82f6" />
+                      <div className="text-[11px] text-muted-foreground">
+                        占本时段总 Token {fmtPct(row.total_tokens, totalTokens)}
+                      </div>
                     </div>
                   );
                 })}
               </CardContent>
             </Card>
 
-            <Card className="py-4 gap-3">
-              <CardHeader className="py-0 px-4">
-                <CardTitle className="text-sm">{t("tokenStats.byOperation", "按操作类型")}</CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-0 space-y-2.5">
+            <Card className="p-0 gap-0 border-border/50 shadow-sm">
+              <div className="px-5 py-3 border-b border-border/50">
+                <div className="text-sm font-semibold">{t("tokenStats.byOperation", "按操作类型")}</div>
+              </div>
+              <CardContent className="px-5 pt-4 pb-5 space-y-4">
                 {byOp.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/50">{t("tokenStats.noData", "暂无数据")}</p>
+                  <p className="text-sm text-muted-foreground/50 py-4 text-center">{t("tokenStats.noData", "暂无数据")}</p>
                 ) : byOp.map((row) => {
-                  const maxRow = byOp[0]?.total_tokens || 1;
+                  const totalTokens = total?.total_tokens || 1;
                   return (
-                    <div key={row.group_key} className="space-y-1">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold truncate mr-2">{row.group_key || "(unknown)"}</span>
-                        <span className="text-muted-foreground shrink-0">
-                          {fmtNum(row.total_tokens)} · {row.request_count} reqs
+                    <div key={row.group_key} className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium truncate mr-2">{row.group_key || "(unknown)"}</span>
+                        <span className="text-muted-foreground shrink-0 font-mono">
+                          {fmtNum(row.total_tokens)} <span className="text-muted-foreground/50 mx-1">·</span> {fmtPct(row.total_tokens, totalTokens)} <span className="text-muted-foreground/50 mx-1">·</span> {row.request_count} reqs
                         </span>
                       </div>
-                      <MiniBar value={row.total_tokens} max={maxRow} color="#8b5cf6" />
+                      <MiniBar value={row.total_tokens} max={totalTokens} color="#8b5cf6" />
                     </div>
                   );
                 })}
@@ -341,35 +354,35 @@ export function TokenStatsView({
 
           {/* ── Sessions table ── */}
           {sessions.length > 0 && (
-            <Card className="py-4 gap-3">
-              <CardHeader className="py-0 px-4">
-                <CardTitle className="text-sm">{t("tokenStats.sessions", "按会话")}</CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-0">
+            <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border/50">
+                <div className="text-sm font-semibold">{t("tokenStats.sessions", "按会话")}</div>
+              </div>
+              <CardContent className="p-0">
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-[11px] h-8 px-2">Session</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2 text-right">Input</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2 text-right">Output</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2 text-right">Total</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2 text-right">Reqs</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2 text-right">Cost</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2">Endpoints</TableHead>
-                      <TableHead className="text-[11px] h-8 px-2">Last</TableHead>
+                  <TableHeader className="bg-muted/30">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="text-xs h-10 px-5 font-medium">Session</TableHead>
+                      <TableHead className="text-xs h-10 px-4 text-right font-medium">Input</TableHead>
+                      <TableHead className="text-xs h-10 px-4 text-right font-medium">Output</TableHead>
+                      <TableHead className="text-xs h-10 px-4 text-right font-medium">Total</TableHead>
+                      <TableHead className="text-xs h-10 px-4 text-right font-medium">Reqs</TableHead>
+                      <TableHead className="text-xs h-10 px-4 text-right font-medium">Cost</TableHead>
+                      <TableHead className="text-xs h-10 px-4 font-medium">Endpoints</TableHead>
+                      <TableHead className="text-xs h-10 px-5 font-medium">Last</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {sessions.map((s) => (
-                      <TableRow key={s.session_id}>
-                        <TableCell className="px-2 py-1.5 font-mono text-[10px] max-w-[160px] truncate">{s.session_id}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[11px] text-right">{fmtNum(s.total_input)}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[11px] text-right">{fmtNum(s.total_output)}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[11px] text-right font-semibold">{fmtNum(s.total_tokens)}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[11px] text-right">{s.request_count}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[10px] text-right text-amber-500">{fmtCost(s.total_cost)}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[10px]">{s.endpoints}</TableCell>
-                        <TableCell className="px-2 py-1.5 text-[10px] text-muted-foreground">{utcToLocal(s.last_call || "")}</TableCell>
+                      <TableRow key={s.session_id} className="border-b-border/50 transition-colors hover:bg-muted/20">
+                        <TableCell className="px-5 py-3 font-mono text-xs max-w-[180px] truncate" title={s.session_id}>{s.session_id}</TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-right font-mono text-muted-foreground">{fmtNum(s.total_input)}</TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-right font-mono text-muted-foreground">{fmtNum(s.total_output)}</TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-right font-mono font-semibold">{fmtNum(s.total_tokens)}</TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-right font-mono text-muted-foreground">{s.request_count}</TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-right font-mono text-amber-500">{fmtCost(s.total_cost)}</TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-muted-foreground max-w-[150px] truncate" title={s.endpoints}>{s.endpoints}</TableCell>
+                        <TableCell className="px-5 py-3 text-xs text-muted-foreground whitespace-nowrap">{utcToLocal(s.last_call || "")}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

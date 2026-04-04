@@ -3373,7 +3373,7 @@ export function ChatView({
       )}
 
       {/* 主聊天区 */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }} onMouseDown={() => { if (sidebarOpen && !sidebarPinned) setSidebarOpen(false); }}>
+      <div className="flex min-w-0 flex-1 flex-col" onMouseDown={() => { if (sidebarOpen && !sidebarPinned) setSidebarOpen(false); }}>
         {/* Chat top bar */}
         <div className="chatTopBar">
           <button onClick={newConversation} className="chatTopBarBtn" aria-label={t("chat.newConversation", "新建会话")}>
@@ -3477,11 +3477,7 @@ export function ChatView({
           }, []) : [];
           const total = matches.length;
           return (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "6px 12px", background: "var(--panel)",
-              borderBottom: "1px solid var(--line)", fontSize: 13,
-            }}>
+            <div className="flex items-center gap-2 border-b border-border/60 bg-muted/20 px-4 py-2 text-sm">
               <input
                 ref={msgSearchRef}
                 value={msgSearchQuery}
@@ -3502,7 +3498,7 @@ export function ChatView({
                 placeholder={t("chat.searchMessages", "搜索消息...")}
                 style={{
                   flex: 1, background: "var(--bg)", border: "1px solid var(--line)",
-                  borderRadius: 6, padding: "4px 8px", fontSize: 13, outline: "none",
+                  borderRadius: 8, padding: "6px 10px", fontSize: 13, outline: "none",
                   color: "var(--fg)",
                 }}
               />
@@ -3516,20 +3512,16 @@ export function ChatView({
 
         {/* 离线横幅 */}
         {!serviceRunning && (
-          <div style={{
-            background: "rgba(245,158,11,0.1)", borderBottom: "1px solid rgba(245,158,11,0.2)",
-            padding: "6px 16px", fontSize: 12, color: "#f59e0b",
-            display: "flex", alignItems: "center", gap: 6,
-          }}>
+          <div className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
             <span style={{ fontSize: 14 }}>⚠️</span>
             {t("chat.offline", "后端服务未连接，部分功能暂不可用")}
           </div>
         )}
 
         {/* 消息列表 */}
-        <div ref={scrollContainerRef} role="log" aria-live="polite" aria-label={t("chat.messageList", "消息列表")} style={{ flex: 1, display: "flex", flexDirection: "column", padding: "16px 20px", minHeight: 0, overflow: "hidden" }}>
+        <div ref={scrollContainerRef} role="log" aria-live="polite" aria-label={t("chat.messageList", "消息列表")} className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-4">
           {hydrating && messages.length === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "20px 0", animation: "pulse 1.5s ease-in-out infinite" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 18, padding: "16px 0", animation: "pulse 1.5s ease-in-out infinite" }}>
               {[0.6, 0.85, 0.45].map((w, i) => (
                 <div key={i} style={{ display: "flex", gap: 10, flexDirection: i % 2 === 0 ? "row" : "row-reverse" }}>
                   <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--line)", flexShrink: 0 }} />
@@ -3543,13 +3535,13 @@ export function ChatView({
             </div>
           )}
           {!hydrating && messages.length === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, gap: 24 }}>
-              <div style={{ opacity: 0.4, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+            <div className="flex flex-1 flex-col items-center justify-center gap-6">
+              <div className="flex flex-col items-center text-center opacity-50">
                 <IconMessageCircle size={48} style={{ marginBottom: 12 }} />
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{t("chat.emptyTitle")}</div>
-                <div style={{ fontSize: 13, marginTop: 4 }}>{t("chat.emptyDesc")}</div>
+                <div className="text-base font-semibold">{t("chat.emptyTitle")}</div>
+                <div className="mt-1 text-sm text-muted-foreground">{t("chat.emptyDesc")}</div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, maxWidth: 480, width: "100%" }}>
+              <div className="grid w-full max-w-[520px] grid-cols-1 gap-3 sm:grid-cols-2">
                 {[
                   { id: "research", icon: "📊", text: t("chat.quickStart.research", "做一份 XX 领域的市场调研报告") },
                   { id: "ppt", icon: "📝", text: t("chat.quickStart.ppt", "帮我做一个项目汇报 PPT 大纲") },
@@ -3562,7 +3554,7 @@ export function ChatView({
                     className="quickStartCard"
                     style={{
                       display: "flex", alignItems: "center", gap: 10,
-                      padding: "12px 16px", borderRadius: 12,
+                      padding: "14px 16px", borderRadius: 14,
                       border: "1px solid var(--line)", background: "var(--panel2)",
                       cursor: "pointer", textAlign: "left", fontSize: 13,
                       transition: "border-color 0.15s, background 0.15s",
@@ -3626,10 +3618,7 @@ export function ChatView({
 
         {/* 长闲置回归提示 (6.7) */}
         {idleReturnPrompt && (
-          <div style={{
-            padding: "10px 16px", borderTop: "1px solid var(--line)", background: "rgba(234,179,8,0.08)",
-            display: "flex", alignItems: "center", gap: 10, fontSize: 13,
-          }}>
+          <div className="flex items-center gap-3 border-t border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-sm">
             <span>⏰</span>
             <span style={{ flex: 1 }}>{t("chat.idleReturnHint", "你已离开较长时间，当前会话上下文较长。建议使用 /clear 节省 token 或新建会话。")}</span>
             <button
@@ -3645,7 +3634,7 @@ export function ChatView({
 
         {/* 大文本粘贴预览 (6.4) */}
         {pastedLargeText && (
-          <div style={{ padding: "10px 16px", borderTop: "1px solid var(--line)", background: "var(--panel)", fontSize: 13 }}>
+          <div className="border-t border-border/60 bg-muted/20 px-4 py-2.5 text-sm">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
               <span style={{ opacity: 0.7 }}>
                 {t("chat.largePaste", "粘贴文本")} — {pastedLargeText.text.length} {t("common.chars", "字符")} / {pastedLargeText.lines} {t("common.lines", "行")}
@@ -3688,7 +3677,7 @@ export function ChatView({
 
         {/* 附件预览栏 */}
         {pendingAttachments.length > 0 && (
-          <div style={{ padding: "12px 16px 8px", borderTop: "1px solid var(--line)", display: "flex", flexWrap: "wrap", gap: 12, background: "var(--panel)", maxHeight: 140, overflowY: "auto" }}>
+          <div className="flex max-h-[140px] flex-wrap gap-3 overflow-y-auto border-t border-border/60 bg-muted/20 px-4 py-3">
             {pendingAttachments.map((att, idx) => (
               <AttachmentPreview
                 key={`${att.name}-${att.type}-${idx}`}

@@ -12,6 +12,7 @@ import {
 import { Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Activity, ArrowRight, Server, Download, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { TroubleshootPanel } from "../components/TroubleshootPanel";
@@ -93,7 +94,7 @@ export function StatusView(props: StatusViewProps) {
     { k: "WEWORK_WS_ENABLED", name: t("status.weworkWs"), required: ["WEWORK_WS_BOT_ID", "WEWORK_WS_SECRET"] },
     { k: "DINGTALK_ENABLED", name: t("status.dingtalk"), required: ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"] },
     { k: "ONEBOT_ENABLED", name: "OneBot", required: [] },
-    { k: "QQBOT_ENABLED", name: "QQ 机器人", required: ["QQBOT_APP_ID", "QQBOT_APP_SECRET"] },
+    { k: "QQBOT_ENABLED", name: "QQ", required: ["QQBOT_APP_ID", "QQBOT_APP_SECRET"] },
     { k: "WECHAT_ENABLED", name: t("status.wechat"), required: ["WECHAT_TOKEN"] },
   ];
   const imStatus = im.map((c) => {
@@ -103,24 +104,20 @@ export function StatusView(props: StatusViewProps) {
   });
 
   return (
-    <>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
       {/* Banner: backend not running (hide during initial probe; hide in web mode — backend is always running) */}
       {IS_TAURI && !serviceStatus?.running && serviceStatus !== null && effectiveWsId && (
-        <div style={{
-          marginBottom: 16, padding: "16px 20px", borderRadius: 10,
-          background: "rgba(245, 158, 11, 0.15)",
-          border: "1px solid rgba(245, 158, 11, 0.4)",
-          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
-        }}>
-          <div style={{ fontSize: 28, lineHeight: 1, color: "var(--warning)" }}>&#9888;</div>
-          <div style={{ flex: 1, minWidth: 180 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: "var(--warning)", marginBottom: 4 }}>
-              {t("status.backendNotRunning")}
+        <Card className="gap-0 border-amber-500/40 bg-amber-500/10 py-0 shadow-sm">
+          <CardContent className="flex flex-wrap items-center gap-4 px-5 py-4">
+            <div className="text-2xl leading-none text-amber-600">&#9888;</div>
+            <div className="min-w-[180px] flex-1">
+              <div className="mb-1 text-sm font-semibold text-amber-700 dark:text-amber-400">
+                {t("status.backendNotRunning")}
+              </div>
+              <div className="text-xs text-amber-700/80 dark:text-amber-400/80">
+                {t("status.backendNotRunningHint")}
+              </div>
             </div>
-            <div style={{ fontSize: 13, color: "var(--warning)", opacity: 0.85 }}>
-              {t("status.backendNotRunningHint")}
-            </div>
-          </div>
           <Button
             size="sm"
             onClick={async () => { await startLocalServiceWithConflictCheck(effectiveWsId); }}
@@ -128,30 +125,29 @@ export function StatusView(props: StatusViewProps) {
           >
             {busy ? <><Loader2 className="animate-spin mr-1" size={14} />{busy}</> : <><Play size={14} className="mr-1" />{t("topbar.start")}</>}
           </Button>
-        </div>
+          </CardContent>
+        </Card>
       )}
       {/* Banner: auto-starting backend (shown while serviceStatus is null and busy with auto-start) */}
       {IS_TAURI && serviceStatus === null && !!busy && effectiveWsId && (
-        <div style={{
-          marginBottom: 16, padding: "16px 20px", borderRadius: 10,
-          background: "rgba(37, 99, 235, 0.15)",
-          border: "1px solid rgba(37, 99, 235, 0.4)",
-          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
-        }}>
-          <div className="spinner" style={{ width: 22, height: 22, flexShrink: 0, color: "var(--brand)" }} />
-          <div style={{ flex: 1, minWidth: 180 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: "var(--brand)", marginBottom: 4 }}>
-              {busy}
+        <Card className="gap-0 border-primary/30 bg-primary/10 py-0 shadow-sm">
+          <CardContent className="flex flex-wrap items-center gap-4 px-5 py-4">
+            <div className="spinner" style={{ width: 22, height: 22, flexShrink: 0, color: "var(--brand)" }} />
+            <div className="min-w-[180px] flex-1">
+              <div className="mb-1 text-sm font-semibold text-primary">
+                {busy}
+              </div>
+              <div className="text-xs text-primary/80">
+                {t("status.backendNotRunningHint")}
+              </div>
             </div>
-            <div style={{ fontSize: 13, color: "var(--brand)", opacity: 0.85 }}>
-              {t("status.backendNotRunningHint")}
-            </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Top: Unified status panel */}
-      <div className="statusPanel">
+      <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
+        <div className="statusPanel !border-0 !rounded-none !bg-transparent">
         {/* Service row */}
         <div className="statusPanelRow statusPanelRowService">
           <div className="statusPanelIcon">
@@ -339,12 +335,16 @@ export function StatusView(props: StatusViewProps) {
             </Button>
           )}
         </div>
-      </div>
+        </div>
+      </Card>
 
       {/* LLM Endpoints compact table */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <span className="statusCardLabel">{t("status.llmEndpoints")} ({endpointSummary.length})</span>
+      <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
+        <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
+          <div>
+            <CardTitle className="text-sm">{t("status.llmEndpoints")} ({endpointSummary.length})</CardTitle>
+            <CardDescription className="mt-1 text-xs">模型端点状态与健康检查</CardDescription>
+          </div>
           <Button size="sm" variant="outline" onClick={async () => {
             setHealthChecking("all");
             try {
@@ -366,9 +366,10 @@ export function StatusView(props: StatusViewProps) {
           }} disabled={!!healthChecking || !!busy}>
             {healthChecking === "all" ? <><Loader2 className="animate-spin mr-1" size={14} />{t("status.checking")}</> : <><Activity size={14} className="mr-1" />{t("status.checkAll")}</>}
           </Button>
-        </div>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
         {endpointSummary.length === 0 ? (
-          <div className="cardHint">
+          <div className="px-5 pb-4 text-sm text-muted-foreground">
             {!serviceStatus?.running
               ? <><Loader2 className="inline animate-spin mr-1" size={13} />{t("status.waitingForBackend")}</>
               : t("status.noEndpoints")}
@@ -379,8 +380,8 @@ export function StatusView(props: StatusViewProps) {
               <TableRow>
                 <TableHead className="h-9 text-xs">{t("status.endpoint")}</TableHead>
                 <TableHead className="h-9 text-xs">{t("status.model")}</TableHead>
-                <TableHead className="h-9 text-xs w-[50px]">Key</TableHead>
-                <TableHead className="h-9 text-xs">{t("sidebar.status")}</TableHead>
+                <TableHead className="h-9 w-[64px] text-center text-xs">Key</TableHead>
+                <TableHead className="h-9 w-[110px] text-center text-xs">{t("sidebar.status")}</TableHead>
                 <TableHead className="h-9 text-xs w-[70px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -399,10 +400,14 @@ export function StatusView(props: StatusViewProps) {
                     {e.enabled === false && <span className="ml-1.5 text-muted-foreground text-[10px] font-bold">{t("llm.disabled")}</span>}
                   </TableCell>
                   <TableCell className="py-2.5 text-muted-foreground text-xs">{e.model}</TableCell>
-                  <TableCell className="py-2.5">{e.keyPresent ? <DotGreen /> : <DotGray />}</TableCell>
-                  <TableCell className="py-2.5">
+                  <TableCell className="py-2.5 text-center">
+                    <span className="inline-flex items-center justify-center">
+                      {e.keyPresent ? <DotGreen /> : <DotGray />}
+                    </span>
+                  </TableCell>
+                  <TableCell className="py-2.5 text-center">
                     <span
-                      className="inline-flex items-center gap-1 text-xs"
+                      className="inline-flex items-center justify-center gap-1 text-xs"
                       title={fullError ? (t("status.clickToCopy", "点击复制") + ": " + fullError) : undefined}
                     >
                       <span className={"healthDot " + dotClass} />
@@ -440,13 +445,14 @@ export function StatusView(props: StatusViewProps) {
             </TableBody>
           </Table>
         )}
-      </div>
+        </CardContent>
+      </Card>
 
       {/* IM Channels + Skills side by side */}
-      <div className="statusGrid2" style={{ marginTop: 12 }}>
-        <div className="card" style={{ marginTop: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span className="statusCardLabel">{t("status.imChannels")}</span>
+      <div className="statusGrid2">
+        <Card className="gap-0 border-border/80 py-0 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
+            <CardTitle className="text-sm">{t("status.imChannels")}</CardTitle>
             <Button size="sm" variant="outline" onClick={async () => {
               setImChecking(true);
               try {
@@ -475,7 +481,8 @@ export function StatusView(props: StatusViewProps) {
             }} disabled={imChecking || !!busy}>
               {imChecking ? <><Loader2 className="animate-spin mr-1" size={14} />{t("status.checking")}</> : <><Activity size={14} className="mr-1" />{t("status.checkAll")}</>}
             </Button>
-          </div>
+          </CardHeader>
+          <CardContent className="space-y-2 px-5 pb-4 pt-0">
           {imStatus.map((c) => {
             const channelId = c.k.replace("_ENABLED", "").toLowerCase();
             const ih = imHealth[channelId];
@@ -492,37 +499,46 @@ export function StatusView(props: StatusViewProps) {
                   ? t("status.configured")
                   : serviceRunning ? "—" : t("status.keyMissing");
             return (
-              <div key={c.k} className="imStatusRow">
-                <span className={"healthDot " + dot} />
-                {LogoComp && <span style={{ display: "inline-flex", flexShrink: 0 }}>{LogoComp({ size: 16 })}</span>}
-                <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{c.name}</span>
-                <span className="imStatusLabel">{label}</span>
+              <div key={c.k} className="imStatusRow rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
+                <span className="inline-flex h-4 w-4 items-center justify-center">
+                  <span className={"healthDot " + dot} />
+                </span>
+                <span className="inline-flex h-4 w-4 items-center justify-center">
+                  {LogoComp && <span style={{ display: "inline-flex", flexShrink: 0 }}>{LogoComp({ size: 16 })}</span>}
+                </span>
+                <span style={{ fontWeight: 600, fontSize: 13, minWidth: 0 }}>{c.name}</span>
+                <span className="imStatusLabel text-right">{label}</span>
               </div>
             );
           })}
-        </div>
-        <div className="card" style={{ marginTop: 0 }}>
-          <span className="statusCardLabel">Skills</span>
+          </CardContent>
+        </Card>
+        <Card className="gap-0 border-border/80 py-0 shadow-sm">
+          <CardHeader className="px-5 py-4">
+            <CardTitle className="text-sm">Skills</CardTitle>
+          </CardHeader>
+          <CardContent className="px-5 pb-4 pt-0">
           {!skillSummary && !serviceStatus?.running ? (
-            <div className="cardHint" style={{ marginTop: 8 }}>
+            <div className="text-sm text-muted-foreground">
               <Loader2 className="inline animate-spin mr-1" size={13} />{t("status.waitingForBackend")}
             </div>
           ) : skillSummary ? (
-            <div style={{ marginTop: 8 }}>
+            <div className="space-y-2">
               <div className="statusMetric"><span>{t("status.total")}</span><b>{skillSummary.count}</b></div>
               <div className="statusMetric"><span>{t("skills.system")}</span><b>{skillSummary.systemCount}</b></div>
               <div className="statusMetric"><span>{t("skills.external")}</span><b>{skillSummary.externalCount}</b></div>
             </div>
-          ) : <div className="cardHint" style={{ marginTop: 8 }}>{t("status.skillsNA")}</div>}
+          ) : <div className="text-sm text-muted-foreground">{t("status.skillsNA")}</div>}
           <Button size="sm" variant="outline" className="w-full mt-2.5" onClick={() => setView("skills")}>{t("status.manageSkills")} <ArrowRight size={14} className="ml-1" /></Button>
-        </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Service log */}
       {serviceStatus?.running && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <span className="statusCardLabel">{t("status.log")}</span>
+        <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
+            <CardTitle className="text-sm">{t("status.log")}</CardTitle>
             <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
               {(["ERROR", "WARN", "INFO", "DEBUG"] as const).map((level) => {
                 const active = logLevelFilter.has(level);
@@ -539,7 +555,8 @@ export function StatusView(props: StatusViewProps) {
                 );
               })}
             </div>
-          </div>
+          </CardHeader>
+          <CardContent className="px-5 pb-5 pt-0">
           <div style={{ position: "relative" }}>
             <div ref={serviceLogRef as any} className="logPre" onScroll={(e) => {
               const el = e.currentTarget;
@@ -576,8 +593,9 @@ export function StatusView(props: StatusViewProps) {
               }}>↓</button>
             )}
           </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
-    </>
+    </div>
   );
 }
