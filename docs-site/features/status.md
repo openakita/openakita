@@ -58,7 +58,7 @@
 |------|------|
 | 操作系统 | Windows 10 / Ubuntu 22.04 / macOS 14 |
 | Python 版本 | 3.11.8 |
-| OpenAkita 版本 | v1.26.5 |
+| OpenAkita 版本 | v1.27.5 |
 | 数据目录 | `data/` |
 
 ---

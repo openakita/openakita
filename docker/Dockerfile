@@ -1,38 +1,95 @@
 # OpenAkita Dockerfile
-# 基于官方 Python 镜像
-FROM python:3.11-slim
+# Builds the web frontend and user docs before packaging the Python wheel.
 
-# 设置工作目录
+FROM node:20-bookworm-slim AS web-builder
+
+WORKDIR /build/apps/setup-center
+
+COPY apps/setup-center/package.json apps/setup-center/package-lock.json ./
+RUN npm ci
+
+COPY apps/setup-center/ ./
+COPY src/openakita/llm/registries/providers.json /build/src/openakita/llm/registries/providers.json
+
+RUN npm run build:web
+
+
+FROM node:20-bookworm-slim AS docs-builder
+
+WORKDIR /build/docs-site
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docs-site/package.json docs-site/package-lock.json ./
+RUN npm ci
+
+COPY docs-site/ ./
+COPY VERSION /build/VERSION
+
+RUN mkdir -p .vitepress \
+    && VERSION_VALUE="$(cat /build/VERSION)" \
+    && printf '{\n  "version": "%s"\n}\n' "$VERSION_VALUE" > .vitepress/version.json \
+    && npm run build
+
+
+FROM python:3.11-slim AS wheel-builder
+
+WORKDIR /build
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md LICENSE VERSION ./
+COPY src ./src
+COPY skills ./skills
+COPY mcps ./mcps
+COPY identity ./identity
+COPY apps/setup-center ./apps/setup-center
+COPY docs-site ./docs-site
+
+COPY --from=web-builder /build/apps/setup-center/dist-web ./apps/setup-center/dist-web
+COPY --from=docs-builder /build/docs-site/.vitepress/dist ./docs-site/.vitepress/dist
+
+RUN python -m pip install --upgrade pip build \
+    && python -m build --wheel \
+    && mkdir -p /wheelhouse \
+    && python -m pip wheel --wheel-dir /wheelhouse /build/dist/*.whl
+
+
+FROM python:3.11-slim AS runtime
+
 WORKDIR /app
 
-# 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
-    wget \
     git \
-    build-essential \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制应用文件
-COPY . .
+COPY --from=wheel-builder /wheelhouse /wheelhouse
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir --no-index --find-links=/wheelhouse openakita \
+    && rm -rf /wheelhouse
 
-# 创建非 root 用户并设置目录权限
 RUN useradd --create-home --shell /bin/bash openakita \
     && mkdir -p /app/data /app/identity /app/logs \
-    && chown -R openakita:openakita /app/data /app/identity /app/logs
+    && chown -R openakita:openakita /app
 
 USER openakita
 
-# 暴露端口（OpenAkita 默认端口 18900）
 EXPOSE 18900
 
-# 启动服务模式（API + IM 通道）
 CMD ["openakita", "serve"]

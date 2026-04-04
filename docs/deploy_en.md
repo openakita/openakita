@@ -718,35 +718,29 @@ journalctl -u openakita -f
 
 ### Using Docker
 
-```dockerfile
-FROM python:3.11-slim
+The repository already ships `docker/Dockerfile`. It performs a self-contained multi-stage build:
 
-WORKDIR /app
+- builds the `apps/setup-center` web frontend and bundles it into the Python wheel
+- builds the `docs-site` user docs so `pyproject.toml` force-includes work in a clean environment
+- installs the final runtime image from the built wheel instead of relying on pre-generated host artifacts
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[feishu]"
-
-# Copy project files
-COPY . .
-
-# Install Playwright
-RUN playwright install chromium && playwright install-deps chromium
-
-CMD ["openakita", "serve"]
-```
+Build from the repository root as the Docker context:
 
 ```bash
-docker build -t openakita .
+docker build -f docker/Dockerfile -t openakita .
 docker run -d \
   --name openakita \
+  -p 18900:18900 \
   -v $(pwd)/.env:/app/.env \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/identity:/app/identity \
   openakita
+```
+
+If you prefer Compose:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build -d
 ```
 
 ### Using nohup (Simple Background)
