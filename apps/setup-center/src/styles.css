@@ -1006,6 +1006,25 @@ button.btnApplyRestart:hover {
   margin: 8px 0;
 }
 
+/* ─── Memory tooltip (hover to see full content) ─── */
+.memory-tip-wrap {
+  max-width: 480px !important;
+  min-width: 200px;
+  padding: 10px 14px !important;
+  text-align: left !important;
+  white-space: normal !important;
+  border-radius: 8px !important;
+}
+.memory-tip-wrap [data-slot="tooltip-arrow"] {
+  display: none;
+}
+.memory-tip-content {
+  font-size: 13px;
+  line-height: 1.65;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
 /* ─── Skill detail markdown ─── */
 .skillMdContent {
   color: var(--text);
