@@ -431,6 +431,48 @@ def create_app(
     # ── Serve web frontend static files ──
     _mount_web_frontend(app)
 
+    @app.on_event("startup")
+    async def _import_pending_feedback():
+        """Import any feedback records staged by Tauri while the backend was down."""
+        try:
+            from openakita.config import settings
+            home = settings.openakita_home
+        except Exception:
+            home = Path.home() / ".openakita"
+        pending = home / "pending_feedback.json"
+        if not pending.exists():
+            return
+        try:
+            import json as _json
+            records = _json.loads(pending.read_text("utf-8"))
+            if not isinstance(records, list):
+                pending.unlink(missing_ok=True)
+                return
+            from .routes import feedback_store
+            imported = 0
+            for rec in records:
+                try:
+                    await feedback_store.save_record(
+                        report_id=rec.get("reportId") or rec.get("report_id", ""),
+                        feedback_token=rec.get("feedbackToken") or rec.get("feedback_token"),
+                        title=rec.get("title", ""),
+                        report_type=rec.get("reportType") or rec.get("report_type", "bug"),
+                        contact_email=rec.get("contactEmail") or rec.get("contact_email", ""),
+                        submitted_at=rec.get("submittedAt") or rec.get("submitted_at"),
+                    )
+                    imported += 1
+                except Exception as rec_err:
+                    logger.warning("Skip bad pending feedback record: %s", rec_err)
+            pending.unlink(missing_ok=True)
+            if imported:
+                logger.info(
+                    "Imported %d pending feedback record(s) from Tauri offline staging",
+                    imported,
+                )
+        except Exception as exc:
+            logger.warning("Failed to import pending feedback: %s", exc)
+            pending.unlink(missing_ok=True)
+
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):
         """Gracefully shut down the OpenAkita service process.
