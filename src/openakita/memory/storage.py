@@ -729,6 +729,70 @@ class MemoryStorage:
         except Exception:
             return 0
 
+    SORTABLE_COLUMNS = frozenset({
+        "importance_score", "created_at", "updated_at",
+        "last_accessed_at", "access_count",
+    })
+
+    def query_paged(
+        self,
+        *,
+        memory_type: str | None = None,
+        min_importance: float | None = None,
+        scope: str | None = None,
+        scope_owner: str | None = None,
+        sort_by: str = "importance_score",
+        sort_order: str = "desc",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Paginated query with SQL-level sorting. Returns (rows, total_count)."""
+        if not self._conn:
+            return [], 0
+
+        if sort_by not in self.SORTABLE_COLUMNS:
+            sort_by = "importance_score"
+        if sort_order.lower() not in ("asc", "desc"):
+            sort_order = "desc"
+
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if memory_type:
+            conditions.append("type = ?")
+            params.append(memory_type)
+        if min_importance is not None:
+            conditions.append("importance_score >= ?")
+            params.append(min_importance)
+        if scope is not None:
+            conditions.append("(scope IS NULL OR scope = ?)")
+            params.append(scope)
+        if scope_owner is not None:
+            conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
+            params.append(scope_owner)
+
+        where = " AND ".join(conditions) if conditions else "1=1"
+
+        try:
+            count_cur = self._conn.execute(
+                f"SELECT COUNT(*) FROM memories WHERE {where}", params
+            )
+            total = count_cur.fetchone()[0]
+
+            order = sort_order.upper()
+            page_params = params + [limit, offset]
+            cursor = self._conn.execute(
+                f"SELECT * FROM memories WHERE {where} "
+                f"ORDER BY {sort_by} {order} "
+                f"LIMIT ? OFFSET ?",
+                page_params,
+            )
+            rows = self._rows_to_dicts(cursor)
+            return rows, total
+        except Exception as e:
+            logger.error(f"Failed to query_paged memories: {e}")
+            return [], 0
+
     # ======================================================================
     # FTS5 Search
     # ======================================================================

@@ -12,8 +12,10 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, RefreshCw, Trash2, Pencil, Check, X, Search, Brain, Ban } from "lucide-react";
+import { Loader2, RefreshCw, Trash2, Pencil, Check, X, Search, Brain, Ban, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { useMdModules, type MdModules } from "../hooks/useMdModules";
 
 type MemoryItem = {
   id: string;
@@ -82,6 +84,16 @@ const TYPE_COLORS: Record<string, string> = {
   context: "#6b7280",
 };
 
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "importance_score", label: "重要性" },
+  { value: "created_at", label: "创建时间" },
+  { value: "updated_at", label: "更新时间" },
+  { value: "last_accessed_at", label: "最近访问" },
+  { value: "access_count", label: "访问次数" },
+];
+
+const PAGE_SIZE = 50;
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "-";
   try {
@@ -92,6 +104,46 @@ function fmtDate(iso: string | null): string {
   }
 }
 
+function stripMd(s: string): string {
+  return s
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\n/g, " ");
+}
+
+function MemoryContent({ content, mdMods }: { content: string; mdMods: MdModules | null }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div style={{
+          fontSize: 13, lineHeight: 1.6, color: "var(--text)",
+          overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap", cursor: "pointer",
+        }}>
+          {stripMd(content)}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent
+        side="bottom"
+        align="start"
+        className="memory-tip-wrap bg-popover text-popover-foreground border border-border shadow-lg"
+      >
+        {mdMods ? (
+          <div className="feedbackMdContent memory-tip-content">
+            <mdMods.ReactMarkdown remarkPlugins={[mdMods.remarkGfm]}>{content}</mdMods.ReactMarkdown>
+          </div>
+        ) : (
+          <div className="memory-tip-content" style={{ whiteSpace: "pre-wrap" }}>{content}</div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface Props {
   serviceRunning: boolean;
   apiBaseUrl?: string;
@@ -99,6 +151,7 @@ interface Props {
 
 export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
   const API_BASE = apiBaseUrl;
+  const mdMods = useMdModules();
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -114,12 +167,18 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
   const [showReviewConfirm, setShowReviewConfirm] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
+  const [sortBy, setSortBy] = useState("importance_score");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  const isSearchMode = !!searchQuery;
 
   const loadMemories = useCallback(async () => {
     if (!serviceRunning) return;
@@ -128,15 +187,23 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
       const params = new URLSearchParams();
       if (searchQuery) params.set("search", searchQuery);
       if (filterType) params.set("type", filterType);
+      if (!searchQuery) {
+        params.set("sort_by", sortBy);
+        params.set("sort_order", sortOrder);
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(page * PAGE_SIZE));
+      }
       const res = await safeFetch(`${API_BASE}/api/memories?${params}`);
       const data = await res.json();
       setMemories(data.memories || []);
+      setTotalCount(data.total ?? 0);
+      setSelected(new Set());
     } catch (e: any) {
       toast.error(e.message || "加载失败");
     } finally {
       setLoading(false);
     }
-  }, [serviceRunning, searchQuery, filterType]);
+  }, [serviceRunning, searchQuery, filterType, sortBy, sortOrder, page]);
 
   const loadStats = useCallback(async () => {
     if (!serviceRunning) return;
@@ -339,6 +406,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
   }
 
   return (
+    <TooltipProvider delayDuration={300}>
     <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 10 : 16 }}>
       {/* Stats bar */}
       {stats && (
@@ -352,7 +420,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
         }}>
           {[
             { value: stats.total, label: "总记忆数", color: "var(--text)" },
-            { value: stats.avg_score, label: "平均分数", color: "var(--text)" },
+            { value: stats.avg_score, label: "平均重要性", color: "var(--text)" },
             ...Object.entries(stats.by_type).map(([t, c]) => ({
               value: c,
               label: TYPE_LABELS[t] || t,
@@ -383,13 +451,13 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
           <Input
             placeholder="搜索记忆内容..."
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
             onKeyDown={e => e.key === "Enter" && loadMemories()}
             className="pl-8"
           />
         </div>
 
-        <Select value={filterType || "__all__"} onValueChange={v => setFilterType(v === "__all__" ? "" : v)}>
+        <Select value={filterType || "__all__"} onValueChange={v => { setFilterType(v === "__all__" ? "" : v); setPage(0); }}>
           <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">全部类型</SelectItem>
@@ -398,6 +466,35 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
             ))}
           </SelectContent>
         </Select>
+
+        <Select
+          value={sortBy}
+          onValueChange={v => { setSortBy(v); setPage(0); }}
+          disabled={isSearchMode}
+        >
+          <SelectTrigger className="w-[120px]" title={isSearchMode ? "搜索结果按相关度排序" : ""}>
+            <ArrowUpDown size={12} className="mr-1 shrink-0" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SORT_OPTIONS.map(o => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Button
+          variant="outline"
+          size="icon"
+          className="shrink-0"
+          disabled={isSearchMode}
+          title={sortOrder === "desc" ? "降序（点击切换升序）" : "升序（点击切换降序）"}
+          onClick={() => { setSortOrder(prev => prev === "desc" ? "asc" : "desc"); setPage(0); }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600, opacity: isSearchMode ? 0.4 : 1 }}>
+            {sortOrder === "desc" ? "↓" : "↑"}
+          </span>
+        </Button>
 
         <Button variant="outline" onClick={loadMemories} disabled={loading}>
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -570,7 +667,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                         className="resize-y text-sm"
                       />
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] text-muted-foreground">分数:</span>
+                        <span className="text-[11px] text-muted-foreground">重要性:</span>
                         <Input
                           type="number" min={0} max={1} step={0.05}
                           value={editScore}
@@ -586,33 +683,20 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                       </div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 13, lineHeight: 1.6, wordBreak: "break-word", whiteSpace: "pre-wrap", color: "var(--text)" }}>
-                      {m.content}
-                    </div>
+                    <MemoryContent content={m.content} mdMods={mdMods} />
                   )}
 
-                  {/* Meta: subject + predicate + tags */}
-                  {(m.subject || m.predicate || (Array.isArray(m.tags) && m.tags.length > 0)) && editingId !== m.id && (
-                    <div style={{ marginTop: 6 }}>
-                      {(m.subject || m.predicate) && (
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
+                  {/* Meta: subject + predicate */}
+                  {editingId !== m.id && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>
+                      {m.subject || m.predicate ? (
+                        <>
                           {m.subject && <span>主体: {m.subject}</span>}
                           {m.subject && m.predicate && <span> · </span>}
                           {m.predicate && <span>属性: {m.predicate}</span>}
-                        </div>
-                      )}
-                      {Array.isArray(m.tags) && m.tags.length > 0 && (
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {m.tags.map(tag => (
-                            <span key={tag} style={{
-                              padding: "1px 6px", borderRadius: 8, fontSize: 10,
-                              background: "rgba(99,102,241,0.1)", color: "#6366f1",
-                              whiteSpace: "nowrap",
-                            }}>
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
+                        </>
+                      ) : (
+                        <span style={{ opacity: 0.4 }}>—</span>
                       )}
                     </div>
                   )}
@@ -636,20 +720,28 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
       ) : (
         /* ── Desktop: table layout ── */
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <Table>
+          <Table style={{ tableLayout: "fixed", width: "100%" }}>
+            <colgroup>
+              <col style={{ width: 36 }} />
+              <col style={{ width: 80 }} />
+              <col />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 80 }} />
+            </colgroup>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[36px] px-3">
+                <TableHead className="px-3">
                   <Checkbox
                     checked={selected.size === memories.length && memories.length > 0}
                     onCheckedChange={selectAll}
                   />
                 </TableHead>
-                <TableHead className="w-[80px]">类型</TableHead>
+                <TableHead>类型</TableHead>
                 <TableHead>内容</TableHead>
-                <TableHead className="w-[60px] text-center">分数</TableHead>
-                <TableHead className="w-[90px] text-center">创建时间</TableHead>
-                <TableHead className="w-[100px] text-center">操作</TableHead>
+                <TableHead className="text-center">重要性</TableHead>
+                <TableHead className="text-center">创建时间</TableHead>
+                <TableHead className="text-center">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -684,7 +776,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                       {TYPE_LABELS[m.type] || m.type}
                     </span>
                   </TableCell>
-                  <TableCell className="max-w-[400px]">
+                  <TableCell style={{ overflow: "hidden" }}>
                     {editingId === m.id ? (
                       <div className="flex flex-col gap-1.5">
                         <Textarea
@@ -694,7 +786,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                           className="resize-y text-xs"
                         />
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-muted-foreground">分数:</span>
+                          <span className="text-[11px] text-muted-foreground">重要性:</span>
                           <Input
                             type="number" min={0} max={1} step={0.05}
                             value={editScore}
@@ -711,25 +803,18 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                       </div>
                     ) : (
                       <div>
-                        <div className="leading-relaxed break-words whitespace-pre-wrap">
-                          {m.content}
+                        <MemoryContent content={m.content} mdMods={mdMods} />
+                        <div className="mt-1 text-[11px] text-muted-foreground" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {m.subject || m.predicate ? (
+                            <>
+                              {m.subject && <span>主体: {m.subject}</span>}
+                              {m.subject && m.predicate && <span> · </span>}
+                              {m.predicate && <span>属性: {m.predicate}</span>}
+                            </>
+                          ) : (
+                            <span style={{ opacity: 0.4 }}>—</span>
+                          )}
                         </div>
-                        {(m.subject || m.predicate) && (
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {m.subject && <span>主体: {m.subject}</span>}
-                            {m.subject && m.predicate && <span> · </span>}
-                            {m.predicate && <span>属性: {m.predicate}</span>}
-                          </div>
-                        )}
-                        {Array.isArray(m.tags) && m.tags.length > 0 && (
-                          <div className="mt-1 flex gap-1 flex-wrap">
-                            {m.tags.map(tag => (
-                              <span key={tag} className="px-1.5 py-px rounded-lg text-[10px] bg-indigo-500/10 text-indigo-500 whitespace-nowrap">
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     )}
                   </TableCell>
@@ -759,6 +844,27 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
           </Table>
         </div>
       )}
+      {/* Pagination */}
+      {!isSearchMode && totalCount > 0 && (() => {
+        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+        if (totalPages <= 1) return null;
+        return (
+          <div className="flex items-center justify-between gap-2 flex-wrap" style={{ fontSize: 13 }}>
+            <span className="text-muted-foreground text-xs">
+              共 {totalCount} 条 · 第 {page + 1}/{totalPages} 页
+            </span>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" disabled={page <= 0} onClick={() => setPage(p => p - 1)}>
+                <ChevronLeft size={14} /> 上一页
+              </Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
+                下一页 <ChevronRight size={14} />
+              </Button>
+            </div>
+          </div>
+        );
+      })()}
+
       <AlertDialog open={!!confirmDialog} onOpenChange={open => { if (!open) setConfirmDialog(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -774,5 +880,6 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </TooltipProvider>
   );
 }
