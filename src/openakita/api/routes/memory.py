@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -151,7 +150,10 @@ async def list_memories(
     search: str | None = None,
     q: str | None = None,
     min_score: float = 0.0,
-    limit: int = 200,
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str = "importance_score",
+    sort_order: str = "desc",
 ):
     store = _get_store(request)
     if not store:
@@ -162,22 +164,26 @@ async def list_memories(
 
     if search:
         results = store.search_semantic(search, limit=limit, filter_type=type)
-    else:
-        results = store.load_all_memories()
-        if type:
-            results = [
-                m
-                for m in results
-                if (m.type.value if hasattr(m.type, "value") else str(m.type)) == type
-            ]
-        if min_score > 0:
-            results = [m for m in results if m.importance_score >= min_score]
-        results.sort(key=lambda m: (m.importance_score, m.created_at or datetime.min), reverse=True)
-        results = results[:limit]
+        return {
+            "memories": [_serialize(m) for m in results],
+            "total": len(results),
+            "limit": limit,
+            "offset": 0,
+        }
 
+    results, total = store.query_paged(
+        memory_type=type,
+        min_importance=min_score if min_score > 0 else None,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
     return {
         "memories": [_serialize(m) for m in results],
-        "total": len(results),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 
