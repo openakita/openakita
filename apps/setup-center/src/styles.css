@@ -3530,10 +3530,12 @@ button.btnApplyRestart:hover {
   left: 50%;
   transform: translateX(-50%);
   min-width: 200px;
-  background: var(--bg-card, #fff);
+  background: var(--panel2);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1px 4px rgba(0,0,0,0.08);
+  box-shadow: var(--shadow);
   padding: 6px 0;
+  color: var(--text);
   z-index: 200;
   animation: thinkingMenuIn 0.15s ease;
 }

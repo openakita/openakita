@@ -49,7 +49,7 @@ class ComplexitySignal:
 
     @property
     def should_suggest_plan(self) -> bool:
-        return self.score >= 3
+        return self.score >= 4
 
 
 @dataclass
@@ -464,7 +464,9 @@ def _analyze_complexity(message: str, intent_result: IntentResult) -> Complexity
         signal.destructive_potential = True
 
     # Multi-step required (from intent analysis)
-    if intent_result.task_type == "compound" or len(message) > 200:
+    # Only flag truly compound tasks; message length alone is not a reliable signal
+    # (users often send long context/requirements that are a single question).
+    if intent_result.task_type == "compound":
         signal.multi_step_required = True
 
     return signal

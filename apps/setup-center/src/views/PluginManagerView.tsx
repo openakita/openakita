@@ -472,15 +472,21 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
       <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
         <CardHeader className="gap-3 px-6 py-5">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-4">
               <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <IconPlug size={24} />
               </div>
               <div className="min-w-0 space-y-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <CardTitle className="text-xl tracking-tight">{t("plugins.title")}</CardTitle>
-                  <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                <div className="flex min-w-0 items-center gap-3">
+                  <CardTitle className="truncate text-xl tracking-tight" title={t("plugins.title")}>
+                    {t("plugins.title")}
+                  </CardTitle>
+                  <Badge
+                    variant="secondary"
+                    className="max-w-[140px] shrink overflow-hidden rounded-full px-3 py-1 text-ellipsis whitespace-nowrap text-xs"
+                    title={t("plugins.installed", { count: plugins.length })}
+                  >
                     {t("plugins.installed", { count: plugins.length })}
                   </Badge>
                 </div>
@@ -595,16 +601,19 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
             {pluginsWithPending.map((p) => (
               <div
                 key={p.id}
-                className="flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-background/80 p-4 md:flex-row md:items-center md:justify-between"
+                className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-background/80 p-4"
               >
                 <div className="min-w-0">
-                  <div className="font-medium text-foreground">{p.name}</div>
-                  <div className="mt-1 text-sm leading-6 text-muted-foreground">
+                  <div className="truncate font-medium text-foreground" title={p.name}>{p.name}</div>
+                  <div
+                    className="mt-1 truncate text-sm leading-6 text-muted-foreground"
+                    title={(p.pending_permissions || []).map((pp) => permLabel(pp, lang)).join(", ")}
+                  >
                     {(p.pending_permissions || []).map((pp) => permLabel(pp, lang)).join(", ")}
                   </div>
                 </div>
                 <Button
-                  className="md:self-start"
+                  className="shrink-0"
                   onClick={() => handleGrantPermissions(p.id, p.pending_permissions || [])}
                   disabled={granting}
                 >
@@ -651,7 +660,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                   hasPending && "border-amber-500/50"
                 )}>
                   <CardHeader className="gap-3 px-6 py-4">
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex items-start justify-between gap-4">
                       <div className="flex min-w-0 gap-4">
                         <div className={cn(
                           "flex size-12 shrink-0 items-center justify-center rounded-2xl border bg-muted/40",
@@ -659,43 +668,62 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                         )}>
                           <PluginIcon plugin={p} apiBase={apiBaseRef.current()} />
                         </div>
-                        <div className="min-w-0 space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <CardTitle className="text-base leading-none">{p.name}</CardTitle>
+                        <div className="min-w-0 flex-1 space-y-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <CardTitle className="min-w-0 truncate text-base leading-none" title={p.name}>{p.name}</CardTitle>
                             {p.permission_level && (
                               <Badge
                                 variant="outline"
-                                className="border-0"
+                                className="max-w-[96px] shrink overflow-hidden whitespace-nowrap border-0 text-ellipsis"
+                                title={levelLabel(p.permission_level, lang)}
                                 style={badgeStyle ? { color: badgeStyle.color, backgroundColor: badgeStyle.backgroundColor } : undefined}
                               >
                                 {levelLabel(p.permission_level, lang)}
                               </Badge>
                             )}
                             {hasPending && (
-                              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-600">
+                              <Badge
+                                variant="outline"
+                                className="max-w-[120px] shrink overflow-hidden whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-600 text-ellipsis"
+                                title={t("plugins.permPending")}
+                              >
                                 {t("plugins.permPending")}
                               </Badge>
                             )}
                             {p.status === "failed" && (
-                              <Badge variant="destructive">{t("plugins.failed")}</Badge>
+                              <Badge variant="destructive" className="max-w-[96px] shrink overflow-hidden whitespace-nowrap text-ellipsis" title={t("plugins.failed")}>
+                                {t("plugins.failed")}
+                              </Badge>
                             )}
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <Badge variant="secondary" className="font-mono">v{p.version}</Badge>
-                            <Badge variant="outline">{categoryLabel(p.category || p.type || "tool", lang)}</Badge>
-                            {p.author && <Badge variant="outline">{p.author}</Badge>}
+                          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                            <Badge variant="secondary" className="max-w-[90px] shrink overflow-hidden whitespace-nowrap font-mono text-ellipsis" title={`v${p.version}`}>v{p.version}</Badge>
+                            <Badge
+                              variant="outline"
+                              className="max-w-[120px] shrink overflow-hidden whitespace-nowrap text-ellipsis"
+                              title={categoryLabel(p.category || p.type || "tool", lang)}
+                            >
+                              {categoryLabel(p.category || p.type || "tool", lang)}
+                            </Badge>
+                            {p.author && (
+                              <Badge variant="outline" className="max-w-[140px] shrink overflow-hidden whitespace-nowrap text-ellipsis" title={p.author}>
+                                {p.author}
+                              </Badge>
+                            )}
                           </div>
 
                           {p.description && (
                             <CardDescription className="max-w-3xl text-sm leading-6">
-                              {p.description}
+                              <span className="block truncate" title={p.description}>
+                                {p.description}
+                              </span>
                             </CardDescription>
                           )}
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2 xl:max-w-[360px] xl:justify-end">
+                      <div className="flex shrink-0 items-center gap-2">
                         {(p.permissions?.length ?? 0) > 0 && (
                           <Button
                             size="icon-sm"
@@ -806,10 +834,12 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                               return (
                                 <div
                                   key={perm}
-                                  className="flex flex-col gap-2 rounded-lg border bg-background/80 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                                  className="flex items-center justify-between gap-2 rounded-lg border bg-background/80 px-4 py-3"
                                 >
-                                  <div className="text-sm text-foreground">{permLabel(perm, lang)}</div>
-                                  <div className="flex flex-wrap items-center gap-2">
+                                  <div className="min-w-0 truncate text-sm text-foreground" title={permLabel(perm, lang)}>
+                                    {permLabel(perm, lang)}
+                                  </div>
+                                  <div className="flex shrink-0 items-center gap-2">
                                     {isBasic ? (
                                       <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600">
                                         {t("plugins.permAuto")}
@@ -1003,11 +1033,11 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                     </CardContent>
                   )}
 
-                  <CardFooter className="flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0 text-xs text-muted-foreground">
+                  <CardFooter className="flex items-center justify-between gap-3 border-t pt-4">
+                    <div className="min-w-0 truncate text-xs text-muted-foreground" title={p.id}>
                       {p.id}
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex shrink-0 gap-2">
                       <Button
                         variant={p.enabled === false ? "default" : "outline"}
                         onClick={() => handleAction(p.id, p.enabled === false ? "enable" : "disable")}

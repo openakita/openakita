@@ -248,7 +248,20 @@ export function Topbar({
           </>
         )}
         <span className="topbarEpCount">{t("topbar.endpoints", { count: endpointCount })}</span>
-        {dataMode === "remote" && <span className="pill" style={{ fontSize: 10, marginLeft: 4, background: "#e3f2fd", color: "#1565c0" }}>{t("connect.remoteMode")}</span>}
+        {dataMode === "remote" && (
+          <span
+            className="pill"
+            style={{
+              fontSize: 10,
+              marginLeft: 4,
+              background: "var(--nav-active)",
+              color: "var(--brand)",
+              borderColor: "var(--nav-active-border)",
+            }}
+          >
+            {t("connect.remoteMode")}
+          </span>
+        )}
       </div>
       <TooltipProvider delayDuration={300}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>

@@ -125,6 +125,8 @@ def should_retry(
         "timeout", "timed out", "connect", "connection", "network",
         "429", "502", "503", "504", "529",
         "econnreset", "epipe", "eof",
+        "readerror", "read error", "remotedisconnected", "broken pipe",
+        "readtimeout", "incompleteread",
     )):
         return True
 

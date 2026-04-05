@@ -51,12 +51,12 @@ export function IMConfigView(props: IMConfigViewProps) {
   return (
     <div className="card">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-base font-bold tracking-tight flex items-center gap-2">
-            {t("config.imTitle")}
+      <div className="flex items-start justify-between gap-4 overflow-x-auto">
+        <div className="min-w-0">
+          <h3 className="flex min-w-max items-center gap-2 text-base font-bold tracking-tight">
+            <span className="max-w-[240px] truncate" title={t("config.imTitle")}>{t("config.imTitle")}</span>
             <Button
-              variant="outline" size="sm" className="h-7 gap-1 text-xs"
+              variant="outline" size="sm" className="h-7 shrink-0 gap-1 text-xs"
               onClick={async () => {
                 const ok = await copyToClipboard(
                   "https://github.com/anthropic-lab/openakita/blob/main/docs/im-channels.md",
@@ -65,16 +65,19 @@ export function IMConfigView(props: IMConfigViewProps) {
               }}
               title={t("config.imGuideDoc")}
             >
-              <BookOpen size={13} />{t("config.imGuideDoc")}
+              <BookOpen size={13} />
+              <span className="hidden xl:inline">{t("config.imGuideDoc")}</span>
             </Button>
             <Button
-              variant="outline" size="sm" className="h-7 gap-1 text-xs"
+              variant="outline" size="sm" className="h-7 shrink-0 gap-1 text-xs"
               onClick={() => setShowCmdRef(true)}
+              title={t("config.imQuickCommands")}
             >
-              <Terminal size={13} />{t("config.imQuickCommands")}
+              <Terminal size={13} />
+              <span className="hidden xl:inline">{t("config.imQuickCommands")}</span>
             </Button>
           </h3>
-          <p className="text-sm text-muted-foreground mt-1">{t("config.imHint")}</p>
+          <p className="mt-1 truncate text-sm text-muted-foreground" title={t("config.imHint")}>{t("config.imHint")}</p>
         </div>
         {!wizardMode && (
           <div className="flex flex-col items-end gap-1 shrink-0">

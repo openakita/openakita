@@ -151,11 +151,14 @@ class AgentToolHandler:
         seen_counter: dict[str, int] = {}
         store = self._get_profile_store() if duplicated_ids else None
 
+        global_context = (params.get("context") or "").strip()
+
         for task in tasks_param:
             agent_id = (task.get("agent_id") or "").strip()
             message = (task.get("message") or "").strip()
             reason = (task.get("reason") or "").strip()
-            task_context = (task.get("context") or "").strip()
+            per_task_ctx = (task.get("context") or "").strip()
+            task_context = "\n\n".join(filter(None, [global_context, per_task_ctx]))
 
             if agent_id in duplicated_ids:
                 seen_counter[agent_id] = seen_counter.get(agent_id, 0) + 1

@@ -281,16 +281,22 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
       <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
         <CardHeader className="gap-3 px-6 py-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-4">
               <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <IconLink size={22} />
               </div>
               <div className="min-w-0 space-y-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <CardTitle className="text-xl tracking-tight">{t("mcp.title")}</CardTitle>
+                <div className="flex min-w-0 items-center gap-3">
+                  <CardTitle className="truncate text-xl tracking-tight" title={t("mcp.title")}>
+                    {t("mcp.title")}
+                  </CardTitle>
                   {!mcpEnabled && (
-                    <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                    <Badge
+                      variant="outline"
+                      className="max-w-full shrink overflow-hidden text-ellipsis whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      title={t("mcp.disabled") || "MCP 已禁用"}
+                    >
                       {t("mcp.disabled") || "MCP 已禁用"}
                     </Badge>
                   )}
@@ -305,7 +311,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <Button variant={showAdd ? "secondary" : "outline"} onClick={() => setShowAdd(!showAdd)}>
                 <Plus size={14} />
                 {t("mcp.addServer")}
@@ -442,15 +448,15 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
             <Card key={s.name} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md">
               <CardHeader className="gap-3 px-6 py-4">
                 <div
-                  className="flex cursor-pointer flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"
+                  className="flex cursor-pointer items-start justify-between gap-4"
                   onClick={() => toggleExpand(s.name)}
                 >
                   <div className="flex min-w-0 gap-4">
                     <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground">
                       {s.connected ? <DotGreen /> : <DotGray />}
                     </div>
-                    <div className="min-w-0 space-y-3">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex min-w-0 items-center gap-2">
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -458,20 +464,39 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                         >
                           {expandedServer === s.name ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                         </Button>
-                        <CardTitle className="text-base">{s.name}</CardTitle>
-                        <Badge variant="secondary">{transportLabel(s.transport)}</Badge>
+                        <CardTitle className="min-w-0 truncate text-base" title={s.name}>
+                          {s.name}
+                        </CardTitle>
+                        <Badge
+                          variant="secondary"
+                          className="max-w-[96px] shrink overflow-hidden text-ellipsis whitespace-nowrap"
+                          title={transportLabel(s.transport)}
+                        >
+                          {transportLabel(s.transport)}
+                        </Badge>
                         <Badge
                           variant="outline"
-                          className={s.source === "workspace" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : undefined}
+                          className={`max-w-[120px] shrink overflow-hidden text-ellipsis whitespace-nowrap ${
+                            s.source === "workspace" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ""
+                          }`}
+                          title={s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
                         >
                           {s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
                         </Badge>
                         {s.connected ? (
-                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[110px] shrink overflow-hidden text-ellipsis whitespace-nowrap border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                            title={t("mcp.connected")}
+                          >
                             {t("mcp.connected")}
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-muted-foreground">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[110px] shrink overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground"
+                            title={t("mcp.disconnected")}
+                          >
                             {t("mcp.disconnected")}
                           </Badge>
                         )}
@@ -479,17 +504,27 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
 
                       {s.description && (
                         <CardDescription className="max-w-3xl text-sm leading-6">
-                          {s.description}
+                          <span className="block truncate" title={s.description}>
+                            {s.description}
+                          </span>
                         </CardDescription>
                       )}
 
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <Badge variant="outline" className="gap-1">
+                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                        <Badge
+                          variant="outline"
+                          className="max-w-[170px] shrink gap-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                          title={s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
+                        >
                           <Wrench size={12} />
                           {s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
                         </Badge>
                         {s.has_instructions && (
-                          <Badge variant="outline" className="gap-1">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[120px] shrink gap-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                            title={t("mcp.instructions")}
+                          >
                             <Info size={12} />
                             {t("mcp.instructions")}
                           </Badge>
@@ -498,7 +533,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
                     {s.connected ? (
                       <Button
                         variant="outline"
@@ -553,9 +588,9 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                       <div className="grid gap-3 md:grid-cols-2">
                         {s.tools.map((tool) => (
                           <div key={tool.name} className="rounded-xl border bg-background/80 p-4">
-                            <div className="text-sm font-medium text-foreground">{tool.name}</div>
+                            <div className="truncate text-sm font-medium text-foreground" title={tool.name}>{tool.name}</div>
                             {tool.description && (
-                              <div className="mt-2 text-sm leading-6 text-muted-foreground">
+                              <div className="mt-2 truncate text-sm leading-6 text-muted-foreground" title={tool.description}>
                                 {tool.description}
                               </div>
                             )}

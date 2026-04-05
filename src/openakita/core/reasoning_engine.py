@@ -2250,7 +2250,19 @@ class ReasoningEngine:
                             react_trace, conversation_id, session_type,
                             f"reason_error: {str(e)[:100]}", _trace_started_at,
                         )
-                        yield {"type": "error", "message": f"推理失败: {str(e)[:300]}"}
+                        err_msg = str(e)[:500]
+                        user_msg = f"推理失败: {err_msg[:300]}"
+                        err_lower = err_msg.lower()
+                        if "image" in err_lower and (
+                            "width" in err_lower or "height" in err_lower
+                            or "size" in err_lower or "dimension" in err_lower
+                            or "larger than" in err_lower
+                        ):
+                            user_msg = (
+                                "图片处理失败：图片尺寸不符合模型要求。"
+                                "请使用宽高均大于 10 像素的图片重试。"
+                            )
+                        yield {"type": "error", "message": user_msg}
                         yield {"type": "done"}
                         return
 

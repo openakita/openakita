@@ -382,9 +382,9 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
       {/* Toolbar */}
       <Card className="gap-0 border-border/80 py-0 shadow-sm shrink-0">
         <CardContent className="p-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-1 flex-wrap items-center gap-2 md:gap-3">
-              <div className="relative flex-1 min-w-[200px] max-w-[320px]">
+          <div className="flex items-center justify-between gap-3 overflow-x-auto">
+            <div className="flex min-w-max items-center gap-2 md:gap-3">
+              <div className="relative w-[220px] min-w-[180px] md:w-[280px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 <Input
                   placeholder="搜索记忆内容..."
@@ -407,30 +407,36 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                 </SelectContent>
               </Select>
 
-              <Button variant="outline" onClick={loadMemories} disabled={loading} className="h-9 px-3">
+              <Button variant="outline" onClick={loadMemories} disabled={loading} className="h-9 px-3 shrink-0" title="刷新">
                 {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                {!isMobile && <span className="ml-1.5">刷新</span>}
+                {!isMobile && <span className="ml-1.5 hidden xl:inline">刷新</span>}
               </Button>
 
               {reviewing ? (
-                <Button onClick={handleCancelReview} variant="destructive" className="h-9 px-3">
-                  <Ban size={14} className="mr-1.5" /> 取消审查
+                <Button onClick={handleCancelReview} variant="destructive" className="h-9 px-3 shrink-0" title="取消审查">
+                  <Ban size={14} className="mr-1.5" />
+                  <span className="hidden xl:inline">取消审查</span>
+                  <span className="xl:hidden">取消</span>
                 </Button>
               ) : (
                 <Button
                   onClick={handleReviewConfirm}
-                  className="h-9 px-3 border-0 bg-gradient-to-br from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-500/20 hover:from-indigo-600 hover:to-purple-600"
+                  className="h-9 px-3 shrink-0 border-0 bg-gradient-to-br from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-500/20 hover:from-indigo-600 hover:to-purple-600"
+                  title="LLM 智能审查"
                 >
                   <Brain size={14} className="mr-1.5" />
-                  {isMobile ? "LLM 审查" : "LLM 智能审查"}
+                  <span className="hidden xl:inline">LLM 智能审查</span>
+                  <span className="xl:hidden">LLM 审查</span>
                 </Button>
               )}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-3">
               {selected.size > 0 && (
-                <Button variant="destructive" onClick={handleBatchDelete} className="h-9 px-3">
-                  <Trash2 size={14} className="mr-1.5" /> 删除 {selected.size} 条
+                <Button variant="destructive" onClick={handleBatchDelete} className="h-9 px-3 shrink-0" title={`删除 ${selected.size} 条`}>
+                  <Trash2 size={14} className="mr-1.5" />
+                  <span className="hidden xl:inline">删除 {selected.size} 条</span>
+                  <span className="xl:hidden">删除</span>
                 </Button>
               )}
 
@@ -440,13 +446,15 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                 value={viewMode}
                 onValueChange={(v) => { if (v) setViewMode(v as "list" | "graph"); }}
                 variant="outline"
-                className="justify-end"
+                className="shrink-0 justify-end"
               >
-                <ToggleGroupItem value="list" className="h-9 px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                  <List size={14} className="mr-1.5" /> 列表
+                <ToggleGroupItem value="list" className="h-9 px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground" title="列表">
+                  <List size={14} className="mr-1.5" />
+                  <span className="hidden xl:inline">列表</span>
                 </ToggleGroupItem>
-                <ToggleGroupItem value="graph" className="h-9 px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                  <Network size={14} className="mr-1.5" /> 图谱
+                <ToggleGroupItem value="graph" className="h-9 px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground" title="图谱">
+                  <Network size={14} className="mr-1.5" />
+                  <span className="hidden xl:inline">图谱</span>
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>
