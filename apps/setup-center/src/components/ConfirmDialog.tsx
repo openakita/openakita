@@ -10,9 +10,10 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+import type { ConfirmDialogState } from "@/hooks/useNotifications";
 
 type ConfirmDialogProps = {
-  dialog: { message: string; onConfirm: () => void } | null;
+  dialog: ConfirmDialogState | null;
   onClose: () => void;
 };
 
@@ -27,18 +28,18 @@ export function ConfirmDialog({ dialog, onClose }: ConfirmDialogProps) {
     <AlertDialog open={!!dialog} onOpenChange={(open) => { if (!open) onClose(); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("common.confirmTitle", { defaultValue: "确认操作" })}</AlertDialogTitle>
+          <AlertDialogTitle>{snapshot?.title || t("common.confirmTitle", { defaultValue: "确认操作" })}</AlertDialogTitle>
           <AlertDialogDescription className="whitespace-pre-wrap">
             {snapshot?.message}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+          <AlertDialogCancel>{snapshot?.cancelLabel || t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
-            variant="destructive"
+            variant={snapshot?.destructive !== false ? "destructive" : "default"}
             onClick={() => { snapshot?.onConfirm(); onClose(); }}
           >
-            {t("common.confirm")}
+            {snapshot?.confirmLabel || t("common.confirm")}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

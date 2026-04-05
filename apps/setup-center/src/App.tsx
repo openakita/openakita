@@ -49,7 +49,7 @@ import { copyToClipboard } from "./utils/clipboard";
 import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS } from "./constants";
 import { safeFetch } from "./providers";
 import {
-  slugify, joinPath, toFileUrl,
+  joinPath, toFileUrl,
   envGet, envSet,
 } from "./utils";
 // ═══════════════════════════════════════════════════════════════════════
@@ -220,7 +220,11 @@ export function App() {
   const [dangerAck, setDangerAck] = useState(false);
 
   // ── Restart overlay state ──
-  const [restartOverlay, setRestartOverlay] = useState<{ phase: "saving" | "restarting" | "waiting" | "done" | "fail" | "notRunning" } | null>(null);
+  const [restartOverlay, setRestartOverlay] = useState<{
+    phase: "saving" | "restarting" | "waiting" | "done" | "fail" | "notRunning";
+    hint?: string;
+    doneMessage?: string;
+  } | null>(null);
 
 
   // ── Service conflict & version state ──
@@ -500,9 +504,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // workspace create
-  const [newWsName, setNewWsName] = useState("默认工作区");
-  const newWsId = useMemo(() => slugify(newWsName) || "default", [newWsName]);
+  // workspace quick-create name is managed by Topbar via wsQuickName state
 
   // python / venv / install
   const [pythonCandidates, setPythonCandidates] = useState<PythonCandidate[]>([]);
@@ -1028,48 +1030,108 @@ export function App() {
     if (venvStatus.includes("安装完成")) setOpenakitaInstalled(true);
   }, [venvStatus]);
 
-  async function doCreateWorkspace() {
-    const _busyId = notifyLoading("创建工作区...");
-    try {
-      if (IS_WEB) {
-        notifyError("工作区管理暂不支持 Web 模式，请在桌面端操作");
-        return;
-      } else {
-        const ws = await invoke<WorkspaceSummary>("create_workspace", {
-          id: newWsId,
-          name: newWsName.trim(),
-          setCurrent: true,
-        });
-        await refreshAll();
-        setCurrentWorkspaceId(ws.id);
-      }
-      resetEnvLoaded();
-      notifySuccess(`已创建工作区：${newWsName.trim()}（${newWsId}）`);
-    } finally {
-      dismissLoading(_busyId);
+  /**
+   * Shared helper: show confirmation dialog before switching/creating workspace,
+   * then auto-restart the backend if it was running.
+   *
+   * Uses restartOverlay (not notifyLoading) so the heartbeat timer correctly
+   * pauses during the stop → start cycle and the UI is fully blocked.
+   */
+  function confirmWorkspaceChange(opts: {
+    targetId: string;
+    displayName: string;
+    title: string;
+    message: string;
+    performSwitch: () => Promise<void>;
+  }) {
+    const wasRunning = serviceStatus?.running;
+    const oldWsId = currentWorkspaceId || workspaces.find((w) => w.isCurrent)?.id;
+
+    let fullMessage = opts.message;
+    if (wasRunning) {
+      fullMessage += t("topbar.switchWorkspaceConfirmMsgRestart");
     }
+
+    setConfirmDialog({
+      title: opts.title,
+      message: fullMessage,
+      destructive: false,
+      onConfirm: async () => {
+        try {
+          await opts.performSwitch();
+          await refreshAll();
+          resetEnvLoaded();
+
+          if (!wasRunning || !IS_TAURI || !venvDir) {
+            notifySuccess(t("topbar.switchWorkspaceDone", { id: opts.targetId }));
+            return;
+          }
+
+          const hint = t("topbar.switchWorkspaceRestarting");
+          setRestartOverlay({ phase: "restarting", hint });
+
+          try {
+            await doStopService(oldWsId);
+            await waitForServiceDown("http://127.0.0.1:18900", 15000);
+          } catch { /* stop errors are non-fatal */ }
+
+          setRestartOverlay({ phase: "waiting", hint });
+
+          try {
+            const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>(
+              "openakita_service_start", { venvDir, workspaceId: opts.targetId },
+            );
+            setServiceStatus(ss);
+          } catch (e) {
+            setRestartOverlay({ phase: "fail" });
+            setTimeout(() => {
+              setRestartOverlay(null);
+              notifyError(t("topbar.switchWorkspaceRestartFail", { id: opts.targetId }) + ": " + String(e));
+            }, 2500);
+            return;
+          }
+
+          const ready = await waitForServiceReady("http://127.0.0.1:18900");
+          if (ready) {
+            setRestartOverlay({
+              phase: "done",
+              doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
+            });
+            setServiceStatus((prev) =>
+              prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+            );
+            try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
+            autoCheckEndpoints("http://127.0.0.1:18900");
+            setTimeout(() => setRestartOverlay(null), 1500);
+          } else {
+            setRestartOverlay({ phase: "fail" });
+            setTimeout(() => {
+              setRestartOverlay(null);
+              notifyError(t("topbar.switchWorkspaceRestartFail", { id: opts.targetId }));
+            }, 2500);
+          }
+        } catch (err: any) {
+          setRestartOverlay(null);
+          notifyError(String(err));
+        }
+      },
+    });
   }
 
   async function doSetCurrentWorkspace(id: string) {
-    const _busyId = notifyLoading("切换工作区...");
-    try {
-      const wasRunning = serviceStatus?.running;
-      if (IS_WEB) {
-        notifyError("工作区切换暂不支持 Web 模式，请在桌面端操作");
-        return;
-      } else {
-        await invoke("set_current_workspace", { id });
-      }
-      await refreshAll();
-      resetEnvLoaded();
-      if (wasRunning) {
-        notifySuccess(t("topbar.switchWorkspaceDoneRestart", { id }));
-      } else {
-        notifySuccess(t("topbar.switchWorkspaceDone", { id }));
-      }
-    } finally {
-      dismissLoading(_busyId);
+    if (IS_WEB) {
+      notifyError("工作区切换暂不支持 Web 模式，请在桌面端操作");
+      return;
     }
+    const target = workspaces.find((w) => w.id === id);
+    const displayName = target?.name || id;
+    confirmWorkspaceChange({
+      targetId: id,
+      displayName,
+      title: t("topbar.switchWorkspaceConfirmTitle"),
+      message: t("topbar.switchWorkspaceConfirmMsg", { name: displayName }),
+      performSwitch: () => invoke("set_current_workspace", { id }),
+    });
   }
 
   async function doDetectPython() {
@@ -4916,17 +4978,20 @@ export function App() {
           wsQuickName={wsQuickName}
           setWsQuickName={setWsQuickName}
           onCreateWorkspace={async (id, name) => {
-            try {
-              if (IS_WEB) {
-                notifyError("工作区管理暂不支持 Web 模式，请在桌面端操作");
-                return;
-              }
-              await invoke("create_workspace", { id, name, setCurrent: true });
-              await refreshAll();
-              setCurrentWorkspaceId(id);
-              resetEnvLoaded();
-              notifySuccess(`${name} (${id})`);
-            } catch (err: any) { notifyError(String(err)); }
+            if (IS_WEB) {
+              notifyError("工作区管理暂不支持 Web 模式，请在桌面端操作");
+              return;
+            }
+            confirmWorkspaceChange({
+              targetId: id,
+              displayName: name,
+              title: t("topbar.createWorkspaceConfirmTitle"),
+              message: t("topbar.createWorkspaceConfirmMsg", { name }),
+              performSwitch: async () => {
+                await invoke("create_workspace", { id, name, setCurrent: true });
+                setCurrentWorkspaceId(id);
+              },
+            });
           }}
           serviceRunning={serviceStatus?.running ?? false}
           endpointCount={endpointSummary.length}
@@ -5099,19 +5164,23 @@ export function App() {
                     </svg>
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 600, color: "#0e7490" }}>
-                    {restartOverlay.phase === "saving" && t("common.loading")}
-                    {restartOverlay.phase === "restarting" && t("config.restarting")}
-                    {restartOverlay.phase === "waiting" && t("config.restartWaiting")}
+                    {restartOverlay.hint
+                      ? restartOverlay.hint
+                      : <>
+                          {restartOverlay.phase === "saving" && t("common.loading")}
+                          {restartOverlay.phase === "restarting" && t("config.restarting")}
+                          {restartOverlay.phase === "waiting" && t("config.restartWaiting")}
+                        </>}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-                    {t("config.applyRestartHint")}
+                    {!restartOverlay.hint && t("config.applyRestartHint")}
                   </div>
                 </>
               )}
               {restartOverlay.phase === "done" && (
                 <>
                   <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><IconCheckCircle size={40} /></div>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: "#059669" }}>{t("config.restartSuccess")}</div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "#059669" }}>{restartOverlay.doneMessage || t("config.restartSuccess")}</div>
                 </>
               )}
               {restartOverlay.phase === "fail" && (
