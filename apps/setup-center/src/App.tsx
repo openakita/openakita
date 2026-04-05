@@ -5588,6 +5588,8 @@ function MainApp() {
         onClose={() => setBugReportOpen(false)}
         apiBase={httpApiBase()}
         onNavigateToMyFeedback={() => setView("my_feedback")}
+        serviceRunning={serviceStatus?.running ?? false}
+        currentWorkspaceId={currentWorkspaceId}
       />
     </div>
     </EnvFieldContext.Provider>

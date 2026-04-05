@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { downloadFile, showInFolder } from "../platform";
+import { downloadFile, showInFolder, invoke, IS_TAURI } from "../platform";
 import { IconX, IconInfo } from "../icons";
 import { safeFetch } from "../providers";
 import {
@@ -35,9 +35,11 @@ type FeedbackModalProps = {
   apiBase: string;
   initialMode?: FeedbackMode;
   onNavigateToMyFeedback?: () => void;
+  serviceRunning?: boolean;
+  currentWorkspaceId?: string | null;
 };
 
-export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onNavigateToMyFeedback }: FeedbackModalProps) {
+export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onNavigateToMyFeedback, serviceRunning = true, currentWorkspaceId }: FeedbackModalProps) {
   const { t } = useTranslation();
 
   const [mode, setMode] = useState<FeedbackMode>(initialMode);
@@ -84,8 +86,24 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     }
   }, [open, initialMode]);
 
+  const useOfflineIpc = IS_TAURI && !serviceRunning;
+
   useEffect(() => {
     if (!open) return;
+
+    if (useOfflineIpc) {
+      setSystemInfo({ os: navigator.userAgent, note: "collected_via_tauri_offline" });
+      const wsId = currentWorkspaceId || "default";
+      invoke<{ captcha_scene_id: string; captcha_prefix: string }>("get_feedback_config_offline", { workspaceId: wsId })
+        .then((cfg) => {
+          if (cfg.captcha_scene_id && cfg.captcha_prefix) {
+            setCaptchaCfg({ scene_id: cfg.captcha_scene_id, prefix: cfg.captcha_prefix });
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
     safeFetch(`${apiBase}/api/system-info`, { signal: AbortSignal.timeout(5000) })
       .then((r) => r.json())
       .then(setSystemInfo)
@@ -99,7 +117,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
         }
       })
       .catch(() => {});
-  }, [open, apiBase]);
+  }, [open, apiBase, useOfflineIpc, currentWorkspaceId]);
 
   useEffect(() => {
     if (!open || !captchaCfg) return;
@@ -209,6 +227,93 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     if (e.dataTransfer.files.length) addImages(e.dataTransfer.files);
   }, [addImages]);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imgs: File[] = [];
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imgs.push(file);
+      }
+    }
+    if (imgs.length > 0) {
+      addImages(imgs);
+    }
+  }, [addImages]);
+
+  const resetForm = useCallback(() => {
+    setMode(initialMode);
+    setTitle("");
+    setDescription("");
+    setSteps("");
+    setContactEmail("");
+    setImageFiles([]);
+    setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+    setUploadLogs(true);
+    setUploadDebug(true);
+    setSubmitResult(null);
+  }, [initialMode]);
+
+  const handleSubmitViaIpc = useCallback(async () => {
+    const reportId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    const wsId = currentWorkspaceId || "default";
+
+    setUploadProgress({ percent: 10, phase: "building", detail: t("feedback.progressPacking") });
+
+    const images: { filename: string; dataBase64: string }[] = [];
+    for (const f of imageFiles) {
+      const buf = await f.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      images.push({ filename: f.name, dataBase64: btoa(binary) });
+    }
+
+    const zipPath = await invoke<string>("build_feedback_zip", {
+      workspaceId: wsId,
+      reportId,
+      title: title.trim(),
+      description: description.trim(),
+      reportType: mode,
+      steps: steps.trim() || null,
+      contactEmail: contactEmail.trim() || null,
+      images: images.length > 0 ? images : null,
+    });
+
+    setUploadProgress({ percent: 35, phase: "uploading", detail: "上传反馈数据..." });
+
+    const result = await invoke<{ reportId: string; feedbackToken: string | null; issueUrl: string | null }>(
+      "upload_feedback_to_cloud",
+      {
+        workspaceId: wsId,
+        zipPath,
+        reportId,
+        reportType: mode,
+        title: title.trim(),
+        summary: description.trim().slice(0, 2000),
+        captchaVerifyParam: captchaTokenRef.current || "none",
+        contactEmail: contactEmail.trim(),
+      },
+    );
+
+    setUploadProgress({ percent: 90, phase: "saving", detail: "保存本地记录..." });
+
+    await invoke("save_pending_feedback", {
+      record: {
+        reportId: result.reportId,
+        feedbackToken: result.feedbackToken,
+        title: title.trim(),
+        reportType: mode,
+        contactEmail: contactEmail.trim(),
+        submittedAt: new Date().toISOString(),
+        issueUrl: result.issueUrl,
+      },
+    });
+
+    return result;
+  }, [currentWorkspaceId, title, description, mode, steps, contactEmail, imageFiles, t]);
+
   const handleSubmit = useCallback(async () => {
     if (submittingRef.current) return;
     if (!title.trim() || !description.trim()) return;
@@ -227,6 +332,21 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     abortRef.current = controller;
 
     try {
+      // Offline IPC path: backend is down, submit via Tauri Rust commands
+      if (useOfflineIpc) {
+        try {
+          await handleSubmitViaIpc();
+          setUploadProgress(null);
+          resetForm();
+          setPhase("success");
+        } catch (err: any) {
+          setUploadProgress(null);
+          setSubmitResult({ ok: false, msg: err?.message || err?.toString() || t("feedback.uploadFailedNetwork") });
+          setPhase("form");
+        }
+        return;
+      }
+
       const form = new FormData();
       form.append("title", title.trim());
       form.append("description", description.trim());
@@ -342,7 +462,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
       abortRef.current = null;
       setSubmitting(false);
     }
-  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, contactWechat, imageFiles, apiBase, t]);
+  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, contactWechat, imageFiles, apiBase, t, resetForm, useOfflineIpc, handleSubmitViaIpc]);
 
   handleSubmitRef.current = handleSubmit;
 
