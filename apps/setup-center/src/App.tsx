@@ -4753,7 +4753,13 @@ export function App() {
           <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「工具与技能」配置中启用</p>
             </div>
           ) : (
-            <MCPView serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl} />
+            <MCPView
+              serviceRunning={serviceStatus?.running ?? false}
+              apiBaseUrl={apiBaseUrl}
+              envDraft={envDraft}
+              onEnvChange={setEnvDraft}
+              onSaveEnvKeys={async (keys) => { await saveEnvKeys(keys); }}
+            />
       );
     }
     if (view === "plugins") {

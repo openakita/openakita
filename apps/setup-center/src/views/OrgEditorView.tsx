@@ -321,7 +321,13 @@ export function OrgEditorView({
 
   useEffect(() => {
     if (visible) {
-      fetchOrgList();
+      fetchOrgList().then(() => {
+        if (!selectedOrgId) {
+          const params = new URLSearchParams(window.location.search);
+          const urlOrg = params.get("org");
+          if (urlOrg) setSelectedOrgId(urlOrg);
+        }
+      });
       fetchTemplates();
       fetchMcpServers();
       fetchAvailableSkills();
@@ -793,6 +799,9 @@ export function OrgEditorView({
       return [...prev, orgNodeToFlowNode(newNode)];
     });
     setSelectedNodeId(newId);
+    setSelectedEdgeId(null);
+    setRightPanel("node");
+    setPropsTab("overview");
     setNewNodeTitle("");
     setNewNodeDept("");
     setShowNewNodeForm(false);
@@ -1085,6 +1094,9 @@ export function OrgEditorView({
     };
     setNodes((prev) => [...prev, orgNodeToFlowNode(newNode)]);
     setSelectedNodeId(newId);
+    setSelectedEdgeId(null);
+    setRightPanel("node");
+    setPropsTab("overview");
     setContextMenu(null);
   }, [nodes, contextMenu, setNodes]);
 
@@ -1268,7 +1280,7 @@ export function OrgEditorView({
               }}
               nodeTypes={nodeTypes}
               connectOnClick
-              connectionLineStyle={{ stroke: "var(--primary)", strokeWidth: 2, strokeDasharray: "6 3" }}
+              connectionLineStyle={{ stroke: "#6366f1", strokeWidth: 2.5, strokeDasharray: "6 3" }}
               fitView
               snapToGrid
               snapGrid={[20, 20]}
@@ -1668,6 +1680,22 @@ export function OrgEditorView({
               animation: orgDotPulse 1.5s ease-in-out infinite;
             }
 
+            /* ── Node handle styling ── */
+            .org-handle {
+              width: 10px !important;
+              height: 10px !important;
+              background: #6366f1 !important;
+              border: 2px solid #fff !important;
+              border-radius: 50% !important;
+              transition: all 0.2s ease;
+            }
+            .org-handle:hover {
+              width: 14px !important;
+              height: 14px !important;
+              background: #4f46e5 !important;
+              box-shadow: 0 0 0 3px rgba(99,102,241,0.3), 0 0 8px rgba(99,102,241,0.4) !important;
+            }
+
             /* ── Canvas toolbar (inside ReactFlow) ── */
             .org-canvas-toolbar {
               display: flex; align-items: center; gap: 4px;
@@ -1793,6 +1821,23 @@ export function OrgEditorView({
             .bb-entry-content th { font-weight: 600; background: var(--hover-bg); }
             .bb-entry-content hr { border: none; border-top: 1px solid var(--line); margin: 6px 0; }
             .bb-entry-content a { color: var(--primary); text-decoration: underline; }
+
+            /* ── Save button feedback ── */
+            .org-save-btn {
+              transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            .org-save-btn:active:not(:disabled) {
+              transform: scale(0.92);
+              box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
+            }
+            .org-save-btn--saving {
+              animation: orgSavePulse 0.8s ease-in-out infinite;
+              pointer-events: none;
+            }
+            @keyframes orgSavePulse {
+              0%, 100% { opacity: 1; }
+              50% { opacity: 0.6; }
+            }
 
             /* ── Auto-save status indicator ── */
             .org-save-indicator {

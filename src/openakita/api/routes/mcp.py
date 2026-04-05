@@ -15,6 +15,7 @@ import logging
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from openakita.tools.mcp_catalog import MCPConfigField
 from openakita.tools.mcp_workspace import (
     add_server_to_workspace,
     remove_server_from_workspace,
@@ -22,6 +23,50 @@ from openakita.tools.mcp_workspace import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _check_config_status(
+    schema: list[MCPConfigField],
+) -> tuple[dict[str, bool], bool]:
+    """Return per-key filled status and overall completeness for a config schema.
+
+    Clears the env-file cache first so newly saved values are always picked up.
+    """
+    import os
+    from pathlib import Path
+
+    from openakita.tools.mcp_catalog import clear_env_file_cache, _read_nearest_env_values
+
+    from openakita.config import settings
+
+    clear_env_file_cache()
+    env_vals = _read_nearest_env_values(Path(settings.project_root))
+
+    status: dict[str, bool] = {}
+    for f in schema:
+        val = env_vals.get(f.key) or os.environ.get(f.key) or ""
+        status[f.key] = bool(val.strip())
+
+    complete = all(status[f.key] for f in schema if f.required)
+    return status, complete
+
+
+def _serialize_config_schema(schema: list[MCPConfigField]) -> list[dict]:
+    return [
+        {
+            "key": f.key,
+            "label": f.label,
+            "type": f.type,
+            "required": f.required,
+            "help": f.help,
+            "helpUrl": f.help_url,
+            "default": f.default,
+            "placeholder": f.placeholder,
+            "options": f.options,
+            "when": f.when if f.when else None,
+        }
+        for f in schema
+    ]
 
 router = APIRouter()
 
@@ -106,6 +151,9 @@ async def list_mcp_servers(request: Request):
         workspace_dir = settings.mcp_config_path / name
         source = "workspace" if workspace_dir.exists() else "builtin"
 
+        schema = catalog_info.config_schema if catalog_info else []
+        config_status, config_complete = _check_config_status(schema) if schema else ({}, True)
+
         servers.append({
             "name": name,
             "description": server_config.description if server_config else "",
@@ -126,6 +174,9 @@ async def list_mcp_servers(request: Request):
             "catalog_tool_count": len(catalog_info.tools) if catalog_info else 0,
             "source": source,
             "removable": source == "workspace",
+            "config_schema": _serialize_config_schema(schema),
+            "config_status": config_status,
+            "config_complete": config_complete,
         })
 
     return {
@@ -151,6 +202,25 @@ async def connect_mcp_server(request: Request, body: MCPConnectRequest):
             "server": body.server_name,
             "tools": [{"name": t.name, "description": t.description} for t in tools],
         }
+
+    catalog = _get_mcp_catalog(request)
+    if catalog:
+        server_info = catalog.get_server(body.server_name)
+        if server_info and server_info.config_schema:
+            config_status, config_complete = _check_config_status(server_info.config_schema)
+            if not config_complete:
+                missing = [
+                    {"key": f.key, "label": f.label or f.key}
+                    for f in server_info.config_schema
+                    if f.required and not config_status.get(f.key)
+                ]
+                labels = ", ".join(m["label"] for m in missing)
+                return {
+                    "status": "config_incomplete",
+                    "server": body.server_name,
+                    "missing_fields": missing,
+                    "message": f"请先完成配置：缺少 {labels}",
+                }
 
     from openakita.tools.mcp_workspace import prepare_chrome_devtools_args
     await prepare_chrome_devtools_args(client, body.server_name)

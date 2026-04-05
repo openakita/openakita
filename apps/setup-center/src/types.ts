@@ -304,6 +304,21 @@ export type SlashCommand = {
   action: (args: string) => void;
 };
 
+// ─── MCP config types ───
+
+export type MCPConfigField = {
+  key: string;
+  label: string;
+  type: "text" | "secret" | "number" | "select" | "bool" | "url" | "path";
+  required?: boolean;
+  help?: string;
+  helpUrl?: string;
+  default?: string | number | boolean;
+  placeholder?: string;
+  options?: string[];
+  when?: Record<string, string> | null;
+};
+
 // ─── Skill types ───
 
 export type SkillConfigField = {
