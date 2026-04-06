@@ -1,0 +1,213 @@
+name: Backfill OSS (历史版本回填)
+
+# 一次性工作流：将 GitHub Releases 中的历史版本回填到阿里云 OSS
+#   1. 遍历所有 GitHub Releases，生成 manifest (api/*.json)
+#   2. 下载每个版本的安装包，上传到 OSS ({tag}/ 目录)
+#   3. 上传所有 manifest 到 OSS (api/ 目录)
+#
+# 可选择只生成 manifest（不上传安装包），适合先预览再决定。
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_binaries:
+        description: "是否同时上传安装包到 OSS（大量带宽，首次回填使用）"
+        required: true
+        default: true
+        type: boolean
+      min_version:
+        description: "最低版本号（不含 v 前缀，如 1.20.0），跳过更旧的版本"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "仅预览，不上传任何文件"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+      OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+      OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+      CDN_DOMAIN: ${{ secrets.ALIYUN_OSS_CDN_DOMAIN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Generate all manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CDN_ARGS=""
+          if [ -n "${CDN_DOMAIN}" ]; then
+            CDN_ARGS="--cdn-base-url https://${CDN_DOMAIN}"
+          fi
+
+          python scripts/backfill_versions.py \
+            --repo "${{ github.repository }}" \
+            --output-dir ./backfill-out \
+            ${CDN_ARGS}
+
+          echo "=== Generated files ==="
+          find ./backfill-out -type f -name '*.json' | sort
+          echo ""
+          echo "=== versions.json summary ==="
+          python -c "
+          import json
+          idx = json.load(open('backfill-out/api/versions.json'))
+          for ch in ['release','pre_release','dev']:
+              entries = idx.get(ch, [])
+              print(f'  {ch}: {len(entries)} versions')
+              for e in entries[:3]:
+                  print(f'    - v{e[\"version\"]} ({e[\"pub_date\"][:10]})')
+              if len(entries) > 3:
+                  print(f'    ... and {len(entries)-3} more')
+          "
+
+      - name: Install ossutil
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+          ossutil config \
+            -e "${OSS_ENDPOINT}" \
+            -i "${OSS_ACCESS_KEY_ID}" \
+            -k "${OSS_ACCESS_KEY_SECRET}"
+
+      - name: Upload binaries to OSS
+        if: ${{ inputs.upload_binaries == true && inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          MIN_VER="${{ inputs.min_version }}"
+          TOTAL_UPLOADED=0
+          TOTAL_SKIPPED=0
+
+          for release_json in backfill-out/api/releases/*.json; do
+            [ -f "$release_json" ] || continue
+            VERSION=$(python -c "import json; print(json.load(open('$release_json'))['version'])")
+            TAG="v${VERSION}"
+
+            # Skip versions below min_version
+            if [ -n "$MIN_VER" ]; then
+              SKIP=$(python -c "
+          v=list(map(int,'${VERSION}'.replace('x','0').split('.')[:3]))
+          m=list(map(int,'${MIN_VER}'.replace('x','0').split('.')[:3]))
+          print('true' if v<m else 'false')
+          " 2>/dev/null || echo "false")
+              if [ "$SKIP" = "true" ]; then
+                echo "⏭️  Skipping ${TAG} (below min_version ${MIN_VER})"
+                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                continue
+              fi
+            fi
+
+            echo "📦 Processing ${TAG}..."
+            mkdir -p /tmp/release-assets
+            rm -rf /tmp/release-assets/*
+
+            gh release download "${TAG}" \
+              --repo "${{ github.repository }}" \
+              --dir /tmp/release-assets \
+              --pattern "*.exe" --pattern "*.dmg" --pattern "*.deb" \
+              --pattern "*.AppImage" --pattern "*.appimage" \
+              --pattern "*.app.tar.gz" --pattern "*.sig" \
+              --pattern "*.apk" --pattern "*.ipa" \
+              --clobber 2>/dev/null || {
+                echo "  ⚠️  Failed to download assets for ${TAG}, skipping"
+                TOTAL_SKIPPED=$((TOTAL_SKIPPED + 1))
+                continue
+              }
+
+            ASSET_COUNT=$(ls /tmp/release-assets 2>/dev/null | wc -l)
+            if [ "$ASSET_COUNT" -eq 0 ]; then
+              echo "  No downloadable assets for ${TAG}"
+              continue
+            fi
+
+            for file in /tmp/release-assets/*; do
+              [ -f "$file" ] || continue
+              FILENAME="$(basename "$file")"
+              ossutil cp "$file" "oss://${OSS_BUCKET}/${TAG}/${FILENAME}" -f
+            done
+            echo "  ✅ Uploaded ${ASSET_COUNT} asset(s) for ${TAG}"
+            TOTAL_UPLOADED=$((TOTAL_UPLOADED + ASSET_COUNT))
+          done
+
+          echo ""
+          echo "=== Binary upload summary ==="
+          echo "  Uploaded: ${TOTAL_UPLOADED} files"
+          echo "  Skipped versions: ${TOTAL_SKIPPED}"
+
+      - name: Upload manifests to OSS
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -euo pipefail
+          CC="Cache-Control:public, max-age=60"
+          MD="./backfill-out/api"
+
+          # Per-version manifests
+          MANIFEST_COUNT=0
+          for f in "${MD}"/releases/*.json; do
+            [ -f "$f" ] || continue
+            FNAME="$(basename "$f")"
+            ossutil cp "$f" "oss://${OSS_BUCKET}/api/releases/${FNAME}" -f --meta "${CC}"
+            MANIFEST_COUNT=$((MANIFEST_COUNT + 1))
+          done
+          echo "✅ Uploaded ${MANIFEST_COUNT} per-version manifests"
+
+          # Channel manifests
+          for f in "${MD}"/release.json "${MD}"/pre-release.json "${MD}"/dev.json; do
+            if [ -f "$f" ]; then
+              FNAME="$(basename "$f")"
+              ossutil cp "$f" "oss://${OSS_BUCKET}/api/${FNAME}" -f --meta "${CC}"
+              echo "✅ Uploaded api/${FNAME}"
+            fi
+          done
+
+          # latest.json (Tauri updater compat)
+          if [ -f "${MD}/latest.json" ]; then
+            ossutil cp "${MD}/latest.json" "oss://${OSS_BUCKET}/api/latest.json" -f --meta "${CC}"
+            echo "✅ Uploaded api/latest.json (Tauri updater compat)"
+          fi
+
+          # versions.json (index)
+          if [ -f "${MD}/versions.json" ]; then
+            ossutil cp "${MD}/versions.json" "oss://${OSS_BUCKET}/api/versions.json" -f --meta "${CC}"
+            echo "✅ Uploaded api/versions.json"
+          fi
+
+      - name: Summary
+        run: |
+          echo "## Backfill Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "🔍 **Dry run** — no files uploaded" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ Manifests uploaded to OSS" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs.upload_binaries }}" = "true" ]; then
+              echo "✅ Binaries uploaded to OSS" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "ℹ️ Binaries not uploaded (use upload_binaries=true)" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Generated manifests" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          find ./backfill-out -type f -name '*.json' | sort >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

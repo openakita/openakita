@@ -1,0 +1,313 @@
+name: Mobile Build (Android + iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach artifacts to (e.g. v1.2.7). Leave empty to skip release upload."
+        required: false
+        default: ""
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RELEASE_TAG: ${{ (github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag) || github.ref_name }}
+
+jobs:
+  # ── Android APK ──
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: apps/setup-center
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/setup-center/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION, Build: ${{ github.run_number }}"
+
+      - name: Build web assets (Capacitor)
+        run: npm run build:cap
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Decode keystore (if available)
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build signed APK
+        if: steps.keystore.outputs.has_keystore == 'true'
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        working-directory: apps/setup-center/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/apps/setup-center/android/app/release.keystore \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEY_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD" \
+            -Pandroid.injected.version.code=${{ steps.version.outputs.code }} \
+            -Pandroid.injected.version.name=${{ steps.version.outputs.name }}
+
+      - name: Build debug APK (fallback)
+        if: steps.keystore.outputs.has_keystore == 'false'
+        working-directory: apps/setup-center/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug \
+            -Pandroid.injected.version.code=${{ steps.version.outputs.code }} \
+            -Pandroid.injected.version.name=${{ steps.version.outputs.name }}
+
+      - name: Find APK
+        id: find_apk
+        run: |
+          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          echo "apk_path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Found APK: $APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-apk
+          path: apps/setup-center/${{ steps.find_apk.outputs.apk_path }}
+
+      - name: Upload APK to Release
+        if: startsWith(env.RELEASE_TAG, 'v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="${{ steps.find_apk.outputs.apk_path }}"
+          BASENAME="OpenAkita-${{ env.RELEASE_TAG }}-android.apk"
+          cp "$APK" "$BASENAME"
+          gh release upload "${{ env.RELEASE_TAG }}" "$BASENAME" --clobber || true
+
+  # ── iOS IPA ──
+  ios:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: apps/setup-center
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/setup-center/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION, Build: ${{ github.run_number }}"
+
+      - name: Build web assets (Capacitor)
+        run: npm run build:cap
+
+      - name: Install iOS platform
+        run: npm install @capacitor/ios --save && npx cap add ios
+
+      - name: Replace iOS app icon
+        run: |
+          ICON_SRC=ios-icon
+          ICON_DST=ios/App/App/Assets.xcassets/AppIcon.appiconset
+          if [ -d "$ICON_SRC" ] && [ -d "$ICON_DST" ]; then
+            cp "$ICON_SRC"/AppIcon-1024.png "$ICON_DST"/
+            cp "$ICON_SRC"/Contents.json "$ICON_DST"/
+            echo "iOS app icon replaced"
+          else
+            echo "Icon source or destination not found, skipping"
+          fi
+
+      - name: Allow HTTP connections (ATS)
+        run: |
+          PLIST=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST" 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c "Set :NSAppTransportSecurity:NSAllowsArbitraryLoads true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c "Set :NSAppTransportSecurity:NSAllowsLocalNetworking true" "$PLIST"
+          echo "ATS configured to allow HTTP connections"
+
+      - name: Set iOS version
+        run: |
+          PLIST=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.name }}" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.code }}" "$PLIST"
+          echo "iOS version: ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})"
+
+      - name: Sync Capacitor iOS
+        run: npx cap sync ios
+
+      - name: Check iOS signing secrets
+        id: ios_signing
+        env:
+          IOS_CERT: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_PP: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -n "$IOS_CERT" ] && [ -n "$IOS_PP" ]; then
+            echo "has_signing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_signing=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import signing certificate
+        if: steps.ios_signing.outputs.has_signing == 'true'
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PW=$(openssl rand -hex 12)
+
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Import provisioning profile
+        id: pp
+        if: steps.ios_signing.outputs.has_signing == 'true'
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PP_PATH=$RUNNER_TEMP/profile.mobileprovision
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          PP_XML=$(security cms -D -i "$PP_PATH")
+          UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<< "$PP_XML")
+          PP_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< "$PP_XML")
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$UUID".mobileprovision
+          echo "uuid=$UUID" >> "$GITHUB_OUTPUT"
+          echo "name=$PP_NAME" >> "$GITHUB_OUTPUT"
+          echo "Installed profile: $PP_NAME ($UUID)"
+
+      - name: Build iOS archive
+        if: steps.ios_signing.outputs.has_signing == 'true'
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          PP_UUID: ${{ steps.pp.outputs.uuid }}
+        working-directory: apps/setup-center/ios/App
+        run: |
+          xcodebuild archive \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -archivePath $RUNNER_TEMP/App.xcarchive \
+            -destination "generic/platform=iOS" \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE="$PP_UUID" \
+            -allowProvisioningUpdates
+
+      - name: Export IPA
+        if: steps.ios_signing.outputs.has_signing == 'true'
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          PP_NAME: ${{ steps.pp.outputs.name }}
+        run: |
+          cat > $RUNNER_TEMP/ExportOptions.plist << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>${IOS_TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.openakita.mobile</key>
+              <string>${PP_NAME}</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath $RUNNER_TEMP/App.xcarchive \
+            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
+            -exportPath $RUNNER_TEMP/ipa
+
+      - name: Build unsigned (debug)
+        if: steps.ios_signing.outputs.has_signing == 'false'
+        working-directory: apps/setup-center/ios/App
+        run: |
+          xcodebuild build \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath $RUNNER_TEMP/ios-build || true
+
+      - name: Upload IPA artifact
+        if: steps.ios_signing.outputs.has_signing == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-ipa
+          path: ${{ runner.temp }}/ipa/*.ipa
+
+      - name: Upload IPA to Release
+        if: steps.ios_signing.outputs.has_signing == 'true' && startsWith(env.RELEASE_TAG, 'v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IPA=$(find $RUNNER_TEMP/ipa -name '*.ipa' | head -1)
+          BASENAME="OpenAkita-${{ env.RELEASE_TAG }}-ios.ipa"
+          cp "$IPA" "$BASENAME"
+          gh release upload "${{ env.RELEASE_TAG }}" "$BASENAME" --clobber || true
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true
+

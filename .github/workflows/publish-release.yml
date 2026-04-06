@@ -1,0 +1,311 @@
+name: Publish Release
+
+# 发布流程（构建自动，渠道自动推断）：
+#   1. 推送 tag → release.yml / mobile.yml 自动构建，产物上传到 draft Release
+#   2. 所有构建完成后 → 手动运行此工作流，指定 tag → 自动推断渠道 → 发布 + 生成 manifest + 上传 OSS
+#
+# 渠道推断规则（基于 .github/release-channels.json）：
+#   - tag 的 minor 版本匹配 release → "release" (稳定版)
+#   - tag 的 minor 版本匹配 pre-release → "pre-release" (抢先版)
+#   - 其他 → "dev" (开发版)
+#   - 可通过 channel 输入手动覆盖
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v1.25.9）"
+        required: true
+        type: string
+      channel:
+        description: "发布渠道（默认自动推断，手动可覆盖）"
+        required: false
+        type: choice
+        default: auto
+        options:
+          - auto
+          - release
+          - pre-release
+          - dev
+      force_update:
+        description: "强制覆盖渠道 manifest（跳过版本号比较，用于发布旧版本补丁）"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+      HAS_OSS_KEY: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      # ── 自动推断发布渠道 ──
+      - name: Detect release channel
+        run: |
+          TAG="${{ inputs.tag }}"
+          MANUAL="${{ inputs.channel }}"
+
+          if [ "$MANUAL" != "auto" ] && [ -n "$MANUAL" ]; then
+            echo "CHANNEL=${MANUAL}" >> "$GITHUB_ENV"
+            echo "✅ Using manual channel override: ${MANUAL}"
+            exit 0
+          fi
+
+          MINOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f1,2)
+          CONFIG=".github/release-channels.json"
+
+          if [ ! -f "$CONFIG" ]; then
+            echo "⚠️ No release-channels.json found, defaulting to dev"
+            echo "CHANNEL=dev" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          RELEASE_LINE=$(jq -r '.release // ""' "$CONFIG")
+          PREVIEW_LINE=$(jq -r '."pre-release" // ""' "$CONFIG")
+
+          if [ "$MINOR" = "$RELEASE_LINE" ]; then
+            CHANNEL="release"
+          elif [ "$MINOR" = "$PREVIEW_LINE" ]; then
+            CHANNEL="pre-release"
+          else
+            CHANNEL="dev"
+          fi
+
+          echo "CHANNEL=${CHANNEL}" >> "$GITHUB_ENV"
+          echo "✅ Auto-detected channel: ${CHANNEL} (tag=${TAG}, minor=${MINOR}, release_line=${RELEASE_LINE}, preview_line=${PREVIEW_LINE})"
+
+      # ── 验证 Release 存在（构建工作流应已创建 draft） ──
+      - name: Verify release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "❌ Release $TAG not found."
+            echo "Please ensure the build workflow (Release / Mobile Build) has completed first."
+            exit 1
+          fi
+          echo "✅ Release $TAG exists"
+
+      # ── 发布 Release：移除 draft 标记，设置 latest / prerelease 标志 ──
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+
+          case "$CHANNEL" in
+            release)
+              LATEST_FLAG="--latest"
+              PRERELEASE_FLAG="--prerelease=false"
+              CHANNEL_LABEL="稳定版"
+              ;;
+            pre-release)
+              LATEST_FLAG="--latest=false"
+              PRERELEASE_FLAG="--prerelease"
+              CHANNEL_LABEL="抢先版"
+              ;;
+            dev)
+              LATEST_FLAG="--latest=false"
+              PRERELEASE_FLAG="--prerelease"
+              CHANNEL_LABEL="开发版"
+              ;;
+          esac
+
+          gh release edit "$TAG" \
+            --repo "${{ github.repository }}" \
+            --draft=false \
+            --title "${TAG} [${CHANNEL_LABEL}]" \
+            ${PRERELEASE_FLAG} \
+            ${LATEST_FLAG}
+          echo "✅ Release ${TAG} published as ${CHANNEL} [${CHANNEL_LABEL}]"
+
+      # ── 生成 manifest（channel / per-version / versions.json / latest.json compat） ──
+      - name: Generate release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          FORCE="${{ inputs.force_update }}"
+          echo "Tag: ${TAG}, Channel: ${CHANNEL}, Force: ${FORCE}"
+
+          CDN_ARGS=""
+          if [ -n "${HAS_OSS_KEY}" ]; then
+            CDN_ARGS="--cdn-base-url https://${{ secrets.ALIYUN_OSS_CDN_DOMAIN }}"
+          fi
+
+          EXISTING_INDEX_ARGS=""
+          INDEX_URL=""
+          if [ -n "${HAS_OSS_KEY}" ]; then
+            INDEX_URL="https://${{ secrets.ALIYUN_OSS_CDN_DOMAIN }}/api/versions.json"
+          else
+            INDEX_URL="https://openakita.ai/api/versions.json"
+          fi
+          if curl -sf "${INDEX_URL}" -o existing-versions.json 2>/dev/null; then
+            EXISTING_INDEX_ARGS="--existing-index existing-versions.json"
+            echo "Loaded existing versions.json"
+          else
+            echo "No existing versions.json found, will create new"
+          fi
+
+          python scripts/generate_release_manifest.py \
+            --tag "${TAG}" \
+            --channel "${CHANNEL}" \
+            --output-dir ./manifest-out \
+            --repo "${{ github.repository }}" \
+            ${CDN_ARGS} \
+            ${EXISTING_INDEX_ARGS}
+
+          NEW_VER=$(python -c "import json; print(json.load(open('manifest-out/${CHANNEL}.json'))['version'])")
+          echo "Generated manifest for version: ${NEW_VER}"
+
+          SHOULD_UPDATE="true"
+          if [ "$CHANNEL" = "release" ] && [ "$FORCE" != "true" ]; then
+            RELEASE_URL="${INDEX_URL%versions.json}release.json"
+            if curl -sf "${RELEASE_URL}" -o existing-release.json 2>/dev/null; then
+              OLD_VER=$(python -c "import json; print(json.load(open('existing-release.json'))['version'])" 2>/dev/null || echo "0.0.0")
+              echo "Existing release version: ${OLD_VER}"
+              IS_OLDER=$(python -c "
+          old=list(map(int,'${OLD_VER}'.split('.')[:3]))
+          new=list(map(int,'${NEW_VER}'.split('.')[:3]))
+          print('true' if new<old else 'false')
+          ")
+              if [ "$IS_OLDER" = "true" ]; then
+                echo "⏭️ Skipping channel manifest update: ${NEW_VER} < ${OLD_VER} (use force_update to override)"
+                SHOULD_UPDATE="false"
+              elif [ "${NEW_VER}" = "${OLD_VER}" ]; then
+                echo "🔄 Same version ${NEW_VER}, will overwrite (re-publish)"
+              fi
+            fi
+          fi
+          echo "SHOULD_UPDATE_CHANNEL=${SHOULD_UPDATE}" >> "$GITHUB_ENV"
+
+          echo "=== channel manifest ==="
+          cat "manifest-out/${CHANNEL}.json"
+
+      - name: Upload manifest as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+            "manifest-out/${CHANNEL}.json" --clobber \
+            || echo "Warning: failed to upload manifest asset"
+
+      # ── 下载 Release 资产（安装包 + 签名，含移动端） ──
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p /tmp/release-assets
+          gh release download "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --dir /tmp/release-assets \
+            --pattern "*.exe" --pattern "*.dmg" --pattern "*.deb" \
+            --pattern "*.AppImage" --pattern "*.appimage" \
+            --pattern "*.app.tar.gz" --pattern "*.sig" \
+            --pattern "*.apk" --pattern "*.ipa" \
+            --clobber || true
+          echo "Downloaded $(ls /tmp/release-assets 2>/dev/null | wc -l) asset(s)"
+
+      # ── 上传安装包 + manifest 到阿里云 OSS（国内加速） ──
+      - name: Upload to Aliyun OSS
+        if: ${{ env.HAS_OSS_KEY != '' }}
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+        run: |
+          set -euo pipefail
+
+          curl -fsSL https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+          ossutil config \
+            -e "${OSS_ENDPOINT}" \
+            -i "${OSS_ACCESS_KEY_ID}" \
+            -k "${OSS_ACCESS_KEY_SECRET}"
+
+          TAG="${{ inputs.tag }}"
+          CC="Cache-Control:public, max-age=60"
+          MD="$GITHUB_WORKSPACE/manifest-out"
+
+          # 1) 上传安装包到 OSS（按 tag 组织目录）
+          ASSET_COUNT=0
+          for file in /tmp/release-assets/*; do
+            [ -f "$file" ] || continue
+            FILENAME="$(basename "$file")"
+            echo "  Uploading asset: ${FILENAME}"
+            ossutil cp "$file" "oss://${OSS_BUCKET}/${TAG}/${FILENAME}" -f
+            ASSET_COUNT=$((ASSET_COUNT + 1))
+          done
+          echo "Uploaded ${ASSET_COUNT} asset(s) to OSS (${OSS_BUCKET}/${TAG}/)"
+
+          # 2) Per-version manifest (always upload)
+          for f in "${MD}"/releases/*.json; do
+            [ -f "$f" ] || continue
+            FNAME="$(basename "$f")"
+            ossutil cp "$f" "oss://${OSS_BUCKET}/api/releases/${FNAME}" -f --meta "${CC}"
+            echo "✅ Uploaded api/releases/${FNAME}"
+          done
+
+          # 3) Channel manifest (if should update)
+          if [ "${SHOULD_UPDATE_CHANNEL}" = "true" ]; then
+            CHANNEL_FILE="${MD}/${CHANNEL}.json"
+            if [ -f "$CHANNEL_FILE" ]; then
+              ossutil cp "$CHANNEL_FILE" "oss://${OSS_BUCKET}/api/${CHANNEL}.json" -f --meta "${CC}"
+              echo "✅ Uploaded api/${CHANNEL}.json"
+            fi
+            # Tauri updater compat (latest.json) for release channel
+            if [ "$CHANNEL" = "release" ] && [ -f "${MD}/latest.json" ]; then
+              ossutil cp "${MD}/latest.json" "oss://${OSS_BUCKET}/api/latest.json" -f --meta "${CC}"
+              echo "✅ Uploaded api/latest.json (Tauri updater compat)"
+            fi
+          fi
+
+          # 4) Version index (always upload)
+          if [ -f "${MD}/versions.json" ]; then
+            ossutil cp "${MD}/versions.json" "oss://${OSS_BUCKET}/api/versions.json" -f --meta "${CC}"
+            echo "✅ Uploaded api/versions.json"
+          fi
+
+      # ── 推送到官网仓库（回退方案，仅在未配置 OSS 时使用） ──
+      - name: Push to website repo (fallback)
+        if: ${{ env.HAS_OSS_KEY == '' && env.HAS_WEBSITE_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+        run: |
+          MD="$GITHUB_WORKSPACE/manifest-out"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/openakita/openakita-web.git" /tmp/openakita-web
+          mkdir -p /tmp/openakita-web/api/releases
+          cd /tmp/openakita-web
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          for f in "${MD}"/*.json; do [ -f "$f" ] && cp "$f" api/; done
+          for f in "${MD}"/releases/*.json; do [ -f "$f" ] && cp "$f" api/releases/; done
+          git add api/
+
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update manifest for ${{ inputs.tag }} (${CHANNEL})"
+            git push
+            echo "✅ Pushed to openakita-web"
+          else
+            echo "No changes to push"
+          fi
