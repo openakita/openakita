@@ -48,6 +48,10 @@ AGENT_CACHE_TTL = 600
 _CIRCUIT_BREAKER_THRESHOLD = 3
 _ORG_QUOTA_PAUSE_THRESHOLD = 2
 
+_LIM_EVENT = 10000
+_LIM_WS = 2000
+_LIM_LOG = 500
+
 _runtime_instance: OrgRuntime | None = None
 
 
@@ -511,7 +515,7 @@ class OrgRuntime:
 
         self.get_event_store(org_id).emit(
             "user_command", "user",
-            {"target": target_node_id, "content": content[:200]},
+            {"target": target_node_id, "content": content[:_LIM_EVENT]},
         )
 
         persona = org.user_persona
@@ -622,11 +626,11 @@ class OrgRuntime:
             return {"node_id": node.id, "error": "org deleted during activation"}
 
         self.get_event_store(org.id).emit(
-            "node_activated", node.id, {"prompt": prompt[:200]},
+            "node_activated", node.id, {"prompt": prompt[:_LIM_EVENT]},
         )
         await self._broadcast_ws("org:node_status", {
             "org_id": org.id, "node_id": node.id, "status": "busy",
-            "current_task": prompt[:120],
+            "current_task": prompt[:_LIM_WS],
         })
 
         try:
@@ -654,7 +658,7 @@ class OrgRuntime:
 
             self.get_event_store(org.id).emit(
                 "task_completed", node.id,
-                {"result_preview": result_text[:200] if result_text else ""},
+                {"result_preview": result_text[:_LIM_EVENT] if result_text else ""},
             )
             await self._broadcast_ws("org:node_status", {
                 "org_id": org.id, "node_id": node.id, "status": "idle",
@@ -662,7 +666,7 @@ class OrgRuntime:
             })
             await self._broadcast_ws("org:task_complete", {
                 "org_id": org.id, "node_id": node.id,
-                "result_preview": result_text[:120] if result_text else "",
+                "result_preview": result_text[:_LIM_WS] if result_text else "",
             })
 
             asyncio.ensure_future(self._post_task_hook(org, node))
@@ -702,7 +706,7 @@ class OrgRuntime:
                     node.status = NodeStatus.FROZEN
             else:
                 try:
-                    self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:200])
+                    self._set_node_status(org, node, NodeStatus.ERROR, str(e)[:_LIM_LOG])
                 except Exception:
                     node.status = NodeStatus.ERROR
             try:
@@ -712,7 +716,7 @@ class OrgRuntime:
             try:
                 es = self.get_event_store(org.id)
                 if es:
-                    es.emit("task_failed", node.id, {"error": str(e)[:200]})
+                    es.emit("task_failed", node.id, {"error": str(e)[:_LIM_EVENT]})
             except Exception:
                 pass
             try:
@@ -761,7 +765,7 @@ class OrgRuntime:
 
         logger.warning(
             f"[OrgRuntime] Quota/auth failure threshold reached for org {org.name} "
-            f"({org.id}), auto-pausing. Error: {str(error)[:200]}"
+            f"({org.id}), auto-pausing. Error: {str(error)[:_LIM_LOG]}"
         )
         try:
             try:
@@ -785,7 +789,7 @@ class OrgRuntime:
 
             self.get_event_store(org.id).emit(
                 "org_paused", "system",
-                {"reason": "quota_exhausted", "error": str(error)[:200]},
+                {"reason": "quota_exhausted", "error": str(error)[:_LIM_EVENT]},
             )
 
             inbox = self.get_inbox(org.id)
@@ -1170,9 +1174,16 @@ class OrgRuntime:
         messenger = self.get_messenger(org_id)
         pending = messenger.get_pending_count(node_id) if messenger else 0
 
+        def _mark_dispatched() -> None:
+            if messenger:
+                mb = messenger.get_mailbox(node_id)
+                if mb and not mb.is_paused:
+                    mb.mark_handler_processed(msg.id)
+
         if active_count >= self.max_concurrent_per_node:
             target_clone = self._try_route_to_clone(org, node, msg, pending)
             if target_clone:
+                _mark_dispatched()
                 task_prompt = self._format_incoming_message(msg)
                 chain_id = msg.metadata.get("task_chain_id") or None
                 await self._activate_and_run(org, target_clone, task_prompt, chain_id=chain_id)
@@ -1181,6 +1192,7 @@ class OrgRuntime:
             if node.auto_clone_enabled and pending >= node.auto_clone_threshold:
                 new_clone = await self._scaler.maybe_auto_clone(org_id, node_id, pending)
                 if new_clone:
+                    _mark_dispatched()
                     self._register_clone_in_messenger(org_id, new_clone)
                     task_prompt = self._format_incoming_message(msg)
                     chain_id = msg.metadata.get("task_chain_id") or None
@@ -1193,6 +1205,7 @@ class OrgRuntime:
             )
             return
 
+        _mark_dispatched()
         task_prompt = self._format_incoming_message(msg)
         chain_id = msg.metadata.get("task_chain_id") or ""
         await self._activate_and_run(org, node, task_prompt, chain_id=chain_id or None)
@@ -1616,13 +1629,16 @@ class OrgRuntime:
             slots = min(slots, max_msgs)
 
         dispatched = 0
-        for _ in range(slots):
-            if mailbox.pending_count <= 0:
+        max_iterations = slots + mailbox._queue.qsize()
+        for _ in range(max_iterations):
+            if mailbox.pending_count <= 0 or dispatched >= slots:
                 break
             msg = await mailbox.get(timeout=0.5)
             if not msg:
                 break
-            mailbox.mark_dispatched()
+            if mailbox.is_handler_processed(msg.id):
+                mailbox.consume_phantom(msg.id)
+                continue
             logger.info(
                 f"[OrgRuntime] Draining pending message {msg.id} for {node.id} "
                 f"(remaining: {mailbox.pending_count})"

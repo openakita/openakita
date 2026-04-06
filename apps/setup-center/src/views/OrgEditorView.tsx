@@ -825,7 +825,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             maxWidth: 180, fontStyle: "italic", opacity: 0.85,
           }}>
-            {data.current_task.slice(0, 40)}{data.current_task.length > 40 ? "..." : ""}
+            {data.current_task}
           </div>
         )}
 
@@ -895,7 +895,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
                 {recentTs != null && <div>最近活动: {fmtShortDate(recentTs)}</div>}
                 {watchdog && <div>看门狗: {watchdog}</div>}
                 {(data.current_task || isAnomaly) && <Sep />}
-                {data.current_task && <div style={{ marginTop: 2, color: "#b45309" }}>任务: {data.current_task.slice(0, 50)}</div>}
+                {data.current_task && <div style={{ marginTop: 2, color: "#b45309" }}>任务: {data.current_task}</div>}
                 {isAnomaly && <div style={{ marginTop: 2, color: "#f59e0b", fontWeight: 500 }}>{typeof isAnomaly === "string" ? isAnomaly : "异常"}</div>}
               </div>
             </div>
@@ -2618,7 +2618,7 @@ export function OrgEditorView({
                 if (n.status !== "busy" && !n.current_task_title) continue;
                 const pp = n.plan_progress || {};
                 const pct = pp.total > 0 ? Math.round((pp.completed / pp.total) * 100) : -1;
-                const taskDesc = n.current_task_title || (n.current_task ? String(n.current_task).slice(0, 50) : "执行中…");
+                const taskDesc = n.current_task_title || (n.current_task ? String(n.current_task) : "执行中…");
                 busyLines.push({ key: n.id, node: n.role_title || nodeLabel(n.id), text: taskDesc, pct });
               }
 
@@ -3170,7 +3170,7 @@ export function OrgEditorView({
 
             /* ── Feed tooltip (shadcn + markdown) ── */
             .org-feed-tip-wrap {
-              max-width: 420px !important; min-width: 200px;
+              max-width: 640px !important; min-width: 200px;
               padding: 10px 14px !important; text-align: left !important;
               white-space: normal !important; border-radius: 8px !important;
             }

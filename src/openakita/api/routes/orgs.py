@@ -28,6 +28,8 @@ MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2 MB
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/orgs", tags=["组织编排"])
 
+_LIM_API = 2000
+
 _VALID_DECISIONS = {"approve", "reject", "批准", "拒绝"}
 
 # In-memory store for async command tracking.
@@ -226,11 +228,33 @@ async def update_org(request: Request, org_id: str):
     if mgr.get(org_id) is None:
         raise HTTPException(404, f"Organization not found: {org_id}")
     body = await request.json()
+    rt = getattr(request.app.state, "org_runtime", None)
+    live_org = (
+        rt._active_orgs.get(org_id)
+        if rt and hasattr(rt, "_active_orgs")
+        else None
+    )
+    live_node_state: dict[str, dict] = {}
+    if live_org:
+        for n in live_org.nodes:
+            live_node_state[n.id] = {
+                "status": n.status,
+                "frozen_by": getattr(n, "frozen_by", None),
+                "frozen_reason": getattr(n, "frozen_reason", None),
+            }
     try:
         org = mgr.update(org_id, body)
     except (ValueError, TypeError, KeyError) as e:
         raise HTTPException(400, f"Invalid org data: {e}")
-    rt = getattr(request.app.state, "org_runtime", None)
+    if live_node_state:
+        for n in org.nodes:
+            saved = live_node_state.get(n.id)
+            if saved:
+                n.status = saved["status"]
+                if saved["frozen_by"] is not None:
+                    n.frozen_by = saved["frozen_by"]
+                if saved["frozen_reason"] is not None:
+                    n.frozen_reason = saved["frozen_reason"]
     if rt and hasattr(rt, "_active_orgs") and org_id in rt._active_orgs:
         rt._active_orgs[org_id] = org
     return org.to_dict()
@@ -771,7 +795,7 @@ async def get_node_thinking(request: Request, org_id: str, node_id: str):
                 if msg.get("from_node") == node_id
                 else msg.get("from_node"),
                 "msg_type": msg.get("msg_type", ""),
-                "content": msg.get("content", "")[:500],
+                "content": msg.get("content", "")[:_LIM_API],
             }
         )
     timeline.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -1643,7 +1667,7 @@ async def get_org_stats(request: Request, org_id: str):
             for e in entries:
                 recent_bb.append(
                     {
-                        "content": (e.content[:120] + "…") if len(e.content) > 120 else e.content,
+                        "content": (e.content[:_LIM_API] + "…") if len(e.content) > _LIM_API else e.content,
                         "source_node": e.source_node,
                         "memory_type": e.memory_type.value
                         if hasattr(e.memory_type, "value")
@@ -1693,7 +1717,7 @@ async def get_org_stats(request: Request, org_id: str):
                 continue
             d = evt.get("data", {})
             _pv = d.get("task") or d.get("content") or d.get("result_preview") or d.get("prompt") or ""
-            preview = str(_pv)[:800]
+            preview = str(_pv)[:_LIM_API]
             recent_tasks.append(
                 {
                     "t": evt.get("timestamp"),

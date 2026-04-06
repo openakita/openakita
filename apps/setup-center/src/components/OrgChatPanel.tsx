@@ -224,11 +224,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const st = d.status as string;
         if (st === "busy") {
           const task = (d.current_task || "") as string;
-          pushProgress(`[START] **${nid}** 开始处理${task ? `：${task.slice(0, 60)}` : ""}`);
+          pushProgress(`[START] **${nid}** 开始处理${task ? `：${task}` : ""}`);
         } else if (st === "idle") pushProgress(`[DONE] **${nid}** 完成`);
         else if (st === "error") pushProgress(`[ERR] **${nid}** 出错`);
       } else if (event === "org:task_delegated") {
-        pushProgress(`[TASK] **${nid}** → **${toN}** 分配任务：${((d.task || "") as string).slice(0, 50)}`);
+        pushProgress(`[TASK] **${nid}** → **${toN}** 分配任务：${(d.task || "") as string}`);
       } else if (event === "org:task_complete") {
         pushProgress(`[OK] **${nid}** 任务完成`);
       } else if (event === "org:blackboard_update") {

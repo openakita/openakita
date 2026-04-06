@@ -34,7 +34,18 @@ _TASK_MSG_TYPES = frozenset({
 
 
 class NodeMailbox:
-    """Async priority queue for a single node."""
+    """Async priority queue for a single node.
+
+    Two consumption paths exist:
+      1. **Handler path** – ``messenger.send()`` invokes a handler callback
+         which receives the ``msg`` reference directly.  The message *also*
+         sits in the queue as a phantom entry.  Call
+         ``mark_handler_processed(msg.id)`` to record that this message has
+         already been handled.
+      2. **Drain path** – ``_drain_node_pending()`` calls ``get()`` to pop
+         the next entry.  If the entry was already processed by the handler
+         path it must be skipped (see ``is_handler_processed``).
+    """
 
     def __init__(self, node_id: str, max_size: int = 100):
         self.node_id = node_id
@@ -43,6 +54,7 @@ class NodeMailbox:
         self._seq = 0
         self._frozen_buffer: list = []
         self._dispatched = 0
+        self._handler_processed: set[str] = set()
 
     async def put(self, msg: OrgMessage) -> None:
         priority = -(int(msg.priority) if msg.priority else 0)
@@ -62,8 +74,31 @@ class NodeMailbox:
             return None
 
     def mark_dispatched(self) -> None:
-        """Mark one message as dispatched to handler for processing."""
+        """Mark one pending message as dispatched (counter-based)."""
         self._dispatched += 1
+
+    def mark_handler_processed(self, msg_id: str) -> None:
+        """Record that the handler callback already processed *msg_id*.
+
+        Increments ``_dispatched`` (so ``pending_count`` decreases by 1)
+        and records the id so the drain path can skip the phantom.
+        """
+        self._handler_processed.add(msg_id)
+        self._dispatched += 1
+
+    def is_handler_processed(self, msg_id: str) -> bool:
+        return msg_id in self._handler_processed
+
+    def consume_phantom(self, msg_id: str) -> None:
+        """Called by the drain path when it dequeues a handler-processed phantom.
+
+        ``get()`` already decremented ``qsize`` by 1.  We must also
+        decrement ``_dispatched`` by 1 so that ``pending_count``
+        (= qsize − dispatched) stays unchanged.
+        """
+        self._handler_processed.discard(msg_id)
+        if self._dispatched > 0:
+            self._dispatched -= 1
 
     def pause(self) -> None:
         self._paused = True
@@ -263,7 +298,11 @@ class OrgMessenger:
         chain_id = msg.metadata.get("task_chain_id")
         if chain_id:
             affinity_node = self._task_affinity.get(chain_id)
-            if affinity_node and affinity_node != msg.to_node:
+            if (
+                affinity_node
+                and affinity_node != msg.to_node
+                and affinity_node != msg.from_node
+            ):
                 actual = self._org.get_node(affinity_node)
                 if actual and actual.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
                     msg.to_node = affinity_node
@@ -309,8 +348,6 @@ class OrgMessenger:
         if msg.to_node in self._message_handlers:
             try:
                 await self._message_handlers[msg.to_node](msg)
-                if mailbox and not mailbox.is_paused:
-                    mailbox.mark_dispatched()
             except Exception as e:
                 logger.error(f"[Messenger] Handler error for {msg.to_node}: {e}")
 
@@ -415,8 +452,6 @@ class OrgMessenger:
             if trigger_handler and nid in self._message_handlers:
                 try:
                     await self._message_handlers[nid](copy)
-                    if mailbox:
-                        mailbox.mark_dispatched()
                 except Exception as e:
                     logger.error(f"[Messenger] Broadcast handler error for {nid}: {e}")
 

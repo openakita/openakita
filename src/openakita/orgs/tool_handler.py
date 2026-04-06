@@ -28,6 +28,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_LIM_EVENT = 10000
+_LIM_WS = 2000
+_LIM_EXEC_LOG = 2000
+_LIM_TOOL_RETURN = 200
+_LIM_TITLE = 200
+
 
 class OrgToolHandler:
     """Dispatch and execute org_* tool calls."""
@@ -220,7 +226,7 @@ class OrgToolHandler:
 
             task = ProjectTask(
                 project_id=proj.id,
-                title=title[:120],
+                title=title[:_LIM_TITLE],
                 status=TaskStatus.IN_PROGRESS,
                 assignee_node_id=assignee,
                 delegated_by=delegated_by,
@@ -246,7 +252,7 @@ class OrgToolHandler:
             existing = store.find_task_by_chain(chain_id)
             if not existing:
                 return
-            log_entry = {"at": _now_iso(), "by": node_id, "entry": entry[:500]}
+            log_entry = {"at": _now_iso(), "by": node_id, "entry": entry[:_LIM_EXEC_LOG]}
             new_log = list(existing.execution_log or []) + [log_entry]
             store.update_task(existing.project_id, existing.id, {"execution_log": new_log})
         except Exception as exc:
@@ -307,7 +313,7 @@ class OrgToolHandler:
                 store.update_task(existing.project_id, existing.id, {"plan_steps": plan_steps})
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"计划创建: {tool_input.get('task_summary', '')[:80]}",
+                    f"计划创建: {tool_input.get('task_summary', '')[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
             elif tool_name == "update_plan_step":
@@ -326,7 +332,7 @@ class OrgToolHandler:
                 store.update_task(existing.project_id, existing.id, {"progress_pct": progress_pct})
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"步骤 {step_id}: {status} - {result_text[:80]}",
+                    f"步骤 {step_id}: {status} - {result_text[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
             elif tool_name == "complete_plan":
@@ -338,7 +344,7 @@ class OrgToolHandler:
                 })
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"计划完成: {summary[:80]}",
+                    f"计划完成: {summary[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
         except Exception as exc:
@@ -409,7 +415,7 @@ class OrgToolHandler:
             await self._runtime._broadcast_ws("org:message", {
                 "org_id": org_id, "from_node": node_id, "to_node": to_node,
                 "msg_type": args.get("msg_type", "question"),
-                "content": args["content"][:120],
+                "content": args["content"][:_LIM_WS],
             })
         return f"消息已发送给 {to_node}" if ok else "发送失败"
 
@@ -508,11 +514,11 @@ class OrgToolHandler:
 
         self._runtime.get_event_store(org_id).emit(
             "task_assigned", node_id,
-            {"to": to_node, "task": args["task"][:100], "chain_id": chain_id},
+            {"to": to_node, "task": args["task"][:_LIM_EVENT], "chain_id": chain_id},
         )
         await self._runtime._broadcast_ws("org:task_delegated", {
             "org_id": org_id, "from_node": node_id, "to_node": to_node,
-            "task": args["task"][:120], "chain_id": chain_id,
+            "task": args["task"][:_LIM_WS], "chain_id": chain_id,
         })
 
         parent_task_id = None
@@ -531,7 +537,7 @@ class OrgToolHandler:
 
         self._link_project_task(
             org_id, chain_id,
-            title=args["task"][:120],
+            title=args["task"][:_LIM_TITLE],
             assignee=to_node,
             delegated_by=node_id,
             status="in_progress",
@@ -540,7 +546,7 @@ class OrgToolHandler:
         )
         self._append_execution_log(
             org_id, chain_id,
-            f"委派给 {to_node}: {args['task'][:80]}",
+            f"委派给 {to_node}: {args['task'][:_LIM_EXEC_LOG]}",
             node_id,
         )
         return (
@@ -565,7 +571,7 @@ class OrgToolHandler:
             await self._runtime._broadcast_ws("org:escalation", {
                 "org_id": org_id, "from_node": node_id,
                 "to_node": result.to_node if hasattr(result, "to_node") else "",
-                "content": args["content"][:120],
+                "content": args["content"][:_LIM_WS],
             })
             return "已上报给上级"
         return "无法上报（没有上级节点）"
@@ -594,11 +600,11 @@ class OrgToolHandler:
         scope_label = "部门" if scope == "department" else "全组织"
         await self._runtime._broadcast_ws("org:broadcast", {
             "org_id": org_id, "from_node": node_id, "scope": scope,
-            "content": args["content"][:120],
+            "content": args["content"][:_LIM_WS],
         })
         self._runtime.get_event_store(org_id).emit(
             "broadcast", node_id,
-            {"scope": scope, "content": args["content"][:200]},
+            {"scope": scope, "content": args["content"][:_LIM_EVENT]},
         )
         return f"已{scope_label}广播"
 
@@ -618,7 +624,7 @@ class OrgToolHandler:
             departments.setdefault(dept, []).append({
                 "id": n.id,
                 "title": n.role_title,
-                "goal": n.role_goal[:80] if n.role_goal else "",
+                "goal": n.role_goal[:_LIM_TOOL_RETURN] if n.role_goal else "",
                 "skills": n.skills[:5],
                 "status": n.status.value,
                 "level": n.level,
@@ -748,7 +754,7 @@ class OrgToolHandler:
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "org", "node_id": node_id,
             "memory_type": args.get("memory_type", "fact"),
-            "content": args["content"][:120],
+            "content": args["content"][:_LIM_WS],
         })
         return f"已写入组织黑板: {args['content'][:50]}"
 
@@ -795,7 +801,7 @@ class OrgToolHandler:
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "department", "department": dept,
             "node_id": node_id, "memory_type": args.get("memory_type", "fact"),
-            "content": args["content"][:120],
+            "content": args["content"][:_LIM_WS],
         })
         return f"已写入 {dept} 部门记忆"
 
@@ -989,25 +995,25 @@ class OrgToolHandler:
             from_node=node_id,
             to_node=to_node,
             msg_type=MsgType.TASK_DELIVERED,
-            content=f"任务交付: {deliverable[:200]}",
+            content=f"任务交付: {deliverable[:_LIM_EVENT]}",
             metadata=metadata,
         )
         ok = await messenger.send(msg)
 
         self._runtime.get_event_store(org_id).emit(
             "task_delivered", node_id,
-            {"to": to_node, "chain_id": chain_id, "deliverable_preview": deliverable[:100]},
+            {"to": to_node, "chain_id": chain_id, "deliverable_preview": deliverable[:_LIM_EVENT]},
         )
 
         if ok:
             await self._runtime._broadcast_ws("org:task_delivered", {
                 "org_id": org_id, "from_node": node_id, "to_node": to_node,
-                "chain_id": chain_id, "summary": summary[:120],
+                "chain_id": chain_id, "summary": summary[:_LIM_WS],
             })
             self._link_project_task(org_id, chain_id, status="delivered")
             self._append_execution_log(
                 org_id, chain_id,
-                f"提交交付物给 {to_node}: {summary[:80]}",
+                f"提交交付物给 {to_node}: {summary[:_LIM_EXEC_LOG]}",
                 node_id,
             )
             return f"交付物已提交给 {to_node}，等待验收。"
@@ -1047,7 +1053,7 @@ class OrgToolHandler:
             from_node=node_id,
             to_node=from_node,
             msg_type=MsgType.TASK_ACCEPTED,
-            content=f"验收通过: {feedback[:200]}",
+            content=f"验收通过: {feedback[:_LIM_EVENT]}",
             metadata=metadata,
         )
         await messenger.send(msg)
@@ -1062,19 +1068,19 @@ class OrgToolHandler:
         )
         await self._runtime._broadcast_ws("org:task_accepted", {
             "org_id": org_id, "from_node": from_node, "accepted_by": node_id,
-            "chain_id": chain_id, "feedback": feedback[:120],
+            "chain_id": chain_id, "feedback": feedback[:_LIM_WS],
         })
         if chain_id:
             self._link_project_task(org_id, chain_id, status="accepted")
             self._append_execution_log(
-                org_id, chain_id, f"验收通过: {feedback[:100]}", node_id,
+                org_id, chain_id, f"验收通过: {feedback[:_LIM_EXEC_LOG]}", node_id,
             )
             self._recalc_parent_progress(org_id, chain_id)
 
         bb = self._runtime.get_blackboard(org_id)
         if bb:
             bb.write_org(
-                content=f"任务验收通过 [{chain_id[:8] if chain_id else ''}]: {feedback[:100]}",
+                content=f"任务验收通过 [{chain_id[:8] if chain_id else ''}]: {feedback[:_LIM_EVENT]}",
                 source_node=node_id,
                 memory_type=MemoryType.PROGRESS,
                 tags=["acceptance", "completed"],
@@ -1116,24 +1122,24 @@ class OrgToolHandler:
             from_node=node_id,
             to_node=from_node,
             msg_type=MsgType.TASK_REJECTED,
-            content=f"任务打回: {reason[:200]}",
+            content=f"任务打回: {reason[:_LIM_EVENT]}",
             metadata=metadata,
         )
         await messenger.send(msg)
 
         self._runtime.get_event_store(org_id).emit(
             "task_rejected", node_id,
-            {"from": from_node, "chain_id": chain_id, "reason": reason[:100]},
+            {"from": from_node, "chain_id": chain_id, "reason": reason[:_LIM_EVENT]},
         )
         await self._runtime._broadcast_ws("org:task_rejected", {
             "org_id": org_id, "from_node": from_node, "rejected_by": node_id,
-            "chain_id": chain_id, "reason": reason[:120],
+            "chain_id": chain_id, "reason": reason[:_LIM_WS],
         })
         if chain_id:
             self._link_project_task(org_id, chain_id, status="rejected")
             self._append_execution_log(
                 org_id, chain_id,
-                f"打回: {reason[:80]}",
+                f"打回: {reason[:_LIM_EXEC_LOG]}",
                 node_id,
             )
             self._recalc_parent_progress(org_id, chain_id)
@@ -1208,7 +1214,7 @@ class OrgToolHandler:
                 round_opinions.append(f"{title}: {response}")
                 await self._runtime._broadcast_ws("org:meeting_speak", {
                     "org_id": org_id, "node_id": pid, "role_title": title,
-                    "round": round_num, "content": response[:200],
+                    "round": round_num, "content": response[:_LIM_WS],
                 })
 
             prev_round_summary = "\n".join(round_opinions)
@@ -1219,7 +1225,7 @@ class OrgToolHandler:
 
         bb = self._runtime.get_blackboard(org_id)
         if bb:
-            summary_text = conclusion or meeting_record[-1][:200]
+            summary_text = conclusion or meeting_record[-1][:_LIM_EVENT]
             bb.write_org(
                 content=f"会议结论 — {topic}: {summary_text}",
                 source_node=node_id,
@@ -1350,7 +1356,7 @@ class OrgToolHandler:
         inbox.push_approval_request(
             org_id, node_id,
             title=f"{node_id} 申请创建定时任务「{args['name']}」",
-            body=f"任务指令: {args['prompt'][:100]}\n类型: {args.get('schedule_type', 'interval')}",
+            body=f"任务指令: {args['prompt'][:_LIM_WS]}\n类型: {args.get('schedule_type', 'interval')}",
             metadata={
                 "action_type": "create_schedule",
                 "node_id": node_id,
@@ -1618,7 +1624,7 @@ class OrgToolHandler:
                 except (ValueError, TypeError):
                     pass
             if args.get("log_entry"):
-                log_entry = {"at": _now_iso(), "by": node_id, "entry": args["log_entry"][:500]}
+                log_entry = {"at": _now_iso(), "by": node_id, "entry": args["log_entry"][:_LIM_EXEC_LOG]}
                 new_log = list(existing.execution_log or []) + [log_entry]
                 updates["execution_log"] = new_log
             if updates:
@@ -1759,7 +1765,7 @@ class OrgToolHandler:
                 if isinstance(new_entries, list):
                     existing = list(task.execution_log or [])
                     for e in new_entries:
-                        entry = e if isinstance(e, dict) else {"at": _now_iso(), "by": node_id, "entry": str(e)[:500]}
+                        entry = e if isinstance(e, dict) else {"at": _now_iso(), "by": node_id, "entry": str(e)[:_LIM_EXEC_LOG]}
                         existing.append(entry)
                     updates["execution_log"] = existing
             if updates:
@@ -1793,7 +1799,7 @@ class OrgToolHandler:
                     depth = (parent_task.depth or 0) + 1
             task = ProjectTask(
                 project_id=project_id,
-                title=title[:120],
+                title=title[:_LIM_TITLE],
                 description=args.get("description", ""),
                 status=TaskStatus.TODO,
                 assignee_node_id=args.get("assignee_node_id"),

@@ -2770,7 +2770,7 @@ export function ChatView({
             const st = d.status as string;
             if (st === "busy") {
               const task = (d.current_task || "") as string;
-              pushProgress(`🟢 **${nodeId}** 开始处理${task ? `：${task.slice(0, 60)}` : ""}`);
+              pushProgress(`🟢 **${nodeId}** 开始处理${task ? `：${task}` : ""}`);
             } else if (st === "idle") {
               pushProgress(`✅ **${nodeId}** 完成`);
             } else if (st === "error") {
@@ -2778,7 +2778,7 @@ export function ChatView({
             }
           } else if (event === "org:task_delegated") {
             const task = (d.task || "") as string;
-            pushProgress(`📋 **${nodeId}** → **${toNode}** 分配任务：${(task as string).slice(0, 50)}`);
+            pushProgress(`📋 **${nodeId}** → **${toNode}** 分配任务：${task}`);
           } else if (event === "org:message") {
             const msgType = d.msg_type as string || "消息";
             pushProgress(`💬 **${nodeId}** → **${toNode}** ${msgType}`);
