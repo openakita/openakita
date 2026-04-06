@@ -181,7 +181,17 @@
     "depthTipLow": "Thinking depth: Low — Quick response",
     "depthTipMedium": "Thinking depth: Medium — Balanced",
     "depthTipHigh": "Thinking depth: High — Deep reasoning",
-    "depthClickToSwitch": "Click to switch"
+    "depthClickToSwitch": "Click to switch",
+    "endpointNotice": {
+      "switchedTo": "Switched to {{to}}",
+      "visionRequired": "Message contains images, vision capability required",
+      "videoRequired": "Message contains video, video understanding required",
+      "audioRequired": "Message contains audio, audio understanding required",
+      "pdfRequired": "Message contains document, document understanding required",
+      "thinkingDegraded": "Thinking endpoint unavailable, degraded to normal reasoning",
+      "failover": "Original endpoint failed, auto-switched",
+      "noVisionEndpoint": "No vision endpoint available, image content will be skipped"
+    }
   },
   "skills": {
     "title": "Skill Manager",
@@ -1207,6 +1217,7 @@
       "customRootToggle": "Custom data storage path",
       "customRootHint": "Data is stored in your home directory by default. Change this to store data on another drive.",
       "customRootPlaceholder": "e.g. D:\\MyData\\.openakita",
+      "customRootBrowse": "Browse…",
       "customRootApply": "Apply",
       "customRootApplied": "Custom storage path set: {{path}}",
       "customRootDefault": "Use default path",

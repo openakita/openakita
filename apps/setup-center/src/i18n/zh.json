@@ -181,7 +181,17 @@
     "depthTipLow": "思考程度: 低 — 快速响应",
     "depthTipMedium": "思考程度: 中 — 平衡模式",
     "depthTipHigh": "思考程度: 高 — 深度推理",
-    "depthClickToSwitch": "点击切换"
+    "depthClickToSwitch": "点击切换",
+    "endpointNotice": {
+      "switchedTo": "已切换到 {{to}}",
+      "visionRequired": "消息包含图片，需要视觉能力",
+      "videoRequired": "消息包含视频，需要视频理解能力",
+      "audioRequired": "消息包含语音，需要音频理解能力",
+      "pdfRequired": "消息包含文档，需要文档理解能力",
+      "thinkingDegraded": "思考端点暂不可用，已降级为普通推理模式",
+      "failover": "原端点响应异常，已自动切换",
+      "noVisionEndpoint": "当前无图片识别端点，图片内容将被忽略"
+    }
   },
   "skills": {
     "title": "技能管理",
@@ -1207,6 +1217,7 @@
       "customRootToggle": "自定义数据存储路径",
       "customRootHint": "默认存储在用户目录下。如需将数据存放到其他磁盘（如 D 盘），可在此修改。",
       "customRootPlaceholder": "例如：D:\\MyData\\.openakita",
+      "customRootBrowse": "浏览…",
       "customRootApply": "应用",
       "customRootApplied": "已设置自定义存储路径：{{path}}",
       "customRootDefault": "使用默认路径",

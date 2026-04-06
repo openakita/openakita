@@ -32,7 +32,7 @@ import type {
 import {
   IconCheckCircle, IconXCircle, IconInfo,
 } from "./icons";
-import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ChevronRight, Loader2, AlertTriangle, CheckCircle2, FolderOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -4170,6 +4170,24 @@ export function App() {
                           onChange={(e) => { setObCustomRootInput(e.target.value); setObCustomRootApplied(false); }}
                           placeholder={t("onboarding.welcome.customRootPlaceholder")}
                         />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 shrink-0 px-2"
+                          title={t("onboarding.welcome.customRootBrowse")}
+                          onClick={async () => {
+                            try {
+                              const { openFileDialog } = await import("./platform");
+                              const selected = await openFileDialog({ directory: true, title: t("onboarding.welcome.customRootToggle") });
+                              if (selected) {
+                                setObCustomRootInput(selected);
+                                setObCustomRootApplied(false);
+                              }
+                            } catch (e) { notifyError(String(e)); }
+                          }}
+                        >
+                          <FolderOpen className="size-4" />
+                        </Button>
                         <Button
                           size="sm"
                           className="h-8 shrink-0"
