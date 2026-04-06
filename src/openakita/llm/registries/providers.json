@@ -313,6 +313,18 @@
     "registry_class": "OpenAIRegistry"
   },
   {
+    "name": "讯飞星辰 MaaS (iFlytek Astron)",
+    "slug": "xfyun",
+    "api_type": "openai",
+    "default_base_url": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
+    "coding_plan_base_url": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+    "coding_plan_api_type": "openai",
+    "api_key_env_suggestion": "XFYUN_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "registry_class": "XfyunRegistry"
+  },
+  {
     "name": "Ollama (本地)",
     "slug": "ollama",
     "api_type": "openai",
