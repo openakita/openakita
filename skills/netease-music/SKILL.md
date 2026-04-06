@@ -36,3 +36,22 @@ ncm-cli login — 使用网易云音乐 App 扫码授权。
 ## 使用示例
 
 搜索歌曲、播放音乐、创建歌单、获取推荐等，均可用自然语言描述。
+
+## 预置脚本
+
+### scripts/setup.py
+网易云音乐 ncm-cli 安装配置脚本。
+
+```bash
+python3 scripts/setup.py
+```
+
+### scripts/music_quick.py
+网易云音乐快捷操作脚本。
+
+```bash
+python3 scripts/music_quick.py search --keyword "周杰伦"
+python3 scripts/music_quick.py playlist --id 123456
+python3 scripts/music_quick.py recommend
+python3 scripts/music_quick.py play --id 789
+```

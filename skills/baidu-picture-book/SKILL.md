@@ -23,3 +23,12 @@ export BAIDU_API_KEY="your_key"
 - 画面构思与描述
 - 连续情节生成
 - 多风格支持
+
+## 预置脚本
+
+### scripts/picture_book.py
+文字转绘本（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/picture_book.py generate "小兔子找妈妈的故事"
+```

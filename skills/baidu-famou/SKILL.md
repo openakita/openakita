@@ -17,3 +17,13 @@ metadata:
 - 实验管理
 - 可视化分析
 - 参数调优
+
+## 预置脚本
+
+### scripts/famou.py
+算法实验管理（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/famou.py experiment "图像分类模型调优"
+python3 scripts/famou.py optimize "超参数搜索"
+```

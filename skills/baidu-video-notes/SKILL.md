@@ -24,3 +24,13 @@ export BAIDU_API_KEY="your_key"
 - 结构化笔记生成
 - 时间戳标注
 - 要点摘要
+
+## 预置脚本
+
+### scripts/video_notes.py
+视频解析笔记生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/video_notes.py analyze "https://example.com/video.mp4"
+python3 scripts/video_notes.py notes "视频内容总结"
+```

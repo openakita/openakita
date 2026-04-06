@@ -17,3 +17,14 @@ metadata:
 - 复杂文档 OCR
 - 多语言支持
 - 轻量化推理
+
+## 预置脚本
+
+### scripts/baidu_ocr_text.py
+百度通用文字 OCR 识别，需设置 BAIDU_OCR_AK 和 BAIDU_OCR_SK。
+
+```bash
+python3 scripts/baidu_ocr_text.py general /path/to/image.jpg
+python3 scripts/baidu_ocr_text.py accurate /path/to/image.jpg
+python3 scripts/baidu_ocr_text.py handwriting /path/to/note.jpg
+```

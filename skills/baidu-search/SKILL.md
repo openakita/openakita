@@ -30,3 +30,13 @@ clawhub install baidu-search --no-input
 - 图片搜索：图搜相似图多模态检索
 - 时效筛选：按发布时间过滤结果
 - 权威度评级：结果附带相关度和权威度评级
+
+## 预置脚本
+
+### scripts/baidu_search.py
+百度搜索 API 封装，需设置 BAIDU_QIANFAN_AK 和 BAIDU_QIANFAN_SK。
+
+```bash
+python3 scripts/baidu_search.py web "Python 异步编程"
+python3 scripts/baidu_search.py image "风景壁纸"
+```

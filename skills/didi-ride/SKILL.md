@@ -58,3 +58,15 @@ npm install -g mcporter
 
 MCP_URL="https://mcp.didichuxing.com/mcp-servers?key=$DIDI_MCP_KEY"
 mcporter call "$MCP_URL" <tool> --args '{"key":"value"}'
+
+## 预置脚本
+
+### scripts/didi_mcp.py
+滴滴出行 MCP 客户端，需设置 DIDI_MCP_KEY。
+
+```bash
+python3 scripts/didi_mcp.py ride --from "望京SOHO" --to "国贸大厦"
+python3 scripts/didi_mcp.py route --from "望京" --to "国贸"
+python3 scripts/didi_mcp.py poi --keyword "加油站" --location "116.4,39.9"
+python3 scripts/didi_mcp.py price --from "望京" --to "国贸"
+```

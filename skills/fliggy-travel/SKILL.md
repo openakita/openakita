@@ -43,3 +43,22 @@ flyai keyword-search --query "三亚有什么好玩的"
 flyai keyword-search --query "下周末上海飞三亚"
 flyai search-hotel --dest-name "杭州" --check-in 2026-04-10 --check-out 2026-04-12
 flyai search-poi --city-name "北京"
+
+## 预置脚本
+
+### scripts/setup.py
+飞猪 flyai-cli 安装配置脚本。
+
+```bash
+python3 scripts/setup.py
+```
+
+### scripts/flyai_quick.py
+飞猪搜索快捷脚本。
+
+```bash
+python3 scripts/flyai_quick.py search --keyword "三亚酒店"
+python3 scripts/flyai_quick.py ai-search --query "五一去哪里玩"
+python3 scripts/flyai_quick.py flight --from 北京 --to 上海 --date 2026-05-01
+python3 scripts/flyai_quick.py hotel --city 三亚 --checkin 2026-05-01
+```

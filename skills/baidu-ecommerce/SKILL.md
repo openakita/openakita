@@ -17,3 +17,14 @@ metadata:
 - 用户口碑与评价分析
 - 选购知识与推荐
 - 从找货到下单的完整链路
+
+## 预置脚本
+
+### scripts/ecommerce.py
+商品比价/口碑分析（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/ecommerce.py compare "iPhone 16 Pro"
+python3 scripts/ecommerce.py review "戴森吹风机"
+python3 scripts/ecommerce.py recommend "降噪耳机"
+```

@@ -114,3 +114,23 @@ npm update -g @larksuite/cli && npx skills add larksuite/cli -g -y
 ## 支持国际版 Lark
 
 通过 `lark-cli config init` 并配置国际版 Lark 的应用即可使用。
+
+## 预置脚本
+
+### scripts/setup.py
+飞书 lark-cli 安装配置脚本。
+
+```bash
+python3 scripts/setup.py
+```
+
+### scripts/feishu_quick.py
+飞书常用操作快捷脚本。
+
+```bash
+python3 scripts/feishu_quick.py send-msg --receive-id xxx --content "Hello"
+python3 scripts/feishu_quick.py list-chats
+python3 scripts/feishu_quick.py create-doc --folder-token xxx --title "新文档"
+python3 scripts/feishu_quick.py list-events --calendar-id xxx
+python3 scripts/feishu_quick.py create-task --summary "待办事项"
+```

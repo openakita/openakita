@@ -24,3 +24,13 @@ export BAIDU_API_KEY="your_key"
 - 公式识别
 - 图文混排解析
 - 多语言文档支持
+
+## 预置脚本
+
+### scripts/baidu_ocr_doc.py
+百度文档/表格 OCR 识别，需设置 BAIDU_OCR_AK 和 BAIDU_OCR_SK。
+
+```bash
+python3 scripts/baidu_ocr_doc.py doc /path/to/document.jpg
+python3 scripts/baidu_ocr_doc.py table /path/to/table.png
+```

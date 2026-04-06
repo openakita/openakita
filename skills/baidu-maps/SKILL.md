@@ -22,3 +22,14 @@ metadata:
 ## 配置
 
 需要百度地图 Web 服务 API Key。
+
+## 预置脚本
+
+### scripts/baidu_maps.py
+百度地图 Web 服务 API 封装，需设置 BAIDU_MAP_AK。
+
+```bash
+python3 scripts/baidu_maps.py geocode "北京市海淀区"
+python3 scripts/baidu_maps.py poi "火锅" --region 成都
+python3 scripts/baidu_maps.py route --origin 39.9,116.4 --dest 40.0,116.5
+```

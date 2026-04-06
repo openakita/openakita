@@ -44,3 +44,24 @@ ima_api() {
 |---------|------|
 | 搜索/浏览/创建/编辑笔记 | notes |
 | 上传文件/添加网页/搜索知识库 | knowledge-base |
+
+## 预置脚本
+
+### scripts/ima_notes.py
+IMA 笔记 API 封装，需设置 IMA_OPENAPI_CLIENTID 和 IMA_OPENAPI_APIKEY。
+
+```bash
+python3 scripts/ima_notes.py search "会议纪要"
+python3 scripts/ima_notes.py folders
+python3 scripts/ima_notes.py create --content "# 新笔记\n内容"
+python3 scripts/ima_notes.py read --doc-id xxx
+```
+
+### scripts/ima_kb.py
+IMA 知识库 API 封装。
+
+```bash
+python3 scripts/ima_kb.py search --kb-id xxx "关键词"
+python3 scripts/ima_kb.py browse --kb-id xxx
+python3 scripts/ima_kb.py import-url --kb-id xxx --url "https://example.com"
+```

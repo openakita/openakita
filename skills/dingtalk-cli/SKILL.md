@@ -181,3 +181,24 @@ dws calendar event list                              # 列出日历事件
 dws todo task create --title "季度报告" --executors "<userId>"  # 创建待办
 dws todo task list --dry-run                          # 预览（不执行）
 ```
+
+## 预置脚本
+
+### scripts/dws_setup.py
+钉钉 CLI 安装和认证脚本。
+
+```bash
+python3 scripts/dws_setup.py install
+python3 scripts/dws_setup.py auth
+python3 scripts/dws_setup.py status
+```
+
+### scripts/dws_quick.py
+钉钉常用操作快捷脚本。
+
+```bash
+python3 scripts/dws_quick.py send --conversation-id xxx --content "消息内容"
+python3 scripts/dws_quick.py contacts
+python3 scripts/dws_quick.py calendar
+python3 scripts/dws_quick.py todo --title "待办事项"
+```

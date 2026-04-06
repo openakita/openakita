@@ -23,3 +23,13 @@ export BAIDU_API_KEY="your_key"
 - 期刊文献检索
 - 知识图谱查询
 - 引用关系分析
+
+## 预置脚本
+
+### scripts/baidu_scholar.py
+学术论文搜索（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/baidu_scholar.py search "transformer attention mechanism"
+python3 scripts/baidu_scholar.py cite "attention is all you need"
+```

@@ -23,3 +23,13 @@ export BAIDU_API_KEY="your_key"
 - 多源分析：交叉验证与深度分析
 - 内容综合：结构化内容整合
 - 报告生成：专业研究报告输出
+
+## 预置脚本
+
+### scripts/deep_research.py
+深度研究报告生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/deep_research.py research "人工智能在医疗领域的应用"
+python3 scripts/deep_research.py report "大模型技术趋势分析"
+```

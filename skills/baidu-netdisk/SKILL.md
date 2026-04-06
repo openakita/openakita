@@ -34,3 +34,14 @@ bdpan login — 使用 OAuth 流程在浏览器中授权。令牌存储在 ~/.co
 
 - 不要在公开频道分享认证码
 - 共享环境使用后执行 bdpan logout
+
+## 预置脚本
+
+### scripts/bdpan.py
+百度网盘 Open API 封装，需设置 BAIDU_NETDISK_TOKEN。
+
+```bash
+python3 scripts/bdpan.py ls /apps/
+python3 scripts/bdpan.py search "报告"
+python3 scripts/bdpan.py info
+```

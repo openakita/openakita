@@ -67,3 +67,24 @@ curl -s -X GET "https://ark.cn-beijing.volces.com/api/v3/contents/generations/ta
 - 视频 URL 24 小时过期，需立即下载
 - 任务历史保留 7 天
 - 本地图片需转为 base64 data URL
+
+## 预置脚本
+
+本 skill 提供以下可执行 Python 脚本（纯 stdlib，零依赖）：
+
+### scripts/seedance.py
+视频生成 CLI 工具，支持 Volcengine Ark 和 EvoLink 双后端。
+
+```bash
+# 文生视频（创建 + 等待 + 下载）
+python3 scripts/seedance.py create --prompt "小猫打哈欠" --wait --download ~/Desktop
+
+# 图生视频
+python3 scripts/seedance.py create --prompt "人物转头微笑" --image photo.jpg --wait --download ~/Desktop
+
+# 2.0 参考视频模式（需 EVOLINK_API_KEY）
+python3 scripts/seedance.py create --prompt "续拍这个画面" --video clip.mp4 --audio bgm.mp3 --wait
+
+# 查询任务状态
+python3 scripts/seedance.py status <TASK_ID>
+```

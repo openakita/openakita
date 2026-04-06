@@ -39,3 +39,14 @@ Token 前缀固定为 wjpt_，长度 70 字符。
 ## URL 解析
 
 wj.qq.com/s2/{survey_id}/{hash} → 取 survey_id 调用 get_survey。
+
+## 预置脚本
+
+### scripts/survey_auth.py
+腾讯问卷认证辅助脚本，支持 TENCENT_SURVEY_TOKEN 环境变量或 OAuth 流程。
+
+```bash
+python3 scripts/survey_auth.py check
+python3 scripts/survey_auth.py configure
+python3 scripts/survey_auth.py status
+```

@@ -91,3 +91,22 @@ wecom-cli meeting list '{}'
 - 写入/删除操作前确认用户意图
 - 不输出密钥到终端明文
 - 配置凭证通过交互式初始化完成，安全存储
+
+## 预置脚本
+
+### scripts/setup.py
+企微 wecom-cli 安装配置脚本。
+
+```bash
+python3 scripts/setup.py
+```
+
+### scripts/wecom_quick.py
+企微常用操作快捷脚本。
+
+```bash
+python3 scripts/wecom_quick.py send-msg --to xxx --content "Hello"
+python3 scripts/wecom_quick.py contacts
+python3 scripts/wecom_quick.py create-doc --title "新文档"
+python3 scripts/wecom_quick.py schedule
+```

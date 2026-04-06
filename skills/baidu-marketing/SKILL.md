@@ -17,3 +17,13 @@ metadata:
 - 营销视频生成
 - 文案优化
 - 呼叫触发（立即/延迟）
+
+## 预置脚本
+
+### scripts/marketing.py
+营销文案/方案生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/marketing.py copywrite "新品咖啡上市推广"
+python3 scripts/marketing.py plan "618大促营销方案"
+```

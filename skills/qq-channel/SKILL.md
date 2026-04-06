@@ -31,3 +31,14 @@ metadata:
 ## API 鉴权
 
 使用 getAppAccessToken 获取 Token，请求头携带 Authorization: QQBot {token}。
+
+## 预置脚本
+
+### scripts/qq_bot.py
+QQ 频道机器人 API 封装，需设置 QQ_BOT_APPID 和 QQ_BOT_TOKEN。
+
+```bash
+python3 scripts/qq_bot.py guilds
+python3 scripts/qq_bot.py channels --guild-id 123456
+python3 scripts/qq_bot.py send --channel-id 789 --content "Hello"
+```

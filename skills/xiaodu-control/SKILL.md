@@ -17,3 +17,14 @@ metadata:
 - 场景联动
 - 家庭 IoT 任务
 - 生态硬件管理
+
+## 预置脚本
+
+### scripts/xiaodu_mcp.py
+小度设备控制 MCP 客户端（MCP URL 需配置），需设置 XIAODU_MCP_KEY。
+
+```bash
+python3 scripts/xiaodu_mcp.py devices
+python3 scripts/xiaodu_mcp.py control --device light-001 --action on
+python3 scripts/xiaodu_mcp.py scene --name "回家模式"
+```

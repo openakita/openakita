@@ -20,3 +20,12 @@ export BAIDU_API_KEY="your_key"
 ## 使用
 
 输入名词或概念，返回百度百科的标准化详细解释。依赖 Python 3 和 requests 库。
+
+## 预置脚本
+
+### scripts/baidu_baike.py
+百度百科词条查询脚本。
+
+```bash
+python3 scripts/baidu_baike.py search "量子计算"
+```

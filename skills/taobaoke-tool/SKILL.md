@@ -43,3 +43,14 @@ export PDD_PID="your_pdd_pid"
 ## 使用
 
 python3 scripts/taobaoke_master.py <链接>
+
+## 预置脚本
+
+### scripts/taobaoke_master.py
+淘宝客转链/搜索/比价工具，需设置 ZHETAOKE_APP_KEY 和 ZHETAOKE_SID。
+
+```bash
+python3 scripts/taobaoke_master.py convert "https://item.taobao.com/item.htm?id=123456"
+python3 scripts/taobaoke_master.py search "无线蓝牙耳机"
+python3 scripts/taobaoke_master.py compare "https://item.taobao.com/item.htm?id=123456"
+```

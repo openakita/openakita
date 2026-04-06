@@ -23,3 +23,12 @@ export BAIDU_API_KEY="your_key"
 - 专业排版与布局
 - 多模板风格支持
 - 内容结构优化
+
+## 预置脚本
+
+### scripts/ppt_gen.py
+PPT 大纲生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+
+```bash
+python3 scripts/ppt_gen.py generate "Q2季度销售报告"
+```
