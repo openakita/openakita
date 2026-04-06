@@ -9,7 +9,8 @@ requests for authentication, rate-limiting, and pre-signed URL generation.
 The actual ZIP upload goes directly from the client to OSS via pre-signed URL.
 
 Endpoints:
-  POST /prepare           — Validate captcha, rate-limit, return pre-signed upload URL
+  POST /verify-captcha    — Verify CAPTCHA token only, return signed nonce (for SDK callback)
+  POST /prepare           — Validate captcha/nonce, rate-limit, return pre-signed upload URL
   POST /complete/{id}     — Verify upload succeeded, create GitHub Issue, return feedback_token
   GET  /status/{id}       — Query single feedback status by report_id + token
   POST /status/batch      — Batch query feedback status (up to 50 items)
@@ -224,6 +225,44 @@ def _verify_captcha(verify_param: str) -> bool:
     except Exception as e:
         logger.error("CAPTCHA verification error: %s", e)
         return False
+
+
+# ---------------------------------------------------------------------------
+# CAPTCHA nonce: signed proof that verification already passed
+# ---------------------------------------------------------------------------
+
+_CAPTCHA_NONCE_PREFIX = "cn1:"
+_CAPTCHA_NONCE_MAX_AGE = 300  # 5 minutes
+
+
+def _sign_captcha_nonce() -> str:
+    """Create a short-lived HMAC-signed nonce proving CAPTCHA was verified."""
+    import time
+    ts = str(int(time.time()))
+    secret = os.environ.get("OSS_ACCESS_KEY_SECRET", "")
+    sig = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()[:24]
+    return f"{_CAPTCHA_NONCE_PREFIX}{ts}:{sig}"
+
+
+def _verify_captcha_nonce(nonce: str) -> bool:
+    """Validate a signed CAPTCHA nonce (timestamp + HMAC)."""
+    import time
+    if not nonce.startswith(_CAPTCHA_NONCE_PREFIX):
+        return False
+    payload = nonce[len(_CAPTCHA_NONCE_PREFIX):]
+    parts = payload.split(":")
+    if len(parts) != 2:
+        return False
+    ts_str, sig = parts
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return False
+    if abs(time.time() - ts) > _CAPTCHA_NONCE_MAX_AGE:
+        return False
+    secret = os.environ.get("OSS_ACCESS_KEY_SECRET", "")
+    expected = hmac.new(secret.encode(), ts_str.encode(), hashlib.sha256).hexdigest()[:24]
+    return hmac.compare_digest(sig, expected)
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +937,9 @@ def handler(event, context):
     if path in ("/", "/health") and method == "GET":
         return _json_response({"status": "ok", "service": "feedback-fc"})
 
+    if path == "/verify-captcha" and method == "POST":
+        return _handle_verify_captcha(evt)
+
     if path == "/prepare" and method == "POST":
         return _handle_prepare(evt)
 
@@ -966,6 +1008,31 @@ def _get_client_ip(evt: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# POST /verify-captcha — lightweight CAPTCHA-only verification for SDK callback
+# ---------------------------------------------------------------------------
+
+
+def _handle_verify_captcha(evt: dict) -> dict:
+    body = _parse_json_body(evt)
+    captcha_param = body.get("captcha_verify_param", "")
+
+    if not captcha_param or captcha_param == "none":
+        return _json_response({"verified": False, "error": "missing captcha param"}, 400)
+
+    scene_id = os.environ.get("CAPTCHA_SCENE_ID", "")
+    if not scene_id:
+        nonce = _sign_captcha_nonce()
+        return _json_response({"verified": True, "nonce": nonce})
+
+    verified = _verify_captcha(captcha_param)
+    if verified:
+        nonce = _sign_captcha_nonce()
+        return _json_response({"verified": True, "nonce": nonce})
+
+    return _json_response({"verified": False})
+
+
+# ---------------------------------------------------------------------------
 # POST /prepare — validate + issue pre-signed upload URL
 # ---------------------------------------------------------------------------
 
@@ -987,8 +1054,12 @@ def _handle_prepare(evt: dict) -> dict:
     if not title or len(title) < 2:
         return _error("Title must be at least 2 characters", 400)
 
-    # 1. Verify captcha (CAPTCHA 2.0 VerifyIntelligentCaptcha)
-    if captcha_param and captcha_param != "none":
+    # 1. Verify captcha — accept signed nonce (from /verify-captcha) or raw token
+    captcha_nonce = body.get("captcha_nonce", "")
+    if captcha_nonce:
+        if not _verify_captcha_nonce(captcha_nonce):
+            return _error("CAPTCHA nonce expired or invalid", 403)
+    elif captcha_param and captcha_param != "none":
         if not _verify_captcha(captcha_param):
             return _error("CAPTCHA verification failed", 403)
 

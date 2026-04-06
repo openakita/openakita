@@ -75,6 +75,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
   } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const captchaTokenRef = useRef("");
+  const captchaNonceRef = useRef("");
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const captchaInstanceRef = useRef<any>(null);
   const handleSubmitRef = useRef<() => void>(() => {});
@@ -82,6 +83,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
 
   type Phase = "form" | "uploading" | "success";
   const [phase, setPhase] = useState<Phase>("form");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   useEffect(() => {
     if (open) {
@@ -179,7 +181,23 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             button: "#feedback-submit-btn",
             captchaVerifyCallback: async (captchaVerifyParam: string) => {
               captchaTokenRef.current = captchaVerifyParam;
-              return { captchaResult: true, bizResult: true };
+              captchaNonceRef.current = "";
+              try {
+                const resp = await safeFetch(`${apiBase}/api/captcha/verify`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ captcha_verify_param: captchaVerifyParam }),
+                  signal: AbortSignal.timeout(10000),
+                });
+                const data = await resp.json();
+                if (data.verified) {
+                  captchaNonceRef.current = data.nonce || "";
+                  return { captchaResult: true, bizResult: true };
+                }
+                return { captchaResult: false, bizResult: false };
+              } catch {
+                return { captchaResult: true, bizResult: true };
+              }
             },
             onBizResultCallback: () => {
               handleSubmitRef.current();
@@ -211,8 +229,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
       }
       captchaInstanceRef.current = null;
       captchaTokenRef.current = "";
+      captchaNonceRef.current = "";
     };
-  }, [open, captchaCfg]);
+  }, [open, captchaCfg, captchaResetKey]);
 
   const addImages = useCallback((files: FileList | File[]) => {
     const newFiles = Array.from(files).filter(
@@ -265,6 +284,23 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
     setUploadDebug(true);
     setSubmitResult(null);
   }, [initialMode]);
+
+  const friendlyErrorMsg = useCallback((data: any): string => {
+    const code = data?.friendly || "";
+    const detail = data?.detail || "";
+    if (code === "feedback_captcha_failed") return t("feedback.captchaFailed");
+    if (code === "feedback_rate_limit") return t("feedback.rateLimited");
+    if (code === "feedback_cloud_network_error") return t("feedback.cloudNetworkError");
+    if (code === "feedback_cloud_error") return t("feedback.cloudError", { detail });
+    return detail || t("feedback.uploadFailedNetwork");
+  }, [t]);
+
+  const handleSseError = useCallback((data: any) => {
+    setUploadProgress(null);
+    setSubmitResult({ ok: false, msg: friendlyErrorMsg(data) });
+    setPhase("form");
+    setCaptchaResetKey((k) => k + 1);
+  }, [friendlyErrorMsg]);
 
   const handleSubmitViaIpc = useCallback(async () => {
     const reportId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
@@ -349,6 +385,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
           setUploadProgress(null);
           setSubmitResult({ ok: false, msg: err?.message || err?.toString() || t("feedback.uploadFailedNetwork") });
           setPhase("form");
+          setCaptchaResetKey((k) => k + 1);
         }
         return;
       }
@@ -357,6 +394,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
       form.append("title", title.trim());
       form.append("description", description.trim());
       form.append("captcha_verify_param", captchaTokenRef.current || "none");
+      if (captchaNonceRef.current) {
+        form.append("captcha_nonce", captchaNonceRef.current);
+      }
       for (const img of imageFiles) {
         form.append("images", img);
       }
@@ -417,14 +457,13 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
                   downloadUrl: dlUrl,
                 });
                 setPhase("form");
+                setCaptchaResetKey((k) => k + 1);
               } else {
                 resetForm();
                 setPhase("success");
               }
             } else if (eventType === "error") {
-              setUploadProgress(null);
-              setSubmitResult({ ok: false, msg: data.detail || t("feedback.uploadFailedNetwork") });
-              setPhase("form");
+              handleSseError(data);
             }
           }
         }
@@ -439,6 +478,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             downloadUrl: dlUrl,
           });
           setPhase("form");
+          setCaptchaResetKey((k) => k + 1);
         } else {
           resetForm();
           setPhase("success");
@@ -452,12 +492,14 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
         setSubmitResult({ ok: false, msg: err?.message || t("feedback.uploadFailedNetwork") });
       }
       setPhase("form");
+      setCaptchaResetKey((k) => k + 1);
     } finally {
       captchaTokenRef.current = "";
+      captchaNonceRef.current = "";
       abortRef.current = null;
       setSubmitting(false);
     }
-  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, imageFiles, apiBase, t, resetForm, useOfflineIpc, handleSubmitViaIpc]);
+  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, imageFiles, apiBase, t, resetForm, useOfflineIpc, handleSubmitViaIpc, handleSseError]);
 
   handleSubmitRef.current = handleSubmit;
 

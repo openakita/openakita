@@ -17,8 +17,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +371,42 @@ async def get_feedback_config():
         }
     except Exception:
         return {"captcha_scene_id": "", "captcha_prefix": ""}
+
+
+@router.post("/api/captcha/verify")
+async def verify_captcha(request: Request):
+    """Proxy CAPTCHA verification to cloud function /verify-captcha.
+
+    Returns the cloud function's response: ``{verified, nonce?}`` on success,
+    or ``{verified: false}`` on failure.  If no cloud endpoint is configured,
+    returns ``{verified: true, nonce: ""}`` to allow offline fallback.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"verified": False, "error": "invalid body"}, status_code=400)
+
+    captcha_param = body.get("captcha_verify_param", "")
+    if not captcha_param:
+        return JSONResponse({"verified": False, "error": "missing param"}, status_code=400)
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        return JSONResponse({"verified": True, "nonce": ""})
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{endpoint.rstrip('/')}/verify-captcha",
+                json={"captcha_verify_param": captcha_param},
+                timeout=10,
+            )
+            return JSONResponse(resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        logger.warning("Captcha verify proxy failed: %s", e)
+        return JSONResponse({"verified": False, "error": "network"}, status_code=502)
 
 
 def _sse_event(event_type: str, data: dict) -> str:
@@ -774,6 +810,84 @@ async def _build_bug_zip(
     return buf.getvalue()
 
 
+async def _prepare_cloud_upload(
+    *,
+    report_id: str,
+    report_type: str,
+    title: str,
+    summary: str,
+    extra_info: str,
+    captcha_verify_param: str,
+    captcha_nonce: str = "",
+    contact_email: str,
+) -> dict | None:
+    """Call cloud function /prepare: verify captcha, rate-limit, get pre-signed URL.
+
+    Returns ``{"upload_url": ..., "report_date": ...}`` on success.
+    Returns ``{"error": ..., "error_code": ...}`` on failure.
+    Returns ``None`` if no cloud endpoint is configured (local fallback).
+    """
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        return None
+
+    import httpx
+
+    base = endpoint.rstrip("/")
+    try:
+        payload: dict = {
+            "report_id": report_id,
+            "title": title[:200],
+            "type": report_type,
+            "summary": summary[:2000],
+            "system_info": extra_info[:2000],
+            "captcha_verify_param": captcha_verify_param,
+            "contact_email": contact_email,
+        }
+        if captcha_nonce:
+            payload["captcha_nonce"] = captcha_nonce
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{base}/prepare",
+                json=payload,
+                timeout=15,
+            )
+
+            if resp.status_code == 429:
+                return {"error": "rate_limit", "error_code": 429}
+            if resp.status_code == 403:
+                try:
+                    detail = resp.json().get("error", "")
+                except Exception:
+                    detail = ""
+                return {"error": "captcha_failed", "error_code": 403, "detail": detail}
+            if resp.status_code >= 400:
+                try:
+                    detail = resp.json().get("error", resp.text[:200])
+                except Exception:
+                    detail = resp.text[:200]
+                return {"error": "cloud_error", "error_code": resp.status_code, "detail": detail}
+
+            data = resp.json()
+            return {"upload_url": data["upload_url"], "report_date": data["report_date"]}
+    except Exception as e:
+        logger.warning("Cloud prepare failed: %s", e)
+        return {"error": "network", "detail": str(e)}
+
+
+def _prepare_error_to_sse(result: dict) -> tuple[str, dict]:
+    """Convert a _prepare_cloud_upload error result into an SSE (event_type, data) tuple."""
+    code = result.get("error", "")
+    detail = result.get("detail", "")
+    if code == "rate_limit":
+        return ("error", {"detail": "rate_limit", "friendly": "feedback_rate_limit"})
+    if code == "captcha_failed":
+        return ("error", {"detail": detail or "captcha_failed", "friendly": "feedback_captcha_failed"})
+    if code == "network":
+        return ("error", {"detail": detail, "friendly": "feedback_cloud_network_error"})
+    return ("error", {"detail": detail or code, "friendly": "feedback_cloud_error"})
+
+
 async def _upload_with_progress(
     *,
     report_id: str,
@@ -784,8 +898,12 @@ async def _upload_with_progress(
     captcha_verify_param: str,
     contact_email: str,
     zip_bytes: bytes,
+    prepared: dict | None = None,
 ):
-    """Async generator performing 3-phase upload with progress.
+    """Async generator performing upload + complete phases with progress.
+
+    If ``prepared`` is given (from a prior ``_prepare_cloud_upload`` call),
+    the /prepare step is skipped entirely.
 
     Yields ``(event_type, data_dict)`` tuples.  The final yield is either
     ``("complete", {...})`` or ``("error", {...})``.
@@ -817,49 +935,54 @@ async def _upload_with_progress(
 
     try:
         async with httpx.AsyncClient() as client:
-            # Phase 1: prepare
-            yield ("progress", {
-                "phase": "preparing", "percent": 33,
-                "detail": "连接云端服务...",
-            })
-
-            prepare_resp = await client.post(
-                f"{base}/prepare",
-                json={
-                    "report_id": report_id,
-                    "title": title[:200],
-                    "type": report_type,
-                    "summary": summary[:2000],
-                    "system_info": extra_info[:2000],
-                    "captcha_verify_param": captcha_verify_param,
-                    "contact_email": contact_email,
-                },
-                timeout=15,
-            )
-
-            if prepare_resp.status_code == 429:
-                yield ("error", {
-                    "detail": "Rate limit reached, please try later",
+            if prepared and "upload_url" in prepared:
+                upload_url = prepared["upload_url"]
+                report_date = prepared["report_date"]
+            else:
+                yield ("progress", {
+                    "phase": "preparing", "percent": 33,
+                    "detail": "连接云端服务...",
                 })
-                return
-            if prepare_resp.status_code == 403:
-                yield ("error", {"detail": "Verification failed"})
-                return
-            if prepare_resp.status_code >= 400:
-                try:
-                    detail = prepare_resp.json().get(
-                        "error", prepare_resp.text[:200]
-                    )
-                except Exception:
-                    detail = prepare_resp.text[:200]
-                yield ("error", {
-                    "detail": f"Cloud service error: {detail}",
-                })
-                return
 
-            prepare_data = prepare_resp.json()
-            upload_url = prepare_data["upload_url"]
-            report_date = prepare_data["report_date"]
+                prepare_resp = await client.post(
+                    f"{base}/prepare",
+                    json={
+                        "report_id": report_id,
+                        "title": title[:200],
+                        "type": report_type,
+                        "summary": summary[:2000],
+                        "system_info": extra_info[:2000],
+                        "captcha_verify_param": captcha_verify_param,
+                        "contact_email": contact_email,
+                    },
+                    timeout=15,
+                )
+
+                if prepare_resp.status_code == 429:
+                    yield ("error", {"detail": "rate_limit", "friendly": "feedback_rate_limit"})
+                    return
+                if prepare_resp.status_code == 403:
+                    try:
+                        detail = prepare_resp.json().get("error", "")
+                    except Exception:
+                        detail = ""
+                    yield ("error", {"detail": detail or "captcha_failed", "friendly": "feedback_captcha_failed"})
+                    return
+                if prepare_resp.status_code >= 400:
+                    try:
+                        detail = prepare_resp.json().get(
+                            "error", prepare_resp.text[:200]
+                        )
+                    except Exception:
+                        detail = prepare_resp.text[:200]
+                    yield ("error", {
+                        "detail": f"Cloud service error: {detail}",
+                    })
+                    return
+
+                prepare_data = prepare_resp.json()
+                upload_url = prepare_data["upload_url"]
+                report_date = prepare_data["report_date"]
 
             # Phase 2: OSS upload with chunked progress tracking
             total = len(zip_bytes)
@@ -978,6 +1101,7 @@ async def submit_bug_report(
     title: str = Form(...),
     description: str = Form(...),
     captcha_verify_param: str = Form("none"),
+    captcha_nonce: str = Form(""),
     steps: str = Form(""),
     upload_logs: bool = Form(True),
     upload_debug: bool = Form(True),
@@ -1002,14 +1126,47 @@ async def submit_bug_report(
         from . import feedback_store
 
         try:
+            # Phase 0: verify captcha + get pre-signed URL BEFORE any heavy work.
+            # This ensures the captcha token is verified within seconds of generation.
             yield _sse_event("progress", {
-                "phase": "collecting", "percent": 5,
+                "phase": "verifying", "percent": 3,
+                "detail": "验证身份...",
+            })
+            oa_ver = "unknown"
+            try:
+                from openakita import get_version_string
+                oa_ver = get_version_string()
+            except Exception:
+                pass
+            quick_sys_info = (
+                f"OS: {platform.system()} {platform.release()} "
+                f"{platform.machine()} | "
+                f"Python: {platform.python_version()} | "
+                f"OpenAkita: {oa_ver}"
+            )
+            prepared = await _prepare_cloud_upload(
+                report_id=report_id,
+                report_type="bug",
+                title=title,
+                summary=description[:2000],
+                extra_info=quick_sys_info,
+                captcha_verify_param=captcha_verify_param,
+                captcha_nonce=captcha_nonce,
+                contact_email=contact_email,
+            )
+            if prepared is not None and "error" in prepared:
+                evt_type, evt_data = _prepare_error_to_sse(prepared)
+                yield _sse_event(evt_type, evt_data)
+                return
+
+            yield _sse_event("progress", {
+                "phase": "collecting", "percent": 8,
                 "detail": "收集系统信息...",
             })
             sys_info = _collect_system_info()
 
             yield _sse_event("progress", {
-                "phase": "building", "percent": 10,
+                "phase": "building", "percent": 15,
                 "detail": "打包诊断数据...",
             })
             zip_bytes = await _build_bug_zip(
@@ -1049,6 +1206,7 @@ async def submit_bug_report(
                 captcha_verify_param=captcha_verify_param,
                 contact_email=contact_email,
                 zip_bytes=zip_bytes,
+                prepared=prepared,
             ):
                 if evt_type in ("complete", "error"):
                     result_data = evt_data
@@ -1094,6 +1252,7 @@ async def submit_feature_request(
     title: str = Form(...),
     description: str = Form(...),
     captcha_verify_param: str = Form("none"),
+    captcha_nonce: str = Form(""),
     contact_email: str = Form(""),
     images: list[UploadFile] | None = File(None),  # noqa: B008
 ):
@@ -1113,6 +1272,27 @@ async def submit_feature_request(
         from . import feedback_store
 
         try:
+            # Phase 0: verify captcha before any packaging work
+            yield _sse_event("progress", {
+                "phase": "verifying", "percent": 3,
+                "detail": "验证身份...",
+            })
+            contact_brief = f"Email: {contact_email}" if contact_email else "(no contact)"
+            prepared = await _prepare_cloud_upload(
+                report_id=report_id,
+                report_type="feature",
+                title=title,
+                summary=description[:2000],
+                extra_info=contact_brief,
+                captcha_verify_param=captcha_verify_param,
+                captcha_nonce=captcha_nonce,
+                contact_email=contact_email,
+            )
+            if prepared is not None and "error" in prepared:
+                evt_type, evt_data = _prepare_error_to_sse(prepared)
+                yield _sse_event(evt_type, evt_data)
+                return
+
             yield _sse_event("progress", {
                 "phase": "building", "percent": 10,
                 "detail": "打包需求数据...",
@@ -1147,8 +1327,6 @@ async def submit_feature_request(
                 ),
             })
 
-            contact_brief = f"Email: {contact_email}" if contact_email else "(no contact)"
-
             result_data: dict = {}
             async for evt_type, evt_data in _upload_with_progress(
                 report_id=report_id,
@@ -1159,6 +1337,7 @@ async def submit_feature_request(
                 captcha_verify_param=captcha_verify_param,
                 contact_email=contact_email,
                 zip_bytes=zip_bytes,
+                prepared=prepared,
             ):
                 if evt_type in ("complete", "error"):
                     result_data = evt_data

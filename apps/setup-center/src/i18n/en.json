@@ -1377,7 +1377,11 @@
     "submitSuccessTitle": "Submitted Successfully",
     "submitSuccessMessage": "Thank you for your feedback! You can check the progress in My Feedback.",
     "clearForm": "Clear & Reset",
-    "close": "Close"
+    "close": "Close",
+    "captchaFailed": "Verification failed. Please click Submit to retry. If the issue persists, close and reopen the dialog.",
+    "rateLimited": "Too many submissions. Please wait and try again later.",
+    "cloudNetworkError": "Failed to connect to the cloud service. Please check your network and retry.",
+    "cloudError": "Cloud service error ({{detail}}). Please try again later."
   },
   "bugReport": {
     "title": "Bug Report",
