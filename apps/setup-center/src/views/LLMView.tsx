@@ -98,7 +98,6 @@ export function LLMView(props: LLMViewProps) {
   const [capSelected, setCapSelected] = useState<string[]>([]);
   const [capTouched, setCapTouched] = useState(false);
   const [endpointName, setEndpointName] = useState<string>("");
-  const [endpointPriority, setEndpointPriority] = useState<number>(1);
   const [endpointNameTouched, setEndpointNameTouched] = useState(false);
   const [baseUrlTouched, setBaseUrlTouched] = useState(false);
   const [baseUrlExpanded, setBaseUrlExpanded] = useState(false);
@@ -196,12 +195,6 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
-  function normalizePriority(n: any, fallback: number) {
-    const x = Number(n);
-    if (!Number.isFinite(x) || x <= 0) return fallback;
-    return Math.floor(x);
-  }
-
   const providerApplyUrl = useMemo(() => getProviderApplyUrl(selectedProvider?.slug || ""), [selectedProvider?.slug]);
 
   // ── Effects ──
@@ -280,12 +273,6 @@ export function LLMView(props: LLMViewProps) {
       .map(([k]) => k);
     setCapSelected(list.length ? list : ["text"]);
   }, [selectedModelId, models, capTouched]);
-
-  useEffect(() => {
-    if (isEditingEndpoint) return;
-    const maxP = savedEndpoints.reduce((m, e) => Math.max(m, Number.isFinite(e.priority) ? e.priority : 0), 0);
-    setEndpointPriority(savedEndpoints.length === 0 ? 1 : maxP + 1);
-  }, [savedEndpoints, isEditingEndpoint]);
 
   // ── Async functions ──
 
@@ -691,7 +678,7 @@ export function LLMView(props: LLMViewProps) {
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "reorder failed");
-      notifySuccess("已保存端点顺序（priority 已更新）");
+      notifySuccess(t("llm.reorderSaved") || "已保存端点顺序");
       await loadSavedEndpoints();
     } catch (e) {
       notifyError(String(e));
@@ -720,7 +707,7 @@ export function LLMView(props: LLMViewProps) {
     setEditingOriginalName(name);
     setEditDraft({
       name: ep.name,
-      priority: normalizePriority(ep.priority, 1),
+      priority: Number.isFinite(ep.priority) && ep.priority > 0 ? ep.priority : 10,
       providerSlug: ep.provider || "",
       apiType: (ep.api_type as any) || "openai",
       baseUrl: ep.base_url || "",
@@ -890,7 +877,7 @@ export function LLMView(props: LLMViewProps) {
         const validTiers = (editDraft.pricingTiers || []).filter(
           (tier) => tier.input_price > 0 || tier.output_price > 0
         );
-        endpoint.priority = normalizePriority(editDraft.priority, 1);
+        endpoint.priority = Number.isFinite(editDraft.priority) && editDraft.priority > 0 ? editDraft.priority : 10;
         endpoint.max_tokens = editDraft.maxTokens ?? 0;
         endpoint.context_window = editDraft.contextWindow ?? 200000;
         endpoint.timeout = editDraft.timeout ?? 180;
@@ -976,13 +963,17 @@ export function LLMView(props: LLMViewProps) {
       const capList = Array.isArray(capSelected) && capSelected.length ? capSelected : ["text"];
       const epName = (endpointName.trim() || `${providerSlug || selectedProvider?.slug || "provider"}-${selectedModelId}`).slice(0, 64);
 
+      const autoP = savedEndpoints.length === 0
+        ? 10
+        : Math.max(...savedEndpoints.map((e) => (Number.isFinite(e.priority) ? e.priority : 0))) + 10;
+
       const endpoint: Record<string, unknown> = {
         name: isEditingEndpoint ? (editingOriginalName || epName) : epName,
         provider: providerSlug || (selectedProvider?.slug ?? "custom"),
         api_type: apiType,
         base_url: baseUrl.trim(),
         model: selectedModelId,
-        priority: normalizePriority(endpointPriority, 1),
+        priority: autoP,
         max_tokens: addEpMaxTokens,
         context_window: addEpContextWindow,
         timeout: addEpTimeout,
@@ -1079,7 +1070,6 @@ export function LLMView(props: LLMViewProps) {
     setEndpointNameTouched(false);
     setCapSelected([]);
     setCapTouched(false);
-    setEndpointPriority(1);
     setCodingPlanMode(false);
     setAddEpMaxTokens(0);
     setAddEpContextWindow(200000);
@@ -1115,7 +1105,6 @@ export function LLMView(props: LLMViewProps) {
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
                 <TableHead className="w-[50px]">Key</TableHead>
-                <TableHead className="w-[80px]">Priority</TableHead>
                 <TableHead className="w-[140px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -1129,7 +1118,6 @@ export function LLMView(props: LLMViewProps) {
                   </TableCell>
                   <TableCell className="text-muted-foreground">{e.model}</TableCell>
                   <TableCell>{(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}</TableCell>
-                  <TableCell>{e.priority}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doSetPrimaryEndpoint(e.name)} disabled={!!busy} title={t("llm.setPrimary")}><IconChevronUp size={14} /></Button>
@@ -1348,22 +1336,16 @@ export function LLMView(props: LLMViewProps) {
                 {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
               </summary>
               <div className="border-t border-border px-4 py-3 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advApiType")}</Label>
-                    <Select value={apiType} onValueChange={(v) => setApiType(v as any)}>
-                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openai">openai</SelectItem>
-                        <SelectItem value="openai_responses">openai_responses</SelectItem>
-                        <SelectItem value="anthropic">anthropic</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advPriority")}</Label>
-                    <Input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} />
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.advApiType")}</Label>
+                  <Select value={apiType} onValueChange={(v) => setApiType(v as any)}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai">openai</SelectItem>
+                      <SelectItem value="openai_responses">openai_responses</SelectItem>
+                      <SelectItem value="anthropic">anthropic</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
@@ -1539,22 +1521,16 @@ export function LLMView(props: LLMViewProps) {
                 {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
               </summary>
               <div className="border-t border-border px-4 py-3 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advApiType")}</Label>
-                    <Select value={editDraft.apiType} onValueChange={(v) => setEditDraft({ ...editDraft, apiType: v as any })}>
-                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openai">openai</SelectItem>
-                        <SelectItem value="openai_responses">openai_responses</SelectItem>
-                        <SelectItem value="anthropic">anthropic</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advPriority")}</Label>
-                    <Input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} />
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.advApiType")}</Label>
+                  <Select value={editDraft.apiType} onValueChange={(v) => setEditDraft({ ...editDraft, apiType: v as any })}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai">openai</SelectItem>
+                      <SelectItem value="openai_responses">openai_responses</SelectItem>
+                      <SelectItem value="anthropic">anthropic</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
