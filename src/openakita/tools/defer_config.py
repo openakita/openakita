@@ -27,6 +27,7 @@ ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset({
     "tool_search",
     # 代理委派
     "delegate_to_agent",
+    "delegate_parallel",
     # 任务管理
     "create_todo",
     "update_todo_step",
@@ -66,7 +67,6 @@ DEFER_INDIVIDUAL_TOOLS: frozenset[str] = frozenset({
     "news_search",
     "semantic_search",
     "spawn_agent",
-    "delegate_parallel",
     "create_agent",
     "get_agent_status",
     "list_active_agents",
