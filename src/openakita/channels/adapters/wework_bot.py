@@ -376,7 +376,7 @@ class WeWorkBotAdapter(ChannelAdapter):
     channel_name = "wework"
 
     capabilities = {
-        "streaming": False,
+        "streaming": True,
         "send_image": True,
         "send_file": False,
         "send_voice": False,
@@ -794,10 +794,20 @@ class WeWorkBotAdapter(ChannelAdapter):
             f"msgtype={msg_type}, has_response_url={bool(response_url)}"
         )
 
-        # event 类型（进入会话等）只记录，不 emit
+        # event 类型（进入会话等）
         if msg_type == "event":
-            logger.info(f"WeWorkBot: Event from {userid}, type ignored")
-            # event 不需要 stream，返回空 JSON
+            event_data = msg_data.get("event", {})
+            event_type = event_data.get("eventtype", msg_data.get("event_type", "unknown"))
+            logger.info(
+                "WeWorkBot: Event received: type=%s, user=%s, chat=%s, data=%s",
+                event_type, userid, chat_id, json.dumps(event_data, ensure_ascii=False)[:200],
+            )
+            await self._emit_event(event_type, {
+                "chatid": chat_id,
+                "chattype": chattype,
+                "userid": userid,
+                "raw": msg_data,
+            })
             reply_payload = json.dumps({})
             encrypted = self._crypt.encrypt_reply(reply_payload, nonce, timestamp)
             return aiohttp.web.Response(
@@ -888,6 +898,10 @@ class WeWorkBotAdapter(ChannelAdapter):
                 )
             elif msg_type == "file":
                 await self._handle_file_message(
+                    msg_data, msgid, userid, chat_id, chat_type_str
+                )
+            elif msg_type == "video":
+                await self._handle_video_message(
                     msg_data, msgid, userid, chat_id, chat_type_str
                 )
             else:
@@ -1145,6 +1159,47 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         is_direct_message = chat_type == "private"
         # 智能机器人 HTTP 回调只在群聊被 @时投递，故群文件消息 is_mentioned=True
+        is_mentioned = msg_data.get("chattype") == "group"
+
+        unified = UnifiedMessage.create(
+            channel=self.channel_name,
+            channel_message_id=msgid,
+            user_id=f"ww_{userid}",
+            channel_user_id=userid,
+            chat_id=chat_id,
+            content=content,
+            chat_type=chat_type,
+            is_mentioned=is_mentioned,
+            is_direct_message=is_direct_message,
+            raw=msg_data,
+            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+        )
+
+        self._log_message(unified)
+        await self._emit_message(unified)
+
+    async def _handle_video_message(
+        self,
+        msg_data: dict,
+        msgid: str,
+        userid: str,
+        chat_id: str,
+        chat_type: str,
+    ) -> None:
+        """处理视频消息"""
+        video_data = msg_data.get("video", {})
+        video_url = video_data.get("url", "")
+
+        media = MediaFile.create(
+            filename=video_data.get("filename", f"video_{msgid}.mp4"),
+            mime_type="video/mp4",
+            url=video_url,
+        )
+        media.extra = {"aes_encrypted": True}
+
+        content = MessageContent(videos=[media])
+
+        is_direct_message = chat_type == "private"
         is_mentioned = msg_data.get("chattype") == "group"
 
         unified = UnifiedMessage.create(

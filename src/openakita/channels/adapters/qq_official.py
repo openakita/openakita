@@ -77,7 +77,7 @@ class QQBotAdapter(ChannelAdapter):
         "streaming": False,
         "send_image": True,
         "send_file": True,
-        "send_voice": False,
+        "send_voice": True,
         "delete_message": False,
         "edit_message": False,
         "get_chat_info": False,
@@ -85,6 +85,7 @@ class QQBotAdapter(ChannelAdapter):
         "get_chat_members": False,
         "get_recent_messages": False,
         "markdown": True,
+        "proactive_send": False,
     }
 
     def __init__(
@@ -161,6 +162,8 @@ class QQBotAdapter(ChannelAdapter):
         )
         # Markdown 能力是否可用（自定义 markdown 需内邀开通，首次失败后自动降级）
         self._markdown_available: bool = True
+        # 沙箱环境 2026/03/05 起不受消息频控限制
+        self._sandbox_rate_exempt: bool = sandbox
 
         # 待投递消息队列：QQ 群聊不支持主动发送，缓存后等用户下条消息时投递
         # 每条记录为 (入队时间戳, 消息文本)
@@ -254,7 +257,10 @@ class QQBotAdapter(ChannelAdapter):
         return "11255" in s or "invalid request" in s
 
     def _enqueue_pending(self, chat_id: str, text: str) -> None:
-        """将无法主动发送的消息缓存，等用户下条消息到达时投递。"""
+        """将无法主动发送的消息缓存，等用户下条消息到达时投递。
+
+        QQ 群聊主动推送已于 2025/04/21 废弃，消息必须在被动回复窗口内发送。
+        """
         pending = self._pending_messages.setdefault(chat_id, [])
         if len(pending) >= self._pending_max_per_chat:
             pending.pop(0)
@@ -1103,6 +1109,7 @@ class QQBotAdapter(ChannelAdapter):
         target_id: str,
         text: str,
         msg_id: str | None = None,
+        is_wakeup: bool = False,
     ) -> str:
         """Webhook 模式下通过 HTTP 发送纯文本消息。"""
         import httpx as hx
@@ -1123,6 +1130,8 @@ class QQBotAdapter(ChannelAdapter):
         }
         if msg_id:
             payload["msg_id"] = msg_id
+        if is_wakeup:
+            payload["is_wakeup"] = True
 
         async with hx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
@@ -1608,7 +1617,8 @@ class QQBotAdapter(ChannelAdapter):
             return await api.post_group_message(group_openid=target_id, **kwargs)
 
     async def _send_to_target(
-        self, api: Any, chat_type: str, target_id: str, **kwargs
+        self, api: Any, chat_type: str, target_id: str,
+        *, is_wakeup: bool = False, **kwargs,
     ) -> Any:
         """
         根据 chat_type 发送消息到对应目标。
@@ -1618,6 +1628,8 @@ class QQBotAdapter(ChannelAdapter):
         遇到 40054005 去重错误时自动递增 msg_seq 重试（最多 5 次）。
         若 msg_id 被动回复失败（窗口过期），自动尝试 event_id 回退。
         """
+        if is_wakeup:
+            kwargs["is_wakeup"] = True
         seq_key = kwargs.get("msg_id") or target_id
         max_dedup_retries = 1
         last_error: Exception | None = None
@@ -1697,14 +1709,86 @@ class QQBotAdapter(ChannelAdapter):
         voice_path: str,
         caption: str | None = None,
     ) -> str:
-        """
-        发送语音消息
+        """发送语音消息 (file_type=3, SILK 格式 + base64 上传)。
 
-        QQ 官方 API 语音 (file_type=3) 仅支持 silk 格式且需要公网 URL。
-        本地文件暂无法直接上传。
+        QQ 官方 API 语音要求 SILK 格式。自动检测输入格式:
+        - .silk/.slk 文件直接上传
+        - 其他格式尝试用 pilk 转码为 SILK
         """
-        raise NotImplementedError(
-            "QQ 官方机器人暂不支持发送语音（需要公网 URL + silk 格式，本地文件不支持）"
+        import base64 as b64
+        from pathlib import Path as _Path
+
+        src = _Path(voice_path)
+        if not src.exists():
+            raise FileNotFoundError(f"Voice file not found: {voice_path}")
+
+        chat_type = self._resolve_chat_type(chat_id)
+        if chat_type == "channel":
+            raise NotImplementedError("QQ 频道暂不支持语音发送")
+        msg_id = self._resolve_msg_id(chat_id)
+
+        ext = src.suffix.lower()
+        silk_data: bytes | None = None
+
+        if ext in (".silk", ".slk"):
+            silk_data = src.read_bytes()
+        else:
+            try:
+                import pilk
+                import tempfile
+                import wave
+                import io
+
+                raw_bytes = src.read_bytes()
+                pcm_data: bytes
+                sample_rate = 24000
+                try:
+                    with wave.open(io.BytesIO(raw_bytes)) as wf:
+                        sample_rate = wf.getframerate()
+                        pcm_data = wf.readframes(wf.getnframes())
+                except wave.Error:
+                    pcm_data = raw_bytes
+
+                tmp_pcm = None
+                tmp_silk = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".pcm", delete=False) as fp:
+                        tmp_pcm = fp.name
+                        fp.write(pcm_data)
+                    with tempfile.NamedTemporaryFile(suffix=".silk", delete=False) as fp:
+                        tmp_silk = fp.name
+                    pilk.encode(tmp_pcm, tmp_silk, pcm_rate=sample_rate, tencent=True)
+                    silk_data = _Path(tmp_silk).read_bytes()
+                finally:
+                    if tmp_pcm:
+                        _Path(tmp_pcm).unlink(missing_ok=True)
+                    if tmp_silk:
+                        _Path(tmp_silk).unlink(missing_ok=True)
+            except ImportError:
+                raise ImportError(
+                    "pilk 未安装，无法将音频转为 SILK 格式。"
+                    "请运行: pip install pilk"
+                )
+
+        if not silk_data:
+            raise RuntimeError("Failed to prepare SILK voice data")
+
+        file_data = b64.standard_b64encode(silk_data).decode("ascii")
+        upload_result = await self._upload_rich_media_base64(
+            chat_type, chat_id,
+            file_type=3,
+            file_data=file_data,
+            srv_send_msg=False,
+        )
+        file_info = (
+            upload_result.get("file_info") if isinstance(upload_result, dict)
+            else getattr(upload_result, "file_info", None)
+        )
+        if not file_info:
+            raise RuntimeError(f"Voice upload did not return file_info: {upload_result}")
+
+        return await self._send_media_message_via_http(
+            chat_type, chat_id, file_info, msg_id,
         )
 
     # ==================== Typing 提示 ====================

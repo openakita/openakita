@@ -79,6 +79,10 @@ CMD_SUBSCRIBE = "aibot_subscribe"
 CMD_HEARTBEAT = "ping"
 CMD_RESPONSE = "aibot_respond_msg"
 CMD_RESPONSE_WELCOME = "aibot_respond_welcome_msg"
+# NOTE: CMD_RESPONSE_UPDATE is defined for template card update support per the
+# WeCom WS protocol, but is NOT yet wired into any send path in this adapter.
+# To use it, a future send_template_card_update() method would call
+# _send_reply_with_ack(req_id, body, CMD_RESPONSE_UPDATE).
 CMD_RESPONSE_UPDATE = "aibot_respond_update_msg"
 CMD_SEND_MSG = "aibot_send_msg"
 CMD_CALLBACK = "aibot_msg_callback"
@@ -1056,6 +1060,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             items = mixed_data.get("msg_item", [])
             text_parts: list[str] = []
             images: list[MediaFile] = []
+            files: list[MediaFile] = []
             for item in items:
                 item_type = item.get("msgtype", "")
                 if item_type == "text":
@@ -1070,8 +1075,18 @@ class WeWorkWsAdapter(ChannelAdapter):
                     media.extra = {"aeskey": img_data.get("aeskey")}
                     images.append(media)
                     media_list.append(media)
+                elif item_type == "file":
+                    file_data = item.get("file", {})
+                    media = MediaFile.create(
+                        filename=file_data.get("filename", f"file_{len(files)}"),
+                        mime_type="application/octet-stream",
+                        url=file_data.get("url"),
+                    )
+                    media.extra = {"aeskey": file_data.get("aeskey")}
+                    files.append(media)
+                    media_list.append(media)
             return (
-                MessageContent(text="\n".join(text_parts) or None, images=images),
+                MessageContent(text="\n".join(text_parts) or None, images=images, files=files),
                 media_list,
             )
 
