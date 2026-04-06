@@ -1630,7 +1630,16 @@
     "progressFinalizing": "正在创建反馈记录…",
     "progressSaving": "保存中…",
     "cancelUpload": "取消上传",
-    "uploadCancelled": "上传已取消"
+    "uploadCancelled": "上传已取消",
+    "uploadingTitle": "正在提交反馈",
+    "submitSuccessTitle": "提交成功",
+    "submitSuccessMessage": "感谢您的反馈！您可以在「我的反馈」中查看处理进度。",
+    "clearForm": "清空重填",
+    "close": "关闭",
+    "captchaFailed": "人机验证未通过，请点击「提交」按钮重试。如多次失败，请尝试关闭弹窗后重新打开。",
+    "rateLimited": "提交过于频繁，请稍后再试。",
+    "cloudNetworkError": "连接云端服务失败，请检查网络后重试。",
+    "cloudError": "云端服务异常（{{detail}}），请稍后再试。"
   },
   "bugReport": {
     "title": "错误报告",
