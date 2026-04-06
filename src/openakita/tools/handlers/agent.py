@@ -117,11 +117,33 @@ class AgentToolHandler:
 
     async def _delegate_parallel(self, params: dict[str, Any]) -> str:
         import asyncio
+        import json as _json
         from collections import Counter
 
         tasks_param = params.get("tasks")
+
+        # LLM 有时把 tasks 序列化为 JSON 字符串而非原生 list
+        if isinstance(tasks_param, str):
+            try:
+                tasks_param = _json.loads(tasks_param)
+            except (ValueError, TypeError):
+                pass
+
+        # 单个 dict → 包装成 list（LLM 偶尔只传一个 task 对象）
+        if isinstance(tasks_param, dict):
+            tasks_param = [tasks_param]
+
         if not tasks_param or not isinstance(tasks_param, list):
-            return "❌ tasks is required and must be a list"
+            return (
+                "❌ tasks is required and must be a list. "
+                f"Received type: {type(tasks_param).__name__}"
+            )
+
+        # LLM 有时用 "task" 代替 "message"，做 key 映射
+        for t in tasks_param:
+            if isinstance(t, dict) and "message" not in t and "task" in t:
+                t["message"] = t.pop("task")
+
         if len(tasks_param) < 2:
             return "❌ delegate_parallel requires at least 2 tasks (use delegate_to_agent for single)"
         if len(tasks_param) > 5:
