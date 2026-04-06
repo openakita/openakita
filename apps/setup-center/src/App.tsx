@@ -4188,30 +4188,6 @@ export function App() {
                         >
                           <FolderOpen className="size-4" />
                         </Button>
-                        <Button
-                          size="sm"
-                          className="h-8 shrink-0"
-                          disabled={!obCustomRootInput.trim() || obCustomRootApplied || obCustomRootBusy}
-                          onClick={async () => {
-                            if (obCustomRootBusy) return;
-                            setObCustomRootBusy(true);
-                            try {
-                              const info = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
-                                "set_custom_root_dir", { path: obCustomRootInput.trim(), migrate: obCustomRootMigrate }
-                              );
-                              setObCurrentRoot(info.currentRoot);
-                              setObCustomRootApplied(true);
-                              notifySuccess(t("onboarding.welcome.customRootApplied", { path: info.currentRoot }));
-                              obLoadEnvCheck();
-                            } catch (e: any) {
-                              notifyError(String(e));
-                            } finally {
-                              setObCustomRootBusy(false);
-                            }
-                          }}
-                        >
-                          {obCustomRootBusy ? <Loader2 className="size-3.5 animate-spin" /> : t("onboarding.welcome.customRootApply")}
-                        </Button>
                       </div>
                       <div className="flex items-center gap-2">
                         <Checkbox
@@ -4223,23 +4199,26 @@ export function App() {
                           {t("onboarding.welcome.customRootMigrate")}
                         </Label>
                       </div>
-                      {obCustomRootApplied && obCustomRootInput.trim() && (
+                      {obCustomRootInput.trim() && (
                         <Button
                           variant="link"
                           className="h-auto p-0 text-[11px] text-muted-foreground"
                           onClick={async () => {
-                            try {
-                              const info = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
-                                "set_custom_root_dir", { path: null, migrate: false }
-                              );
-                              setObCurrentRoot(info.currentRoot);
-                              setObCustomRootInput("");
-                              setObCustomRootApplied(false);
-                              notifySuccess(t("onboarding.welcome.customRootDefault") + ": " + info.currentRoot);
-                              obLoadEnvCheck();
-                            } catch (e: any) {
-                              notifyError(String(e));
+                            if (obCustomRootApplied) {
+                              try {
+                                const rootInfo = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
+                                  "set_custom_root_dir", { path: null, migrate: false }
+                                );
+                                setObCurrentRoot(rootInfo.currentRoot);
+                                notifySuccess(t("onboarding.welcome.customRootDefault") + ": " + rootInfo.currentRoot);
+                                obLoadEnvCheck();
+                              } catch (e: any) {
+                                notifyError(String(e));
+                                return;
+                              }
                             }
+                            setObCustomRootInput("");
+                            setObCustomRootApplied(false);
                           }}
                         >
                           {t("onboarding.welcome.customRootDefault")}
@@ -4253,7 +4232,26 @@ export function App() {
               <Button
                 size="lg"
                 className="mt-2 px-10 rounded-xl text-[15px]"
+                disabled={obCustomRootBusy}
                 onClick={async () => {
+                  if (obShowCustomRoot && obCustomRootInput.trim() && !obCustomRootApplied) {
+                    setObCustomRootBusy(true);
+                    try {
+                      const rootInfo = await invoke<{ defaultRoot: string; currentRoot: string; customRoot: string | null }>(
+                        "set_custom_root_dir", { path: obCustomRootInput.trim(), migrate: obCustomRootMigrate }
+                      );
+                      setObCurrentRoot(rootInfo.currentRoot);
+                      setObCustomRootApplied(true);
+                      notifySuccess(t("onboarding.welcome.customRootApplied", { path: rootInfo.currentRoot }));
+                      obLoadEnvCheck();
+                    } catch (e: any) {
+                      notifyError(String(e));
+                      return;
+                    } finally {
+                      setObCustomRootBusy(false);
+                    }
+                  }
+
                   let earlyStartWsId = currentWorkspaceId || "";
                   try {
                     const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
