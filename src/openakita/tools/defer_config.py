@@ -28,6 +28,9 @@ ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset({
     # 代理委派
     "delegate_to_agent",
     "delegate_parallel",
+    # MCP 入口（prompt 中 MCP Catalog 引导用户调用，必须常驻）
+    "call_mcp_tool",
+    "list_mcp_servers",
     # 任务管理
     "create_todo",
     "update_todo_step",
@@ -93,16 +96,27 @@ def is_always_load(tool_name: str) -> bool:
     return tool_name in ALWAYS_LOAD_TOOLS
 
 
-def should_defer(tool_name: str, category: str | None = None) -> bool:
+def should_defer(
+    tool_name: str,
+    category: str | None = None,
+    *,
+    user_always_load: frozenset[str] | None = None,
+    user_always_load_cats: frozenset[str] | None = None,
+) -> bool:
     """判断工具是否应该延迟加载。
 
-    规则:
-    1. always_load 工具永不延迟
-    2. 在 DEFER_CATEGORIES 分类下的工具延迟
+    规则（按优先级）:
+    1. ALWAYS_LOAD_TOOLS 中的工具永不延迟
+    2. 用户配置的 always_load_tools / always_load_categories 豁免
     3. 在 DEFER_INDIVIDUAL_TOOLS 中的工具延迟
-    4. 其余工具不延迟
+    4. 在 DEFER_CATEGORIES 分类下的工具延迟
+    5. 其余工具不延迟
     """
     if tool_name in ALWAYS_LOAD_TOOLS:
+        return False
+    if user_always_load and tool_name in user_always_load:
+        return False
+    if user_always_load_cats and category and category in user_always_load_cats:
         return False
     if tool_name in DEFER_INDIVIDUAL_TOOLS:
         return True

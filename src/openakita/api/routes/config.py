@@ -654,6 +654,55 @@ async def write_agent_mode(body: AgentModeRequest, request: Request):
     return {"status": "ok", "multi_agent_enabled": body.enabled}
 
 
+# ---------------------------------------------------------------------------
+# Tool Loading Configuration
+# ---------------------------------------------------------------------------
+
+
+class ToolLoadingRequest(BaseModel):
+    always_load_tools: list[str] = []
+    always_load_categories: list[str] = []
+
+
+@router.get("/api/config/tool-loading")
+async def read_tool_loading(request: Request):
+    """读取工具常驻加载配置。"""
+    from openakita.config import settings
+
+    available_categories: list[str] = []
+    agent = getattr(request.app.state, "agent", None)
+    if agent and hasattr(agent, "tool_catalog"):
+        try:
+            available_categories = sorted(agent.tool_catalog.get_tool_groups().keys())
+        except Exception:
+            pass
+
+    return {
+        "always_load_tools": settings.always_load_tools,
+        "always_load_categories": settings.always_load_categories,
+        "available_categories": available_categories,
+    }
+
+
+@router.post("/api/config/tool-loading")
+async def write_tool_loading(body: ToolLoadingRequest, request: Request):
+    """更新工具常驻加载配置。立即生效并持久化。"""
+    from openakita.config import runtime_state, settings
+
+    settings.always_load_tools = body.always_load_tools
+    settings.always_load_categories = body.always_load_categories
+    runtime_state.save()
+    logger.info(
+        "[Config API] tool-loading updated: tools=%s, categories=%s",
+        body.always_load_tools, body.always_load_categories,
+    )
+    return {
+        "status": "ok",
+        "always_load_tools": body.always_load_tools,
+        "always_load_categories": body.always_load_categories,
+    }
+
+
 @router.get("/api/config/providers")
 async def list_providers_api():
     """返回后端已注册的 LLM 服务商列表。

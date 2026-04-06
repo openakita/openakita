@@ -141,6 +141,7 @@ class ToolExecutor:
         max_parallel: int = 1,
     ) -> None:
         self._handler_registry = handler_registry
+        self._agent_ref: Any = None  # set by Agent after construction
 
         # 并行控制
         self._semaphore = asyncio.Semaphore(max(1, max_parallel))
@@ -650,6 +651,32 @@ class ToolExecutor:
                                     "needs_sandbox", False
                                 ),
                             },
+                        },
+                        None,
+                        None,
+                    )
+
+            # Blind-call guard: intercept calls to deferred tools that haven't
+            # been discovered via tool_search yet.
+            _agent = self._agent_ref
+            if _agent and hasattr(_agent, "_discovered_tools"):
+                _all_tools = getattr(_agent, "_tools", [])
+                _tool_def = next(
+                    (t for t in _all_tools if t.get("name") == tool_name), None
+                )
+                if _tool_def and _tool_def.get("_deferred"):
+                    return (
+                        idx,
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": (
+                                f"⚠️ Tool '{tool_name}' is deferred. "
+                                "You must first call tool_search(query=\"...\") "
+                                "to load its full parameters, then call it in "
+                                "the NEXT turn."
+                            ),
+                            "is_error": True,
                         },
                         None,
                         None,

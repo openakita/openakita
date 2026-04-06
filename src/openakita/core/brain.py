@@ -933,11 +933,15 @@ class Brain:
                 continue
 
             if is_deferred:
-                # Deferred: only pass name + short description, empty schema
                 short_desc = description.split("\n")[0][:200] if description else ""
                 result.append(Tool(
                     name=name,
-                    description=f"[use tool_search to see full params] {short_desc}",
+                    description=(
+                        f"[DEFERRED] {short_desc} — "
+                        "Do NOT call this tool directly. "
+                        "You must first call tool_search(query=\"...\") to load "
+                        "its full parameters, then call it in the NEXT turn."
+                    ),
                     input_schema={"type": "object", "properties": {}},
                 ))
                 deferred += 1

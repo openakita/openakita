@@ -36,15 +36,19 @@ from .definitions.base import infer_category
 logger = logging.getLogger(__name__)
 
 
-# 高频工具白名单 - 直接提供完整 schema 给 LLM API，跳过渐进式披露
-# 使用 sorted tuple 而非 set，确保迭代顺序稳定（prompt cache 友好）
-HIGH_FREQ_TOOLS = tuple(sorted({
+# Catalog-excluded tools — these are always loaded with full schema via LLM
+# tools parameter, so they are excluded from the textual catalog to save tokens.
+# Sorted tuple for stable iteration order (prompt cache friendly).
+CATALOG_EXCLUDED_TOOLS = tuple(sorted({
     "run_shell", "read_file", "write_file", "edit_file",
     "list_directory", "ask_user", "glob",
     "web_search", "web_fetch", "delete_file", "read_lints",
     "semantic_search",
 }))
-_HIGH_FREQ_TOOLS_SET = frozenset(HIGH_FREQ_TOOLS)
+_CATALOG_EXCLUDED_SET = frozenset(CATALOG_EXCLUDED_TOOLS)
+
+# Backwards compat alias
+HIGH_FREQ_TOOLS = CATALOG_EXCLUDED_TOOLS
 
 
 class ToolCatalog:
@@ -147,8 +151,27 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         self._tools = {t["name"]: t for t in tools if t.get("name")}
         self._tool_sources: dict[str, str] = {}
         self._cached_catalog: str | None = None
+        self._deferred_tools: set[str] = set()
 
-    def generate_catalog(self, exclude_high_freq: bool = True) -> str:
+    def set_deferred_tools(self, deferred: set[str]) -> None:
+        """Update the set of currently deferred tool names.
+
+        Invalidates the cached catalog so the next get_catalog() call
+        reflects the updated deferred annotations.
+        """
+        if deferred != self._deferred_tools:
+            self._deferred_tools = deferred
+            self._cached_catalog = None
+            logger.info(
+                "[ToolCatalog] deferred set updated: %d tools, cache invalidated",
+                len(deferred),
+            )
+
+    def generate_catalog(
+        self,
+        exclude_high_freq: bool = True,
+        deferred_tools: set[str] | None = None,
+    ) -> str:
         """
         生成工具清单（Level 1）
 
@@ -158,10 +181,14 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         Args:
             exclude_high_freq: 是否排除高频工具（默认排除，因为它们已通过
                 LLM tools 参数直接注入完整 schema，不需要在文本清单中重复）
+            deferred_tools: 当前被 defer 的工具名集合。在 catalog 文本中标注
+                [deferred] 以告知 LLM 需先 tool_search 才能调用。
 
         Returns:
             格式化的工具清单字符串
         """
+        if deferred_tools is not None:
+            self._deferred_tools = deferred_tools
         if not self._tools:
             return "\n## Available System Tools\n\nNo system tools available.\n"
 
@@ -172,7 +199,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         for name in sorted(self._tools):
             tool = self._tools[name]
             # 高频工具已在 tools 参数中全量提供，跳过以节省 token
-            if exclude_high_freq and name in _HIGH_FREQ_TOOLS_SET:
+            if exclude_high_freq and name in _CATALOG_EXCLUDED_SET:
                 continue
             cat = tool.get("category")
             if not cat:
@@ -231,7 +258,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
             高频工具的完整 schema 列表
         """
         schemas = []
-        for tool_name in HIGH_FREQ_TOOLS:
+        for tool_name in CATALOG_EXCLUDED_TOOLS:
             tool = self._tools.get(tool_name)
             if tool:
                 schemas.append({
@@ -243,7 +270,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
 
     def is_high_freq_tool(self, tool_name: str) -> bool:
         """判断是否为高频工具"""
-        return tool_name in _HIGH_FREQ_TOOLS_SET
+        return tool_name in _CATALOG_EXCLUDED_SET
 
     def _format_category_section(
         self, display_name: str, tools: list[tuple[str, dict]]
@@ -261,11 +288,15 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         if not tools:
             return None
 
+        deferred = getattr(self, "_deferred_tools", set())
+
         entries = []
         for name, tool in tools:
             desc = tool.get("short_description") or self._get_short_description(
                 tool.get("description", "")
             )
+            if name in deferred:
+                desc = f"[deferred] {desc}"
             source = self._tool_sources.get(name, "")
             suffix = f" _(from {source})_" if source else ""
             entry = self._safe_format(self.TOOL_ENTRY_TEMPLATE, name=name, description=desc) + suffix
@@ -309,19 +340,28 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
                 groups.setdefault(cat, set()).add(name)
         return groups
 
-    def get_catalog(self, refresh: bool = False, exclude_high_freq: bool = True) -> str:
+    def get_catalog(
+        self,
+        refresh: bool = False,
+        exclude_high_freq: bool = True,
+        deferred_tools: set[str] | None = None,
+    ) -> str:
         """
         获取工具清单
 
         Args:
             refresh: 是否强制刷新
             exclude_high_freq: 是否排除高频工具（默认排除）
+            deferred_tools: 当前被 defer 的工具名集合
 
         Returns:
             工具清单字符串
         """
-        if refresh or self._cached_catalog is None:
-            return self.generate_catalog(exclude_high_freq=exclude_high_freq)
+        if refresh or self._cached_catalog is None or deferred_tools is not None:
+            return self.generate_catalog(
+                exclude_high_freq=exclude_high_freq,
+                deferred_tools=deferred_tools,
+            )
         return self._cached_catalog
 
     def get_tool_info(self, tool_name: str) -> dict | None:
@@ -360,7 +400,16 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         if not tool:
             return f"❌ Tool not found: {tool_name}"
 
+        deferred = getattr(self, "_deferred_tools", set())
+        is_deferred = tool_name in deferred
+
         output = f"# Tool: {tool['name']}\n\n"
+
+        if is_deferred:
+            output += (
+                "**Status**: DEFERRED — this tool's schema is not yet loaded. "
+                "Call `tool_search` to activate it, then use it in the next turn.\n\n"
+            )
 
         # 分类
         category = tool.get("category")

@@ -87,6 +87,16 @@ class Settings(BaseSettings):
         description="是否允许在启用“工具间中断检查”时也并行执行工具（会降低中断插入粒度，默认关闭）",
     )
 
+    # === 工具常驻加载 ===
+    always_load_tools: list = Field(
+        default_factory=list,
+        description="用户指定的常驻工具名列表，不会被 defer（如 browser_navigate, edit_notebook）",
+    )
+    always_load_categories: list = Field(
+        default_factory=list,
+        description="用户指定的常驻工具分类（如 Browser, MCP），该分类下所有工具不 defer",
+    )
+
     # Thinking 模式配置
     thinking_mode: str = Field(
         default="auto",
@@ -714,6 +724,8 @@ _PERSISTABLE_KEYS: list[str] = [
     "force_tool_call_max_retries",
     "force_tool_call_im_floor",
     "confirmation_text_max_retries",
+    "always_load_tools",
+    "always_load_categories",
 ]
 
 

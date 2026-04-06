@@ -520,6 +520,10 @@ class Agent:
         # 任务取消机制 — 统一使用 TaskState.cancelled / agent_state.is_task_cancelled
         # (旧 self._task_cancelled 已废弃，取消状态绑定到 TaskState 实例，避免全局竞态)
 
+        # Discovered tools — populated by tool_search handler; tools in this set
+        # are promoted from deferred to full-schema in _effective_tools.
+        self._discovered_tools: set[str] = set()
+
         # Sub-agent call flag: set by orchestrator._call_agent()
         self._is_sub_agent_call = False
         # Agent tool names to exclude when running as sub-agent
@@ -569,6 +573,7 @@ class Agent:
             handler_registry=self.handler_registry,
             max_parallel=max(1, settings.tool_max_parallel),
         )
+        self.tool_executor._agent_ref = self
 
         # 上下文管理器（委托自 _compress_context 等）
         self.context_manager = ContextManager(brain=self.brain)
@@ -615,39 +620,6 @@ class Agent:
 
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
-    # Categories that must always remain available regardless of intent filtering.
-    # Infrastructure tools always included regardless of intent filtering.
-    _ALWAYS_KEEP_CATEGORIES: frozenset[str] = frozenset({
-        "System",       # ask_user, enable_thinking, get_tool_info, etc.
-        "Memory",       # search_memory, add_memory — context recall
-        "Todo",         # create_todo, update_todo_step — task execution tracking
-        "Plan",         # create_plan_file, exit_plan_mode — plan mode tools
-        "File System",  # read_file, write_file, list_directory — fundamental I/O
-        "Skills",       # list_skills, run_skill_script — capability discovery
-    })
-    # Individual tool names to always keep even when their category is deferred
-    _ALWAYS_KEEP_TOOLS: frozenset[str] = frozenset({
-        "tool_search",  # meta-tool to discover deferred tools
-        "ask_user",     # always need to be able to ask the user
-    })
-
-    # Categories deferred by default to reduce token overhead (~40 tools saved).
-    # The model can discover deferred tools via `tool_search` when needed.
-    _DEFERRED_CATEGORIES: frozenset[str] = frozenset({
-        "Browser",         # 15 tools — loaded when user needs web interaction
-        "Desktop",         # 10 tools — loaded when user needs desktop automation
-        "MCP",             # 8 tools — loaded when user needs MCP server interaction
-        "IM Channel",      # IM platform tools — only needed for channel operations
-        "Scheduled",       # scheduler tools — only needed when setting up schedules
-        "Agent Package",   # agent packaging — rarely needed in normal conversation
-        "Profile",         # persona traits — deferred until personality discussion
-        "Config",          # config management — rarely needed
-        "Plugin",          # plugin management — rarely needed
-        "Advanced",        # powershell, lsp, notebook, worktree, etc.
-        "OpenCLI",         # CLI management tools
-        "Platform",        # platform-specific tools
-    })
-
     @property
     def _effective_tools(self) -> list[dict]:
         """Tools available for the current call context.
@@ -655,12 +627,16 @@ class Agent:
         Filtering layers (applied in order):
         0. Sanity: drop entries without a valid name
         1. Sub-agent restriction: remove delegation tools
-        2. Tiered loading: exclude _DEFERRED_CATEGORIES (saves ~50 tools)
+        2. Defer marking: use defer_config.should_defer() as single source of truth
            - Intent hints can un-defer specific categories
            - IM sessions auto-include IM Channel category
-           - _ALWAYS_KEEP_TOOLS are never deferred
+           - User settings.always_load_tools / always_load_categories override defer
+           - _discovered_tools (from tool_search) override defer
+           - Deferred tools stay in list but marked _deferred=True (schema omitted by Brain)
         3. Context window: reduce set for small models
         """
+        from ..tools.defer_config import should_defer as _should_defer
+
         tools = [t for t in self._tools if t.get("name")]
         dropped = len(self._tools) - len(tools)
         if dropped:
@@ -675,39 +651,54 @@ class Agent:
         intent = getattr(self, "_current_intent", None)
         intent_hints = set(intent.tool_hints) if intent and intent.tool_hints else set()
 
-        # IM sessions always need IM Channel tools
         session_type = getattr(self, "_current_session_type", "cli")
         if session_type == "im":
             intent_hints.add("IM Channel")
 
+        user_always_tools = frozenset(settings.always_load_tools)
+        user_always_cats = frozenset(settings.always_load_categories)
+        discovered = getattr(self, "_discovered_tools", set())
+
+        hint_names: set[str] = set()
         if intent_hints and hasattr(self, "tool_catalog"):
             tool_groups = self.tool_catalog.get_tool_groups()
-            allowed: set[str] = set(self._ALWAYS_KEEP_TOOLS)
-            for cat in self._ALWAYS_KEEP_CATEGORIES:
-                allowed |= tool_groups.get(cat, set())
             for hint in intent_hints:
-                allowed |= tool_groups.get(hint, set())
-            tools = [t for t in tools if t.get("name") in allowed]
-        elif hasattr(self, "tool_catalog"):
-            deferred_cats = self._DEFERRED_CATEGORIES - intent_hints
-            if deferred_cats:
-                tool_groups = self.tool_catalog.get_tool_groups()
-                deferred_names: set[str] = set()
-                for cat in deferred_cats:
-                    deferred_names |= tool_groups.get(cat, set())
-                deferred_names -= self._ALWAYS_KEEP_TOOLS
-                if deferred_names:
-                    before = len(tools)
-                    tools = [
-                        t for t in tools if t.get("name") not in deferred_names
-                    ]
-                    if len(tools) < before:
-                        logger.info(
-                            "[Agent] tiered loading: deferred %d tools from %s (remaining=%d)",
-                            before - len(tools),
-                            sorted(deferred_cats),
-                            len(tools),
-                        )
+                hint_names |= tool_groups.get(hint, set())
+
+        deferred_count = 0
+        for tool in tools:
+            name = tool.get("name", "")
+            cat = tool.get("category", "")
+
+            tool.pop("_deferred", None)
+
+            if name in discovered:
+                continue
+            if name in user_always_tools:
+                continue
+            if cat and cat in user_always_cats:
+                continue
+            if intent_hints and hasattr(self, "tool_catalog") and name in hint_names:
+                continue
+
+            if _should_defer(name, cat) or tool.get("should_defer", False):
+                tool["_deferred"] = True
+                deferred_count += 1
+
+        if hasattr(self, "tool_catalog"):
+            deferred_names = {t.get("name", "") for t in tools if t.get("_deferred")}
+            self.tool_catalog.set_deferred_tools(deferred_names)
+
+        if deferred_count:
+            logger.info(
+                "[Agent] tiered loading: deferred %d tools "
+                "(discovered=%d, user_always_tools=%d, user_always_cats=%s, "
+                "intent_hints=%s)",
+                deferred_count, len(discovered),
+                len(user_always_tools),
+                sorted(user_always_cats) if user_always_cats else "[]",
+                sorted(intent_hints) if intent_hints else "[]",
+            )
 
         ctx = self._get_raw_context_window()
         if 0 < ctx < 8000:
@@ -4140,6 +4131,10 @@ class Agent:
                 return
 
             # === 构建 System Prompt（与 _chat_with_tools_and_context 一致） ===
+            # Pre-compute _effective_tools so the catalog's deferred annotations
+            # are up-to-date before the system prompt is built.
+            _ = self._effective_tools
+
             task_description = (getattr(self, "_current_task_query", "") or "").strip()
             if not task_description:
                 task_description = self._get_last_user_request(messages).strip()
