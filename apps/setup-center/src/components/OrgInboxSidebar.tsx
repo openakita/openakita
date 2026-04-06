@@ -66,11 +66,13 @@ export function OrgInboxSidebar({
   orgId,
   visible,
   onClose,
+  embedded = false,
 }: {
   apiBaseUrl: string;
   orgId: string;
   visible: boolean;
   onClose: () => void;
+  embedded?: boolean;
 }) {
   const [messages, setMessages] = useState<InboxMsg[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -149,21 +151,21 @@ export function OrgInboxSidebar({
 
   if (!visible) return null;
 
+  const rootStyle: React.CSSProperties = embedded
+    ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }
+    : {
+        position: "fixed",
+        right: 0, top: 0, bottom: 0,
+        width: 380, maxWidth: "100vw",
+        background: "var(--card-bg, #fff)",
+        borderLeft: "1px solid var(--border, #e5e7eb)",
+        display: "flex", flexDirection: "column",
+        zIndex: 1200,
+        boxShadow: "-4px 0 16px rgba(0,0,0,0.08)",
+      };
+
   return (
-    <div style={{
-      position: "fixed",
-      right: 0,
-      top: 0,
-      bottom: 0,
-      width: 380,
-      maxWidth: "100vw",
-      background: "var(--card-bg, #fff)",
-      borderLeft: "1px solid var(--border, #e5e7eb)",
-      display: "flex",
-      flexDirection: "column",
-      zIndex: 1200,
-      boxShadow: "-4px 0 16px rgba(0,0,0,0.08)",
-    }}>
+    <div style={rootStyle}>
       {/* Header */}
       <div style={{
         padding: "12px 16px",

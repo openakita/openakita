@@ -951,7 +951,7 @@ export function OrgEditorView({
   const [layoutLocked, setLayoutLocked] = useState(false);
   const liveMode = currentOrg?.status === "active" || currentOrg?.status === "running";
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({});
-  const [inboxOpen, setInboxOpen] = useState(false);
+  const [activeDrawer, setActiveDrawer] = useState<"chat" | "inbox" | null>(null);
   const [nodeEvents, setNodeEvents] = useState<any[]>([]);
   const [nodeSchedules, setNodeSchedules] = useState<any[]>([]);
   const [nodeMessages, setNodeMessages] = useState<any[]>([]);
@@ -972,7 +972,8 @@ export function OrgEditorView({
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
 
   const [viewMode, setViewMode] = useState<"canvas" | "projects" | "dashboard">("canvas");
-  const [chatPanelOpen, setChatPanelOpen] = useState(false);
+  const chatPanelOpen = activeDrawer === "chat";
+  const inboxOpen = activeDrawer === "inbox";
   const [chatPanelNode, setChatPanelNode] = useState<string | null>(null);
   const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -1085,6 +1086,7 @@ export function OrgEditorView({
 
   const fetchOrg = useCallback(async (orgId: string) => {
     setLoading(true);
+    setActiveDrawer(null);
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}`);
       const data: OrgFull = await res.json();
@@ -1493,6 +1495,7 @@ export function OrgEditorView({
       await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}`, { method: "DELETE" });
       if (selectedOrgId === orgId) {
         if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+        setActiveDrawer(null);
         setSelectedOrgId(null);
         setCurrentOrg(null);
         setNodes([]);
@@ -1980,8 +1983,8 @@ export function OrgEditorView({
               <IconGear size={13} />
             </button>
             <button
-              className="org-tb-btn"
-              onClick={() => setInboxOpen(!inboxOpen)}
+              className={`org-tb-btn${inboxOpen ? " org-tb-btn--active" : ""}`}
+              onClick={() => setActiveDrawer(inboxOpen ? null : "inbox")}
               style={{ position: "relative" }}
             >
               <IconMessageCircle size={13} />
@@ -2480,7 +2483,7 @@ export function OrgEditorView({
               >
                 {contextMenu.type === "node" && contextMenu.id && (<>
                   {liveMode && selectedOrgId && (
-                    <button onClick={() => { setChatPanelNode(contextMenu.id); setChatPanelOpen(true); setContextMenu(null); }}>
+                    <button onClick={() => { setChatPanelNode(contextMenu.id); setActiveDrawer("chat"); setContextMenu(null); }}>
                       <span className="org-ctx-icon">💬</span>与该节点对话
                     </button>
                   )}
@@ -2648,7 +2651,7 @@ export function OrgEditorView({
           {/* ═══ Floating Chat FAB (always visible when org selected) ═══ */}
           {selectedOrgId && !chatPanelOpen && (
             <button
-              onClick={() => { setChatPanelNode(null); setChatPanelOpen(true); }}
+              onClick={() => { setChatPanelNode(null); setActiveDrawer("chat"); }}
               className="org-chat-fab"
               title="打开组织指挥台"
             >
@@ -2659,16 +2662,15 @@ export function OrgEditorView({
             </button>
           )}
 
-          {/* ═══ Slide-out Chat Panel ═══ */}
-          {/* Slide-out chat panel: always mounted when org is selected, toggled via display */}
+          {/* ═══ Slide-out Drawers (Chat / Inbox) — shared overlay, mutually exclusive ═══ */}
           {selectedOrgId && (
             <>
               <div
-                className="org-chat-overlay"
-                onClick={() => setChatPanelOpen(false)}
-                style={{ display: chatPanelOpen ? undefined : "none" }}
+                className="org-drawer-overlay"
+                onClick={() => setActiveDrawer(null)}
+                style={{ display: activeDrawer ? undefined : "none" }}
               />
-              <div className="org-chat-slide" style={{ display: chatPanelOpen ? undefined : "none" }}>
+              <div className="org-drawer-slide" style={{ display: chatPanelOpen ? undefined : "none" }}>
                 <OrgChatPanel
                   orgId={selectedOrgId}
                   nodeId={chatPanelNode}
@@ -2677,7 +2679,16 @@ export function OrgEditorView({
                   title={chatPanelNode
                     ? `对话 · ${(nodes.find(n => n.id === chatPanelNode)?.data as any)?.role_title || chatPanelNode}`
                     : `${currentOrg?.name || "组织"} · 指挥台`}
-                  onClose={() => setChatPanelOpen(false)}
+                  onClose={() => setActiveDrawer(null)}
+                />
+              </div>
+              <div className="org-drawer-slide" style={{ display: inboxOpen ? undefined : "none" }}>
+                <OrgInboxSidebar
+                  apiBaseUrl={apiBaseUrl}
+                  orgId={selectedOrgId}
+                  visible={inboxOpen}
+                  onClose={() => setActiveDrawer(null)}
+                  embedded
                 />
               </div>
             </>
@@ -2710,7 +2721,7 @@ export function OrgEditorView({
             .org-chat-fab svg { stroke: #ffffff !important; }
             .org-chat-fab-label { letter-spacing: 0.5px; color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }
 
-            .org-chat-overlay {
+            .org-drawer-overlay {
               position: absolute; inset: 0; z-index: 80;
               background: rgba(0,0,0,0.3);
               backdrop-filter: blur(2px);
@@ -2718,13 +2729,14 @@ export function OrgEditorView({
             }
             @keyframes org-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 
-            .org-chat-slide {
+            .org-drawer-slide {
               position: absolute; top: 0; right: 0; bottom: 0; z-index: 90;
               width: min(420px, 85%);
               background: var(--bg-app);
               border-left: 1px solid var(--line, rgba(51,65,85,0.5));
               box-shadow: -8px 0 30px rgba(0,0,0,0.3);
               animation: org-slide-in 0.3s cubic-bezier(0.4,0,0.2,1);
+              display: flex; flex-direction: column; overflow: hidden;
             }
             @keyframes org-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
@@ -3270,7 +3282,7 @@ export function OrgEditorView({
               {liveMode && selectedOrgId && (
                 <button
                   className="btnSmall"
-                  onClick={() => { setChatPanelNode(selectedNodeId); setChatPanelOpen(true); }}
+                  onClick={() => { setChatPanelNode(selectedNodeId); setActiveDrawer("chat"); }}
                   style={{
                     minWidth: 36, minHeight: 36, fontSize: 12,
                     background: "linear-gradient(135deg, #3b82f6, #6366f1)",
@@ -5079,15 +5091,6 @@ export function OrgEditorView({
         </div>
       )}
 
-      {/* Inbox Sidebar */}
-      {currentOrg && (
-        <OrgInboxSidebar
-          apiBaseUrl={apiBaseUrl}
-          orgId={currentOrg.id}
-          visible={inboxOpen}
-          onClose={() => setInboxOpen(false)}
-        />
-      )}
       </div>{/* close content area */}
 
       {/* Toast notification */}
