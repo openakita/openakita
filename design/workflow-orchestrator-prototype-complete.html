@@ -1,0 +1,118 @@
+        // 关闭欢迎提示
+        function closeToast() {
+            document.getElementById('welcomeToast').style.display = 'none';
+        }
+
+        // 模拟节点拖拽效果
+        const nodeItems = document.querySelectorAll('.node-item');
+        nodeItems.forEach(item => {
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', item.querySelector('.node-name').textContent);
+                item.style.opacity = '0.5';
+            });
+            
+            item.addEventListener('dragend', () => {
+                item.style.opacity = '1';
+            });
+        });
+
+        // 画布拖拽放置
+        const canvas = document.getElementById('canvas');
+        canvas.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            canvas.style.backgroundImage = `
+                linear-gradient(#667eea 1px, transparent 1px),
+                linear-gradient(90deg, #667eea 1px, transparent 1px)
+            `;
+        });
+
+        canvas.addEventListener('dragleave', () => {
+            canvas.style.backgroundImage = `
+                linear-gradient(#e1e5eb 1px, transparent 1px),
+                linear-gradient(90deg, #e1e5eb 1px, transparent 1px)
+            `;
+        });
+
+        canvas.addEventListener('drop', (e) => {
+            e.preventDefault();
+            canvas.style.backgroundImage = `
+                linear-gradient(#e1e5eb 1px, transparent 1px),
+                linear-gradient(90deg, #e1e5eb 1px, transparent 1px)
+            `;
+            
+            const nodeName = e.dataTransfer.getData('text/plain');
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left - 140;
+            const y = e.clientY - rect.top - 40;
+            
+            // 创建新节点
+            createCanvasNode(nodeName, x, y);
+        });
+
+        // 创建画布节点
+        function createCanvasNode(name, x, y) {
+            const node = document.createElement('div');
+            node.className = 'canvas-node action';
+            node.style.left = x + 'px';
+            node.style.top = y + 'px';
+            
+            node.innerHTML = `
+                <div class="canvas-node-header">
+                    <div class="canvas-node-icon">⚡</div>
+                    <div class="canvas-node-title">${name}</div>
+                </div>
+                <div class="canvas-node-body">
+                    <div class="canvas-node-desc">新添加的节点</div>
+                    <div class="canvas-node-config">点击配置节点参数</div>
+                </div>
+            `;
+            
+            canvas.appendChild(node);
+            
+            // 选中节点
+            selectNode(node);
+        }
+
+        // 节点选择
+        function selectNode(node) {
+            document.querySelectorAll('.canvas-node').forEach(n => n.classList.remove('selected'));
+            node.classList.add('selected');
+        }
+
+        // 画布节点点击事件
+        canvas.addEventListener('click', (e) => {
+            const node = e.target.closest('.canvas-node');
+            if (node) {
+                selectNode(node);
+            } else if (e.target === canvas) {
+                document.querySelectorAll('.canvas-node').forEach(n => n.classList.remove('selected'));
+            }
+        });
+
+        // 工具栏按钮效果
+        document.querySelectorAll('.toolbar-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                this.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    this.style.transform = 'scale(1)';
+                }, 100);
+            });
+        });
+
+        // 自动关闭欢迎提示（5 秒后）
+        setTimeout(() => {
+            const toast = document.getElementById('welcomeToast');
+            if (toast) {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s';
+                setTimeout(() => {
+                    toast.style.display = 'none';
+                }, 300);
+            }
+        }, 5000);
+
+        console.log('🎨 FlowAI 工作流编排器原型已加载');
+        console.log('💡 提示：从左侧拖拽节点到画布创建新工作流');
+    </script>
+</body>
+</html>

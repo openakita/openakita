@@ -11,7 +11,7 @@
 
 API Base: https://ilinkai.weixin.qq.com
 CDN Base: https://novac2c.cdn.weixin.qq.com/c2c
-协议参考: @tencent-weixin/openclaw-weixin (MIT)
+协议参考: @tencent-weixin/openclaw-weixin v2.1.6 (MIT)
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ import struct
 import time
 import uuid
 from collections import OrderedDict
-from urllib.parse import quote
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from ..base import ChannelAdapter
 from ..types import (
@@ -70,7 +70,26 @@ def _import_httpx():
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
 DEFAULT_ILINK_BOT_TYPE = "3"
-DEFAULT_CHANNEL_VERSION = "2.0.0"
+
+# ---------------------------------------------------------------------------
+# 协议兼容参数 — 对齐 @tencent-weixin/openclaw-weixin v2.1.6
+# 可通过环境变量紧急覆盖，无需改代码
+# ---------------------------------------------------------------------------
+
+OPENCLAW_COMPAT_VERSION = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.6")
+ILINK_APP_ID = os.environ.get("WECHAT_ILINK_APP_ID", "bot")
+
+
+def _encode_client_version(semver: str) -> int:
+    """将语义化版本号编码为 uint32: 0x00MMNNPP (major<<16 | minor<<8 | patch)"""
+    parts = semver.split(".")
+    major = int(parts[0]) if len(parts) > 0 else 0
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    patch = int(parts[2]) if len(parts) > 2 else 0
+    return (major << 16) | (minor << 8) | patch
+
+
+ILINK_APP_CLIENT_VERSION = str(_encode_client_version(OPENCLAW_COMPAT_VERSION))
 
 DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000
 DEFAULT_API_TIMEOUT_MS = 15_000
@@ -169,44 +188,242 @@ def _parse_aes_key(aes_key_b64: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Markdown → 纯文本
+# Streaming Markdown Filter
+# Character-level state machine that strips Markdown syntax while preserving
+# readable content.  Works with both complete text and incremental chunks.
 # ---------------------------------------------------------------------------
 
-_RE_CODE_BLOCK = re.compile(r"```[^\n]*\n?([\s\S]*?)```")
-_RE_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
-_RE_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
-_RE_TABLE_SEP = re.compile(r"^\|[\s:|\-]+\|$", re.MULTILINE)
-_RE_TABLE_ROW = re.compile(r"^\|(.+)\|$", re.MULTILINE)
-_RE_BOLD = re.compile(r"\*\*(.+?)\*\*")
-_RE_ITALIC = re.compile(r"\*(.+?)\*")
-_RE_INLINE_CODE = re.compile(r"`([^`]+)`")
-_RE_HEADING = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+class StreamingMarkdownFilter:
+    """Character-level Markdown→plaintext filter.
+
+    Supports streaming: call feed() with arbitrary chunks, then flush().
+    Also usable as a one-shot via the class method ``filter_text()``.
+    """
+
+    def __init__(self) -> None:
+        self._buf: list[str] = []
+        self._out: list[str] = []
+        self._in_code_fence = False
+        self._fence_tick_count = 0
+        self._fence_opening = True
+        self._skip_to_eol = False
+        self._inline_code = False
+        self._star_count = 0
+        self._link_phase = 0  # 0=none 1=[text 2=]( 3=url)
+        self._link_text: list[str] = []
+        self._link_is_image = False
+        self._line_start = True
+        self._heading_hashes = 0
+        self._pending_bang = False
+
+    # -- public API --
+
+    def feed(self, chunk: str) -> str:
+        for ch in chunk:
+            self._process_char(ch)
+        result = "".join(self._out)
+        self._out.clear()
+        return result
+
+    def flush(self) -> str:
+        self._star_count = 0
+        if self._pending_bang:
+            self._out.append("!")
+            self._pending_bang = False
+        if self._link_phase == 1:
+            self._out.append("[" + "".join(self._link_text))
+            self._link_text.clear()
+            self._link_phase = 0
+        result = "".join(self._out)
+        self._out.clear()
+        return result
+
+    _RE_TABLE_SEP = re.compile(r"^[\s\t:|\-]+$", re.MULTILINE)
+
+    @classmethod
+    def filter_text(cls, text: str) -> str:
+        f = cls()
+        out = f.feed(text)
+        out += f.flush()
+        out = cls._RE_TABLE_SEP.sub("", out)
+        return out.strip()
+
+    # -- internal --
+
+    def _emit(self, ch: str) -> None:
+        self._out.append(ch)
+        self._line_start = (ch == "\n")
+
+    def _process_char(self, ch: str) -> None:
+        # inside code fence — pass through until closing fence
+        if self._in_code_fence:
+            if ch == "\n" and self._fence_opening:
+                self._fence_opening = False
+                return
+            if ch == "`":
+                self._fence_tick_count += 1
+                if self._fence_tick_count >= 3:
+                    self._in_code_fence = False
+                    self._fence_tick_count = 0
+                    self._skip_to_eol = True
+                return
+            else:
+                if self._fence_tick_count:
+                    self._emit("`" * self._fence_tick_count)
+                    self._fence_tick_count = 0
+                self._emit(ch)
+            return
+
+        # skip rest of line (after closing fence / heading)
+        if self._skip_to_eol:
+            if ch == "\n":
+                self._skip_to_eol = False
+                self._emit("\n")
+            return
+
+        # heading detection at line start
+        if self._line_start and ch == "#":
+            self._heading_hashes += 1
+            return
+        if self._heading_hashes > 0:
+            if ch == " " and self._heading_hashes <= 6:
+                self._heading_hashes = 0
+                return
+            else:
+                self._emit("#" * self._heading_hashes)
+                self._heading_hashes = 0
+
+        # backtick handling
+        if ch == "`":
+            self._fence_tick_count += 1
+            if self._fence_tick_count >= 3 and not self._inline_code:
+                self._in_code_fence = True
+                self._fence_opening = True
+                self._fence_tick_count = 0
+                return
+            return
+        if self._fence_tick_count:
+            if self._fence_tick_count < 3:
+                self._inline_code = not self._inline_code
+            self._fence_tick_count = 0
+
+        if self._inline_code:
+            self._emit(ch)
+            return
+
+        # link / image: ![alt](url) or [text](url)
+        if self._pending_bang:
+            self._pending_bang = False
+            if ch == "[":
+                self._link_phase = 1
+                self._link_is_image = True
+                self._link_text.clear()
+                return
+            self._emit("!")
+
+        if ch == "!" and self._link_phase == 0:
+            self._pending_bang = True
+            return
+        if ch == "[" and self._link_phase == 0:
+            self._link_phase = 1
+            self._link_is_image = False
+            self._link_text.clear()
+            return
+        if self._link_phase == 1:
+            if ch == "]":
+                self._link_phase = 2
+            else:
+                self._link_text.append(ch)
+            return
+        if self._link_phase == 2:
+            if ch == "(":
+                self._link_phase = 3
+            else:
+                if not self._link_is_image:
+                    self._emit("".join(self._link_text))
+                self._link_text.clear()
+                self._link_phase = 0
+                self._emit(ch)
+            return
+        if self._link_phase == 3:
+            if ch == ")":
+                if not self._link_is_image:
+                    self._emit("".join(self._link_text))
+                self._link_text.clear()
+                self._link_phase = 0
+            return
+
+        # bold/italic stars
+        if ch == "*":
+            self._star_count += 1
+            return
+        if self._star_count:
+            self._star_count = 0
+
+        # table: pipe characters → tab separation
+        if ch == "|":
+            if not self._line_start:
+                self._emit("\t")
+            return
+
+        self._emit(ch)
 
 
 def _markdown_to_plaintext(text: str) -> str:
-    result = text
-    result = _RE_CODE_BLOCK.sub(lambda m: m.group(1).strip(), result)
-    result = _RE_IMAGE.sub("", result)
-    result = _RE_LINK.sub(r"\1", result)
-    result = _RE_TABLE_SEP.sub("", result)
-    result = _RE_TABLE_ROW.sub(
-        lambda m: "  ".join(cell.strip() for cell in m.group(1).split("|")),
-        result,
-    )
-    result = _RE_BOLD.sub(r"\1", result)
-    result = _RE_ITALIC.sub(r"\1", result)
-    result = _RE_INLINE_CODE.sub(r"\1", result)
-    result = _RE_HEADING.sub("", result)
-    return result.strip()
+    return StreamingMarkdownFilter.filter_text(text)
 
 
 # ---------------------------------------------------------------------------
 # MIME 工具
 # ---------------------------------------------------------------------------
 
+def _try_silk_to_wav(silk_path: Path) -> Path | None:
+    """Attempt to transcode SILK audio to WAV. Returns WAV path on success, None on failure."""
+    try:
+        import pilk  # type: ignore[import-untyped]
+        pcm_path = silk_path.with_suffix(".pcm")
+        wav_path = silk_path.with_suffix(".wav")
+        pilk.decode(str(silk_path), str(pcm_path), pcm_rate=24000)
+
+        import wave
+        with wave.open(str(wav_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(pcm_path.read_bytes())
+        pcm_path.unlink(missing_ok=True)
+        return wav_path
+    except ImportError:
+        pass
+    except Exception:
+        logger.debug("SILK→WAV transcode failed, keeping .silk", exc_info=True)
+    return None
+
+
 def _guess_mime(filepath: str) -> str:
     mime, _ = mimetypes.guess_type(filepath)
     return mime or "application/octet-stream"
+
+
+# ---------------------------------------------------------------------------
+# Log Redaction — 敏感信息脱敏
+# ---------------------------------------------------------------------------
+
+def _redact_token(token: str) -> str:
+    if not token or len(token) <= 6:
+        return "***"
+    return f"{token[:6]}...({len(token)})"
+
+
+def _redact_id(user_id: str) -> str:
+    if not user_id or len(user_id) <= 8:
+        return user_id
+    return f"{user_id[:4]}...{user_id[-4:]}"
+
+
+def _redact_url(url: str) -> str:
+    """Strip query parameters (may contain signatures) from a URL for logging."""
+    return url.split("?")[0] if "?" in url else url
 
 
 def _guess_extension(content_type: str | None, url: str = "") -> str:
@@ -230,6 +447,7 @@ class WeChatConfig:
     cdn_base_url: str = DEFAULT_CDN_BASE_URL
     long_poll_timeout_ms: int = DEFAULT_LONG_POLL_TIMEOUT_MS
     api_timeout_ms: int = DEFAULT_API_TIMEOUT_MS
+    route_tag: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +496,7 @@ class WeChatAdapter(ChannelAdapter):
         bot_id: str | None = None,
         agent_profile_id: str = "default",
         footer_elapsed: bool | None = None,
+        route_tag: str = "",
     ):
         super().__init__(
             channel_name=channel_name,
@@ -288,7 +507,9 @@ class WeChatAdapter(ChannelAdapter):
             token=token,
             base_url=base_url.rstrip("/") if base_url else DEFAULT_BASE_URL,
             cdn_base_url=cdn_base_url.rstrip("/") if cdn_base_url else DEFAULT_CDN_BASE_URL,
+            route_tag=route_tag,
         )
+        self._route_tag = route_tag
 
         self._http: Any = None
         self._poll_task: asyncio.Task | None = None
@@ -328,6 +549,9 @@ class WeChatAdapter(ChannelAdapter):
         self._msg_count: int = 0
         self._send_count: int = 0
 
+        # per-user debug mode for /toggle-debug
+        self._debug_users: set[str] = set()
+
         self.media_dir = Path("data/media/wechat")
 
     # ==================== 生命周期 ====================
@@ -348,6 +572,7 @@ class WeChatAdapter(ChannelAdapter):
         self.media_dir.mkdir(parents=True, exist_ok=True)
         self._sync_buf_dir.mkdir(parents=True, exist_ok=True)
         self._load_sync_buf()
+        self._load_context_tokens()
 
         self._running = True
         self._poll_task = asyncio.create_task(self._poll_loop())
@@ -365,6 +590,7 @@ class WeChatAdapter(ChannelAdapter):
             except (asyncio.CancelledError, Exception):
                 pass
         self._save_sync_buf()
+        self._save_context_tokens()
         if self._http:
             await self._http.aclose()
             self._http = None
@@ -382,9 +608,13 @@ class WeChatAdapter(ChannelAdapter):
             "Content-Type": "application/json",
             "AuthorizationType": "ilink_bot_token",
             "X-WECHAT-UIN": uin_b64,
+            "iLink-App-Id": ILINK_APP_ID,
+            "iLink-App-ClientVersion": ILINK_APP_CLIENT_VERSION,
         }
         if self.config.token:
             headers["Authorization"] = f"Bearer {self.config.token}"
+        if self._route_tag:
+            headers["SKRouteTag"] = self._route_tag
         return headers
 
     def _is_session_paused(self) -> bool:
@@ -410,7 +640,7 @@ class WeChatAdapter(ChannelAdapter):
             remaining = int(self._session_paused_until - time.time())
             raise RuntimeError(f"session paused, {remaining}s remaining")
 
-        body.setdefault("base_info", {"channel_version": DEFAULT_CHANNEL_VERSION})
+        body.setdefault("base_info", {"channel_version": OPENCLAW_COMPAT_VERSION})
 
         url = f"{self.config.base_url}/{endpoint}"
         to = timeout_s or (self.config.api_timeout_ms / 1000)
@@ -516,7 +746,7 @@ class WeChatAdapter(ChannelAdapter):
                     except Exception:
                         logger.exception(
                             f"{self.channel_name}: error processing message "
-                            f"from={msg.get('from_user_id')}"
+                            f"from={_redact_id(msg.get('from_user_id', ''))}"
                         )
             except asyncio.CancelledError:
                 break
@@ -541,7 +771,7 @@ class WeChatAdapter(ChannelAdapter):
         timeout_s = self._next_poll_timeout_ms / 1000 + 5
         body = {
             "get_updates_buf": self._get_updates_buf or "",
-            "base_info": {"channel_version": DEFAULT_CHANNEL_VERSION},
+            "base_info": {"channel_version": OPENCLAW_COMPAT_VERSION},
         }
         try:
             resp = await self._http.post(
@@ -609,32 +839,45 @@ class WeChatAdapter(ChannelAdapter):
     def _is_media_item(item: dict) -> bool:
         return item.get("type") in (ITEM_IMAGE, ITEM_VIDEO, ITEM_FILE, ITEM_VOICE)
 
+    @staticmethod
+    def _media_downloadable(media: dict) -> bool:
+        return bool(media.get("encrypt_query_param") or media.get("full_url"))
+
     def _find_media_item(self, item_list: list[dict] | None) -> dict | None:
         """按优先级 IMAGE > VIDEO > FILE > VOICE 查找第一个可下载的媒体 item"""
         if not item_list:
             return None
-        for target_type, media_key, param_path in [
-            (ITEM_IMAGE, "image_item", ["media", "encrypt_query_param"]),
-            (ITEM_VIDEO, "video_item", ["media", "encrypt_query_param"]),
-            (ITEM_FILE, "file_item", ["media", "encrypt_query_param"]),
+        for target_type, media_key in [
+            (ITEM_IMAGE, "image_item"),
+            (ITEM_VIDEO, "video_item"),
+            (ITEM_FILE, "file_item"),
         ]:
             for item in item_list:
                 if item.get("type") == target_type:
                     sub = item.get(media_key) or {}
-                    val = sub
-                    for k in param_path:
-                        val = (val or {}).get(k)
-                    if val:
+                    media = sub.get("media") or {}
+                    if self._media_downloadable(media):
                         return item
-        # VOICE: 只下载没有转文字的语音
         for item in item_list:
             if item.get("type") == ITEM_VOICE:
                 voice = item.get("voice_item") or {}
                 if not voice.get("text"):
                     media = voice.get("media") or {}
-                    if media.get("encrypt_query_param"):
+                    if self._media_downloadable(media):
                         return item
         return None
+
+    def _extract_cdn_params(self, sub: dict, media: dict) -> tuple[str, str, bytes | None]:
+        """Extract (encrypt_query_param, full_url, aes_key) from a media item."""
+        param = media.get("encrypt_query_param", "")
+        cdn_full = (media.get("full_url") or "").strip()
+        aes_key_raw = sub.get("aeskey")
+        if aes_key_raw:
+            key = bytes.fromhex(aes_key_raw)
+        else:
+            aes_b64 = media.get("aes_key", "")
+            key = _parse_aes_key(aes_b64) if aes_b64 else None
+        return param, cdn_full, key
 
     async def _download_media_item(self, item: dict) -> tuple[Path | None, str]:
         """下载并解密一个媒体 item，返回 (local_path, mime_type)"""
@@ -643,16 +886,10 @@ class WeChatAdapter(ChannelAdapter):
             if item_type == ITEM_IMAGE:
                 img = item.get("image_item") or {}
                 media = img.get("media") or {}
-                param = media.get("encrypt_query_param")
-                if not param:
+                param, cdn_full, key = self._extract_cdn_params(img, media)
+                if not param and not cdn_full:
                     return None, ""
-                aes_key_raw = img.get("aeskey")
-                if aes_key_raw:
-                    key = bytes.fromhex(aes_key_raw)
-                else:
-                    aes_b64 = media.get("aes_key", "")
-                    key = _parse_aes_key(aes_b64) if aes_b64 else None
-                buf = await self._cdn_download(param, key)
+                buf = await self._cdn_download(param, key, full_url=cdn_full)
                 path = self.media_dir / f"wechat_img_{uuid.uuid4().hex[:8]}.jpg"
                 path.write_bytes(buf)
                 return path, "image/jpeg"
@@ -660,12 +897,10 @@ class WeChatAdapter(ChannelAdapter):
             if item_type == ITEM_VIDEO:
                 video = item.get("video_item") or {}
                 media = video.get("media") or {}
-                param = media.get("encrypt_query_param")
-                aes_b64 = media.get("aes_key", "")
-                if not param:
+                param, cdn_full, key = self._extract_cdn_params(video, media)
+                if not param and not cdn_full:
                     return None, ""
-                key = _parse_aes_key(aes_b64) if aes_b64 else None
-                buf = await self._cdn_download(param, key)
+                buf = await self._cdn_download(param, key, full_url=cdn_full)
                 path = self.media_dir / f"wechat_video_{uuid.uuid4().hex[:8]}.mp4"
                 path.write_bytes(buf)
                 return path, "video/mp4"
@@ -673,12 +908,10 @@ class WeChatAdapter(ChannelAdapter):
             if item_type == ITEM_FILE:
                 file_info = item.get("file_item") or {}
                 media = file_info.get("media") or {}
-                param = media.get("encrypt_query_param")
-                aes_b64 = media.get("aes_key", "")
-                if not param:
+                param, cdn_full, key = self._extract_cdn_params(file_info, media)
+                if not param and not cdn_full:
                     return None, ""
-                key = _parse_aes_key(aes_b64) if aes_b64 else None
-                buf = await self._cdn_download(param, key)
+                buf = await self._cdn_download(param, key, full_url=cdn_full)
                 fname = file_info.get("file_name", f"file_{uuid.uuid4().hex[:8]}")
                 path = self.media_dir / f"wechat_{fname}"
                 path.write_bytes(buf)
@@ -688,15 +921,16 @@ class WeChatAdapter(ChannelAdapter):
             if item_type == ITEM_VOICE:
                 voice = item.get("voice_item") or {}
                 media = voice.get("media") or {}
-                param = media.get("encrypt_query_param")
-                aes_b64 = media.get("aes_key", "")
-                if not param:
+                param, cdn_full, key = self._extract_cdn_params(voice, media)
+                if not param and not cdn_full:
                     return None, ""
-                key = _parse_aes_key(aes_b64) if aes_b64 else None
-                buf = await self._cdn_download(param, key)
-                path = self.media_dir / f"wechat_voice_{uuid.uuid4().hex[:8]}.silk"
-                path.write_bytes(buf)
-                return path, "audio/silk"
+                buf = await self._cdn_download(param, key, full_url=cdn_full)
+                silk_path = self.media_dir / f"wechat_voice_{uuid.uuid4().hex[:8]}.silk"
+                silk_path.write_bytes(buf)
+                wav_path = _try_silk_to_wav(silk_path)
+                if wav_path:
+                    return wav_path, "audio/wav"
+                return silk_path, "audio/silk"
 
         except Exception:
             logger.exception(f"{self.channel_name}: media download failed type={item_type}")
@@ -718,9 +952,13 @@ class WeChatAdapter(ChannelAdapter):
         ctx_token = msg.get("context_token")
         if ctx_token:
             self._context_tokens[from_user] = ctx_token
+            self._save_context_tokens()
 
         item_list = msg.get("item_list") or []
         text_body = self._extract_text_body(item_list)
+
+        if await self._handle_slash_command(text_body, from_user, ctx_token or "", msg):
+            return
 
         content = MessageContent()
         content.text = text_body
@@ -771,27 +1009,82 @@ class WeChatAdapter(ChannelAdapter):
         ts_ms = msg.get("create_time_ms") or 0
         timestamp = datetime.fromtimestamp(ts_ms / 1000) if ts_ms else datetime.now()
 
+        group_id = msg.get("group_id", "")
+        chat_type = "group" if group_id else "private"
+        chat_id = group_id if group_id else from_user
+
+        meta: dict[str, Any] = {
+            "context_token": ctx_token or "",
+            "session_id": msg.get("session_id", ""),
+        }
+        if group_id:
+            meta["group_id"] = group_id
+
         unified = UnifiedMessage.create(
             channel=self.channel_name,
             channel_message_id=str(msg_id or ""),
             user_id=from_user,
             channel_user_id=from_user,
-            chat_id=from_user,
+            chat_id=chat_id,
             content=content,
-            chat_type="private",
-            is_direct_message=True,
+            chat_type=chat_type,
+            is_direct_message=not group_id,
             is_mentioned=True,
             timestamp=timestamp,
-            metadata={
-                "context_token": ctx_token or "",
-                "session_id": msg.get("session_id", ""),
-            },
+            metadata=meta,
         )
         self._msg_count += 1
         self._log_message(unified)
         await self._emit_message(unified)
 
+    # ==================== 斜杠命令 ====================
+
+    async def _handle_slash_command(
+        self, text: str, user_id: str, ctx_token: str, msg: dict,
+    ) -> bool:
+        """Handle /echo and /toggle-debug. Returns True if consumed."""
+        stripped = text.strip()
+        if not stripped.startswith("/"):
+            return False
+
+        if stripped.startswith("/echo"):
+            payload = stripped[5:].strip() or "(empty)"
+            ts_ms = msg.get("create_time_ms") or 0
+            latency = ""
+            if ts_ms:
+                latency = f"\n平台延迟: {(time.time() * 1000 - ts_ms):.0f}ms"
+            reply = f"[echo] {payload}{latency}"
+            try:
+                await self._send_text(user_id, reply, ctx_token)
+            except Exception:
+                logger.debug("slash /echo reply failed", exc_info=True)
+            return True
+
+        if stripped == "/toggle-debug":
+            if user_id in self._debug_users:
+                self._debug_users.discard(user_id)
+                reply = "🔧 Debug 模式已关闭"
+            else:
+                self._debug_users.add(user_id)
+                reply = "🔧 Debug 模式已开启，消息尾部将附加耗时信息"
+            try:
+                await self._send_text(user_id, reply, ctx_token)
+            except Exception:
+                logger.debug("slash /toggle-debug reply failed", exc_info=True)
+            return True
+
+        return False
+
     # ==================== 消息发送 ====================
+
+    async def _send_error_notice(
+        self, chat_id: str, notice: str, ctx_token: str = "",
+    ) -> None:
+        """Fire-and-forget: send a visible error notice to the user."""
+        try:
+            await self._send_text(chat_id, notice, ctx_token)
+        except Exception:
+            logger.debug(f"{self.channel_name}: error notice send failed (ignored)")
 
     async def send_message(self, message: OutgoingMessage) -> str:
         if self._is_session_paused():
@@ -801,7 +1094,8 @@ class WeChatAdapter(ChannelAdapter):
         ctx_token = self._resolve_context_token(chat_id, message.metadata)
         if not ctx_token:
             logger.warning(
-                f"{self.channel_name}: no context_token for {chat_id}, message may fail"
+                f"{self.channel_name}: no context_token for {_redact_id(chat_id)}, "
+                "message may fail"
             )
 
         text = message.content.text or ""
@@ -816,9 +1110,19 @@ class WeChatAdapter(ChannelAdapter):
                         chat_id, media.local_path, _guess_mime(media.local_path),
                         caption=text, ctx_token=ctx_token,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         f"{self.channel_name}: media send failed, falling back to text"
+                    )
+                    err_str = str(exc)
+                    if "upload" in err_str.lower() or "CDN" in err_str:
+                        notice = "⚠️ 媒体文件上传失败，请稍后重试。"
+                    elif "download" in err_str.lower():
+                        notice = "⚠️ 媒体文件下载失败，请检查链接是否可访问。"
+                    else:
+                        notice = "⚠️ 媒体文件发送失败，请稍后重试。"
+                    asyncio.create_task(
+                        self._send_error_notice(chat_id, notice, ctx_token)
                     )
                     if not text:
                         text = f"[媒体消息: {media.filename}]"
@@ -878,8 +1182,7 @@ class WeChatAdapter(ChannelAdapter):
                     raise
         self._send_count += 1
         logger.info(
-            f"{self.channel_name}: text sent to={to}, "
-            f"len={len(text)}, client_id={body['msg']['client_id']}"
+            f"{self.channel_name}: text sent to={_redact_id(to)}, len={len(text)}"
         )
         return body["msg"]["client_id"]
 
@@ -970,8 +1273,8 @@ class WeChatAdapter(ChannelAdapter):
                     raise
         self._send_count += 1
         logger.info(
-            f"{self.channel_name}: media sent to={chat_id}, "
-            f"mime={mime}, file={Path(file_path).name}, client_id={body['msg']['client_id']}"
+            f"{self.channel_name}: media sent to={_redact_id(chat_id)}, "
+            f"mime={mime}, file={Path(file_path).name}"
         )
         return body["msg"]["client_id"]
 
@@ -1026,17 +1329,26 @@ class WeChatAdapter(ChannelAdapter):
             logger.debug(f"{self.channel_name}: clearTyping failed (ignored)")
 
     def format_final_footer(self, chat_id: str, thread_id: str | None = None) -> str | None:
-        if not self._footer_elapsed:
-            return None
         start = self._typing_start_time.pop(chat_id, None)
         if start is None:
             return None
         elapsed = time.time() - start
+        is_debug = chat_id in self._debug_users
+        if not self._footer_elapsed and not is_debug:
+            return None
         if elapsed < 60:
-            return f"\n\n⏱ 耗时 {elapsed:.1f}s"
-        minutes = int(elapsed // 60)
-        secs = elapsed % 60
-        return f"\n\n⏱ 耗时 {minutes}m{secs:.0f}s"
+            footer = f"\n\n⏱ 耗时 {elapsed:.1f}s"
+        else:
+            minutes = int(elapsed // 60)
+            secs = elapsed % 60
+            footer = f"\n\n⏱ 耗时 {minutes}m{secs:.0f}s"
+        if is_debug:
+            footer += (
+                f"\n[debug] msgs_recv={self._msg_count} msgs_sent={self._send_count}"
+                f" ctx_tokens={len(self._context_tokens)}"
+                f" ver={OPENCLAW_COMPAT_VERSION}"
+            )
+        return footer
 
     async def _get_typing_ticket(self, user_id: str) -> str:
         now = time.time()
@@ -1062,7 +1374,7 @@ class WeChatAdapter(ChannelAdapter):
                 )
                 return ticket
         except Exception:
-            logger.debug(f"{self.channel_name}: getConfig failed for {user_id}")
+            logger.debug(f"{self.channel_name}: getConfig failed for {_redact_id(user_id)}")
 
         if entry:
             new_delay = min(entry.retry_delay_s * 2, CONFIG_CACHE_MAX_RETRY_S)
@@ -1077,14 +1389,23 @@ class WeChatAdapter(ChannelAdapter):
     # ==================== CDN 媒体 ====================
 
     async def _cdn_download(
-        self, encrypt_query_param: str, aes_key: bytes | None
+        self,
+        encrypt_query_param: str,
+        aes_key: bytes | None,
+        *,
+        full_url: str = "",
     ) -> bytes:
-        url = (
-            f"{self.config.cdn_base_url}/download"
-            f"?encrypted_query_param={quote(encrypt_query_param, safe='')}"
-        )
+        if full_url:
+            url = full_url
+        else:
+            url = (
+                f"{self.config.cdn_base_url}/download"
+                f"?encrypted_query_param={quote(encrypt_query_param, safe='')}"
+            )
         resp = await self._http.get(url, timeout=30.0)
-        resp.raise_for_status()
+        if not resp.is_success:
+            err_msg = resp.headers.get("x-error-message", f"status {resp.status_code}")
+            raise RuntimeError(f"CDN download error {resp.status_code}: {err_msg}")
         data = resp.content
         if aes_key and len(aes_key) == 16:
             data = _decrypt_aes_ecb(data, aes_key)
@@ -1122,24 +1443,28 @@ class WeChatAdapter(ChannelAdapter):
             upload_body["context_token"] = context_token
         upload_resp = await self._api_post("ilink/bot/getuploadurl", upload_body)
         self._check_send_response(upload_resp, action="getuploadurl")
+        upload_full_url = (upload_resp.get("upload_full_url") or "").strip()
         upload_param = upload_resp.get("upload_param")
-        if not upload_param:
+        if not upload_full_url and not upload_param:
             logger.error(
-                f"{self.channel_name}: getUploadUrl returned no upload_param, "
+                f"{self.channel_name}: getUploadUrl returned no upload URL, "
                 f"resp keys={list(upload_resp.keys())}, "
                 f"ret={upload_resp.get('ret')}, errmsg={upload_resp.get('errmsg', '')!r}"
             )
             raise RuntimeError(
-                f"getUploadUrl returned no upload_param "
+                f"getUploadUrl returned no upload URL "
                 f"(ret={upload_resp.get('ret')}, errmsg={upload_resp.get('errmsg', '')})"
             )
 
         ciphertext = _encrypt_aes_ecb(plaintext, aeskey)
-        cdn_url = (
-            f"{self.config.cdn_base_url}/upload"
-            f"?encrypted_query_param={quote(upload_param, safe='')}"
-            f"&filekey={quote(filekey, safe='')}"
-        )
+        if upload_full_url:
+            cdn_url = upload_full_url
+        else:
+            cdn_url = (
+                f"{self.config.cdn_base_url}/upload"
+                f"?encrypted_query_param={quote(upload_param, safe='')}"
+                f"&filekey={quote(filekey, safe='')}"
+            )
 
         download_param: str | None = None
         last_err: Exception | None = None
@@ -1152,8 +1477,11 @@ class WeChatAdapter(ChannelAdapter):
                     timeout=60.0,
                 )
                 if 400 <= resp.status_code < 500:
-                    raise RuntimeError(f"CDN client error {resp.status_code}")
-                resp.raise_for_status()
+                    err_msg = resp.headers.get("x-error-message", f"status {resp.status_code}")
+                    raise RuntimeError(f"CDN upload client error {resp.status_code}: {err_msg}")
+                if not resp.is_success:
+                    err_msg = resp.headers.get("x-error-message", f"status {resp.status_code}")
+                    raise RuntimeError(f"CDN upload server error: {err_msg}")
                 download_param = resp.headers.get("x-encrypted-param")
                 if not download_param:
                     raise RuntimeError("CDN response missing x-encrypted-param")
@@ -1217,11 +1545,15 @@ class WeChatAdapter(ChannelAdapter):
         mf.status = MediaStatus.READY
         return mf
 
-    # ==================== 同步游标持久化 ====================
+    # ==================== 同步游标 & Context Token 持久化 ====================
 
     def _sync_buf_path(self) -> Path:
         safe_id = self.bot_id.replace(":", "_").replace("/", "_")
         return self._sync_buf_dir / f"{safe_id}.buf"
+
+    def _context_tokens_path(self) -> Path:
+        safe_id = self.bot_id.replace(":", "_").replace("/", "_")
+        return self._sync_buf_dir / f"{safe_id}.context_tokens.json"
 
     def _save_sync_buf(self) -> None:
         if not self._get_updates_buf:
@@ -1243,3 +1575,26 @@ class WeChatAdapter(ChannelAdapter):
                     )
             except Exception:
                 self._get_updates_buf = ""
+
+    def _save_context_tokens(self) -> None:
+        if not self._context_tokens:
+            return
+        try:
+            self._context_tokens_path().write_text(
+                json.dumps(self._context_tokens), encoding="utf-8"
+            )
+        except Exception:
+            logger.debug(f"{self.channel_name}: failed to save context tokens")
+
+    def _load_context_tokens(self) -> None:
+        p = self._context_tokens_path()
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._context_tokens = data
+                    logger.info(
+                        f"{self.channel_name}: loaded {len(data)} context tokens from disk"
+                    )
+            except Exception:
+                logger.debug(f"{self.channel_name}: failed to load context tokens")

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChainGroup, ChainEntry, ChatToolCall } from "../utils/chatTypes";
 import {
@@ -266,7 +266,6 @@ export function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
 }) {
   const { t } = useTranslation();
   const [localChain, setLocalChain] = useState(chain);
-  const chainEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLocalChain(prev => {
@@ -277,12 +276,6 @@ export function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
       }));
     });
   }, [chain]);
-
-  useEffect(() => {
-    if (streaming && chainEndRef.current) {
-      chainEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [chain, streaming]);
 
   if (!showChain || !localChain || localChain.length === 0) return null;
 
@@ -316,7 +309,6 @@ export function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
           }}
         />
       ))}
-      <div ref={chainEndRef} />
     </div>
   );
 }

@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Writing Skills
+  short_description: Use when creating new skills, editing existing skills, or ver...
+  default_prompt: Use $superpowers-writing-skills
+i18n:
+  zh:
+    name: 编写技能文件
+    description: 创建和维护 SKILL.md 技能定义文件的最佳实践指南

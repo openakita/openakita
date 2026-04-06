@@ -1,0 +1,9 @@
+interface:
+  display_name: Superpowers Finishing Branch
+  short_description: Use when implementation is complete, all tests pass, and you
+    ...
+  default_prompt: Use $superpowers-finishing-branch
+i18n:
+  zh:
+    name: 完成开发分支
+    description: 开发分支收尾流程：代码审查、测试验证、合并准备，确保分支干净完整

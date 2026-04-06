@@ -1049,7 +1049,7 @@ export function ChatView({
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
-  }, [visible, messages.length]);
+  }, [visible]);
 
   // ── 思维链: 流式结束后自动折叠 ──
   useEffect(() => {
@@ -1677,10 +1677,9 @@ export function ChatView({
       pollingTimer: null,
     };
     streamContexts.current.set(thisConvId, sctx);
-    // Only force-follow if the user was already at the bottom.
-    if (isMessageListAtBottomRef.current) {
-      messageListRef.current?.forceFollow();
-    }
+    // Sending a new turn should always reveal the latest messages immediately.
+    messageListRef.current?.forceFollow();
+    isMessageListAtBottomRef.current = true;
     // Functional updater chains with any pending setMessages (e.g. handleAskAnswer's answered flag)
     if (thisConvId === activeConvIdRef.current) {
       setMessages((prev) => {

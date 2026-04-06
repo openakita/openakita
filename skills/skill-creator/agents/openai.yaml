@@ -1,0 +1,9 @@
+interface:
+  display_name: "Skill Creator"
+  short_description: "Create, test, and improve skills"
+  default_prompt: "Use $skill-creator to create a new skill"
+
+i18n:
+  zh:
+    name: "技能创建器"
+    description: "创建和改进技能。为重复性任务创建新技能、改进现有技能、或将临时脚本封装为可复用技能。"

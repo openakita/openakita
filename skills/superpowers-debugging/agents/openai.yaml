@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Debugging
+  short_description: Use when encountering any bug, test failure, or unexpected be...
+  default_prompt: Use $superpowers-debugging
+i18n:
+  zh:
+    name: 系统化调试
+    description: 结构化的 Bug 调试流程：收集证据、形成假设、二分验证，避免盲目修改代码

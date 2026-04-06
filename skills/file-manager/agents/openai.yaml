@@ -1,0 +1,9 @@
+interface:
+  display_name: "File Manager"
+  short_description: "Create, read, write, delete, move, and search files"
+  default_prompt: "Use $file-manager to manage files and directories"
+
+i18n:
+  zh:
+    name: "文件管理器"
+    description: "文件和目录管理工具，支持创建、读取、写入、删除、移动、复制和搜索操作。"

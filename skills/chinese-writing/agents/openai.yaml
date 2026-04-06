@@ -1,0 +1,9 @@
+interface:
+  display_name: "Chinese Writing Standards"
+  short_description: "Enforce modern Chinese writing standards and style rules"
+  default_prompt: "Use $chinese-writing to apply Chinese writing standards"
+
+i18n:
+  zh:
+    name: "中文写作规范"
+    description: "系统化的中文写作规范，涵盖语调风格、盘古之白间距、全角标点、段落结构和主动语态等规则，支持博客、错误提示、UI 文案和技术文档等多种场景。"

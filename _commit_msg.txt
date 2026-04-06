@@ -1,0 +1,10 @@
+refactor(browser): 移除 browser-use SDK，统一为 Playwright 单一浏览器控制层
+
+解决 CDP 多客户端资源争用导致 browser-use 100% 失败的架构问题 (#173)。
+
+- 删除 browser_use_runner.py 及其 LLM 注入机制
+- 移除 browser-use、langchain-openai 两个依赖
+- 将 Playwright 已实现但未暴露的 8 个工具正式注册:
+  browser_click, browser_type, browser_scroll, browser_wait,
+  browser_execute_js, browser_list_tabs, browser_switch_tab, browser_new_tab
+- 清理所有 browser_task 引用 (agent/handler/definitions/prompt/tests)

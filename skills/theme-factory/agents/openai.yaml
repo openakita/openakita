@@ -1,0 +1,9 @@
+interface:
+  display_name: "Theme Factory"
+  short_description: "Apply professional color and font themes to artifacts"
+  default_prompt: "Use $theme-factory to style my presentation with a theme"
+
+i18n:
+  zh:
+    name: "主题工厂"
+    description: "为演示文稿、文档、报告等作品应用专业配色和字体主题，内置 10 套预设主题。"

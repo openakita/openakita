@@ -1,0 +1,9 @@
+interface:
+  display_name: Baoyu Infographic
+  short_description: Generates professional infographics with 21 layout types and
+    ...
+  default_prompt: Use $baoyu-infographic
+i18n:
+  zh:
+    name: 信息图生成
+    description: 专业信息图制作，21种布局×20种视觉风格，自动分析内容并推荐最佳组合

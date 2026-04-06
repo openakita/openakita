@@ -1,0 +1,9 @@
+interface:
+  display_name: Superpowers Workflow
+  short_description: Use when starting any conversation - establishes how to find
+    ...
+  default_prompt: Use $superpowers-workflow
+i18n:
+  zh:
+    name: Superpowers 工作流
+    description: Superpowers 开发方法论入口：在执行任何任务前检查并应用合适的技能

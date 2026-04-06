@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Requesting Review
+  short_description: Use when completing tasks, implementing major features, or be...
+  default_prompt: Use $superpowers-requesting-review
+i18n:
+  zh:
+    name: 请求代码评审
+    description: 发起代码评审请求：准备变更摘要、标注关注点、提供上下文

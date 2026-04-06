@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Tdd
+  short_description: Use when implementing any feature or bugfix, before writing i...
+  default_prompt: Use $superpowers-tdd
+i18n:
+  zh:
+    name: 测试驱动开发
+    description: Red-Green-Refactor 工作流：先写失败测试，再写最小实现代码，最后重构。确保每行代码都有测试覆盖

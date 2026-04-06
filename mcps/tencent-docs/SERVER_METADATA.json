@@ -1,0 +1,21 @@
+{
+  "serverIdentifier": "tencent-docs",
+  "serverName": "腾讯文档 (Tencent Docs)",
+  "serverDescription": "腾讯文档 MCP 服务，支持创建智能文档、Excel、幻灯片、思维导图、流程图、智能表格等",
+  "transport": "streamable_http",
+  "url": "https://docs.qq.com/openapi/mcp",
+  "headers": {
+    "Authorization": "${TENCENT_DOCS_TOKEN}"
+  },
+  "autoConnect": false,
+  "configSchema": [
+    {
+      "key": "TENCENT_DOCS_TOKEN",
+      "label": "Access Token",
+      "type": "secret",
+      "required": true,
+      "placeholder": "从 docs.qq.com 获取的个人 Token",
+      "help": "访问 https://docs.qq.com/open/auth/mcp.html 获取"
+    }
+  ]
+}

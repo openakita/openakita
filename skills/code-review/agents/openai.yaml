@@ -1,0 +1,9 @@
+interface:
+  display_name: "Code Review"
+  short_description: "Review local changes and Pull Requests for quality"
+  default_prompt: "Use $code-review to review my code changes"
+
+i18n:
+  zh:
+    name: "代码审查"
+    description: "审查代码变更，支持本地修改（暂存区或工作区）和远程 Pull Request，关注正确性和质量。"

@@ -1,0 +1,9 @@
+interface:
+  display_name: "Algorithmic Art"
+  short_description: "Create generative art with p5.js and seeded randomness"
+  default_prompt: "Use $algorithmic-art to create generative art"
+
+i18n:
+  zh:
+    name: "算法艺术"
+    description: "使用 p5.js 创建算法艺术作品，支持种子随机数和交互式参数探索。"

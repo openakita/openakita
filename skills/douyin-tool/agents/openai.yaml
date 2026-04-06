@@ -1,0 +1,9 @@
+interface:
+  display_name: "Douyin Tool"
+  short_description: "Douyin video scripting, BGM, captions, and analytics"
+  default_prompt: "Use $douyin-tool to help me create Douyin content"
+
+i18n:
+  zh:
+    name: "抖音视频工具"
+    description: "抖音短视频全流程工具包，涵盖脚本撰写、BGM 推荐、字幕文案生成、热点分析和视频信息提取。"

@@ -225,13 +225,30 @@ class SessionManager:
             session_key += f":{thread_id}"
 
         with self._sessions_lock:
-            # 检查缓存
             if session_key in self._sessions:
                 session = self._sessions[session_key]
                 session.touch()
                 return session
 
-            # 创建新会话
+        # 磁盘恢复在锁外执行，避免 IO 阻塞其他线程
+        recovered = self._try_recover_session_from_disk(session_key)
+
+        with self._sessions_lock:
+            # double-check：另一个线程可能已抢先恢复或创建
+            if session_key in self._sessions:
+                session = self._sessions[session_key]
+                session.touch()
+                return session
+
+            if recovered is not None:
+                self._sessions[session_key] = recovered
+                recovered.touch()
+                logger.info(
+                    f"Recovered session from disk: {session_key} "
+                    f"({len(recovered.context.messages)} messages)"
+                )
+                return recovered
+
             if create_if_missing:
                 session = self._create_session(
                     channel, chat_id, user_id, thread_id, config,
@@ -245,6 +262,29 @@ class SessionManager:
                 )
                 return session
 
+        return None
+
+    def _try_recover_session_from_disk(self, session_key: str) -> "Session | None":
+        """尝试从 sessions.json 中恢复指定 session_key 的会话。
+
+        当会话已从内存中移除（如空闲清理、内存压力）但磁盘上仍有记录时，
+        可以通过此方法恢复，避免创建空白会话导致上下文丢失。
+        """
+        sessions_file = self.storage_path / "sessions.json"
+        data = self._try_load_sessions_file(sessions_file)
+        if not data:
+            return None
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                session = Session.from_dict(item)
+                if session.session_key == session_key and not session.is_expired():
+                    self._clean_large_content_in_messages(session.context.messages)
+                    return session
+            except Exception:
+                continue
         return None
 
     def get_session_by_id(self, session_id: str) -> Session | None:

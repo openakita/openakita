@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作流编排器 - MVP 高保真原型</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f7fa;
+            color: #2c3e50;
+            overflow: hidden;
+        }
+
+        /* 顶部导航栏 */
+        .header {
+            height: 56px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .workflow-title {
+            color: rgba(255,255,255,0.9);
+            font-size: 16px;
+            margin-left: 16px;
+            padding-left: 16px;
+            border-left: 1px solid rgba(255,255,255,0.3);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: white;
+            color: #667eea;
+        }
+
+        .btn-primary:hover {
+            background: rgba(255,255,255,0.9);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.15);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.25);
+        }
+
+        /* 主容器 */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 56px);
+        }
+
+        /* 左侧节点工具箱 */
+        .toolbox {
+            width: 280px;
+            background: white;
+            border-right: 1px solid #e1e5eb;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .toolbox-header {
+            padding: 16px;
+            border-bottom: 1px solid #e1e5eb;
+            font-weight: 600;
+            font-size: 14px;
+            color: #4a5568;
+        }
+
+        .toolbox-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .node-category {
+            margin-bottom: 20px;
+        }
+
+        .category-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            padding: 0 8px;
+        }
+
+        .node-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: #f7fafc;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: grab;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .node-item:hover {
+            background: #edf2f7;
+            border-color: #667eea;
+            transform: translateX(4px);
+        }
+
+        .node-item:active {
+            cursor: grabbing;
+        }
+
+        .node-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .node-icon.trigger { background: #e3f2fd; color: #1976d2; }
+        .node-icon.action { background: #e8f5e9; color: #388e3c; }
+        .node-icon.condition { background: #fff3e0; color: #f57c00; }
+        .node-icon.loop { background: #f3e5f5; color: #7b1fa2; }
+        .node-icon.tool { background: #e0f7fa; color: #0097a7; }
+
+        .node-info {
+            flex: 1;
+        }
+
+        .node-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: #2d3748;
+            margin-bottom: 2px;
+        }
+
+        .node-desc {
+            font-size: 12px;
+            color: #718096;
+        }
+
+        /* 中间画布区域 */
+        .canvas-area {
+            flex: 1;
+            position: relative;
+            background: #f5f7fa;
+            overflow: hidden;
+        }
+
+        .canvas-toolbar {
+            position: absolute;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 100;
+        }
+
+        .toolbar-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            border: 1px solid #e1e5eb;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 16px;
+        }
+
+        .toolbar-btn:hover {
+            background: #f7fafc;
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background-image: 
+                linear-gradient(#e1e5eb 1px, transparent 1px),
+                linear-gradient(90deg, #e1e5eb 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        /* 画布上的节点 */
+        .canvas-node {
+            position: absolute;
+            width: 280px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            cursor: move;
+        }
+
+        .canvas-node:hover {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            border-color: #667eea;
+        }
+
+        .canvas-node.selected {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        .canvas-node-header {
+            padding: 12px 16px;
+            border-radius: 10px 10px 0 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #e1e5eb;
+        }
+
+        .canvas-node.trigger .canvas-node-header { background: #e3f2fd; }
+        .canvas-node.action .canvas-node-header { background: #e8f5e9; }
+        .canvas-node.condition .canvas-node-header { background: #fff3e0; }
+        .canvas-node.loop .canvas-node-header { background: #f3e5f5; }
+        .canvas-node.tool .canvas-node-header { background: #e0f7fa; }
+
+        .canvas-node-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .canvas-node.trigger .canvas-node-icon { background: #1976d2; color: white; }
+        .canvas-node.action .canvas-node-icon { background: #388e3c; color: white; }
+        .canvas-node.condition .canvas-node-icon { background: #f57c00; color: white; }
+        .canvas-node.loop .canvas-node-icon { background: #7b1fa2; color: white; }
+        .canvas-node.tool .canvas-node-icon { background: #0097a7; color: white; }
+
+        .canvas-node-title {
+            flex: 1;
+            font-weight: 600;
+            font-size: 14px;
+            color: #2d3748;
+        }
+
+        .canvas-node-body {
+            padding: 12px 16px;
+        }
+
+        .canvas-node-desc {
+            font-size: 13px;
+            color: #718096;
+            margin-bottom: 8px;
+        }
+
+        .canvas-node-config {
+            background: #f7fafc;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #4a5568;
+        }
+
+        /* 连接线 */
+        .connection-line {
+            position: absolute;
+            height: 2px;
+            background: #cbd5e0;
+            transform-origin: left center;
+            z-index: 0;
+        }
+
+        .connection-line::after {
+            content: '▶';
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #cbd5e0;
+            font-size: 10px;
+        }
+
+        /* 右侧属性面板 */
+        .properties-panel {
+            width: 320px;
+            background: white;
+            border-left: 1px solid #e1e5eb;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .properties-header {
+            padding: 16px;
+            border-bottom: 1px solid #e1e5eb;
+            font-weight: 600;
+            font-size: 14px;
+            color: #4a5568;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .close-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: none;
+            background: #f7fafc;
+            cursor: pointer;
+            font-size: 16px;
+            color: #718096;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-btn:hover {
+            background: #edf2f7;
+            color: #4a5568;
+        }
+
+        .properties-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .prop-section {
+            margin-bottom: 24px;
+        }
+
+        .prop-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .prop-item {
+            margin-bottom: 16px;
+        }
+
+        .prop-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: #4a5568;
+            margin-bottom: 6px;
+        }
+
+        .prop-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e1e5eb;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .prop-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .prop-select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e1e5eb;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }
+
+        .prop-textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e1e5eb;
+            border-radius: 6px;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 80px;
+            font-family: inherit;
+        }
+
+        .prop-hint {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 4px;
+        }
+
+        .properties-footer {
+            padding: 16px;
+            border-top: 1px solid #e1e5eb;
+            display: flex;
+            gap: 8px;
+        }
+
+        .properties-footer .btn {
+            flex: 1;
+            justify-content: center;
+        }
+
+        .btn-danger {
+            background: #fed7d7;
+            color: #c53030;
+        }
+
+        .btn-danger:hover {
+            background: #feb2b2;
+        }
+
+        /* 空状态提示 */
+        .empty-state {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #a0aec0;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #718096;
+            margin-bottom: 8px;
+        }
+
+        .empty-state-desc {
+            font-size: 14px;
+        }
+
+        /* 欢迎提示 */
+        .welcome-toast {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 1000;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translate(-50%, 20px);
+            }
+            to {
+                opacity: 1;
+                transform: translate(-50%, 0);
+            }
+        }
+
+        .toast-icon {
+            font-size: 24px;
+        }
+
+        .toast-content {
+            flex: 1;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .toast-desc {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .toast-close {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部导航栏 -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="logo-icon">⚡</div>
+                FlowAI 工作流编排器
+            </div>
+            <div class="workflow-title">订单自动处理工作流</div>
+        </div>
+        <div class="header-right">
+            <button class="btn btn-secondary">💾 保存</button>
+            <button class="btn btn-secondary">▶️ 测试</button>
+            <button class="btn btn-primary">🚀 发布</button>
+        </div>
+    </header>
+
+    <!-- 主容器 -->
+    <div class="main-container">
+        <!-- 左侧节点工具箱 -->
+        <aside class="toolbox">
+            <div class="toolbox-header">🧩 节点工具箱</div>
+            <div class="toolbox-content">
+                <!-- 触发器节点 -->
+                <div class="node-category">
+                    <div class="category-title">触发器</div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon trigger">⏰</div>
+                        <div class="node-info">
+                            <div class="node-name">定时触发</div>
+                            <div class="node-desc">按固定时间执行</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon trigger">📨</div>
+                        <div class="node-info">
+                            <div class="node-name">Webhook</div>
+                            <div class="node-desc">接收外部事件</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon trigger">📧</div>
+                        <div class="node-info">
+                            <div class="node-name">邮件到达</div>
+                            <div class="node-desc">新邮件触发</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 动作节点 -->
+                <div class="node-category">
+                    <div class="category-title">动作</div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon action">📤</div>
+                        <div class="node-info">
+                            <div class="node-name">发送邮件</div>
+                            <div class="node-desc">发送电子邮件</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon action">📝</div>
+                        <div class="node-info">
+                            <div class="node-name">创建记录</div>
+                            <div class="node-desc">添加到数据库</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon action">📊</div>
+                        <div class="node-info">
+                            <div class="node-name">生成报表</div>
+                            <div class="node-desc">Excel/PDF导出</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon action">💬</div>
+                        <div class="node-info">
+                            <div class="node-name">发送消息</div>
+                            <div class="node-desc">钉钉/企微/飞书</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 条件节点 -->
+                <div class="node-category">
+                    <div class="category-title">条件</div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon condition">🔀</div>
+                        <div class="node-info">
+                            <div class="node-name">条件分支</div>
+                            <div class="node-desc">If/Else判断</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon condition">✅</div>
+                        <div class="node-info">
+                            <div class="node-name">数据验证</div>
+                            <div class="node-desc">检查数据格式</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 循环节点 -->
+                <div class="node-category">
+                    <div class="category-title">循环</div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon loop">🔄</div>
+                        <div class="node-info">
+                            <div class="node-name">遍历列表</div>
+                            <div class="node-desc">For Each 循环</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon loop">🔁</div>
+                        <div class="node-info">
+                            <div class="node-name">条件循环</div>
+                            <div class="node-desc">While 循环</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 工具节点 -->
+                <div class="node-category">
+                    <div class="category-title">工具</div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon tool">🔧</div>
+                        <div class="node-info">
+                            <div class="node-name">数据转换</div>
+                            <div class="node-desc">格式化/计算</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon tool">🔗</div>
+                        <div class="node-info">
+                            <div class="node-name">API 调用</div>
+                            <div class="node-desc">请求外部接口</div>
+                        </div>
+                    </div>
+                    <div class="node-item" draggable="true">
+                        <div class="node-icon tool">🤖</div>
+                        <div class="node-info">
+                            <div class="node-name">AI 处理</div>
+                            <div class="node-desc">智能分析/生成</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 中间画布区域 -->
+        <main class="canvas-area">
+            <!-- 画布工具栏 -->
+            <div class="canvas-toolbar">
+                <div class="toolbar-btn" title="放大">🔍+</div>
+                <div class="toolbar-btn" title="缩小">🔍-</div>
+                <div class="toolbar-btn" title="适应屏幕">⛶</div>
+                <div style="width: 1px; height: 24px; background: #e1e5eb; margin: 0 8px;"></div>
+                <div class="toolbar-btn" title="撤销">↩️</div>
+                <div class="toolbar-btn" title="重做">↪️</div>
+                <div style="width: 1px; height: 24px; background: #e1e5eb; margin: 0 8px;"></div>
+                <div class="toolbar-btn" title="清空">🗑️</div>
+            </div>
+
+            <!-- 画布 -->
+            <div class="canvas" id="canvas">
+                <!-- 示例工作流节点 -->
+                <div class="canvas-node trigger" style="top: 80px; left: 100px;">
+                    <div class="canvas-node-header">
+                        <div class="canvas-node-icon">📨</div>
+                        <div class="canvas-node-title">新订单产生</div>
+                    </div>
+                    <div class="canvas-node-body">
+                        <div class="canvas-node-desc">当电商平台产生新订单时触发</div>
+                        <div class="canvas-node-config">
+                            📦 平台：淘宝/京东/拼多多<br>
+                            ⏰ 检查频率：实时
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 连接线 -->
+                <div class="connection-line" style="top: 168px; left: 380px; width: 100px; transform: rotate(0deg);"></div>
+
+                <div class="canvas-node action" style="top: 80px; left: 480px;">
+                    <div class="canvas-node-header">
+                        <div class="canvas-node-icon">✅</div>
+                        <div class="canvas-node-title">验证订单</div>
+                    </div>
+                    <div class="canvas-node-body">
+                        <div class="canvas-node-desc">检查订单信息完整性</div>
+                        <div class="canvas-node-config">
+                            ✓ 收货地址<br>
+                            ✓ 联系方式<br>
+                            ✓ 库存检查
+                        </div>
+                    </div>
+                </div>
+
+                <div class="connection-line" style="top: 168px; left: 760px; width: 100px; transform: rotate(0deg);"></div>
+
+                <div class="canvas-node condition" style="top: 80px; left: 860px;">
+                    <div class="canvas-node-header">
+                        <div class="canvas-node-icon">🔀</div>
+                        <div class="canvas-node-title">库存检查</div>
+                    </div>
+                    <div class="canvas-node-body">
+                        <div class="canvas-node-desc">判断商品库存是否充足</div>
+                        <div class="canvas-node-config">
+                            如果：库存 ≥ 订单数量<br>
+                            否则：触发补货流程
+                        </div>
+                    </div>
+                </div>
+
+                <div class="connection-line" style="top: 268px; left: 1000px; width: 60px; transform: rotate(90deg);"></div>
+
+                <div class="canvas-node action" style="top: 240px; left: 1060px;">
+                    <div class="canvas-node-header">
+                        <div class="canvas-node-icon">📝</div>
+                        <div class="canvas-node-title">生成发货单</div>
+                    </div>
+                    <div class="canvas-node-body">
+                        <div class="canvas-node-desc">创建发货单据</div>
+                        <div class="canvas-node-config">
+                            📄 包含：商品清单<br>
+                            🏷️ 自动打印面单
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 空状态提示（隐藏） -->
+                <div class="empty-state" style="display: none;">
+                    <div class="empty-state-icon">🎨</div>
+                    <div class="empty-state-title">开始创建你的工作流</div>
+                    <div class="empty-state-desc">从左侧拖拽节点到画布，或点击模板快速开始</div>
+                </div>
+
+                <!-- 欢迎提示 -->
+                <div class="welcome-toast" id="welcomeToast">
+                    <div class="toast-icon">💡</div>
+                    <div class="toast-content">
+                        <div class="toast-title">欢迎使用工作流编排器</div>
+                        <div class="toast-desc">从左侧拖拽节点到画布，快速构建自动化流程</div>
+                    </div>
+                    <button class="toast-close" onclick="closeToast()">✕</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- 右侧属性面板 -->
+        <aside class="properties-panel">
+            <div class="properties-header">
+                ⚙️ 节点配置
+                <button class="close-btn">✕</button>
+            </div>
+            <div class="properties-content">
+                <div class="prop-section">
+                    <div class="prop-section-title">基本信息</div>
+                    <div class="prop-item">
+                        <div class="prop-label">节点名称</div>
+                        <input type="text" class="prop-input" value="库存检查" placeholder="输入节点名称">
+                    </div>
+                    <div class="prop-item">
+                        <div class="prop-label">节点描述</div>
+                        <textarea class="prop-textarea" placeholder="输入节点描述">判断商品库存是否充足</textarea>
+                    </div>
+                </div>
+
+                <div class="prop-section">
+                    <div class="prop-section-title">条件设置</div>
+                    <div class="prop-item">
+                        <div class="prop-label">条件类型</div>
+                        <select class="prop-select">
+                            <option>数值比较</option>
+                            <option>文本匹配</option>
+                            <option>逻辑判断</option>
+                            <option>数据存在性</option>
+                        </select>
+                    </div>
+                    <div class="prop-item">
+                        <div class="prop-label">条件表达式</div>
+                        <input type="text" class="prop-input" value="库存数量 ≥ 订单数量" placeholder="例如：value > 100">
+                        <div class="prop-hint">支持变量引用和数学运算</div>
+                    </div>
+                    <div class="prop-item">
+                        <div class="prop-label">满足条件时</div>
+                        <select class="prop-select">
+                            <option>执行下一步</option>
+                            <option>执行分支 A</option>
+                        </select>
+                    </div>
+                    <div class="prop-item">
+                        <div class="prop-label">不满足条件时</div>
+                        <select class="prop-select">
+                            <option>结束流程</option>
+                            <option>执行分支 B</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="prop-section">
+                    <div class="prop-section-title">高级选项</div>
+                    <div class="prop-item">
+                        <div class="prop-label">错误处理</div>
+                        <select class="prop-select">
+                            <option>继续执行</option>
+                            <option>重试 3 次</option>
+                            <option>发送告警</option>
+                            <option>结束流程</option>
+                        </select>
+                    </div>
+                    <div class="prop-item">
+                        <div class="prop-label">超时设置（秒）</div>
+                        <input type="number" class="prop-input" value="30" placeholder="超时时间">
+                    </div>
+                </div>
+            </div>
+            <div class="properties-footer">
+                <button class="btn btn-danger">🗑️ 删除</button>
+                <button class="btn btn-primary" style="background: #667eea; color: white;">✅ 保存</button>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // 关闭欢迎提示
+        function closeToast() {
+            document.getElementById('welcomeToast').style

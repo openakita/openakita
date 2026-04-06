@@ -1,0 +1,225 @@
+version: '3.8'
+
+# OpenAkita 私有化部署 - 生产环境 Docker Compose 配置
+# 用途：企业客户私有化部署，包含完整的应用服务、数据库、缓存和监控
+# 版本：v1.0.0
+# 更新日期：2026-03-11
+
+services:
+  # ==================== 核心应用服务 ====================
+  
+  # 主应用服务（OpenAkita Agent 核心）
+  app:
+    image: openakita/core:latest
+    container_name: openakita-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-openakita}:${DB_PASSWORD}@db:5432/${DB_NAME:-openakita}
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET}
+      - API_KEY=${API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - MAX_CONCURRENT_AGENTS=${MAX_CONCURRENT_AGENTS:-10}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - ./data/app:/app/data
+      - ./logs:/app/logs
+      - ./skills:/app/skills:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - openakita-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # ==================== 数据库服务 ====================
+  
+  # PostgreSQL 数据库
+  db:
+    image: postgres:15-alpine
+    container_name: openakita-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DB_USER:-openakita}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-openakita}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups/db:/backups
+    networks:
+      - openakita-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-openakita} -d ${DB_NAME:-openakita}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ==================== 缓存服务 ====================
+  
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: openakita-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./backups/redis:/backups
+    networks:
+      - openakita-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ==================== 监控服务（可选） ====================
+  
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: openakita-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    networks:
+      - openakita-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Grafana 可视化
+  grafana:
+    image: grafana/grafana:latest
+    container_name: openakita-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - openakita-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ==================== 反向代理（可选） ====================
+  
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: openakita-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - openakita-network
+    profiles:
+      - nginx
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+# ==================== 数据卷 ====================
+
+volumes:
+  postgres_data:
+    driver: local
+    name: openakita_postgres_data
+  redis_data:
+    driver: local
+    name: openakita_redis_data
+  prometheus_data:
+    driver: local
+    name: openakita_prometheus_data
+  grafana_data:
+    driver: local
+    name: openakita_grafana_data
+
+# ==================== 网络配置 ====================
+
+networks:
+  openakita-network:
+    driver: bridge
+    name: openakita_network
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

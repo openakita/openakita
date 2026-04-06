@@ -1,0 +1,9 @@
+interface:
+  display_name: "Changelog Generator"
+  short_description: "Generate user-friendly changelogs from git commits"
+  default_prompt: "Use $changelog-generator to create release notes"
+
+i18n:
+  zh:
+    name: "变更日志生成器"
+    description: "从 Git 提交历史自动生成面向用户的变更日志，分类整理技术提交为可读的更新说明。"

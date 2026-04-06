@@ -1,0 +1,9 @@
+interface:
+  display_name: "Image Understander"
+  short_description: "Analyze images with GPT-4 Vision for OCR and Q&A"
+  default_prompt: "Use $image-understander to analyze this image"
+
+i18n:
+  zh:
+    name: "图片理解 (OpenAI)"
+    description: "使用 GPT-4 Vision 分析图片，支持描述、OCR 文字提取、物体识别和图片问答。"

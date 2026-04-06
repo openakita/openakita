@@ -1,0 +1,39 @@
+# OpenAkita MVP - 开发环境 Dockerfile
+# 用途：本地开发环境，支持热重载
+# 版本：v1.0 | 日期：2026-03-11
+
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    libpq-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖文件
+COPY requirements.txt .
+
+# 安装 Python 依赖
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 复制应用代码
+COPY src/ src/
+COPY identity/ identity/
+COPY skills/ skills/
+COPY pyproject.toml .
+COPY VERSION .
+
+# 创建日志目录
+RUN mkdir -p logs data/uploads data/temp
+
+# 暴露端口
+EXPOSE 8000
+
+# 默认命令：启动开发服务器（热重载）
+CMD ["python", "-m", "uvicorn", "src.openakita.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -30,6 +30,22 @@ class MCPToolInfo:
 
 
 @dataclass
+class MCPConfigField:
+    """MCP 服务器配置参数声明（SERVER_METADATA.json 中的 configSchema 条目）"""
+
+    key: str
+    label: str = ""
+    type: str = "text"  # text | secret | number | select | bool | url | path
+    required: bool = False
+    help: str = ""
+    help_url: str = ""
+    default: str = ""
+    placeholder: str = ""
+    options: list[str] = field(default_factory=list)
+    when: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class MCPServerInfo:
     """MCP 服务器信息"""
 
@@ -46,26 +62,90 @@ class MCPServerInfo:
     auto_connect: bool = False
     enabled: bool = True  # per-server 启用/禁用，默认启用（向后兼容）
     config_dir: str = ""  # 配置文件所在目录（用作 stdio 的 cwd 回退）
+    config_schema: list[MCPConfigField] = field(default_factory=list)
 
 
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
+_ENV_FILE_CACHE: dict[str, dict[str, str]] = {}
 
 
-def _resolve_env_vars(value: str) -> str:
-    """Replace ``${VAR_NAME}`` patterns with ``os.environ`` values."""
-    return _ENV_VAR_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+def _read_nearest_env_values(start_dir: Path) -> dict[str, str]:
+    """Read the nearest workspace ``.env`` while walking up from ``start_dir``."""
+    current = start_dir
+    for _ in range(8):
+        env_path = current / ".env"
+        if env_path.is_file():
+            cache_key = str(env_path.resolve())
+            cached = _ENV_FILE_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            try:
+                from dotenv import dotenv_values
+
+                values = {
+                    str(k): str(v)
+                    for k, v in dotenv_values(env_path).items()
+                    if k and v is not None
+                }
+                _ENV_FILE_CACHE[cache_key] = values
+                return values
+            except Exception as e:
+                logger.warning("Failed to read MCP env file %s: %s", env_path, e)
+                _ENV_FILE_CACHE[cache_key] = {}
+                return {}
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return {}
 
 
-def _resolve_headers(raw: dict) -> dict[str, str]:
+def clear_env_file_cache() -> None:
+    """Clear the cached .env file values so the next read picks up fresh data."""
+    _ENV_FILE_CACHE.clear()
+
+
+def _resolve_env_vars(value: str, env_values: dict[str, str] | None = None) -> str:
+    """Replace ``${VAR_NAME}`` patterns with workspace env or ``os.environ`` values."""
+    return _ENV_VAR_RE.sub(
+        lambda m: (env_values or {}).get(m.group(1), os.environ.get(m.group(1), "")),
+        value,
+    )
+
+
+def _resolve_headers(raw: dict, env_values: dict[str, str] | None = None) -> dict[str, str]:
     """Resolve env-var placeholders in header values, dropping empty ones."""
     resolved: dict[str, str] = {}
     for k, v in raw.items():
-        val = _resolve_env_vars(str(v))
+        val = _resolve_env_vars(str(v), env_values)
         if val:
             resolved[k] = val
         else:
             logger.warning("MCP header %s resolved to empty (env var not set?), skipping", k)
     return resolved
+
+
+def _parse_config_schema(raw: list) -> list[MCPConfigField]:
+    """Parse ``configSchema`` array from SERVER_METADATA.json into dataclass list."""
+    result: list[MCPConfigField] = []
+    for item in raw:
+        if not isinstance(item, dict) or "key" not in item:
+            continue
+        result.append(
+            MCPConfigField(
+                key=item["key"],
+                label=item.get("label", ""),
+                type=item.get("type", "text"),
+                required=bool(item.get("required", False)),
+                help=item.get("help", ""),
+                help_url=item.get("helpUrl", ""),
+                default=str(item.get("default", "")),
+                placeholder=item.get("placeholder", ""),
+                options=item.get("options") or [],
+                when=item.get("when") or {},
+            )
+        )
+    return result
 
 
 class MCPCatalog:
@@ -210,6 +290,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
 
         try:
             metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            env_values = _read_nearest_env_values(server_dir)
 
             server_id = metadata.get("serverIdentifier", server_dir.name)
             server_name = metadata.get("serverName", server_id)
@@ -224,7 +305,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
             elif stype == "sse":
                 transport = "sse"
             url = metadata.get("url", "")
-            headers = _resolve_headers(metadata.get("headers") or {})
+            headers = _resolve_headers(metadata.get("headers") or {}, env_values)
             auto_connect = metadata.get("autoConnect", False)
             enabled = metadata.get("enabled", True)
 
@@ -243,6 +324,8 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
             if instructions_file.exists():
                 instructions = instructions_file.read_text(encoding="utf-8")
 
+            config_schema = _parse_config_schema(metadata.get("configSchema") or [])
+
             return MCPServerInfo(
                 identifier=server_id,
                 name=server_name,
@@ -257,6 +340,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
                 auto_connect=auto_connect,
                 enabled=enabled,
                 config_dir=str(server_dir),
+                config_schema=config_schema,
             )
 
         except Exception as e:

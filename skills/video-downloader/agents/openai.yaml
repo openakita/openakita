@@ -1,0 +1,9 @@
+interface:
+  display_name: "Video Downloader"
+  short_description: "Download YouTube videos with quality and format control"
+  default_prompt: "Use $video-downloader to download this YouTube video"
+
+i18n:
+  zh:
+    name: "视频下载器"
+    description: "下载 YouTube 视频，支持多种画质（1080p/720p/480p）、格式（mp4/webm）和纯音频 MP3 导出。"

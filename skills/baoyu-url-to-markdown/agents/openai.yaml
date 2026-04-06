@@ -1,0 +1,8 @@
+interface:
+  display_name: Baoyu Url To Markdown
+  short_description: Fetch any URL and convert to markdown using Chrome CDP
+  default_prompt: Use $baoyu-url-to-markdown
+i18n:
+  zh:
+    name: URL 转 Markdown
+    description: 通过 Chrome CDP 抓取网页并转换为干净的 Markdown，支持登录页面和动态内容

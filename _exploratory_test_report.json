@@ -1,0 +1,1405 @@
+{
+  "timestamp": "2026-04-04T23:24:14.238077",
+  "summary": {
+    "total": 208,
+    "passed": 198,
+    "failed": 10,
+    "rate": "95.2%"
+  },
+  "phase_stats": {
+    "Phase 0": {
+      "total": 1,
+      "passed": 1
+    },
+    "Phase 1a": {
+      "total": 16,
+      "passed": 15
+    },
+    "Phase 1b": {
+      "total": 10,
+      "passed": 10
+    },
+    "Phase 1c": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 2a": {
+      "total": 10,
+      "passed": 10
+    },
+    "Phase 2b": {
+      "total": 4,
+      "passed": 4
+    },
+    "Phase 3a": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 3b": {
+      "total": 7,
+      "passed": 7
+    },
+    "Phase 3c": {
+      "total": 3,
+      "passed": 3
+    },
+    "Phase 3d": {
+      "total": 4,
+      "passed": 4
+    },
+    "Phase 4a": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 4b": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 4c": {
+      "total": 2,
+      "passed": 2
+    },
+    "Phase 5a": {
+      "total": 5,
+      "passed": 5
+    },
+    "Phase 5b": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 6a": {
+      "total": 13,
+      "passed": 13
+    },
+    "Phase 6b": {
+      "total": 4,
+      "passed": 4
+    },
+    "Phase 7a": {
+      "total": 11,
+      "passed": 8
+    },
+    "Phase 7b": {
+      "total": 3,
+      "passed": 3
+    },
+    "Phase 7c": {
+      "total": 8,
+      "passed": 8
+    },
+    "Phase 7d": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 8a": {
+      "total": 7,
+      "passed": 7
+    },
+    "Phase 8b": {
+      "total": 6,
+      "passed": 6
+    },
+    "Phase 8c": {
+      "total": 5,
+      "passed": 5
+    },
+    "Phase 8d": {
+      "total": 1,
+      "passed": 1
+    },
+    "Phase 8e": {
+      "total": 10,
+      "passed": 10
+    },
+    "复杂度": {
+      "total": 18,
+      "passed": 18
+    },
+    "Budget": {
+      "total": 7,
+      "passed": 7
+    },
+    "Prompt": {
+      "total": 1,
+      "passed": 1
+    },
+    "会话类型": {
+      "total": 3,
+      "passed": 3
+    },
+    "API": {
+      "total": 1,
+      "passed": 1
+    },
+    "连续对话": {
+      "total": 5,
+      "passed": 3
+    },
+    "Phase 3": {
+      "total": 1,
+      "passed": 0
+    },
+    "消息分型": {
+      "total": 3,
+      "passed": 3
+    },
+    "工具使用": {
+      "total": 1,
+      "passed": 0
+    },
+    "输出": {
+      "total": 2,
+      "passed": 0
+    }
+  },
+  "results": [
+    {
+      "phase": "Phase 0",
+      "test": ".gitignore 包含 claude_code/",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "_CORE_RULES 含 '## 操作风险评估'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '可自由执行' 分类",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '需要先确认再执行' 分类",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '读取文件' 安全操作",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '破坏性操作' 说明",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '对外可见的操作' 说明",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '暂停确认的成本很低' 准则",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '授权仅适用于指定的范围'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "含 '先调查再行动'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "含 '## 结果报告'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "含 '说失败'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "含 '未验证'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "含 '准确的报告'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "含 '不要声称一切正常'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "含 '不要压制或简化失败'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1c",
+      "test": "含 '不要超出用户请求范围'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1c",
+      "test": "含 '先诊断原因再换方案'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1c",
+      "test": "含 '不要给出任务需要多长时间'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1c",
+      "test": "含 '完成前必须验证结果'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "SOUL.md 含 '反向金字塔'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "SOUL.md 含 '关键节点更新'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "SOUL.md 含 '文本输出只聚焦于'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "SOUL.md 含 '一句话能说清'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "SOUL.md 含 '假设用户丢失上下文'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "SOUL.md 含 '不要过度强调'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2b",
+      "test": "含 'prompt injection'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2b",
+      "test": "含 '工具返回结果可能包含'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2b",
+      "test": "含 '标记该风险'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3a",
+      "test": "含 'Mode 1'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3a",
+      "test": "含 'Mode 2'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3a",
+      "test": "含 'search_relational_memory'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3a",
+      "test": "含 'search_memory'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3a",
+      "test": "含 '因果链遍历'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3a",
+      "test": "含 '时间线遍历'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 '何时保存记忆'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 'preference'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 'fact'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 'rule'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 'error'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 'skill'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3b",
+      "test": "含 '相对日期转为绝对日期'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3c",
+      "test": "含 '不应保存为记忆的内容'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3c",
+      "test": "含 '异步索引有延迟'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3c",
+      "test": "含 'MEMORY.md 中已存在'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3d",
+      "test": "含 '记忆可靠性'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3d",
+      "test": "含 '记忆可能过时'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3d",
+      "test": "含 '记忆与观察冲突时以观察为准'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 3d",
+      "test": "含 '用户说忽略记忆时'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4a",
+      "test": "builder.py 含 '协作优先原则'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4a",
+      "test": "含 '给子 Agent 写 prompt 的原则'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4a",
+      "test": "含 '永远不要委派理解'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4a",
+      "test": "含 '继续已有子 Agent vs 新启动'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4a",
+      "test": "含 '绝不编造或预测子 Agent 的结果'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4b",
+      "test": "含子 Agent 工作原则",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4b",
+      "test": "含 '委派工具不可用'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4b",
+      "test": "含 '不要编造结果'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4c",
+      "test": "含 '关键规则'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4c",
+      "test": "含验证必须证明有效",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5a",
+      "test": "_CORE_RULES 含 '## 任务管理'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5a",
+      "test": "含 '多步骤任务'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5a",
+      "test": "含 'in_progress'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5a",
+      "test": "含 '部分完成 != 完成'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5b",
+      "test": "builder.py 含 '选项设计原则'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5b",
+      "test": "含 '推荐'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5b",
+      "test": "含 '阻塞性的'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5b",
+      "test": "含 '不要问许可型问题'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "所有导出均可导入",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "含 '不要调用任何工具'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "含 '<analysis>'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "含 '<summary>'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "含 '所有用户消息'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "含 '保留所有具体数值'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "含自定义指导参数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "format: 剥离 analysis",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "format: 保留 summary 内容",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "format: 无标签时原样返回",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "user_msg: 含 '续接'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "user_msg: suppress 含 '直接从中断处继续'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6a",
+      "test": "user_msg: recent 含 '原样保留'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6b",
+      "test": "导入了 compact 模块",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6b",
+      "test": "使用 format_compact_summary",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6b",
+      "test": "使用 get_compact_prompt",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 6b",
+      "test": "token cache 使用 json.dumps 而非 id()",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "_section_cache 是 dict",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "_STATIC_SECTIONS 含 'core_rules'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "_STATIC_SECTIONS 含 'safety'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "_STATIC_SECTIONS 含 'identity'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "_STATIC_SECTIONS 含 'mode_rules'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "_STATIC_SECTIONS 含 'agents_md'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "clear_prompt_section_cache 可调用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "清除缓存后 _section_cache 为空",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7b",
+      "test": "_RUNTIME_CACHE_TTL 存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7b",
+      "test": "TTL >= 10秒",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7b",
+      "test": "_build_runtime_section_uncached 存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "build_system_prompt_compiled 含 mode 参数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "build_system_prompt_compiled 含 model_id 参数",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7d",
+      "test": "_build_system_blocks 存在",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7d",
+      "test": "返回 2 个 block",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7d",
+      "test": "第一个 block 有 cache_control",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7d",
+      "test": "第二个 block 无 cache_control",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7d",
+      "test": "无分割点时返回 1 个 block",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7d",
+      "test": "仍有 cache_control",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "_BUILT_IN_DEFAULTS 含 'soul'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "_BUILT_IN_DEFAULTS 含 'agent_core'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "soul 默认含 'OpenAkita'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "agent_core 默认含 '执行流程'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "_read_with_fallback 可调用",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "不存在文件返回 soul 默认",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8a",
+      "test": "真实文件直接读取内容",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8b",
+      "test": "去除 HTML 注释",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8b",
+      "test": "保留实质内容",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8b",
+      "test": "去除空 section",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8b",
+      "test": "去除空表格",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8b",
+      "test": "去除 [待学习] 占位符",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8b",
+      "test": "保留真实数据",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8c",
+      "test": "'agent_core' 不在 _SOURCE_MAP",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8c",
+      "test": "'user' 不在 _SOURCE_MAP",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8c",
+      "test": "'agent_core' 不在 _OUTPUT_MAP",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8c",
+      "test": "'user' 不在 _OUTPUT_MAP",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8c",
+      "test": "'persona_custom' 在 _COMPILE_PROMPTS",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8d",
+      "test": "BUILT_IN_DEFAULTS['soul'] 非空",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_load_hashes 可导入",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_save_hashes 可导入",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_file_hash 可导入",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_HASH_FILE 定义",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_TRACKED_FILES 含 SOUL.md",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_TRACKED_FILES 含 AGENT.md",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "_TRACKED_FILES 含 USER.md",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "hash 返回 16 字符",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "hash 结果一致",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 8e",
+      "test": "load_hashes 返回 dict",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "prompt 含 'complexity:' 字段",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "prompt 含 'destructive:' 说明",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "prompt 含 'scope:' 说明",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "prompt 含 'suggest_plan:' 说明",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "prompt 含破坏性判断标准",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "_analyze_complexity 已删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "_REFACTOR_KEYWORDS 已删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "_GLOBAL_KEYWORDS 已删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "_ARCHITECTURE_KEYWORDS 已删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "destructive_words 已删除",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "parse: destructive=true 正确",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "parse: scope=broad -> multi_file=True",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "parse: destructive=false 正确",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "parse: scope=local -> multi_file=False",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "parse: 空输入返回默认",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "fallback suggest_plan=True",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "fallback destructive_potential=True",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "复杂度",
+      "test": "fallback confidence=0.0",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "identity_budget=6000 (期望 6000)",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "total_budget=21000 (期望 21000)",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "catalogs_budget=12000",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "memory_budget=2500",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Prompt",
+      "test": "Agent prompt 长度 25111 chars",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "Agent prompt 含 '操作风险评估'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "Agent prompt 含 '可自由执行'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "Agent prompt 含 '需要先确认再执行'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "Agent prompt 含 '暂停确认的成本很低'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "Agent prompt 含 '结果报告'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "Agent prompt 含 '准确的报告'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1c",
+      "test": "Agent prompt 含 '不要超出用户请求范围'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1c",
+      "test": "Agent prompt 含 '完成前必须验证结果'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "Agent prompt 含 '反向金字塔'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "Agent prompt 含 '关键节点更新'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "Agent prompt 含 '文本输出只聚焦于'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 2b",
+      "test": "Agent prompt 含 'prompt injection'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5a",
+      "test": "Agent prompt 含 '任务管理'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5b",
+      "test": "Agent prompt 含 '选项设计原则'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 5b",
+      "test": "Agent prompt 含 '阻塞性的'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "SOUL.md 内容在 prompt 中",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "沟通风格在 prompt 中",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Budget",
+      "test": "自主能动性在 prompt 中",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "Plan prompt 长度 25315 chars",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "Plan prompt 含核心规则",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "Ask prompt 长度 24823 chars",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4b",
+      "test": "子 Agent prompt 长度 10829 chars",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4b",
+      "test": "子 Agent 含 '子 Agent'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4b",
+      "test": "子 Agent 含 '专注完成'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 4a",
+      "test": "子 Agent 不含 '协作优先'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "会话类型",
+      "test": "IM prompt 含 '对话上下文约定'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "会话类型",
+      "test": "IM prompt 含 'IM 会话规则'",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "会话类型",
+      "test": "CLI prompt 长度 25111 chars",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "构建后 cache 有内容 (keys=0)",
+      "status": "FAIL",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "'core_rules' 在缓存中",
+      "status": "FAIL",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7a",
+      "test": "'safety' 在缓存中",
+      "status": "FAIL",
+      "detail": ""
+    },
+    {
+      "phase": "API",
+      "test": "健康检查",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "L3-01 删除文件触发确认",
+      "status": "FAIL",
+      "detail": "events=['chain_text', 'iteration_start', 'heartbeat', 'thinking_delta', 'text_delta'], tools=['run_shell', 'run_shell']"
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "L3-02 系统配置修改触发确认",
+      "status": "PASS",
+      "detail": "events=['heartbeat', 'ask_user', 'done']"
+    },
+    {
+      "phase": "Phase 1a",
+      "test": "L3-03 查看文件正常执行",
+      "status": "PASS",
+      "detail": "tools=['glob', 'glob', 'run_shell'], text_len=2976"
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "L3-04 知识问答无工具调用",
+      "status": "PASS",
+      "detail": "tools=[]"
+    },
+    {
+      "phase": "Phase 1b",
+      "test": "L3-04 知识问答有实质内容",
+      "status": "PASS",
+      "detail": "text_len=364"
+    },
+    {
+      "phase": "Phase 2a",
+      "test": "L3-05 无英文客套话",
+      "status": "PASS",
+      "detail": "text前100: Python 列表推导式（List Comprehension）是一种**简洁的创建列表的语法**，让你可以用一行代码完成\"遍历 + 过滤 + 转换\"的操作。\n\n## 核心概念\n\n列表推导式的本质是："
+    },
+    {
+      "phase": "连续对话",
+      "test": "L3-06a 记住项目名",
+      "status": "FAIL",
+      "detail": "text前100: "
+    },
+    {
+      "phase": "连续对话",
+      "test": "L3-06b 记住编程语言",
+      "status": "FAIL",
+      "detail": ""
+    },
+    {
+      "phase": "连续对话",
+      "test": "L3-07a 3轮后记住名字",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "连续对话",
+      "test": "L3-07b 3轮后记住城市",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "连续对话",
+      "test": "L3-07c 3轮后记住职业",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "L3-08 Plan 模式有输出",
+      "status": "PASS",
+      "detail": "text_len=3465"
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "L3-08 Plan 不执行写操作",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "Phase 7c",
+      "test": "L3-09 Ask 模式有回答",
+      "status": "PASS",
+      "detail": "text_len=1042"
+    },
+    {
+      "phase": "Phase 3",
+      "test": "L3-10 触发记忆搜索",
+      "status": "FAIL",
+      "detail": "tools=[]"
+    },
+    {
+      "phase": "消息分型",
+      "test": "L3-11 闲聊无工具调用",
+      "status": "PASS",
+      "detail": "tools=[]"
+    },
+    {
+      "phase": "消息分型",
+      "test": "L3-11 闲聊有回复",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "phase": "工具使用",
+      "test": "L3-12 多步骤任务调用了工具",
+      "status": "FAIL",
+      "detail": "tools=[]"
+    },
+    {
+      "phase": "消息分型",
+      "test": "L3-13 确认回复简短",
+      "status": "PASS",
+      "detail": "text_len=14"
+    },
+    {
+      "phase": "输出",
+      "test": "L3-14 回复包含中文",
+      "status": "FAIL",
+      "detail": ""
+    },
+    {
+      "phase": "输出",
+      "test": "L3-15 计算结果正确 (56088)",
+      "status": "FAIL",
+      "detail": "text前80: 123 × 456 = **56,088**"
+    }
+  ]
+}

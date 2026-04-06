@@ -176,12 +176,12 @@ export function TokenStatsView({
   return (
     <div className="mx-auto max-w-[1080px] space-y-6 px-6 py-5">
       {/* ── Header: title + toggle ── */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 overflow-x-auto">
         <div className="space-y-1.5 min-w-0">
-          <h2 className="text-lg font-bold tracking-tight">
+          <h2 className="truncate text-lg font-bold tracking-tight" title={t("tokenStats.title", "Token 用量统计")}>
             {t("tokenStats.title", "Token 用量统计")}
           </h2>
-          <p className="text-xs text-muted-foreground leading-relaxed">
+          <p className="truncate text-xs text-muted-foreground leading-relaxed" title={t("tokenStats.disclaimer", "⚠ 本地 token 计算与服务商算法无法保证完全一致，实际用量以服务商账单为准，此处统计仅供参考。")}>
             {t("tokenStats.disclaimer", "⚠ 本地 token 计算与服务商算法无法保证完全一致，实际用量以服务商账单为准，此处统计仅供参考。")}
           </p>
         </div>
@@ -210,19 +210,21 @@ export function TokenStatsView({
       ) : (
         <>
           {/* ── Period selector ── */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap">
             {PERIOD_KEYS.map((pk) => (
               <Button
                 key={pk}
                 size="xs"
                 variant={period === pk ? "default" : "outline"}
+                className="shrink-0"
                 onClick={() => setPeriod(pk)}
               >
                 {t(PERIOD_I18N[pk])}
               </Button>
             ))}
-            <Button size="xs" variant="outline" onClick={fetchAll} disabled={loading}>
-              {loading ? "..." : t("tokenStats.refresh", "刷新")}
+            <Button size="xs" variant="outline" className="shrink-0" onClick={fetchAll} disabled={loading} title={t("tokenStats.refresh", "刷新")}>
+              <span className="hidden xl:inline">{loading ? "..." : t("tokenStats.refresh", "刷新")}</span>
+              <span className="xl:hidden">{loading ? "..." : "刷新"}</span>
             </Button>
           </div>
 

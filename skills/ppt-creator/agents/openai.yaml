@@ -1,0 +1,9 @@
+interface:
+  display_name: "PPT Creator"
+  short_description: "Create presentations using Pyramid Principle methodology"
+  default_prompt: "Use $ppt-creator to create a professional presentation"
+
+i18n:
+  zh:
+    name: "PPT 演示文稿制作"
+    description: "基于金字塔原理的专业演示文稿制作，支持 PPTX 生成、Marp/Reveal.js、数据图表、演讲备注和自评打分。"

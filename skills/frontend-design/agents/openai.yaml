@@ -1,0 +1,9 @@
+interface:
+  display_name: "Frontend Design"
+  short_description: "Create distinctive, production-grade frontend interfaces"
+  default_prompt: "Use $frontend-design to build a beautiful web interface"
+
+i18n:
+  zh:
+    name: "前端设计"
+    description: "创建独特的生产级前端界面，避免千篇一律的 AI 美学，注重排版、配色、动效和空间构成。"

@@ -1,0 +1,8 @@
+interface:
+  display_name: Baoyu Format Markdown
+  short_description: Formats plain text or markdown files with frontmatter, titles...
+  default_prompt: Use $baoyu-format-markdown
+i18n:
+  zh:
+    name: Markdown 格式化
+    description: 文本格式化为规范 Markdown，自动添加 frontmatter/标题/加粗/列表，支持中英文排版修复

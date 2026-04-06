@@ -1,0 +1,9 @@
+interface:
+  display_name: "Doc Co-Authoring"
+  short_description: "Structured workflow for collaborative document creation"
+  default_prompt: "Use $doc-coauthoring to help me write a document"
+
+i18n:
+  zh:
+    name: "文档协作写作"
+    description: "结构化文档共创工作流，引导用户通过上下文收集、迭代完善和读者测试三阶段完成高质量文档。"

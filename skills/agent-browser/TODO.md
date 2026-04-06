@@ -1,0 +1,22 @@
+# Skills TODO
+
+- [ ] infographic-design
+- [ ] interior-design-viz
+- [ ] food-photography
+- [ ] podcast-episode-production
+- [ ] audiobook-production
+- [ ] sound-effects-design
+- [ ] video-captioning
+- [ ] whitepaper-creation
+- [ ] readme-with-visuals
+- [ ] error-page-design
+- [ ] real-estate-listing
+- [ ] ecommerce-product-page
+- [ ] photo-editing-guide
+- [ ] photo-restoration
+- [ ] music-for-content
+- [ ] 3d-product-viz
+- [ ] fashion-lookbook
+- [ ] game-asset-creation
+- [ ] batch-media-processing
+- [ ] website-audit-screenshots

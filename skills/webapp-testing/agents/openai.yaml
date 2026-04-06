@@ -1,0 +1,9 @@
+interface:
+  display_name: "WebApp Testing"
+  short_description: "Test local web apps interactively with Playwright"
+  default_prompt: "Use $webapp-testing to test my web application"
+
+i18n:
+  zh:
+    name: "Web 应用测试"
+    description: "使用 Playwright 交互式测试本地 Web 应用，支持页面导航、元素操作和截图。"

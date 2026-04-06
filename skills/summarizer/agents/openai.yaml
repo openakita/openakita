@@ -1,0 +1,9 @@
+interface:
+  display_name: "Summarizer"
+  short_description: "Summarize content from URLs, files, YouTube, and text"
+  default_prompt: "Use $summarizer to summarize this content"
+
+i18n:
+  zh:
+    name: "通用内容摘要"
+    description: "从任意来源（网页、本地文件、YouTube 视频、原始文本）提取并生成摘要，支持多种输出格式（要点、执行摘要、详细笔记）和可配置的摘要长度与风格。"

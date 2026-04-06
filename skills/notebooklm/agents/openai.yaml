@@ -1,0 +1,9 @@
+interface:
+  display_name: Notebooklm
+  short_description: Conduct deep research using NotebookLM integration — upload d...
+  default_prompt: Use $notebooklm
+i18n:
+  zh:
+    name: NotebookLM 研究
+    description: 基于 NotebookLM 进行深度文档研究，生成引用溯源的答案和信息图风格演示，支持 Markdown、HTML/reveal.js
+      和 Mermaid 图表多格式输出。

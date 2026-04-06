@@ -1,0 +1,8 @@
+interface:
+  display_name: Baoyu Cover Image
+  short_description: Generates article cover images with 5 dimensions (type, palet...
+  default_prompt: Use $baoyu-cover-image
+i18n:
+  zh:
+    name: 文章封面图
+    description: 5维度定制文章封面图，支持9种色板和6种渲染风格，电影级/宽屏/方形比例

@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Git Worktrees
+  short_description: Use when starting feature work that needs isolation from curr...
+  default_prompt: Use $superpowers-git-worktrees
+i18n:
+  zh:
+    name: Git Worktree 工作流
+    description: 使用 Git Worktree 在独立工作空间开发，避免分支切换干扰，支持并行开发

@@ -1,0 +1,9 @@
+interface:
+  display_name: "YouTube Summarizer"
+  short_description: "Summarize YouTube videos with structured notes"
+  default_prompt: "Use $youtube-summarizer to summarize this YouTube video"
+
+i18n:
+  zh:
+    name: "YouTube 视频总结"
+    description: "从 YouTube 视频中提取字幕并生成结构化摘要笔记，支持多种 URL 格式和语言，使用 STAR + R-I-S-E 框架输出要点、时间戳和详细笔记。"

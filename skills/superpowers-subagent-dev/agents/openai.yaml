@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Subagent Dev
+  short_description: Use when executing implementation plans with independent task...
+  default_prompt: Use $superpowers-subagent-dev
+i18n:
+  zh:
+    name: 子 Agent 驱动开发
+    description: 通过子 Agent 自主工作模式处理复杂开发任务，监督和审查子 Agent 产出

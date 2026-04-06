@@ -3,9 +3,10 @@ import { useTranslation } from "react-i18next";
 import {
   IconLink,
   IconChevronDown, IconChevronRight,
-  DotGreen, DotGray, DotYellow,
+  DotYellow,
 } from "../icons";
 import { safeFetch } from "../providers";
+import type { MCPConfigField, EnvMap } from "../types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Plus, Trash2, Plug, Unplug, Info, Server, Wrench } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Loader2, RefreshCw, Plus, Trash2, Plug, Unplug, Info, Server, Wrench, Eye, EyeOff, Save, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 type MCPTool = {
@@ -36,6 +39,9 @@ type MCPServer = {
   catalog_tool_count: number;
   source: "builtin" | "workspace";
   removable: boolean;
+  config_schema: MCPConfigField[];
+  config_status: Record<string, boolean>;
+  config_complete: boolean;
 };
 
 type AddServerForm = {
@@ -45,6 +51,7 @@ type AddServerForm = {
   args: string;
   env: string;
   url: string;
+  headers: string;
   description: string;
   auto_connect: boolean;
 };
@@ -54,6 +61,7 @@ const emptyForm: AddServerForm = {
   transport: "stdio",
   command: "",
   args: "",
+  headers: "",
   env: "",
   url: "",
   description: "",
@@ -64,6 +72,34 @@ function transportLabel(transport: string): string {
   if (transport === "streamable_http") return "HTTP";
   if (transport === "sse") return "SSE";
   return "stdio";
+}
+
+function ConnectionIndicator({ connected, busy }: { connected: boolean; busy: boolean }) {
+  const shellClassName = "relative flex size-11 shrink-0 items-center justify-center rounded-2xl border";
+
+  if (busy) {
+    return (
+      <div className={`${shellClassName} border-primary/20 bg-primary/5 text-primary`}>
+        <Loader2 className="animate-spin" size={16} />
+      </div>
+    );
+  }
+
+  if (connected) {
+    return (
+      <div className={`${shellClassName} border-emerald-500/25 bg-emerald-500/10`}>
+        <span className="absolute inline-flex size-5 rounded-full bg-emerald-400/20 animate-ping" />
+        <span className="absolute inline-flex size-3.5 rounded-full bg-emerald-500/30 animate-pulse" />
+        <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(34,197,94,0.45)]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${shellClassName} border-border bg-muted/40`}>
+      <span className="inline-flex size-2.5 rounded-full bg-muted-foreground/70" />
+    </div>
+  );
 }
 
 /**
@@ -99,7 +135,344 @@ function parseArgs(raw: string): string[] {
   return args;
 }
 
-export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" }: { serviceRunning: boolean; apiBaseUrl?: string }) {
+function renderHelpText(help: string, helpUrl?: string) {
+  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+  const parts: (string | { text: string; url: string })[] = [];
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+  while ((match = linkRe.exec(help)) !== null) {
+    if (match.index > lastIdx) parts.push(help.slice(lastIdx, match.index));
+    parts.push({ text: match[1], url: match[2] });
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx < help.length) parts.push(help.slice(lastIdx));
+
+  return (
+    <p className="text-xs text-muted-foreground">
+      {parts.map((p, i) =>
+        typeof p === "string" ? (
+          <span key={i}>{p}</span>
+        ) : (
+          <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80">{p.text}</a>
+        )
+      )}
+      {helpUrl && (
+        <>
+          {" "}
+          <a href={helpUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-primary underline underline-offset-2 hover:text-primary/80">
+            <Info size={11} />
+          </a>
+        </>
+      )}
+    </p>
+  );
+}
+
+function shouldShowField(f: MCPConfigField, serverProps: Record<string, string>): boolean {
+  if (!f.when || Object.keys(f.when).length === 0) return true;
+  return Object.entries(f.when).every(([k, v]) => serverProps[k] === v);
+}
+
+function MCPConfigForm({
+  schema,
+  configStatus,
+  envDraft,
+  onEnvChange,
+  onSave,
+  serverName,
+  serverTransport,
+  apiBaseUrl,
+  onRefresh,
+  t,
+}: {
+  schema: MCPConfigField[];
+  configStatus: Record<string, boolean>;
+  envDraft: EnvMap;
+  onEnvChange: (update: (prev: EnvMap) => EnvMap) => void;
+  onSave: (keys: string[]) => Promise<void>;
+  serverName: string;
+  serverTransport: string;
+  apiBaseUrl: string;
+  onRefresh: () => Promise<void>;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  const [secretVisible, setSecretVisible] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const serverProps: Record<string, string> = { transport: serverTransport };
+  const visibleSchema = schema.filter(f => shouldShowField(f, serverProps));
+  const missingCount = visibleSchema.filter(f => f.required && !configStatus[f.key]).length;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(schema.map(f => f.key));
+      toast.success(t("mcp.configSaved"));
+    } catch {
+      toast.error(t("mcp.configSaveFailed") || "保存失败");
+    }
+    setSaving(false);
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/mcp/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ server_name: serverName }),
+      });
+      const data = await res.json();
+      if (data.status === "connected" || data.status === "already_connected") {
+        toast.success(t("mcp.testConnectSuccess") || `${serverName} 连接成功`);
+        if (data.status === "connected") {
+          try {
+            await safeFetch(`${apiBaseUrl}/api/mcp/disconnect`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ server_name: serverName }),
+            });
+          } catch { /* ignore disconnect error during test */ }
+        }
+        await onRefresh();
+      } else if (data.status === "config_incomplete") {
+        toast.error(data.message || t("mcp.configRequired"));
+      } else {
+        toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${data.error || ""}`);
+      }
+    } catch (e) {
+      toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${e}`);
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4 space-y-4">
+      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Wrench size={14} className="text-primary" />
+        {t("mcp.configTitle")}
+      </div>
+      <p className="text-xs text-muted-foreground">{t("mcp.configHint")}</p>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {visibleSchema.map(f => {
+          const val = envDraft[f.key] ?? (f.default != null ? String(f.default) : "");
+
+          if (f.type === "bool") {
+            return (
+              <div key={f.key} className="flex items-center justify-between gap-3 md:col-span-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm">
+                    {f.label || f.key}
+                    {f.required && <span className="ml-1 text-destructive">*</span>}
+                  </Label>
+                  {f.help && renderHelpText(f.help, f.helpUrl)}
+                </div>
+                <Switch
+                  checked={val === "true" || val === "1"}
+                  onCheckedChange={(v) => onEnvChange(prev => ({ ...prev, [f.key]: v ? "true" : "false" }))}
+                />
+              </div>
+            );
+          }
+
+          if (f.type === "select" && f.options?.length) {
+            return (
+              <div key={f.key} className="space-y-2">
+                <Label className="text-sm">
+                  {f.label || f.key}
+                  {f.required && <span className="ml-1 text-destructive">*</span>}
+                </Label>
+                <Select value={val} onValueChange={(v) => onEnvChange(prev => ({ ...prev, [f.key]: v }))}>
+                  <SelectTrigger className="w-full"><SelectValue placeholder={f.placeholder} /></SelectTrigger>
+                  <SelectContent>
+                    {f.options.map(opt => (
+                      <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {f.help && renderHelpText(f.help, f.helpUrl)}
+              </div>
+            );
+          }
+
+          const isSecret = f.type === "secret";
+          const visible = secretVisible[f.key] ?? false;
+
+          return (
+            <div key={f.key} className={`space-y-2 ${f.type === "url" || f.type === "path" ? "md:col-span-2" : ""}`}>
+              <Label className="text-sm">
+                {f.label || f.key}
+                {f.required && <span className="ml-1 text-destructive">*</span>}
+              </Label>
+              <div className="relative">
+                <Input
+                  type={isSecret && !visible ? "password" : "text"}
+                  value={val}
+                  onChange={e => onEnvChange(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder={f.placeholder || `${f.label || f.key}`}
+                  className={isSecret ? "pr-10 font-mono text-xs" : "font-mono text-xs"}
+                />
+                {isSecret && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setSecretVisible(prev => ({ ...prev, [f.key]: !visible }))}
+                    title={visible ? t("mcp.secretHide") : t("mcp.secretShow")}
+                  >
+                    {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </Button>
+                )}
+              </div>
+              {f.help && renderHelpText(f.help, f.helpUrl)}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between border-t pt-3">
+        <div className="text-xs text-muted-foreground">
+          {missingCount > 0 ? (
+            <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+              <AlertTriangle size={12} />
+              {t("mcp.configMissing", { count: missingCount })}
+            </span>
+          ) : (
+            <span className="text-emerald-600 dark:text-emerald-400">{t("mcp.configComplete")}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={handleTestConnection} disabled={testing || saving}>
+            {testing ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
+            {t("mcp.testConnect") || "测试连接"}
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+            {t("mcp.configSave")}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type QuickConfigDialogState = {
+  serverName: string;
+  schema: MCPConfigField[];
+  missingFields: { key: string; label: string }[];
+} | null;
+
+function QuickConfigDialog({
+  state,
+  onClose,
+  envDraft,
+  onEnvChange,
+  onSaveAndConnect,
+  t,
+}: {
+  state: QuickConfigDialogState;
+  onClose: () => void;
+  envDraft: EnvMap;
+  onEnvChange: (update: (prev: EnvMap) => EnvMap) => void;
+  onSaveAndConnect: (serverName: string, keys: string[]) => Promise<void>;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  const [secretVisible, setSecretVisible] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+
+  if (!state) return null;
+
+  const relevantFields = state.schema.filter(f =>
+    state.missingFields.some(m => m.key === f.key)
+  );
+
+  const handleSaveAndConnect = async () => {
+    setSaving(true);
+    try {
+      await onSaveAndConnect(state.serverName, state.schema.map(f => f.key));
+    } finally {
+      setSaving(false);
+      onClose();
+    }
+  };
+
+  return (
+    <Dialog open={!!state} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-amber-500" />
+            {t("mcp.configRequired")}
+          </DialogTitle>
+          <DialogDescription>
+            {t("mcp.configMissingFields", { fields: state.missingFields.map(f => f.label).join(", ") })}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          {relevantFields.map(f => {
+            const val = envDraft[f.key] ?? "";
+            const isSecret = f.type === "secret";
+            const visible = secretVisible[f.key] ?? false;
+
+            return (
+              <div key={f.key} className="space-y-2">
+                <Label className="text-sm">
+                  {f.label || f.key}
+                  {f.required && <span className="ml-1 text-destructive">*</span>}
+                </Label>
+                <div className="relative">
+                  <Input
+                    type={isSecret && !visible ? "password" : "text"}
+                    value={val}
+                    onChange={e => onEnvChange(prev => ({ ...prev, [f.key]: e.target.value }))}
+                    placeholder={f.placeholder || `${f.label || f.key}`}
+                    className={isSecret ? "pr-10 font-mono text-xs" : "font-mono text-xs"}
+                  />
+                  {isSecret && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setSecretVisible(prev => ({ ...prev, [f.key]: !visible }))}
+                    >
+                      {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </Button>
+                  )}
+                </div>
+                {f.help && <p className="text-xs text-muted-foreground">{f.help}</p>}
+              </div>
+            );
+          })}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t("common.cancel") || "取消"}</Button>
+          <Button onClick={handleSaveAndConnect} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
+            {t("mcp.saveAndConnect") || "保存并连接"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function MCPView({
+  serviceRunning,
+  apiBaseUrl = "http://127.0.0.1:18900",
+  envDraft,
+  onEnvChange,
+  onSaveEnvKeys,
+}: {
+  serviceRunning: boolean;
+  apiBaseUrl?: string;
+  envDraft: EnvMap;
+  onEnvChange: React.Dispatch<React.SetStateAction<EnvMap>>;
+  onSaveEnvKeys: (keys: string[]) => Promise<void>;
+}) {
   const { t } = useTranslation();
   const [servers, setServers] = useState<MCPServer[]>([]);
   const [mcpEnabled, setMcpEnabled] = useState(true);
@@ -111,6 +484,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
   const [form, setForm] = useState<AddServerForm>({ ...emptyForm });
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [quickConfigDialog, setQuickConfigDialog] = useState<QuickConfigDialogState>(null);
 
   const fetchServers = useCallback(async () => {
     if (!serviceRunning) return;
@@ -143,6 +517,19 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
       if (data.status === "connected" || data.status === "already_connected") {
         showMsg(`${t("mcp.connected")} ${name}`, true);
         await fetchServers();
+      } else if (data.status === "config_incomplete") {
+        const server = servers.find(s => s.name === name);
+        if (server?.config_schema?.length) {
+          setQuickConfigDialog({
+            serverName: name,
+            schema: server.config_schema,
+            missingFields: data.missing_fields || [],
+          });
+        } else {
+          const fields = (data.missing_fields || []).map((f: { label: string }) => f.label).join(", ");
+          toast.error(t("mcp.configMissingFields", { fields }) || data.message);
+          setExpandedServer(name);
+        }
       } else {
         showMsg(`${t("mcp.connectFailed")}: ${data.error || t("mcp.unknownError")}`, false);
       }
@@ -207,6 +594,13 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
           if (idx > 0) envObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
         }
       }
+      const headersObj: Record<string, string> = {};
+      if (form.headers.trim()) {
+        for (const line of form.headers.trim().split("\n")) {
+          const idx = line.indexOf("=");
+          if (idx > 0) headersObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+        }
+      }
       const parsedArgs = parseArgs(form.args);
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/servers/add`, {
         method: "POST",
@@ -218,6 +612,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
           args: parsedArgs,
           env: envObj,
           url: form.url.trim(),
+          headers: Object.keys(headersObj).length > 0 ? headersObj : undefined,
           description: form.description.trim(),
           auto_connect: form.auto_connect,
         }),
@@ -281,16 +676,22 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
       <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
         <CardHeader className="gap-3 px-6 py-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-4">
               <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <IconLink size={22} />
               </div>
               <div className="min-w-0 space-y-2">
-                <div className="flex flex-wrap items-center gap-3">
-                  <CardTitle className="text-xl tracking-tight">{t("mcp.title")}</CardTitle>
+                <div className="flex min-w-0 items-center gap-3">
+                  <CardTitle className="truncate text-xl tracking-tight" title={t("mcp.title")}>
+                    {t("mcp.title")}
+                  </CardTitle>
                   {!mcpEnabled && (
-                    <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                    <Badge
+                      variant="outline"
+                      className="max-w-full shrink overflow-hidden text-ellipsis whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      title={t("mcp.disabled") || "MCP 已禁用"}
+                    >
                       {t("mcp.disabled") || "MCP 已禁用"}
                     </Badge>
                   )}
@@ -305,7 +706,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <Button variant={showAdd ? "secondary" : "outline"} onClick={() => setShowAdd(!showAdd)}>
                 <Plus size={14} />
                 {t("mcp.addServer")}
@@ -404,6 +805,21 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                 className="resize-y font-mono text-xs"
               />
             </div>
+            {(form.transport === "streamable_http" || form.transport === "sse") && (
+              <div className="space-y-2 md:col-span-2">
+                <Label>{t("mcp.headersLabel") || "请求头 (Headers)"}</Label>
+                <Textarea
+                  value={form.headers}
+                  onChange={e => setForm({ ...form, headers: e.target.value })}
+                  placeholder={"Authorization=${MY_TOKEN}\nX-Custom-Header=value"}
+                  rows={3}
+                  className="resize-y font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("mcp.headersHint") || "每行一个，格式 KEY=VALUE。支持 ${VAR} 变量替换（从 .env 文件读取）。"}
+                </p>
+              </div>
+            )}
           </CardContent>
           <CardFooter className="flex flex-col gap-3 border-t px-6 py-4 md:flex-row md:items-center md:justify-between">
             <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
@@ -438,19 +854,20 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {servers.map((s) => (
+          {servers.map((s) => {
+            const isBusy = busy === s.name;
+
+            return (
             <Card key={s.name} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md">
               <CardHeader className="gap-3 px-6 py-4">
                 <div
-                  className="flex cursor-pointer flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"
+                  className="flex cursor-pointer items-center justify-between gap-4"
                   onClick={() => toggleExpand(s.name)}
                 >
-                  <div className="flex min-w-0 gap-4">
-                    <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border bg-muted/40 text-muted-foreground">
-                      {s.connected ? <DotGreen /> : <DotGray />}
-                    </div>
-                    <div className="min-w-0 space-y-3">
-                      <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-4">
+                    <ConnectionIndicator connected={s.connected} busy={isBusy} />
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex min-w-0 items-center gap-2">
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -458,38 +875,77 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                         >
                           {expandedServer === s.name ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                         </Button>
-                        <CardTitle className="text-base">{s.name}</CardTitle>
-                        <Badge variant="secondary">{transportLabel(s.transport)}</Badge>
+                        <CardTitle className="min-w-0 truncate text-base" title={s.name}>
+                          {s.name}
+                        </CardTitle>
+                        <Badge
+                          variant="secondary"
+                          className="max-w-[96px] shrink overflow-hidden text-ellipsis whitespace-nowrap"
+                          title={transportLabel(s.transport)}
+                        >
+                          {transportLabel(s.transport)}
+                        </Badge>
                         <Badge
                           variant="outline"
-                          className={s.source === "workspace" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : undefined}
+                          className={`max-w-[120px] shrink overflow-hidden text-ellipsis whitespace-nowrap ${
+                            s.source === "workspace" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ""
+                          }`}
+                          title={s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
                         >
                           {s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
                         </Badge>
                         {s.connected ? (
-                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[110px] shrink overflow-hidden text-ellipsis whitespace-nowrap border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                            title={t("mcp.connected")}
+                          >
                             {t("mcp.connected")}
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-muted-foreground">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[110px] shrink overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground"
+                            title={t("mcp.disconnected")}
+                          >
                             {t("mcp.disconnected")}
+                          </Badge>
+                        )}
+                        {s.config_schema?.length > 0 && !s.config_complete && (
+                          <Badge
+                            variant="outline"
+                            className="max-w-[120px] shrink overflow-hidden text-ellipsis whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            title={t("mcp.configIncomplete")}
+                          >
+                            <AlertTriangle size={11} className="mr-0.5" />
+                            {t("mcp.configIncomplete")}
                           </Badge>
                         )}
                       </div>
 
                       {s.description && (
                         <CardDescription className="max-w-3xl text-sm leading-6">
-                          {s.description}
+                          <span className="block truncate" title={s.description}>
+                            {s.description}
+                          </span>
                         </CardDescription>
                       )}
 
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <Badge variant="outline" className="gap-1">
+                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                        <Badge
+                          variant="outline"
+                          className="max-w-[170px] shrink gap-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                          title={s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
+                        >
                           <Wrench size={12} />
                           {s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
                         </Badge>
                         {s.has_instructions && (
-                          <Badge variant="outline" className="gap-1">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[120px] shrink gap-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                            title={t("mcp.instructions")}
+                          >
                             <Info size={12} />
                             {t("mcp.instructions")}
                           </Badge>
@@ -498,20 +954,20 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex shrink-0 items-center gap-2 self-center" onClick={(e) => e.stopPropagation()}>
                     {s.connected ? (
                       <Button
                         variant="outline"
                         onClick={() => disconnectServer(s.name)}
-                        disabled={busy === s.name}
+                        disabled={isBusy}
                         className="text-amber-600 border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950"
                       >
-                        {busy === s.name ? <Loader2 className="animate-spin" size={14} /> : <Unplug size={14} />}
+                        {isBusy ? <Loader2 className="animate-spin" size={14} /> : <Unplug size={14} />}
                         {t("mcp.disconnect")}
                       </Button>
                     ) : (
-                      <Button onClick={() => connectServer(s.name)} disabled={busy === s.name}>
-                        {busy === s.name ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
+                      <Button onClick={() => connectServer(s.name)} disabled={isBusy} className="self-center">
+                        {isBusy ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
                         {t("mcp.connect")}
                       </Button>
                     )}
@@ -520,7 +976,7 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => removeServer(s.name)}
-                        disabled={busy === s.name}
+                        disabled={isBusy}
                         title={t("mcp.deleteServer")}
                         className="text-muted-foreground hover:text-destructive"
                       >
@@ -533,6 +989,23 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
 
               {expandedServer === s.name && (
                 <CardContent className="space-y-4 border-t px-6 py-4">
+                  {s.config_schema && s.config_schema.length > 0 && (
+                    <MCPConfigForm
+                      schema={s.config_schema}
+                      configStatus={s.config_status}
+                      envDraft={envDraft}
+                      onEnvChange={onEnvChange}
+                      onSave={async (keys) => {
+                        await onSaveEnvKeys(keys);
+                        await fetchServers();
+                      }}
+                      serverName={s.name}
+                      serverTransport={s.transport}
+                      apiBaseUrl={apiBaseUrl}
+                      onRefresh={fetchServers}
+                      t={t}
+                    />
+                  )}
                   <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
                     <div className="mb-1 flex items-center gap-2 font-medium text-foreground">
                       <Server size={14} />
@@ -553,9 +1026,9 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                       <div className="grid gap-3 md:grid-cols-2">
                         {s.tools.map((tool) => (
                           <div key={tool.name} className="rounded-xl border bg-background/80 p-4">
-                            <div className="text-sm font-medium text-foreground">{tool.name}</div>
+                            <div className="truncate text-sm font-medium text-foreground" title={tool.name}>{tool.name}</div>
                             {tool.description && (
-                              <div className="mt-2 text-sm leading-6 text-muted-foreground">
+                              <div className="mt-2 truncate text-sm leading-6 text-muted-foreground" title={tool.description}>
                                 {tool.description}
                               </div>
                             )}
@@ -591,11 +1064,24 @@ export function MCPView({ serviceRunning, apiBaseUrl = "http://127.0.0.1:18900" 
                 </CardContent>
               )}
             </Card>
-          ))}
+          );
+          })}
         </div>
       )}
 
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+      <QuickConfigDialog
+        state={quickConfigDialog}
+        onClose={() => setQuickConfigDialog(null)}
+        envDraft={envDraft}
+        onEnvChange={onEnvChange}
+        onSaveAndConnect={async (serverName, keys) => {
+          await onSaveEnvKeys(keys);
+          await fetchServers();
+          await connectServer(serverName);
+        }}
+        t={t}
+      />
     </div>
   );
 }

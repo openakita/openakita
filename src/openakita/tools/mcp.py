@@ -319,9 +319,10 @@ class MCPClient:
         config = self._servers[server_name]
 
         # stdio 模式预检查命令是否存在
-        # 打包模式下 python -m openakita.* 会在 _connect_stdio 中被适配为冻结主程序，跳过预检
+        # ``python -m openakita.*`` 会在 _connect_stdio 中被适配为当前运行环境，
+        # 避免误用系统 Python 导致内置模块不可导入。
         if config.transport == "stdio" and config.command:
-            if not self._adapt_bundled_module_command(config) and not self._resolve_command(config):
+            if not self._adapt_openakita_module_command(config) and not self._resolve_command(config):
                 msg = (
                     f"启动命令 '{config.command}' 未找到。"
                     f"请确认已安装并在 PATH 中可访问。"
@@ -373,29 +374,42 @@ class MCPClient:
         return None
 
     @staticmethod
-    def _adapt_bundled_module_command(
+    def _adapt_openakita_module_command(
         config: MCPServerConfig,
     ) -> tuple[str, list[str]] | None:
-        """打包模式下，将 ``python -m openakita.*`` 适配为冻结主程序子命令。
+        """将 ``python -m openakita.*`` 适配为当前 OpenAkita 运行环境。
 
-        PyInstaller 冻结的 python.exe 是裸解释器，无法 import 冻结在主程序中的模块。
-        此方法将命令替换为 ``sys.executable run-mcp-module <module>``，
-        让冻结主程序自身作为 MCP 服务器的宿主进程。
+        - 打包环境: 使用 ``sys.executable run-mcp-module <module>``，
+          让冻结主程序自身作为 MCP 服务器宿主，避免裸解释器无法导入内置模块。
+        - 开发环境: 使用当前虚拟环境的 Python 解释器，而不是 PATH 里的系统 Python，
+          避免 ``python -m openakita.*`` 落到错误环境中。
 
         Returns:
             (command, args) 如果需要适配；否则 None。
         """
-        from ..runtime_env import IS_FROZEN
+        from ..runtime_env import IS_FROZEN, get_python_executable
 
         if not (
-            IS_FROZEN
-            and config.command in ("python", "python3")
+            config.command in ("python", "python3")
             and len(config.args) >= 2
             and config.args[0] == "-m"
             and config.args[1].startswith("openakita.")
         ):
             return None
-        return (sys.executable, ["run-mcp-module", config.args[1], *config.args[2:]])
+
+        if IS_FROZEN:
+            return (sys.executable, ["run-mcp-module", config.args[1], *config.args[2:]])
+
+        py = get_python_executable() or sys.executable
+        py_path = Path(py)
+        if py_path.name.lower() not in ("python.exe", "python3.exe", "python", "python3"):
+            for candidate_name in ("python.exe", "python3.exe", "python", "python3"):
+                candidate = py_path.with_name(candidate_name)
+                if candidate.exists():
+                    py = str(candidate)
+                    break
+
+        return (py, ["-m", config.args[1], *config.args[2:]])
 
     _CONNECT_TIMEOUT: int = 30
     _CALL_TIMEOUT: int = 60
@@ -411,11 +425,11 @@ class MCPClient:
 
     async def _connect_stdio(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
         """通过 stdio 连接到 MCP 服务器"""
-        adapted = self._adapt_bundled_module_command(config)
+        adapted = self._adapt_openakita_module_command(config)
         if adapted:
             command, args = adapted
             logger.info(
-                "Bundled mode: adapted MCP command for %s: %s %s",
+                "Adapted MCP command for %s: %s %s",
                 server_name, command, " ".join(args),
             )
         else:
@@ -500,7 +514,8 @@ class MCPClient:
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
         except BaseException as e:
-            msg = f"stdio 连接失败: {type(e).__name__}: {e}"
+            stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
+            msg = f"stdio 连接失败: {type(e).__name__}: {e}{stderr_hint}"
             logger.error(f"Failed to connect to {server_name} via stdio: {e}")
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)

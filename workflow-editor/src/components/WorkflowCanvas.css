@@ -1,0 +1,120 @@
+.workflow-canvas-wrapper {
+  width: 100%;
+  height: 100%;
+  background: #F9FAFB;
+}
+
+/* 空状态面板 */
+.empty-state-panel {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.empty-state {
+  text-align: center;
+  color: #6B7280;
+  padding: 40px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+}
+
+.empty-state-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.empty-state-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 8px;
+}
+
+.empty-state-desc {
+  font-size: 14px;
+}
+
+/* 自定义节点样式 */
+.react-flow__node {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.react-flow__node.selected .react-flow__node-resizer {
+  border-color: #2563EB;
+  border-width: 2px;
+}
+
+/* 节点类型特定样式 */
+.react-flow__node-trigger {
+  border-left: 4px solid #10B981;
+}
+
+.react-flow__node-action {
+  border-left: 4px solid #2563EB;
+}
+
+.react-flow__node-condition {
+  border-left: 4px solid #F59E0B;
+}
+
+.react-flow__node-loop {
+  border-left: 4px solid #7C3AED;
+}
+
+.react-flow__node-transform {
+  border-left: 4px solid #EF4444;
+}
+
+/* 连接线样式 */
+.react-flow__edge-path {
+  stroke: #9CA3AF;
+  stroke-width: 2px;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #2563EB;
+  stroke-width: 3px;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+}
+
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 10;
+  }
+}
+
+/* 控制面板优化 */
+.react-flow__controls {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  border: 1px solid #E5E7EB;
+}
+
+.react-flow__controls-button {
+  border: none;
+  background: white;
+}
+
+.react-flow__controls-button:hover {
+  background: #F9FAFB;
+}
+
+/* 小地图优化 */
+.react-flow__minimap {
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 背景网格 */
+.react-flow__background {
+  background-color: #F9FAFB;
+}

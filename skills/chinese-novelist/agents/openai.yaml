@@ -1,0 +1,9 @@
+interface:
+  display_name: "Chinese Novelist"
+  short_description: "Guide AI to write Chinese novels with structured techniques"
+  default_prompt: "Use $chinese-novelist to help me write a Chinese novel"
+
+i18n:
+  zh:
+    name: "中文小说写作"
+    description: "中文小说创作助手，提供角色塑造、情节架构（起承转合）、对话编写、场景描写和长篇一致性管理指导，支持玄幻、都市、悬疑、言情等多种类型。"

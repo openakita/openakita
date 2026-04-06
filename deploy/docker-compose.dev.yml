@@ -1,0 +1,128 @@
+# MVP 三环境 Docker Compose 架构
+# 开发环境配置 (docker-compose.dev.yml)
+
+version: '3.8'
+
+services:
+  # 应用服务
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: development
+    container_name: mvp-app-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/mvp_dev
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ../src:/app/src
+      - ../tests:/app/tests
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - mvp-dev-network
+    restart: unless-stopped
+
+  # 数据库
+  db:
+    image: postgres:15-alpine
+    container_name: mvp-db-dev
+    environment:
+      - POSTGRES_DB=mvp_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mvp-dev-network
+    restart: unless-stopped
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: mvp-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - mvp-dev-network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: development
+    container_name: mvp-celery-dev
+    command: celery -A app.celery worker --loglevel=debug
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/mvp_dev
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+    volumes:
+      - ../src:/app/src
+    depends_on:
+      - db
+      - redis
+    networks:
+      - mvp-dev-network
+    restart: unless-stopped
+
+  # 向量数据库 (Qdrant)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mvp-qdrant-dev
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_dev_data:/qdrant/storage
+    networks:
+      - mvp-dev-network
+    restart: unless-stopped
+
+  # MLOps (MLflow)
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mvp-mlflow-dev
+    ports:
+      - "5000:5000"
+    command: mlflow server --host 0.0.0.0 --port 5000
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5000
+    volumes:
+      - mlflow_dev_data:/mlflow
+    networks:
+      - mvp-dev-network
+    restart: unless-stopped
+
+networks:
+  mvp-dev-network:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  qdrant_dev_data:
+  mlflow_dev_data:

@@ -1,0 +1,9 @@
+interface:
+  display_name: "Image Understanding (Dashscope)"
+  short_description: "Analyze images with Qwen Vision for OCR and Q&A"
+  default_prompt: "Use $image-understanding to analyze this image"
+
+i18n:
+  zh:
+    name: "图片理解 (通义千问)"
+    description: "使用 Dashscope 通义千问视觉模型分析图片，支持描述、OCR 文字提取、物体识别和图片问答。"

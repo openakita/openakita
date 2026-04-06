@@ -16,6 +16,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -98,11 +99,11 @@ async def get_task(request: Request, task_id: str):
     """Get a single task by ID."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     task = scheduler.get_task(task_id)
     if task is None:
-        return {"error": "Task not found"}
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
 
     return {"task": task.to_dict()}
 
@@ -112,19 +113,19 @@ async def create_task(request: Request, body: TaskCreateRequest):
     """Create a new scheduled task."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     from openakita.scheduler.task import ScheduledTask, TaskSource, TaskType, TriggerType
 
     try:
         trigger_type = TriggerType(body.trigger_type)
     except ValueError:
-        return {"error": f"Invalid trigger_type: {body.trigger_type}"}
+        return JSONResponse(status_code=422, content={"error": f"Invalid trigger_type: {body.trigger_type}"})
 
     try:
         task_type = TaskType(body.task_type)
     except ValueError:
-        return {"error": f"Invalid task_type: {body.task_type}"}
+        return JSONResponse(status_code=422, content={"error": f"Invalid task_type: {body.task_type}"})
 
     description = body.reminder_message or body.prompt or body.name
     task = ScheduledTask.create(
@@ -144,7 +145,7 @@ async def create_task(request: Request, body: TaskCreateRequest):
     try:
         task_id = await scheduler.add_task(task)
     except ValueError as e:
-        return {"error": str(e)}
+        return JSONResponse(status_code=422, content={"error": str(e)})
     _notify_scheduler_change("create")
     return {"status": "ok", "task_id": task_id, "task": task.to_dict()}
 
@@ -154,11 +155,11 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
     """Update an existing scheduled task."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     task = scheduler.get_task(task_id)
     if task is None:
-        return {"error": "Task not found"}
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
 
     updates: dict = {}
 
@@ -178,14 +179,14 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
         try:
             updates["task_type"] = TaskType(body.task_type)
         except ValueError:
-            return {"error": f"Invalid task_type: {body.task_type}"}
+            return JSONResponse(status_code=422, content={"error": f"Invalid task_type: {body.task_type}"})
 
     if body.trigger_type is not None:
         from openakita.scheduler.task import TriggerType
         try:
             updates["trigger_type"] = TriggerType(body.trigger_type)
         except ValueError:
-            return {"error": f"Invalid trigger_type: {body.trigger_type}"}
+            return JSONResponse(status_code=422, content={"error": f"Invalid trigger_type: {body.trigger_type}"})
 
     if body.trigger_config is not None:
         updates["trigger_config"] = body.trigger_config
@@ -201,7 +202,7 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
     if updates:
         success = await scheduler.update_task(task_id, updates)
         if not success:
-            return {"error": "Update failed"}
+            return JSONResponse(status_code=500, content={"error": "Update failed"})
 
     if body.enabled is not None:
         if body.enabled:
@@ -219,20 +220,20 @@ async def delete_task(request: Request, task_id: str):
     """Delete a scheduled task."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     task = scheduler.get_task(task_id)
     if task is None:
-        return {"error": "Task not found"}
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
 
     if not task.deletable:
-        return {"error": "System task cannot be deleted, use disable instead"}
+        return JSONResponse(status_code=403, content={"error": "System task cannot be deleted, use disable instead"})
 
     result = await scheduler.remove_task(task_id)
     if result == "system_task":
-        return {"error": "System task cannot be deleted, use disable instead"}
+        return JSONResponse(status_code=403, content={"error": "System task cannot be deleted, use disable instead"})
     if result == "not_found":
-        return {"error": "Task not found"}
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
 
     _notify_scheduler_change("delete")
     return {"status": "ok", "task_id": task_id}
@@ -243,11 +244,11 @@ async def toggle_task(request: Request, task_id: str):
     """Toggle task enabled/disabled."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     task = scheduler.get_task(task_id)
     if task is None:
-        return {"error": "Task not found"}
+        return JSONResponse(status_code=404, content={"error": "Task not found"})
 
     if task.enabled:
         await scheduler.disable_task(task_id)
@@ -264,13 +265,13 @@ async def trigger_task(request: Request, task_id: str):
     """Trigger a task to run immediately."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     from openakita.core.engine_bridge import to_engine
 
     execution = await to_engine(scheduler.trigger_now(task_id))
     if execution is None:
-        return {"error": "Task not found or trigger failed"}
+        return JSONResponse(status_code=404, content={"error": "Task not found or trigger failed"})
 
     _notify_scheduler_change("trigger")
     return {"status": "ok", "execution": execution.to_dict()}
@@ -499,6 +500,6 @@ async def scheduler_stats(request: Request):
     """Get scheduler statistics."""
     scheduler = _get_scheduler(request)
     if scheduler is None:
-        return {"error": "Agent not initialized"}
+        return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
     return scheduler.get_stats()

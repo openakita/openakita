@@ -26,6 +26,9 @@ wheels/
 # Virtual environments
 .venv/
 .venv-ci/
+.venv-cli/
+.venv-wheelbuild/
+.venv-wheelrun/
 venv/
 ENV/
 env/
@@ -72,6 +75,7 @@ pnpm-debug.log*
 
 # Frontend build outputs
 dist/
+dist-cli/
 .vite/
 
 # Rust / Tauri

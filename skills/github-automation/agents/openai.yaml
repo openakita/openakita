@@ -1,0 +1,9 @@
+interface:
+  display_name: "GitHub Automation"
+  short_description: "Automate GitHub repos, issues, PRs, CI/CD via MCP"
+  default_prompt: "Use $github-automation to manage GitHub repositories"
+
+i18n:
+  zh:
+    name: "GitHub 自动化"
+    description: "通过 Rube MCP 自动化 GitHub 仓库管理、Issue 跟踪、PR 流程、分支操作和 CI/CD 工作流。"

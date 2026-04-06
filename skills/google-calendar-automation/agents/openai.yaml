@@ -1,0 +1,9 @@
+interface:
+  display_name: "Google Calendar Automation"
+  short_description: "Automate Google Calendar events and scheduling via MCP"
+  default_prompt: "Use $google-calendar-automation to manage my calendar"
+
+i18n:
+  zh:
+    name: "Google 日历自动化"
+    description: "通过 Rube MCP 自动化 Google 日历事件创建、日程安排、空闲时段查询和参会者管理。"

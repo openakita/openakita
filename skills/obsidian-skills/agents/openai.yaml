@@ -1,0 +1,9 @@
+interface:
+  display_name: Obsidian Skills
+  short_description: Manage Obsidian vaults with full support for Obsidian Flavore...
+  default_prompt: Use $obsidian-skills
+i18n:
+  zh:
+    name: Obsidian 笔记管理
+    description: 管理 Obsidian 知识库，支持 Obsidian Flavored Markdown（wikilinks、嵌入、callouts）、YAML
+      属性、Dataview 查询、Canvas 画布和 Bases 数据库视图，遵循 MOC 和原子笔记最佳实践。

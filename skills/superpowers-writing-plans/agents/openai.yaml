@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Writing Plans
+  short_description: Use when you have a spec or requirements for a multi-step tas...
+  default_prompt: Use $superpowers-writing-plans
+i18n:
+  zh:
+    name: 编写实施计划
+    description: 将设计文档转化为可执行的分步实施计划，每步2-5分钟，可独立验证

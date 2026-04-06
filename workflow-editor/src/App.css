@@ -1,0 +1,201 @@
+/* 整体布局 */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: #F9FAFB;
+}
+
+/* 顶部导航栏 */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  height: 64px;
+  background: white;
+  border-bottom: 1px solid #E5E7EB;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  z-index: 10;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-subtitle {
+  font-size: 13px;
+  color: #6B7280;
+  padding: 4px 12px;
+  background: #F3F4F6;
+  border-radius: 12px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.stats {
+  display: flex;
+  gap: 16px;
+  padding-right: 16px;
+  border-right: 1px solid #E5E7EB;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.stat-label {
+  color: #6B7280;
+}
+
+.stat-value {
+  font-weight: 600;
+  color: #111827;
+  background: #F3F4F6;
+  padding: 2px 8px;
+  border-radius: 8px;
+  min-width: 24px;
+  text-align: center;
+}
+
+/* 按钮样式 */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background: #2563EB;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #1D4ED8;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.btn-secondary {
+  background: #F3F4F6;
+  color: #374151;
+}
+
+.btn-secondary:hover {
+  background: #E5E7EB;
+}
+
+/* 主体内容区 */
+.app-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* 左侧边栏 - 组件库 */
+.sidebar-left {
+  width: 280px;
+  min-width: 280px;
+  background: white;
+  border-right: 1px solid #E5E7EB;
+  overflow-y: auto;
+}
+
+/* 中间画布区域 */
+.canvas-area {
+  flex: 1;
+  position: relative;
+  background: #F9FAFB;
+  overflow: hidden;
+}
+
+/* 右侧边栏 - 配置面板 */
+.sidebar-right {
+  width: 320px;
+  min-width: 320px;
+  background: white;
+  border-left: 1px solid #E5E7EB;
+  overflow-y: auto;
+}
+
+/* 滚动条样式 */
+.sidebar-left::-webkit-scrollbar,
+.sidebar-right::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-left::-webkit-scrollbar-track,
+.sidebar-right::-webkit-scrollbar-track {
+  background: #F3F4F6;
+}
+
+.sidebar-left::-webkit-scrollbar-thumb,
+.sidebar-right::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+  border-radius: 3px;
+}
+
+.sidebar-left::-webkit-scrollbar-thumb:hover,
+.sidebar-right::-webkit-scrollbar-thumb:hover {
+  background: #9CA3AF;
+}
+
+/* 响应式布局 */
+@media (max-width: 1200px) {
+  .sidebar-left {
+    width: 240px;
+    min-width: 240px;
+  }
+  
+  .sidebar-right {
+    width: 280px;
+    min-width: 280px;
+  }
+}
+
+@media (max-width: 992px) {
+  .sidebar-right {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar-left {
+    display: none;
+  }
+  
+  .header-title {
+    font-size: 16px;
+  }
+  
+  .stats {
+    display: none;
+  }
+}

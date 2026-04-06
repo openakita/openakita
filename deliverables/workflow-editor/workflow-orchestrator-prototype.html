@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAkita Workflow Editor - 高保真交互原型</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary: #2563EB; --success: #10B981; --warning: #F59E0B;
+            --danger: #EF4444; --bg: #F9FAFB; --border: #E5E7EB;
+            --text-primary: #111827; --text-secondary: #6B7280;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+        .top-bar { height: 60px; background: white; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .logo { font-size: 20px; font-weight: 600; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+        .logo-icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; }
+        .toolbar { display: flex; gap: 10px; }
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: #1D4ED8; transform: translateY(-1px); }
+        .btn-secondary { background: white; color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: var(--bg); }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        .left-panel { width: 280px; background: white; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+        .panel-header { padding: 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+        .component-list { padding: 12px; overflow-y: auto; flex: 1; }
+        .component-category { margin-bottom: 20px; }
+        .category-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 10px; }
+        .component-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--bg); border-radius: 6px; margin-bottom: 8px; cursor: grab; transition: all 0.15s; }
+        .component-item:hover { background: white; border: 1px solid var(--primary); transform: translateX(4px); }
+        .component-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+        .component-icon.trigger { background: #D1FAE5; color: #059669; }
+        .component-icon.action { background: #DBEAFE; color: #1D4ED8; }
+        .component-icon.condition { background: #FEF3C7; color: #D97706; }
+        .component-icon.loop { background: #E9D5FF; color: #7C3AED; }
+        .component-icon.transform { background: #FED7AA; color: #EA580C; }
+        .component-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+        .canvas-container { flex: 1; background: var(--bg); position: relative; overflow: hidden; }
+        .canvas { width: 100%; height: 100%; position: relative; }
+        .canvas-grid { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 20px 20px; opacity: 0.5; }
+        .node { position: absolute; width: 240px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 2px solid transparent; transition: all 0.15s; cursor: move; }
+        .node:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .node.selected { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        .node.trigger { border-left: 4px solid var(--success); }
+        .node.action { border-left: 4px solid var(--primary); }
+        .node.condition { border-left: 4px solid var(--warning); }
+        .node.loop { border-left: 4px solid #7C3AED; }
+        .node.transform { border-left: 4px solid var(--danger); }
+        .node-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+        .node-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+        .node.trigger .node-icon { background: #D1FAE5; color: #059669; }
+        .node.action .node-icon { background: #DBEAFE; color: #1D4ED8; }
+        .node.condition .node-icon { background: #FEF3C7; color: #D97706; }
+        .node.loop .node-icon { background: #E9D5FF; color: #7C3AED; }
+        .node.transform .node-icon { background: #FED7AA; color: #EA580C; }
+        .node-title { font-weight: 600; font-size: 13px; color: var(--text-primary); flex: 1; }
+        .node-body { padding: 12px 16px; }
+        .node-description { font-size: 12px; color: var(--text-secondary); }
+        .port { position: absolute; width: 16px; height: 16px; background: white; border: 2px solid var(--border); border-radius: 50%; top: 50%; transform: translateY(-50%); cursor: crosshair; transition: all 0.15s; }
+        .port:hover { border-color: var(--primary); background: var(--primary); }
+        .port.input { left: -8px; }
+        .port.output { right: -8px; }
+        .right-panel { width: 320px; background: white; border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+        .config-section { padding: 16px; border-bottom: 1px solid var(--border); }
+        .section-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+        .form-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        .status-bar { height: 40px; background: white; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-size: 12px; color: var(--text-secondary); }
+        .zoom-controls { display: flex; gap: 8px; align-items: center; }
+        .zoom-btn { width: 28px; height: 28px; border: 1px solid var(--border); background: white; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .zoom-btn:hover { background: var(--bg); }
+        .empty-state { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--text-secondary); }
+        .empty-state-icon { font-size: 48px; margin-bottom: 16px; }
+        .empty-state-title { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+        .empty-state-desc { font-size: 13px; }
+        .mini-map { position: absolute; bottom: 60px; right: 20px; width: 200px; height: 120px; background: white; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tooltip { position: fixed; background: var(--text-primary); color: white; padding: 6px 10px; border-radius: 4px; font-size: 12px; pointer-events: none; z-index: 1000; display: none; }
+        
+        /* Onboarding Modal */
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+        .modal { background: white; border-radius: 12px; width: 600px; max-width: 90vw; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+        .modal-header { padding: 24px; border-bottom: 1px solid var(--border); }
+        .modal-body { padding: 24px; }
+        .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .progress-bar { display: flex; gap: 8px; margin-bottom: 24px; }
+        .progress-step { flex: 1; height: 4px; background: var(--border); border-radius: 2px; }
+        .progress-step.active { background: var(--primary); }
+        .progress-step.completed { background: var(--success); }
+        .onboarding-content { text-align: center; }
+        .onboarding-icon { font-size: 64px; margin-bottom: 16px; }
+        .onboarding-title { font-size: 24px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; }
+        .onboarding-desc { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.6; }
+        .industry-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 20px; }
+        .industry-card { padding: 20px; border: 2px solid var(--border); border-radius: 8px; cursor: pointer; transition: all 0.15s; text-align: left; }
+        .industry-card:hover { border-color: var(--primary); background: var(--bg); transform: translateY(-2px); }
+        .industry-card.selected { border-color: var(--primary); background: rgba(37, 99, 235, 0.05); }
+        .industry-icon { font-size: 32px; margin-bottom: 8px; }
+        .industry-name { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+        .industry-desc { font-size: 12px; color: var(--text-secondary); }
+        .template-preview { background: var(--bg); border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .template-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+        .template-node { padding: 8px 12px; background: white; border-radius: 6px; font-size: 12px; border: 1px solid var(--border); }
+        .template-arrow { color: var(--text-secondary); }
+        .time-saved { background: var(--success); color: white; padding: 12px 20px; border-radius: 8px; display: inline-block; margin-top: 16px; }
+        .hidden { display: none; }
+        
+        /* Dashboard */
+        .dashboard-container { padding: 24px; overflow-y: auto; height: 100%; }
+        .dashboard-header { margin-bottom: 24px; }
+        .dashboard-title { font-size: 24px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+        .dashboard-subtitle { font-size: 14px; color: var(--text-secondary); }
+        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .metric-card { background: white; padding: 20px; border-radius: 8px; border: 1px solid var(--border); }
+        .metric-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+        .metric-value { font-size: 28px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+        .metric-trend { font-size: 12px; }
+        .metric-trend.up { color: var(--success); }
+        .metric-trend.down { color: var(--danger); }
+        .chart-container { background: white; padding: 20px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 16px; }
+        .chart-title { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 16px; }
+        .chart-placeholder { height: 200px; background: var(--bg); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+        .workflow-list { list-style: none; }
+        .workflow-item { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+        .workflow-name { flex: 1; font-size: 14px; color: var(--text-primary); }
+        .workflow-status { padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-right: 12px; }
+        .workflow-status.active { background: #D1FAE5; color: #059669; }
+        .workflow-count { font-size: 14px; color: var(--text-secondary); }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="logo">
+            <div class="logo-icon">🔄</div>
+            <span>OpenAkita Workflow Editor</span>
+        </div>
+        <div class="toolbar">
+            <button class="btn btn-secondary" onclick="showView('editor')">↩️ 编辑器</button>
+            <button class="btn btn-secondary" onclick="showView('dashboard')">📊 数据看板</button>
+            <button class="btn btn-secondary" onclick="showOnboarding()">🎯 新手引导</button>
+            <button class="btn btn-primary">💾 保存</button>
+            <button class="btn btn-primary">▶️ 运行</button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container" id="mainView">
+        <!-- Left Panel -->
+        <div class="left-panel">
+            <div class="panel-header">🧩 组件库</div>
+            <div class="component-list">
+                <div class="component-category">
+                    <div class="category-title">触发器</div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon trigger">🕐</div>
+                        <div class="component-name">定时触发</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon trigger">⚡</div>
+                        <div class="component-name">事件触发</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon trigger">🔗</div>
+                        <div class="component-name">Webhook</div>
+                    </div>
+                </div>
+                <div class="component-category">
+                    <div class="category-title">动作</div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">📧</div>
+                        <div class="component-name">发送邮件</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">📊</div>
+                        <div class="component-name">生成报表</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">📝</div>
+                        <div class="component-name">数据整理</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">🌐</div>
+                        <div class="component-name">API 调用</div>
+                    </div>
+                </div>
+                <div class="component-category">
+                    <div class="category-title">逻辑</div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon condition">🔀</div>
+                        <div class="component-name">条件分支</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon loop">🔄</div>
+                        <div class="component-name">循环</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon transform">🔧</div>
+                        <div class="component-name">数据转换</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Canvas -->
+        <div class="canvas-container">
+            <div class="canvas" id="canvas">
+                <div class="canvas-grid"></div>
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-state-icon">🎨</div>
+                    <div class="empty-state-title">开始创建工作流</div>
+                    <div class="empty-state-desc">从左侧拖拽组件到画布开始</div>
+                </div>
+            </div>
+            <div class="mini-map">
+                <div style="padding: 8px; font-size: 12px; color: var(--text-secondary);">小地图</div>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="right-panel">
+            <div class="panel-header">⚙️ 节点配置</div>
+            <div style="padding: 20px; text-align: center; color: var(--text-secondary);">
+                <p style="font-size: 14px; margin-bottom: 8px;">👈 点击节点进行配置</p>
+                <p style="font-size: 12px;">选择画布中的节点以查看和编辑其配置</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard View (Hidden by default) -->
+    <div class="dashboard-container hidden" id="dashboardView">
+        <div class="dashboard-header">
+            <div class="dashboard-title">📊 数据看板</div>
+            <div class="dashboard-subtitle">工作流运行统计与性能监控</div>
+        </div>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">今日执行次数</div>
+                <div class="metric-value">1,247</div>
+                <div class="metric-trend up">↑ 12.5% 较昨日</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">成功率</div>
+                <div class="metric-value">98.2%</div>
+                <div class="metric-trend up">↑ 0.3% 较昨日</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">节省时间</div>
+                <div class="metric-value">42.5h</div>
+                <div class="metric-trend up">↑ 8.2h 累计</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">活跃工作流</div>
+                <div class="metric-value">23</div>
+                <div class="metric-trend">→ 与昨日持平</div>
+            </div>
+        </div>
+        <div class="chart-container">
+            <div class="chart-title">📈 执行趋势（7 天）</div>
+            <div class="chart-placeholder">
+                <div style="text-align: center;">
+                    <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
+                    <div>执行趋势图表区域</div>
+                    <div style="font-size: 12px; margin-top: 8px;">支持 7 天/30 天切换，实时数据刷新</div>
+                </div>
+            </div>
+        </div>
+        <div class="chart-container">
+            <div class="chart-title">🏆 工作流排行（Top 10）</div>
+            <ul class="workflow-list">
+                <li class="workflow-item">
+                    <span class="workflow-name">订单自动处理工作流</span>
+                    <span class="workflow-status active">运行中</span>
+                    <span class="workflow-count">342 次/今日</span>
+                </li>
+                <li class="workflow-item">
+                    <span class="workflow-name">客服邮件自动分类</span>
+                    <span class="workflow-status active">运行中</span>
+                    <span class="workflow-count">218 次/今日</span>
+                </li>
+                <li class="workflow-item">
+                    <span class="workflow-name">销售日报自动生成</span>
+                    <span class="workflow-status active">运行中</span>
+                    <span class="workflow-count">156 次/今日</span>
+                </li>
+                <li class="workflow-item">
+                    <span class="workflow-name">客户预约自动确认</span>
+                    <span class="workflow-status active">运行中</span>
+                    <span class="workflow-count">89 次/今日</span>
+                </li>
+                <li class="workflow-item">
+                    <span class="workflow-name">库存预警自动补货</span>
+                    <span class="workflow-status active">运行中</span>
+                    <span class="workflow-count">67 次/今日</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+        <div>
+            <span>工作流：未命名工作流</span>
+            <span style="margin-left: 20px;">节点：<span id="nodeCount">0</span></span>
+        </div>
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomOut()">−</button>
+            <span id="zoomLevel">100%</span>
+            <button class="zoom-btn" onclick="zoomIn()">+</button>
+            <button class="zoom-btn" style="margin-left: 8px;" onclick="resetZoom()">适应</button>
+        </div>
+    </div>
+
+    <!-- Tooltip -->
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        let zoom = 1;
+        let nodeCount = 0;
+        let selectedNode = null;
+        let isDragging = false;
+        let currentNode = null;
+        const canvas = document.getElementById('canvas');
+        const emptyState = document.getElementById('emptyState');
+
+        // Component drag and drop
+        document.querySelectorAll('.component-item').forEach(item => {
+            item.addEventListener('dragstart', (e) => {
+                const componentName = item.querySelector('.component-name').textContent;
+                const componentIcon = item.querySelector('.component-icon').textContent;
+                const componentType = item.querySelector('.component-icon').className.split(' ')[1];
+                e.dataTransfer.setData('component', JSON.stringify({ name: componentName, icon: componentIcon, type: componentType }));
+            });
+        });
+
+        canvas.addEventListener('dragover', (e) => { e.preventDefault(); });
+        canvas.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const componentData = JSON.parse(e.dataTransfer.getData('component'));
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / zoom;
+            const y = (e.clientY - rect.top) / zoom;
+            createNode(componentData, x, y);
+        });
+
+        function createNode(component, x, y) {
+            emptyState.style.display = 'none';
+            nodeCount++;
+            const node = document.createElement('div');
+            node.className = `node ${component.type}`;
+            node.style.left = `${x - 120}px`;
+            node.style.top = `${y - 40}px`;
+            node.dataset.id = `node-${nodeCount}`;
+            node.innerHTML = `
+                <div class="port input"></div>
+                <div class="node-header">
+                    <div class="node-icon">${component.icon}</div>
+                    <div class="node-title">${component.name}</div>
+                </div>
+                <div class="node-body">
+                    <div class="node-description">点击配置此节点</div>
+                </div>
+                <div class="port output"></div>
+            `;
+            node.addEventListener('click', (e) => { e.stopPropagation(); selectNode(node); });
+            const header = node.querySelector('.node-header');
+            header.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                currentNode = node;
+                dragOffset.x = e.clientX - node.offsetLeft;
+                dragOffset.y = e.clientY - node.offsetTop;
+                selectNode(node);
+            });
+            canvas.appendChild(node);
+            document.getElementById('nodeCount').textContent = nodeCount;
+        }
+
+        function selectNode(node) {
+            if (selectedNode) selectedNode.classList.remove('selected');
+            selectedNode = node;
+            node.classList.add('selected');
+            const rightPanel = document.querySelector('.right-panel');
+            const nodeTitle = node.querySelector('.node-title').textContent;
+            const nodeIcon = node.querySelector('.node-icon').textContent;
+            rightPanel.innerHTML = `
+                <div class="panel-header"><span>${nodeIcon} ${nodeTitle}</span></div>
+                <div class="config-section">
+                    <div class="section-title">基础配置</div>
+                    <div class="form-group">
+                        <label class="form-label">节点名称</label>
+                        <input type="text" class="form-input" value="${nodeTitle}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">描述</label>
+                        <input type="text" class="form-input" placeholder="输入节点描述">
+                    </div>
+                </div>
+                <div class="config-section">
+                    <div class="section-title">高级配置</div>
+                    <div class="form-group">
+                        <label class="form-label">重试次数</label>
+                        <input type="number" class="form-input" value="3" min="0" max="10">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">超时时间 (秒)</label>
+                        <input type="number" class="form-input" value="30" min="1" max="300">
+                    </div>
+                </div>
+                <div class="config-section">
+                    <button class="btn btn-primary" style="width: 100%;">💾 保存配置</button>
+                </div>
+            `;
+        }
+
+        // Zoom controls
+        function zoomIn() { zoom = Math.min(zoom + 0.1, 2); applyZoom(); }
+        function zoomOut() { zoom = Math.max(zoom - 0.1, 0.5); applyZoom(); }
+        function resetZoom() { zoom = 1; applyZoom(); }
+        function applyZoom() {
+            canvas.style.transform = `scale(${zoom})`;
+            document.getElementById('zoomLevel').textContent = `${Math.round(zoom * 100)}%`;
+        }
+
+        // View switching
+        function showView(view) {
+            if (view === 'editor') {
+                document.getElementById('mainView').classList.remove('hidden');
+                document.getElementById('dashboardView').classList.add('hidden');
+            } else {
+                document.getElementById('mainView').classList.add('hidden');
+                document.getElementById('dashboardView').classList.remove('hidden');
+            }
+        }
+
+        // Onboarding
+        function showOnboarding() {
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <div class="progress-bar">
+                            <div class="progress-step active"></div>
+                            <div class="progress-step"></div>
+                            <div class="progress-step"></div>
+                            <div class="progress-step"></div>
+                            <div class="progress-step"></div>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <div class="onboarding-content">
+                            <div class="onboarding-icon">🚀</div>
+                            <div class="onboarding-title">欢迎使用工作流编排器</div>
+                            <div class="onboarding-desc">让 AI 真正帮你干活，而不只是聊天<br>通过可视化拖拽，3 分钟创建自动化工作流</div>
+                            <div class="industry-grid">
+                                <div class="industry-card">
+                                    <div class="industry-icon">🛒</div>
+                                    <div class="industry-name">电商行业</div>
+                                    <div class="industry-desc">订单处理、客服自动化</div>
+                                </div>
+                                <div class="industry-card">
+                                    <div class="industry-icon">🏢</div>
+                                    <div class="industry-name">服务业</div>
+                                    <div class="industry-desc">预约管理、工单分配</div>
+                                </div>
+                                <div class="industry-card">
+                                    <div class="industry-icon">🏭</div>
+                                    <div class="industry-name">制造业</div>
+                                    <div class="industry-desc">库存预警、生产报表</div>
+                                </div>
+                                <div class="industry-card">
+                                    <div class="industry-icon">💼</div>
+                                    <div class="industry-name">专业服务</div>
+                                    <div class="industry-desc">会议纪要、待办生成</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">跳过</button>
+                        <button class="btn btn-primary" onclick="alert('进入下一步：选择行业模板')">下一步 →</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // Canvas pan
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.target === canvas || e.target.classList.contains('canvas-grid')) {
+                isPanning = true;
+                panStart = { x: e.clientX, y: e.clientY };
+            }
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPanning && currentNode) {
+                currentNode.style.left = `${e.clientX - dragOffset.x}px`;
+                currentNode.style.top = `${e.clientY - dragOffset.y}px`;
+            }
+        });
+        canvas.addEventListener('mouseup', () => { isPanning = false; isDragging = false; });
+    </script>
+</body>
+</html>

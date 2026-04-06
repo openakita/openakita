@@ -1,0 +1,8 @@
+interface:
+  display_name: Baoyu Comic
+  short_description: Knowledge comic creator supporting multiple art styles and tones
+  default_prompt: Use $baoyu-comic
+i18n:
+  zh:
+    name: 知识漫画
+    description: 知识漫画创作，支持清线/日漫/写实/水墨/粉笔多种画风，可自动合成PDF

@@ -1,0 +1,155 @@
+# MVP 项目 Docker Compose 配置
+# 包含：应用服务 + PostgreSQL + Redis + Qdrant
+# 用于本地开发和测试环境
+
+version: '3.8'
+
+services:
+  # ============================================
+  # 应用服务
+  # ============================================
+  app:
+    build:
+      context: ..
+      dockerfile: docker/mvp/Dockerfile
+      target: development
+    container_name: mvp-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ..:/app
+      - ./.venv:/app/.venv
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/mvp
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - mvp-network
+    restart: unless-stopped
+
+  # ============================================
+  # PostgreSQL 数据库
+  # ============================================
+  db:
+    image: postgres:15-alpine
+    container_name: mvp-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=mvp
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mvp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mvp-network
+    restart: unless-stopped
+
+  # ============================================
+  # Redis 缓存/消息队列
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: mvp-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mvp-network
+    restart: unless-stopped
+
+  # ============================================
+  # Qdrant 向量数据库
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mvp-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mvp-network
+    restart: unless-stopped
+
+  # ============================================
+  # 监控服务（可选）
+  # ============================================
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: mvp-prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - prometheus_data:/prometheus
+  #   networks:
+  #     - mvp-network
+  #   restart: unless-stopped
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: mvp-grafana
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #   volumes:
+  #     - grafana_data:/var/lib/grafana
+  #   depends_on:
+  #     - prometheus
+  #   networks:
+  #     - mvp-network
+  #   restart: unless-stopped
+
+# ============================================
+# 数据卷
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  # prometheus_data:
+  #   driver: local
+  # grafana_data:
+  #   driver: local
+
+# ============================================
+# 网络
+# ============================================
+networks:
+  mvp-network:
+    driver: bridge

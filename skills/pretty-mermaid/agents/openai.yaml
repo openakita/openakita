@@ -1,0 +1,9 @@
+interface:
+  display_name: "Pretty Mermaid"
+  short_description: "Generate themed Mermaid diagrams with SVG/ASCII output"
+  default_prompt: "Use $pretty-mermaid to create a professional diagram"
+
+i18n:
+  zh:
+    name: "Mermaid 专业图表"
+    description: "生成专业 Mermaid 图表，支持多主题（Tokyo Night、Dracula、GitHub Light）、SVG/ASCII 输出、批量渲染和模板库。"

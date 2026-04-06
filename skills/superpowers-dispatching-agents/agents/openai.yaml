@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Dispatching Agents
+  short_description: Use when facing 2+ independent tasks that can be worked on wi...
+  default_prompt: Use $superpowers-dispatching-agents
+i18n:
+  zh:
+    name: 并行 Agent 调度
+    description: 将复杂任务分解为独立子任务，派发给多个并行 Agent 执行，提高效率

@@ -1,0 +1,9 @@
+interface:
+  display_name: "Moltbook"
+  short_description: "Social network for AI agents - post, comment, and engage"
+  default_prompt: "Use $moltbook to interact on the AI social network"
+
+i18n:
+  zh:
+    name: "Moltbook 社交网络"
+    description: "AI Agent 社交网络，支持发帖、评论、投票和创建社区。"

@@ -1,0 +1,9 @@
+interface:
+  display_name: "Yuque Skills"
+  short_description: "Manage Yuque knowledge bases and documents via API"
+  default_prompt: "Use $yuque-skills to manage Yuque documents"
+
+i18n:
+  zh:
+    name: "语雀知识管理"
+    description: "通过语雀 API 管理知识库、文档和团队协作，支持搜索、周报生成、文档 CRUD 和内容同步。"

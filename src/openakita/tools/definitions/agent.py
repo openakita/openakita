@@ -197,6 +197,15 @@ AGENT_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "所有子任务共享的背景上下文（可选）。"
+                        "子Agent可能看不到完整对话历史，请提供完成任务所需的关键信息"
+                        "（已知结论、相关约束、期望输出格式等）。"
+                        "此字段会自动添加到每个子任务的 context 前面。"
+                    ),
+                },
                 "tasks": {
                     "type": "array",
                     "items": {
@@ -216,7 +225,7 @@ AGENT_TOOLS = [
                             },
                             "context": {
                                 "type": "string",
-                                "description": "为子Agent提供的背景上下文（可选）",
+                                "description": "为该子Agent提供的额外背景上下文（可选，与顶层context合并）",
                             },
                         },
                         "required": ["agent_id", "message"],

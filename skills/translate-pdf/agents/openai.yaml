@@ -1,0 +1,9 @@
+interface:
+  display_name: "Translate PDF"
+  short_description: "Translate PDF documents preserving layout and formatting"
+  default_prompt: "Use $translate-pdf to translate this PDF document"
+
+i18n:
+  zh:
+    name: "PDF 文档翻译"
+    description: "翻译 PDF 文档并保留原始排版、表格、图片和格式，支持中英日韩等多语种及双语对照输出。"

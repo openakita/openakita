@@ -1,0 +1,9 @@
+interface:
+  display_name: Superpowers Verification
+  short_description: Use when about to claim work is complete, fixed, or passing,
+    ...
+  default_prompt: Use $superpowers-verification
+i18n:
+  zh:
+    name: 完成前验证
+    description: 在声明任务完成前必须运行验证命令并确认输出，用证据支持结论，杜绝假完成

@@ -1,0 +1,9 @@
+interface:
+  display_name: "DateTime Tool"
+  short_description: "Get current time, format dates, and convert timezones"
+  default_prompt: "Use $datetime-tool to get the current time"
+
+i18n:
+  zh:
+    name: "日期时间工具"
+    description: "获取当前时间、格式化日期、计算日期差值和时区转换。"

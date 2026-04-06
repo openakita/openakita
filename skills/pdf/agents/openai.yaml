@@ -1,0 +1,8 @@
+interface:
+  display_name: Pdf
+  short_description: Use this skill whenever the user wants to do anything with PD...
+  default_prompt: Use $pdf
+i18n:
+  zh:
+    name: PDF 文档处理
+    description: 处理 PDF 文件，包括读取/提取文本和表格、合并、拆分、转换和填写表单。

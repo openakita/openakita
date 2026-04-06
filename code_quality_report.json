@@ -1,0 +1,3016 @@
+{
+  "generated_at": "2026-03-11T14:47:34.488583",
+  "metrics": {
+    "total_files": 303,
+    "total_lines": 122575,
+    "total_classes": 0,
+    "total_functions": 0,
+    "complex_functions": [],
+    "duplicate_code": [],
+    "missing_docstrings": [],
+    "long_functions": []
+  },
+  "issues": [
+    {
+      "file": "src\\openakita\\config.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 630
+    },
+    {
+      "file": "src\\openakita\\config.py",
+      "function": "state_file",
+      "type": "missing_docstring",
+      "line": 635
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_ensure_channel_deps",
+      "type": "high_complexity",
+      "value": 52,
+      "line": 213
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_ensure_channel_deps",
+      "type": "long_function",
+      "value": 255,
+      "line": 213
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_create_bot_adapter",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 470
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_create_bot_adapter",
+      "type": "long_function",
+      "value": 69,
+      "line": 470
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_auto_migrate_env_bots",
+      "type": "high_complexity",
+      "value": 26,
+      "line": 541
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_auto_migrate_env_bots",
+      "type": "long_function",
+      "value": 104,
+      "line": 541
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "start_im_channels",
+      "type": "high_complexity",
+      "value": 53,
+      "line": 682
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "start_im_channels",
+      "type": "long_function",
+      "value": 276,
+      "line": 682
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "run_interactive",
+      "type": "high_complexity",
+      "value": 19,
+      "line": 1078
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "run_interactive",
+      "type": "long_function",
+      "value": 128,
+      "line": 1078
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "prompt_debug",
+      "type": "long_function",
+      "value": 94,
+      "line": 1477
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "serve",
+      "type": "high_complexity",
+      "value": 57,
+      "line": 1584
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "serve",
+      "type": "long_function",
+      "value": 373,
+      "line": 1584
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_on_install_success",
+      "type": "missing_docstring",
+      "line": 336
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_interactive_signal_handler",
+      "type": "missing_docstring",
+      "line": 1111
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_run",
+      "type": "missing_docstring",
+      "line": 1367
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_selfcheck",
+      "type": "missing_docstring",
+      "line": 1412
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_status",
+      "type": "missing_docstring",
+      "line": 1424
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_debug",
+      "type": "long_function",
+      "value": 79,
+      "line": 1490
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_debug",
+      "type": "missing_docstring",
+      "line": 1490
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_serve",
+      "type": "high_complexity",
+      "value": 26,
+      "line": 1677
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_serve",
+      "type": "long_function",
+      "value": 170,
+      "line": 1677
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_serve",
+      "type": "missing_docstring",
+      "line": 1677
+    },
+    {
+      "file": "src\\openakita\\main.py",
+      "function": "_file_watcher",
+      "type": "missing_docstring",
+      "line": 1775
+    },
+    {
+      "file": "src\\openakita\\runtime_env.py",
+      "function": "get_python_executable",
+      "type": "long_function",
+      "value": 54,
+      "line": 144
+    },
+    {
+      "file": "src\\openakita\\runtime_env.py",
+      "function": "ensure_ssl_certs",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 258
+    },
+    {
+      "file": "src\\openakita\\runtime_env.py",
+      "function": "ensure_ssl_certs",
+      "type": "long_function",
+      "value": 64,
+      "line": 258
+    },
+    {
+      "file": "src\\openakita\\runtime_env.py",
+      "function": "_sanitize_sys_path",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 324
+    },
+    {
+      "file": "src\\openakita\\runtime_env.py",
+      "function": "inject_module_paths",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 371
+    },
+    {
+      "file": "src\\openakita\\runtime_env.py",
+      "function": "inject_module_paths",
+      "type": "long_function",
+      "value": 60,
+      "line": 371
+    },
+    {
+      "file": "src\\openakita\\__init__.py",
+      "function": "_resolve_version_info",
+      "type": "long_function",
+      "value": 56,
+      "line": 8
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "create",
+      "type": "missing_docstring",
+      "line": 56
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "_apply_skill_filter",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 116
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "_apply_skill_filter",
+      "type": "missing_docstring",
+      "line": 116
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 156
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "touch",
+      "type": "missing_docstring",
+      "line": 164
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "idle_seconds",
+      "type": "missing_docstring",
+      "line": 168
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "pool_key",
+      "type": "missing_docstring",
+      "line": 172
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 186
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "_make_key",
+      "type": "missing_docstring",
+      "line": 201
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "start",
+      "type": "missing_docstring",
+      "line": 204
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "stop",
+      "type": "missing_docstring",
+      "line": 208
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "get_stats",
+      "type": "missing_docstring",
+      "line": 312
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "_reap_loop",
+      "type": "missing_docstring",
+      "line": 346
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "_reap_idle",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 356
+    },
+    {
+      "file": "src\\openakita\\agents\\factory.py",
+      "function": "_reap_idle",
+      "type": "missing_docstring",
+      "line": 356
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "record_success",
+      "type": "missing_docstring",
+      "line": 34
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "record_failure",
+      "type": "missing_docstring",
+      "line": 38
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "failure_rate",
+      "type": "missing_docstring",
+      "line": 49
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "should_degrade",
+      "type": "missing_docstring",
+      "line": 55
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 64
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "record_success",
+      "type": "missing_docstring",
+      "line": 79
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "record_failure",
+      "type": "missing_docstring",
+      "line": 89
+    },
+    {
+      "file": "src\\openakita\\agents\\fallback.py",
+      "function": "get_health_stats",
+      "type": "missing_docstring",
+      "line": 123
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 20
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "acquire",
+      "type": "missing_docstring",
+      "line": 27
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "release",
+      "type": "missing_docstring",
+      "line": 33
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "locked",
+      "type": "missing_docstring",
+      "line": 38
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 53
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "_get_or_create",
+      "type": "missing_docstring",
+      "line": 57
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "is_locked",
+      "type": "missing_docstring",
+      "line": 75
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "get_holder",
+      "type": "missing_docstring",
+      "line": 80
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "get_stats",
+      "type": "missing_docstring",
+      "line": 85
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 121
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "__aenter__",
+      "type": "missing_docstring",
+      "line": 129
+    },
+    {
+      "file": "src\\openakita\\agents\\lock_manager.py",
+      "function": "__aexit__",
+      "type": "missing_docstring",
+      "line": 138
+    },
+    {
+      "file": "src\\openakita\\agents\\manifest.py",
+      "function": "validate",
+      "type": "missing_docstring",
+      "line": 36
+    },
+    {
+      "file": "src\\openakita\\agents\\manifest.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 53
+    },
+    {
+      "file": "src\\openakita\\agents\\manifest.py",
+      "function": "from_dict",
+      "type": "missing_docstring",
+      "line": 57
+    },
+    {
+      "file": "src\\openakita\\agents\\manifest.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 128
+    },
+    {
+      "file": "src\\openakita\\agents\\manifest.py",
+      "function": "from_dict",
+      "type": "missing_docstring",
+      "line": 140
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_extract_output_files",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 975
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_persist_sub_agent_record",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 1057
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_persist_sub_agent_record",
+      "type": "long_function",
+      "value": 66,
+      "line": 1057
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "success_rate",
+      "type": "missing_docstring",
+      "line": 57
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "avg_latency_ms",
+      "type": "missing_docstring",
+      "line": 61
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 68
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "send",
+      "type": "missing_docstring",
+      "line": 72
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "receive",
+      "type": "missing_docstring",
+      "line": 75
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "pending",
+      "type": "missing_docstring",
+      "line": 82
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 97
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "get_mailbox",
+      "type": "missing_docstring",
+      "line": 213
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_get_health",
+      "type": "missing_docstring",
+      "line": 220
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_dispatch",
+      "type": "long_function",
+      "value": 121,
+      "line": 283
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_run_with_progress_timeout",
+      "type": "high_complexity",
+      "value": 20,
+      "line": 409
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_run_with_progress_timeout",
+      "type": "long_function",
+      "value": 141,
+      "line": 409
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_call_agent",
+      "type": "long_function",
+      "value": 61,
+      "line": 672
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "delegate",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 801
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "delegate",
+      "type": "long_function",
+      "value": 76,
+      "line": 801
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_add",
+      "type": "missing_docstring",
+      "line": 987
+    },
+    {
+      "file": "src\\openakita\\agents\\orchestrator.py",
+      "function": "_delayed_cleanup",
+      "type": "missing_docstring",
+      "line": 571
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 43
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "package",
+      "type": "high_complexity",
+      "value": 19,
+      "line": 56
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "package",
+      "type": "long_function",
+      "value": 138,
+      "line": 56
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_to_slug",
+      "type": "missing_docstring",
+      "line": 195
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_find_skill",
+      "type": "missing_docstring",
+      "line": 200
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 266
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "install",
+      "type": "long_function",
+      "value": 70,
+      "line": 310
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_validate_file",
+      "type": "missing_docstring",
+      "line": 381
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_security_check",
+      "type": "missing_docstring",
+      "line": 397
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_install_skills",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 502
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_install_skills",
+      "type": "long_function",
+      "value": 54,
+      "line": 502
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_skill_exists_locally",
+      "type": "missing_docstring",
+      "line": 606
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_write_zip",
+      "type": "missing_docstring",
+      "line": 153
+    },
+    {
+      "file": "src\\openakita\\agents\\packager.py",
+      "function": "_parts",
+      "type": "missing_docstring",
+      "line": 452
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "__post_init__",
+      "type": "missing_docstring",
+      "line": 100
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "is_system",
+      "type": "missing_docstring",
+      "line": 109
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 116
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "from_dict",
+      "type": "missing_docstring",
+      "line": 123
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 144
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "get",
+      "type": "missing_docstring",
+      "line": 170
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "list_all",
+      "type": "missing_docstring",
+      "line": 174
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "exists",
+      "type": "missing_docstring",
+      "line": 264
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "count",
+      "type": "missing_docstring",
+      "line": 268
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "_persist",
+      "type": "missing_docstring",
+      "line": 305
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "_load_categories",
+      "type": "missing_docstring",
+      "line": 325
+    },
+    {
+      "file": "src\\openakita\\agents\\profile.py",
+      "function": "_persist_categories",
+      "type": "missing_docstring",
+      "line": 336
+    },
+    {
+      "file": "src\\openakita\\agents\\task_queue.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 52
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_b64url_encode",
+      "type": "missing_docstring",
+      "line": 52
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_b64url_decode",
+      "type": "missing_docstring",
+      "line": 56
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_jwt_encode",
+      "type": "missing_docstring",
+      "line": 67
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_verify_password",
+      "type": "missing_docstring",
+      "line": 109
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_make_hint",
+      "type": "missing_docstring",
+      "line": 275
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "create_auth_middleware",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 352
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "create_auth_middleware",
+      "type": "long_function",
+      "value": 52,
+      "line": 352
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 127
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_load",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 133
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_load",
+      "type": "long_function",
+      "value": 57,
+      "line": 133
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_load",
+      "type": "missing_docstring",
+      "line": 133
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "_save",
+      "type": "missing_docstring",
+      "line": 191
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "jwt_secret",
+      "type": "missing_docstring",
+      "line": 199
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "token_version",
+      "type": "missing_docstring",
+      "line": 203
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "password_hint",
+      "type": "missing_docstring",
+      "line": 207
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "verify_password",
+      "type": "missing_docstring",
+      "line": 210
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "password_user_set",
+      "type": "missing_docstring",
+      "line": 218
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "change_password",
+      "type": "missing_docstring",
+      "line": 221
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "create_access_token",
+      "type": "missing_docstring",
+      "line": 231
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "create_refresh_token",
+      "type": "missing_docstring",
+      "line": 242
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "validate_access_token",
+      "type": "missing_docstring",
+      "line": 254
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "validate_refresh_token",
+      "type": "missing_docstring",
+      "line": 264
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 288
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "is_allowed",
+      "type": "missing_docstring",
+      "line": 293
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "auth_middleware",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 355
+    },
+    {
+      "file": "src\\openakita\\api\\auth.py",
+      "function": "auth_middleware",
+      "type": "missing_docstring",
+      "line": 355
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "create_app",
+      "type": "high_complexity",
+      "value": 17,
+      "line": 141
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "create_app",
+      "type": "long_function",
+      "value": 214,
+      "line": 141
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "start_api_server",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 357
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "start_api_server",
+      "type": "long_function",
+      "value": 146,
+      "line": 357
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "root",
+      "type": "missing_docstring",
+      "line": 284
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "_startup_org_runtime",
+      "type": "missing_docstring",
+      "line": 333
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "_shutdown_org_runtime",
+      "type": "missing_docstring",
+      "line": 345
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "_api_thread",
+      "type": "missing_docstring",
+      "line": 425
+    },
+    {
+      "file": "src\\openakita\\api\\server.py",
+      "function": "_proxy",
+      "type": "missing_docstring",
+      "line": 492
+    },
+    {
+      "file": "src\\openakita\\channels\\base.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 41
+    },
+    {
+      "file": "src\\openakita\\channels\\base.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 291
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 111
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_start_switch_session",
+      "type": "long_function",
+      "value": 59,
+      "line": 242
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_handle_switch_input",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 349
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 494
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "handle_command",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 507
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "handle_command",
+      "type": "long_function",
+      "value": 52,
+      "line": 507
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "is_expired",
+      "type": "missing_docstring",
+      "line": 639
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "remaining_seconds",
+      "type": "missing_docstring",
+      "line": 643
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 661
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "is_restart_command",
+      "type": "missing_docstring",
+      "line": 672
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "is_cancel_command",
+      "type": "missing_docstring",
+      "line": 675
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_timeout_handler",
+      "type": "missing_docstring",
+      "line": 781
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_trigger_restart",
+      "type": "missing_docstring",
+      "line": 798
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_cleanup",
+      "type": "missing_docstring",
+      "line": 810
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_send",
+      "type": "missing_docstring",
+      "line": 816
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "__init__",
+      "type": "long_function",
+      "value": 90,
+      "line": 837
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_handle_mode_command",
+      "type": "long_function",
+      "value": 58,
+      "line": 928
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_handle_agent_switch",
+      "type": "long_function",
+      "value": 52,
+      "line": 1045
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_extract_video_keyframes",
+      "type": "long_function",
+      "value": 58,
+      "line": 1330
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_load_whisper_model",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 1389
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_load_whisper_model",
+      "type": "long_function",
+      "value": 64,
+      "line": 1389
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_cleanup_stale_session_dicts",
+      "type": "long_function",
+      "value": 51,
+      "line": 1535
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_on_message",
+      "type": "high_complexity",
+      "value": 18,
+      "line": 1638
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_on_message",
+      "type": "long_function",
+      "value": 116,
+      "line": 1638
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_resolve_task_session_id",
+      "type": "high_complexity",
+      "value": 17,
+      "line": 1784
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_handle_message",
+      "type": "high_complexity",
+      "value": 49,
+      "line": 1934
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_handle_message",
+      "type": "long_function",
+      "value": 272,
+      "line": 1934
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_pending_interrupts",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 2207
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_pending_interrupts",
+      "type": "long_function",
+      "value": 62,
+      "line": 2207
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_preprocess_media",
+      "type": "high_complexity",
+      "value": 27,
+      "line": 2270
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_preprocess_media",
+      "type": "long_function",
+      "value": 93,
+      "line": 2270
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_call_agent_with_streaming",
+      "type": "high_complexity",
+      "value": 21,
+      "line": 2468
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_call_agent_with_streaming",
+      "type": "long_function",
+      "value": 115,
+      "line": 2468
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_prepare_agent_call",
+      "type": "high_complexity",
+      "value": 42,
+      "line": 2584
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_prepare_agent_call",
+      "type": "long_function",
+      "value": 156,
+      "line": 2584
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_send_response",
+      "type": "long_function",
+      "value": 63,
+      "line": 2832
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_deliver_pending_selfcheck_report",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 2930
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_deliver_pending_selfcheck_report",
+      "type": "long_function",
+      "value": 81,
+      "line": 2930
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "emit_progress_event",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 3091
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "emit_progress_event",
+      "type": "long_function",
+      "value": 66,
+      "line": 3091
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_do_extract",
+      "type": "missing_docstring",
+      "line": 1352
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_voice",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 2285
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_voice",
+      "type": "missing_docstring",
+      "line": 2285
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_image",
+      "type": "missing_docstring",
+      "line": 2318
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_video",
+      "type": "missing_docstring",
+      "line": 2329
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_process_file",
+      "type": "missing_docstring",
+      "line": 2340
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "_flush",
+      "type": "missing_docstring",
+      "line": 3130
+    },
+    {
+      "file": "src\\openakita\\channels\\gateway.py",
+      "function": "transcribe",
+      "type": "missing_docstring",
+      "line": 2391
+    },
+    {
+      "file": "src\\openakita\\channels\\group_response.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 32
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_image",
+      "type": "missing_docstring",
+      "line": 101
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_audio",
+      "type": "missing_docstring",
+      "line": 105
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_video",
+      "type": "missing_docstring",
+      "line": 109
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_document",
+      "type": "missing_docstring",
+      "line": 113
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_ready",
+      "type": "missing_docstring",
+      "line": 117
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 139
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "from_dict",
+      "type": "missing_docstring",
+      "line": 159
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "has_text",
+      "type": "missing_docstring",
+      "line": 198
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "has_media",
+      "type": "missing_docstring",
+      "line": 202
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "message_type",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 211
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "to_plain_text",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 233
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 273
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "from_dict",
+      "type": "missing_docstring",
+      "line": 285
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_private",
+      "type": "missing_docstring",
+      "line": 420
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "is_group",
+      "type": "missing_docstring",
+      "line": 424
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 427
+    },
+    {
+      "file": "src\\openakita\\channels\\types.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 580
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_task_key",
+      "type": "missing_docstring",
+      "line": 269
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_current_session",
+      "type": "missing_docstring",
+      "line": 277
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_current_session",
+      "type": "missing_docstring",
+      "line": 281
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_current_session_id",
+      "type": "missing_docstring",
+      "line": 291
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_current_session_id",
+      "type": "missing_docstring",
+      "line": 295
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_current_conversation_id",
+      "type": "missing_docstring",
+      "line": 304
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_current_conversation_id",
+      "type": "missing_docstring",
+      "line": 308
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "__init__",
+      "type": "long_function",
+      "value": 229,
+      "line": 316
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 316
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_execute_tool_calls_batch",
+      "type": "high_complexity",
+      "value": 40,
+      "line": 564
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_execute_tool_calls_batch",
+      "type": "long_function",
+      "value": 224,
+      "line": 564
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "initialize",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 789
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "initialize",
+      "type": "long_function",
+      "value": 102,
+      "line": 789
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_init_handlers",
+      "type": "long_function",
+      "value": 195,
+      "line": 892
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_install_skill_from_git",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 1257
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_install_skill_from_git",
+      "type": "long_function",
+      "value": 84,
+      "line": 1257
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_install_skill_from_url",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 1342
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_install_skill_from_url",
+      "type": "long_function",
+      "value": 97,
+      "line": 1342
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_load_mcp_servers",
+      "type": "high_complexity",
+      "value": 28,
+      "line": 1519
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_load_mcp_servers",
+      "type": "long_function",
+      "value": 104,
+      "line": 1519
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_inject_browser_use_llm_config",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 1643
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_register_system_tasks",
+      "type": "high_complexity",
+      "value": 23,
+      "line": 1710
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_register_system_tasks",
+      "type": "long_function",
+      "value": 169,
+      "line": 1710
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_build_system_prompt",
+      "type": "long_function",
+      "value": 351,
+      "line": 1880
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_build_multi_agent_prompt_section",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 2264
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_build_multi_agent_prompt_section",
+      "type": "long_function",
+      "value": 181,
+      "line": 2264
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_generate_tools_text",
+      "type": "long_function",
+      "value": 72,
+      "line": 2446
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_group_messages",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 2583
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_group_messages",
+      "type": "long_function",
+      "value": 69,
+      "line": 2583
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_record_inbound_attachments",
+      "type": "high_complexity",
+      "value": 18,
+      "line": 2655
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_record_inbound_attachments",
+      "type": "long_function",
+      "value": 75,
+      "line": 2655
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_extract_outbound_attachments",
+      "type": "high_complexity",
+      "value": 16,
+      "line": 2732
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_extract_outbound_attachments",
+      "type": "long_function",
+      "value": 55,
+      "line": 2732
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_compress_large_tool_results",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 2813
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_compress_large_tool_results",
+      "type": "long_function",
+      "value": 78,
+      "line": 2813
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_llm_compress_text",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 2925
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_llm_compress_text",
+      "type": "long_function",
+      "value": 95,
+      "line": 2925
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_extract_message_text",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 3021
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_summarize_messages_chunked",
+      "type": "high_complexity",
+      "value": 20,
+      "line": 3071
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_summarize_messages_chunked",
+      "type": "long_function",
+      "value": 139,
+      "line": 3071
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_hard_truncate_if_needed",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 3255
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_hard_truncate_if_needed",
+      "type": "long_function",
+      "value": 81,
+      "line": 3255
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "chat",
+      "type": "long_function",
+      "value": 61,
+      "line": 3337
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_prepare_session_context",
+      "type": "high_complexity",
+      "value": 124,
+      "line": 3401
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_prepare_session_context",
+      "type": "long_function",
+      "value": 442,
+      "line": 3401
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_finalize_session",
+      "type": "high_complexity",
+      "value": 16,
+      "line": 3844
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_finalize_session",
+      "type": "long_function",
+      "value": 89,
+      "line": 3844
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_cleanup_session_state",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 3937
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "chat_with_session",
+      "type": "high_complexity",
+      "value": 35,
+      "line": 3986
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "chat_with_session",
+      "type": "long_function",
+      "value": 165,
+      "line": 3986
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "chat_with_session_stream",
+      "type": "high_complexity",
+      "value": 38,
+      "line": 4152
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "chat_with_session_stream",
+      "type": "long_function",
+      "value": 201,
+      "line": 4152
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "build_tool_trace_summary",
+      "type": "high_complexity",
+      "value": 19,
+      "line": 4397
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "build_tool_trace_summary",
+      "type": "long_function",
+      "value": 90,
+      "line": 4397
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_detect_topic_change",
+      "type": "high_complexity",
+      "value": 16,
+      "line": 4726
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_detect_topic_change",
+      "type": "long_function",
+      "value": 77,
+      "line": 4726
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_verify_task_completion",
+      "type": "high_complexity",
+      "value": 21,
+      "line": 4848
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_verify_task_completion",
+      "type": "long_function",
+      "value": 133,
+      "line": 4848
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_chat_with_tools_and_context",
+      "type": "high_complexity",
+      "value": 135,
+      "line": 5123
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_chat_with_tools_and_context",
+      "type": "long_function",
+      "value": 961,
+      "line": 5123
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "cancel_current_task",
+      "type": "high_complexity",
+      "value": 16,
+      "line": 6113
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "cancel_current_task",
+      "type": "long_function",
+      "value": 63,
+      "line": 6113
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_chat_with_tools",
+      "type": "high_complexity",
+      "value": 25,
+      "line": 6281
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_chat_with_tools",
+      "type": "long_function",
+      "value": 177,
+      "line": 6281
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_execute_tool",
+      "type": "long_function",
+      "value": 81,
+      "line": 6469
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "execute_task",
+      "type": "high_complexity",
+      "value": 63,
+      "line": 6551
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "execute_task",
+      "type": "long_function",
+      "value": 558,
+      "line": 6551
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "self_check",
+      "type": "long_function",
+      "value": 80,
+      "line": 7131
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_run_one",
+      "type": "high_complexity",
+      "value": 28,
+      "line": 607
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_run_one",
+      "type": "long_function",
+      "value": 158,
+      "line": 607
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_run_one",
+      "type": "missing_docstring",
+      "line": 607
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_is_human_user_message",
+      "type": "missing_docstring",
+      "line": 5202
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_do_exec",
+      "type": "missing_docstring",
+      "line": 640
+    },
+    {
+      "file": "src\\openakita\\core\\agent.py",
+      "function": "_im_chain_progress",
+      "type": "missing_docstring",
+      "line": 4117
+    },
+    {
+      "file": "src\\openakita\\core\\agent_state.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 310
+    },
+    {
+      "file": "src\\openakita\\core\\agent_state.py",
+      "function": "begin_task",
+      "type": "long_function",
+      "value": 52,
+      "line": 350
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "__init__",
+      "type": "long_function",
+      "value": 61,
+      "line": 78
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 78
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_compiler_on_success",
+      "type": "missing_docstring",
+      "line": 184
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_compiler_on_failure",
+      "type": "missing_docstring",
+      "line": 190
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "think_lightweight",
+      "type": "long_function",
+      "value": 62,
+      "line": 267
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "messages_create",
+      "type": "long_function",
+      "value": 66,
+      "line": 391
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "messages_create_async",
+      "type": "long_function",
+      "value": 52,
+      "line": 458
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_convert_messages_to_llm",
+      "type": "high_complexity",
+      "value": 33,
+      "line": 565
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_convert_messages_to_llm",
+      "type": "long_function",
+      "value": 203,
+      "line": 565
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_convert_response_to_anthropic",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 789
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_convert_response_to_anthropic",
+      "type": "long_function",
+      "value": 74,
+      "line": 789
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "think",
+      "type": "long_function",
+      "value": 83,
+      "line": 868
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_dump_llm_request",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 956
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_dump_llm_request",
+      "type": "long_function",
+      "value": 115,
+      "line": 956
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_dump_llm_response",
+      "type": "long_function",
+      "value": 63,
+      "line": 1072
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_serialize_response_content",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 1136
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_serialize_response_content",
+      "type": "long_function",
+      "value": 54,
+      "line": 1136
+    },
+    {
+      "file": "src\\openakita\\core\\brain.py",
+      "function": "_serialize_message",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 1219
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "group_messages",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 165
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "group_messages",
+      "type": "long_function",
+      "value": 58,
+      "line": 165
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "compress_if_needed",
+      "type": "high_complexity",
+      "value": 19,
+      "line": 224
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "compress_if_needed",
+      "type": "long_function",
+      "value": 155,
+      "line": 224
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_compress_across_boundary",
+      "type": "long_function",
+      "value": 51,
+      "line": 389
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_summarize_messages_chunked_for_boundary",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 441
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_summarize_messages_chunked_for_boundary",
+      "type": "long_function",
+      "value": 68,
+      "line": 441
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_compress_large_tool_results",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 510
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_llm_compress_text",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 561
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_llm_compress_text",
+      "type": "long_function",
+      "value": 78,
+      "line": 561
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_summarize_messages_chunked",
+      "type": "high_complexity",
+      "value": 20,
+      "line": 673
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_summarize_messages_chunked",
+      "type": "long_function",
+      "value": 119,
+      "line": 673
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "rewrite_after_compression",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 848
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "rewrite_after_compression",
+      "type": "long_function",
+      "value": 74,
+      "line": 848
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_hard_truncate_if_needed",
+      "type": "high_complexity",
+      "value": 16,
+      "line": 923
+    },
+    {
+      "file": "src\\openakita\\core\\context_manager.py",
+      "function": "_hard_truncate_if_needed",
+      "type": "long_function",
+      "value": 67,
+      "line": 923
+    },
+    {
+      "file": "src\\openakita\\core\\desktop_notify.py",
+      "function": "_notify_windows",
+      "type": "long_function",
+      "value": 55,
+      "line": 20
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "set_engine_loop",
+      "type": "missing_docstring",
+      "line": 36
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "set_api_loop",
+      "type": "missing_docstring",
+      "line": 42
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "get_engine_loop",
+      "type": "missing_docstring",
+      "line": 48
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "get_api_loop",
+      "type": "missing_docstring",
+      "line": 52
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "is_dual_loop",
+      "type": "missing_docstring",
+      "line": 56
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "_current_loop",
+      "type": "missing_docstring",
+      "line": 60
+    },
+    {
+      "file": "src\\openakita\\core\\engine_bridge.py",
+      "function": "_pump",
+      "type": "missing_docstring",
+      "line": 146
+    },
+    {
+      "file": "src\\openakita\\core\\errors.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 17
+    },
+    {
+      "file": "src\\openakita\\core\\identity.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 41
+    },
+    {
+      "file": "src\\openakita\\core\\identity.py",
+      "function": "get_system_prompt",
+      "type": "long_function",
+      "value": 120,
+      "line": 184
+    },
+    {
+      "file": "src\\openakita\\core\\im_context.py",
+      "function": "get_im_session",
+      "type": "missing_docstring",
+      "line": 20
+    },
+    {
+      "file": "src\\openakita\\core\\im_context.py",
+      "function": "get_im_gateway",
+      "type": "missing_docstring",
+      "line": 24
+    },
+    {
+      "file": "src\\openakita\\core\\im_context.py",
+      "function": "reset_im_context",
+      "type": "missing_docstring",
+      "line": 37
+    },
+    {
+      "file": "src\\openakita\\core\\memory.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 30
+    },
+    {
+      "file": "src\\openakita\\core\\persona.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 95
+    },
+    {
+      "file": "src\\openakita\\core\\persona.py",
+      "function": "from_dict",
+      "type": "missing_docstring",
+      "line": 109
+    },
+    {
+      "file": "src\\openakita\\core\\persona.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 190
+    },
+    {
+      "file": "src\\openakita\\core\\policy.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 111
+    },
+    {
+      "file": "src\\openakita\\core\\policy.py",
+      "function": "config",
+      "type": "missing_docstring",
+      "line": 116
+    },
+    {
+      "file": "src\\openakita\\core\\policy.py",
+      "function": "load_from_yaml",
+      "type": "long_function",
+      "value": 52,
+      "line": 119
+    },
+    {
+      "file": "src\\openakita\\core\\policy.py",
+      "function": "assert_tool_allowed",
+      "type": "high_complexity",
+      "value": 21,
+      "line": 172
+    },
+    {
+      "file": "src\\openakita\\core\\policy.py",
+      "function": "assert_tool_allowed",
+      "type": "long_function",
+      "value": 78,
+      "line": 172
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 60
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "_load",
+      "type": "missing_docstring",
+      "line": 65
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "_save",
+      "type": "missing_docstring",
+      "line": 81
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 234
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "heartbeat",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 256
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "_decide_message_type",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 305
+    },
+    {
+      "file": "src\\openakita\\core\\proactive.py",
+      "function": "_generate_message",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 349
+    },
+    {
+      "file": "src\\openakita\\core\\prompt_assembler.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 29
+    },
+    {
+      "file": "src\\openakita\\core\\prompt_assembler.py",
+      "function": "mcp_catalog_text",
+      "type": "missing_docstring",
+      "line": 50
+    },
+    {
+      "file": "src\\openakita\\core\\prompt_assembler.py",
+      "function": "mcp_catalog_text",
+      "type": "missing_docstring",
+      "line": 54
+    },
+    {
+      "file": "src\\openakita\\core\\prompt_assembler.py",
+      "function": "build_system_prompt",
+      "type": "long_function",
+      "value": 72,
+      "line": 57
+    },
+    {
+      "file": "src\\openakita\\core\\prompt_assembler.py",
+      "function": "build_environment_snapshot",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 239
+    },
+    {
+      "file": "src\\openakita\\core\\prompt_assembler.py",
+      "function": "build_environment_snapshot",
+      "type": "long_function",
+      "value": 63,
+      "line": 239
+    },
+    {
+      "file": "src\\openakita\\core\\ralph.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 106
+    },
+    {
+      "file": "src\\openakita\\core\\ralph.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 152
+    },
+    {
+      "file": "src\\openakita\\core\\ralph.py",
+      "function": "run",
+      "type": "long_function",
+      "value": 100,
+      "line": 168
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 103
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_wait_for_user_reply",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 202
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_wait_for_user_reply",
+      "type": "long_function",
+      "value": 108,
+      "line": 202
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "run",
+      "type": "high_complexity",
+      "value": 151,
+      "line": 443
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "run",
+      "type": "long_function",
+      "value": 901,
+      "line": 443
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "reason_stream",
+      "type": "high_complexity",
+      "value": 190,
+      "line": 1347
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "reason_stream",
+      "type": "long_function",
+      "value": 1022,
+      "line": 1347
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_describe_tool_call",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 2373
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_describe_tool_call",
+      "type": "long_function",
+      "value": 53,
+      "line": 2373
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_save_react_trace",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 2465
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_save_react_trace",
+      "type": "long_function",
+      "value": 79,
+      "line": 2465
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_sanitize_messages_for_farewell",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 2577
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_reason_with_heartbeat",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 2738
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_reason_with_heartbeat",
+      "type": "long_function",
+      "value": 94,
+      "line": 2738
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_reason",
+      "type": "long_function",
+      "value": 56,
+      "line": 2835
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_parse_decision",
+      "type": "high_complexity",
+      "value": 16,
+      "line": 2892
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_parse_decision",
+      "type": "long_function",
+      "value": 83,
+      "line": 2892
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_handle_final_answer",
+      "type": "high_complexity",
+      "value": 21,
+      "line": 3003
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_handle_final_answer",
+      "type": "long_function",
+      "value": 172,
+      "line": 3003
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_detect_loops",
+      "type": "long_function",
+      "value": 75,
+      "line": 3178
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_strip_heavy_content",
+      "type": "high_complexity",
+      "value": 12,
+      "line": 3303
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_strip_heavy_content",
+      "type": "long_function",
+      "value": 56,
+      "line": 3303
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_handle_llm_error",
+      "type": "high_complexity",
+      "value": 19,
+      "line": 3360
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_handle_llm_error",
+      "type": "long_function",
+      "value": 131,
+      "line": 3360
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_emit_progress",
+      "type": "missing_docstring",
+      "line": 522
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_do_reason",
+      "type": "missing_docstring",
+      "line": 2770
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_heartbeat_loop",
+      "type": "missing_docstring",
+      "line": 2787
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_build_effective_prompt",
+      "type": "missing_docstring",
+      "line": 1424
+    },
+    {
+      "file": "src\\openakita\\core\\reasoning_engine.py",
+      "function": "_make_tool_sig",
+      "type": "missing_docstring",
+      "line": 1503
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 41
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "has_any_limit",
+      "type": "missing_docstring",
+      "line": 65
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 93
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "config",
+      "type": "missing_docstring",
+      "line": 108
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "tokens_used",
+      "type": "missing_docstring",
+      "line": 112
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "cost_used",
+      "type": "missing_docstring",
+      "line": 116
+    },
+    {
+      "file": "src\\openakita\\core\\resource_budget.py",
+      "function": "elapsed_seconds",
+      "type": "missing_docstring",
+      "line": 120
+    },
+    {
+      "file": "src\\openakita\\core\\response_handler.py",
+      "function": "verify_task_completion",
+      "type": "high_complexity",
+      "value": 21,
+      "line": 150
+    },
+    {
+      "file": "src\\openakita\\core\\response_handler.py",
+      "function": "verify_task_completion",
+      "type": "long_function",
+      "value": 136,
+      "line": 150
+    },
+    {
+      "file": "src\\openakita\\core\\skill_manager.py",
+      "function": "_install_from_git",
+      "type": "high_complexity",
+      "value": 13,
+      "line": 165
+    },
+    {
+      "file": "src\\openakita\\core\\skill_manager.py",
+      "function": "_install_from_git",
+      "type": "long_function",
+      "value": 64,
+      "line": 165
+    },
+    {
+      "file": "src\\openakita\\core\\skill_manager.py",
+      "function": "_install_from_url",
+      "type": "high_complexity",
+      "value": 14,
+      "line": 230
+    },
+    {
+      "file": "src\\openakita\\core\\skill_manager.py",
+      "function": "_install_from_url",
+      "type": "long_function",
+      "value": 71,
+      "line": 230
+    },
+    {
+      "file": "src\\openakita\\core\\supervisor.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 104
+    },
+    {
+      "file": "src\\openakita\\core\\supervisor.py",
+      "function": "enabled",
+      "type": "missing_docstring",
+      "line": 136
+    },
+    {
+      "file": "src\\openakita\\core\\supervisor.py",
+      "function": "events",
+      "type": "missing_docstring",
+      "line": 140
+    },
+    {
+      "file": "src\\openakita\\core\\supervisor.py",
+      "function": "evaluate",
+      "type": "high_complexity",
+      "value": 11,
+      "line": 210
+    },
+    {
+      "file": "src\\openakita\\core\\supervisor.py",
+      "function": "evaluate",
+      "type": "long_function",
+      "value": 83,
+      "line": 210
+    },
+    {
+      "file": "src\\openakita\\core\\task_monitor.py",
+      "function": "__init__",
+      "type": "long_function",
+      "value": 51,
+      "line": 126
+    },
+    {
+      "file": "src\\openakita\\core\\task_monitor.py",
+      "function": "get_retrospect_context",
+      "type": "long_function",
+      "value": 56,
+      "line": 475
+    },
+    {
+      "file": "src\\openakita\\core\\task_monitor.py",
+      "function": "to_dict",
+      "type": "missing_docstring",
+      "line": 577
+    },
+    {
+      "file": "src\\openakita\\core\\task_monitor.py",
+      "function": "get_summary",
+      "type": "long_function",
+      "value": 51,
+      "line": 690
+    },
+    {
+      "file": "src\\openakita\\core\\token_tracking.py",
+      "function": "set_tracking_context",
+      "type": "missing_docstring",
+      "line": 43
+    },
+    {
+      "file": "src\\openakita\\core\\token_tracking.py",
+      "function": "get_tracking_context",
+      "type": "missing_docstring",
+      "line": 47
+    },
+    {
+      "file": "src\\openakita\\core\\token_tracking.py",
+      "function": "reset_tracking_context",
+      "type": "missing_docstring",
+      "line": 51
+    },
+    {
+      "file": "src\\openakita\\core\\token_tracking.py",
+      "function": "_writer_loop",
+      "type": "long_function",
+      "value": 62,
+      "line": 128
+    },
+    {
+      "file": "src\\openakita\\core\\token_tracking.py",
+      "function": "_flush",
+      "type": "missing_docstring",
+      "line": 192
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "__init__",
+      "type": "missing_docstring",
+      "line": 116
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "_execute_with_cancel",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 151
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "_execute_with_cancel",
+      "type": "long_function",
+      "value": 60,
+      "line": 151
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "execute_tool",
+      "type": "long_function",
+      "value": 91,
+      "line": 212
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "execute_batch",
+      "type": "high_complexity",
+      "value": 35,
+      "line": 304
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "execute_batch",
+      "type": "long_function",
+      "value": 206,
+      "line": 304
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "_run_one",
+      "type": "high_complexity",
+      "value": 23,
+      "line": 347
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "_run_one",
+      "type": "long_function",
+      "value": 120,
+      "line": 347
+    },
+    {
+      "file": "src\\openakita\\core\\tool_executor.py",
+      "function": "_run_one",
+      "type": "missing_docstring",
+      "line": 347
+    },
+    {
+      "file": "src\\openakita\\core\\trait_miner.py",
+      "function": "mine_from_message",
+      "type": "long_function",
+      "value": 51,
+      "line": 129
+    },
+    {
+      "file": "src\\openakita\\core\\trait_miner.py",
+      "function": "_parse_trait_response",
+      "type": "high_complexity",
+      "value": 15,
+      "line": 181
+    },
+    {
+      "file": "src\\openakita\\core\\trait_miner.py",
+      "function": "_parse_trait_response",
+      "type": "long_function",
+      "value": 80,
+      "line": 181
+    }
+  ],
+  "dependencies": {
+    "anthropic": {
+      "current": "unknown",
+      "required": ">=0.40.0\""
+    },
+    "openai": {
+      "current": "unknown",
+      "required": ">=1.0.0\""
+    },
+    "mcp": {
+      "current": "unknown",
+      "required": ">=1.0.0\""
+    },
+    "ddgs": {
+      "current": "unknown",
+      "required": ">=8.0.0\""
+    },
+    "rich": {
+      "current": "unknown",
+      "required": ">=13.7.0\""
+    },
+    "prompt-toolkit": {
+      "current": "unknown",
+      "required": ">=3.0.43\""
+    },
+    "typer": {
+      "current": "unknown",
+      "required": ">=0.12.0\""
+    },
+    "httpx[socks]": {
+      "current": "unknown",
+      "required": ">=0.27.0\""
+    },
+    "aiofiles": {
+      "current": "unknown",
+      "required": ">=24.1.0\""
+    },
+    "nest-asyncio": {
+      "current": "unknown",
+      "required": ">=1.5.0\""
+    },
+    "aiosqlite": {
+      "current": "unknown",
+      "required": ">=0.20.0\""
+    },
+    "pydantic": {
+      "current": "unknown",
+      "required": ">=2.5.0\""
+    },
+    "pydantic-settings": {
+      "current": "unknown",
+      "required": ">=2.1.0\""
+    },
+    "gitpython": {
+      "current": "unknown",
+      "required": ">=3.1.40\""
+    },
+    "pyyaml": {
+      "current": "unknown",
+      "required": ">=6.0.1\""
+    },
+    "python-dotenv": {
+      "current": "unknown",
+      "required": ">=1.0.0\""
+    },
+    "tenacity": {
+      "current": "unknown",
+      "required": ">=8.2.3\""
+    },
+    "simplejson": {
+      "current": "unknown",
+      "required": ">=3.19.2\""
+    },
+    "fastapi": {
+      "current": "unknown",
+      "required": ">=0.110.0\""
+    },
+    "uvicorn": {
+      "current": "unknown",
+      "required": ">=0.27.0\""
+    },
+    "python-telegram-bot": {
+      "current": "unknown",
+      "required": ">=21.0\""
+    },
+    "playwright": {
+      "current": "unknown",
+      "required": ">=1.40.0\""
+    },
+    "browser-use": {
+      "current": "unknown",
+      "required": ">=0.11.8\""
+    },
+    "langchain-openai": {
+      "current": "unknown",
+      "required": ">=1.0.0\""
+    },
+    "Pillow": {
+      "current": "unknown",
+      "required": ">=10.0.0\""
+    }
+  },
+  "test_info": {
+    "total_tests": 0,
+    "can_run": true,
+    "error": null
+  },
+  "technical_debt": [
+    {
+      "type": "代码复杂度",
+      "count": 104,
+      "estimated_hours": 208,
+      "priority": "高",
+      "description": "重构高圈复杂度函数，降低维护成本"
+    },
+    {
+      "type": "文档缺失",
+      "count": 209,
+      "estimated_hours": 104.5,
+      "priority": "中",
+      "description": "为公共函数添加文档字符串"
+    },
+    {
+      "type": "函数过长",
+      "count": 127,
+      "estimated_hours": 381,
+      "priority": "中",
+      "description": "拆分超长函数，提高可读性"
+    }
+  ]
+}

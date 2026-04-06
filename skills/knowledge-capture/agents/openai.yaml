@@ -1,0 +1,9 @@
+interface:
+  display_name: Knowledge Capture
+  short_description: Transform conversations and unstructured information into str...
+  default_prompt: Use $knowledge-capture
+i18n:
+  zh:
+    name: Notion 知识捕获
+    description: 将对话和非结构化信息转化为结构化 Notion 文档，提取关键洞察、决策和行动项，支持会议笔记、操作指南、决策记录等模板，集成 Notion
+      API。

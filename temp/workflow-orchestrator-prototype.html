@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作流编排器 - 执行型 Agent 原型</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drag-item { cursor: grab; }
+        .drag-item:active { cursor: grabbing; }
+        .drop-zone { min-height: 60px; border: 2px dashed #cbd5e1; }
+        .drop-zone.drag-over { border-color: #3b82f6; background: #eff6ff; }
+        .workflow-node { position: relative; }
+        .workflow-node:hover .node-actions { opacity: 1; }
+        .node-actions { opacity: 0; transition: opacity 0.2s; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useRef } = React;
+        
+        // 预置工作流模板
+        const TEMPLATES = [
+            { id: 1, name: '📦 订单自动处理', industry: '电商', time: '2 分钟' },
+            { id: 2, name: '📧 客服邮件分类回复', industry: '电商', time: '3 分钟' },
+            { id: 3, name: '📊 销售日报自动生成', industry: '电商', time: '2 分钟' },
+            { id: 4, name: '📅 客户预约自动确认', industry: '服务业', time: '2 分钟' },
+            { id: 5, name: '🔧 服务工单自动分配', industry: '服务业', time: '3 分钟' },
+            { id: 6, name: '⭐ 客户满意度调研', industry: '服务业', time: '2 分钟' },
+            { id: 7, name: '📦 库存预警补货', industry: '制造业', time: '3 分钟' },
+            { id: 8, name: '🏭 生产日报汇总', industry: '制造业', time: '2 分钟' },
+            { id: 9, name: '📄 合同到期提醒', industry: '专业服务', time: '2 分钟' },
+            { id: 10, name: '📝 会议纪要待办', industry: '专业服务', time: '3 分钟' },
+        ];
+        
+        // 可用节点类型
+        const NODE_TYPES = [
+            { type: 'trigger', label: '🔔 触发器', icon: '🔔', color: 'bg-green-500' },
+            { type: 'action', label: '⚡ 执行动作', icon: '⚡', color: 'bg-blue-500' },
+            { type: 'condition', label: '🔀 条件分支', icon: '🔀', color: 'bg-yellow-500' },
+            { type: 'loop', label: '🔄 循环', icon: '🔄', color: 'bg-purple-500' },
+            { type: 'exception', label: '⚠️ 异常处理', icon: '⚠️', color: 'bg-red-500' },
+        ];
+        
+        // 节点组件
+        function WorkflowNode({ node, onDelete, onEdit }) {
+            const typeConfig = NODE_TYPES.find(t => t.type === node.type);
+            return (
+                <div className="workflow-node bg-white rounded-lg shadow-md p-4 mb-3 border-l-4" style={{borderLeftColor: typeConfig?.color.replace('bg-', '')}}>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <span className={`w-8 h-8 ${typeConfig?.color} rounded-full flex items-center justify-center text-white`}>
+                                {typeConfig?.icon}
+                            </span>
+                            <div>
+                                <h4 className="font-semibold text-gray-800">{node.name}</h4>
+                                <p className="text-sm text-gray-500">{typeConfig?.label}</p>
+                            </div>
+                        </div>
+                        <div className="node-actions flex space-x-2">
+                            <button onClick={() => onEdit(node)} className="text-blue-600 hover:text-blue-800 text-sm">编辑</button>
+                            <button onClick={() => onDelete(node.id)} className="text-red-600 hover:text-red-800 text-sm">删除</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+        
+        // 主应用
+        function App() {
+            const [workflow, setWorkflow] = useState([]);
+            const [selectedTemplate, setSelectedTemplate] = useState(null);
+            const [draggedNode, setDraggedNode] = useState(null);
+            const [showTime, setShowTime] = useState(0);
+            const [currentStep, setCurrentStep] = useState(0);
+            
+            // 引导步骤
+            const steps = [
+                '选择一个行业模板',
+                '拖拽节点到工作区',
+                '配置节点参数',
+                '测试并运行'
+            ];
+            
+            // 处理拖拽开始
+            const handleDragStart = (e, nodeType) => {
+                setDraggedNode(nodeType);
+                e.dataTransfer.effectAllowed = 'copy';
+            };
+            
+            // 处理拖拽放置
+            const handleDrop = (e) => {
+                e.preventDefault();
+                if (draggedNode) {
+                    const newNode = {
+                        id: Date.now(),
+                        type: draggedNode.type,
+                        name: `${draggedNode.label} ${workflow.length + 1}`,
+                        config: {}
+                    };
+                    setWorkflow([...workflow, newNode]);
+                    setShowTime(prev => prev + 15);
+                    setDraggedNode(null);
+                }
+            };
+            
+            // 删除节点
+            const handleDeleteNode = (nodeId) => {
+                setWorkflow(workflow.filter(n => n.id !== nodeId));
+            };
+            
+            // 编辑节点
+            const handleEditNode = (node) => {
+                alert(`编辑节点：${node.name}\n（原型演示，实际会打开配置面板）`);
+            };
+            
+            // 使用模板
+            const useTemplate = (template) => {
+                setSelectedTemplate(template);
+                // 模拟加载模板
+                const mockWorkflow = [
+                    { id: 1, type: 'trigger', name: '当新订单产生时', config: {} },
+                    { id: 2, type: 'action', name: '验证订单信息', config: {} },
+                    { id: 3, type: 'condition', name: '库存是否充足？', config: {} },
+                    { id: 4, type: 'action', name: '生成发货单', config: {} },
+                    { id: 5, type: 'action', name: '通知仓库', config: {} },
+                ];
+                setWorkflow(mockWorkflow);
+                setShowTime(120);
+                setCurrentStep(2);
+            };
+            
+            // 重置工作流
+            const resetWorkflow = () => {
+                setWorkflow([]);
+                setSelectedTemplate(null);
+                setShowTime(0);
+                setCurrentStep(0);
+            };
+            
+            return (
+                <div className="min-h-screen">
+                    {/* 顶部导航 */}
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-900">🚀 工作流编排器</h1>
+                                <p className="text-sm text-gray-500">让 AI 真正帮你干活，3 分钟上手</p>
+                            </div>
+                            <div className="flex items-center space-x-4">
+                                <div className="text-right">
+                                    <p className="text-sm text-gray-500">预计配置时间</p>
+                                    <p className="text-2xl font-bold text-blue-600">{showTime}秒</p>
+                                </div>
+                                <button onClick={resetWorkflow} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+                                    重置
+                                </button>
+                                <button className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+                                    运行工作流
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+                    
+                    <div className="max-w-7xl mx-auto px-4 py-6 flex gap-6">
+                        {/* 左侧：组件面板 */}
+                        <aside className="w-64 flex-shrink-0">
+                            <div className="bg-white rounded-lg shadow p-4 sticky top-4">
+                                <h3 className="font-semibold text-gray-800 mb-4">📦 组件库</h3>
+                                <div className="space-y-2">
+                                    {NODE_TYPES.map(nodeType => (
+                                        <div
+                                            key={nodeType.type}
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, nodeType)}
+                                            className="drag-item bg-gray-50 hover:bg-blue-50 border border-gray-200 rounded-lg p-3 cursor-grab transition-colors"
+                                        >
+                                            <div className="flex items-center space-x-2">
+                                                <span className="text-xl">{nodeType.icon}</span>
+                                                <span className="text-sm font-medium">{nodeType.label}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                <div className="mt-6 pt-6 border-t">
+                                    <h4 className="font-semibold text-gray-800 mb-3 text-sm">💡 提示</h4>
+                                    <p className="text-xs text-gray-500">
+                                        拖拽组件到右侧工作区，构建你的自动化工作流
+                                    </p>
+                                </div>
+                            </div>
+                        </aside>
+                        
+                        {/* 中间：工作区 */}
+                        <main className="flex-1">
+                            {/* 步骤指示器 */}
+                            <div className="bg-white rounded-lg shadow p-4 mb-4">
+                                <div className="flex items-center justify-between">
+                                    {steps.map((step, index) => (
+                                        <div key={index} className="flex items-center">
+                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                                index <= currentStep ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'
+                                            }`}>
+                                                {index + 1}
+                                            </div>
+                                            <span className={`ml-2 text-sm ${index <= currentStep ? 'text-gray-900' : 'text-gray-400'}`}>
+                                                {step}
+                                            </span>
+                                            {index < steps.length - 1 && (
+                                                <div className={`w-12 h-0.5 mx-2 ${index < currentStep ? 'bg-blue-600' : 'bg-gray-200'}`}></div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {/* 模板选择（如果未选择） */}
+                            {!selectedTemplate && (
+                                <div className="bg-white rounded-lg shadow p-6 mb-4">
+                                    <h3 className="font-semibold text-gray-800 mb-4">🎯 选择行业模板快速开始</h3>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {TEMPLATES.map(template => (
+                                            <button
+                                                key={template.id}
+                                                onClick={() => useTemplate(template)}
+                                                className="text-left p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                                            >
+                                                <div className="font-medium text-gray-900">{template.name}</div>
+                                                <div className="text-sm text-gray-500 mt-1">
+                                                    {template.industry} · {template.time}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {/* 工作区 */}
+                            <div
+                                onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
+                                onDragLeave={(e) => { e.currentTarget.classList.remove('drag-over'); }}
+                                onDrop={handleDrop}
+                                className="bg-white rounded-lg shadow p-6 min-h-[500px]"
+                            >
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-semibold text-gray-800">
+                                        {selectedTemplate ? `📋 ${selectedTemplate.name}` : '📝 工作流设计区'}
+                                    </h3>
+                                    {workflow.length > 0 && (
+                                        <span className="text-sm text-gray-500">{workflow.length} 个节点</span>
+                                    )}
+                                </div>
+                                
+                                {workflow.length === 0 ? (
+                                    <div className="text-center py-20 text-gray-400">
+                                        <div className="text-6xl mb-4">🎨</div>
+                                        <p className="text-lg">拖拽组件到此处开始构建工作流</p>
+                                        <p className="text-sm mt-2">或从上方选择一个行业模板快速开始</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {workflow.map((node, index) => (
+                                            <div key={node.id}>
+                                                <WorkflowNode
+                                                    node={node}
+                                                    onDelete={handleDeleteNode}
+                                                    onEdit={handleEditNode}
+                                                />
+                                                {index < workflow.length - 1 && (
+                                                    <div className="flex justify-center -my-1">
+                                                        <div className="w-0.5 h-4 bg-gray-300"></div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </main>
+                        
+                        {/* 右侧：属性面板 */}
+                        <aside className="w-72 flex-shrink-0">
+                            <div className="bg-white rounded-lg shadow p-4 sticky top-4">
+                                <h3 className="font-semibold text-gray-800 mb-4">⚙️ 属性配置</h3>
+                                {workflow.length > 0 ? (
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">节点名称</label>
+                                            <input type="text" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="输入节点名称" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">触发条件</label>
+                                            <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                                <option>当新数据产生时</option>
+                                                <option>定时触发</option>
+                                                <option>手动触发</option>
+                                                <option>API 调用</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">执行动作</label>
+                                            <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                                <option>发送邮件</option>
+                                                <option>生成报表</option>
+                                                <option>更新数据库</option>
+                                                <option>调用 API</option>
+                                                <option>发送通知</option>
+                                            </select>
+                                        </div>
+                                        <div className="pt-4 border-t">
+                                            <h4 className="text-sm font-medium text-gray-700 mb-2">高级设置</h4>
+                                            <label className="flex items-center space-x-2 text-sm text-gray-600">
+                                                <input type="checkbox" className="rounded" />
+                                                <span>启用异常处理</span>
+                                            </label>
+                                            <label className="flex items-center space-x-2 text-sm text-gray-600 mt-2">
+                                                <input type="checkbox" className="rounded" />
+                                                <span>记录执行日志</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-gray-500 text-center py-8">
+                                        选择或创建一个节点以配置属性
+                                    </p>
+                                )}
+                                
+                                <div className="mt-6 pt-6 border-t">
+                                    <h4 className="font-semibold text-gray-800 mb-3 text-sm">📊 执行统计</h4>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">预计节省时间</span>
+                                            <span className="font-medium text-green-600">{Math.floor(showTime / 60)}分钟/天</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">工作流复杂度</span>
+                                            <span className="font-medium">{workflow.length === 0 ? '未开始' : workflow.length < 5 ? '简单' : '中等'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+            );
+        }
+        
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>

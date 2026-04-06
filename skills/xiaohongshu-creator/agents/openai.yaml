@@ -1,0 +1,9 @@
+interface:
+  display_name: "Xiaohongshu Creator"
+  short_description: "Create engaging Xiaohongshu content with SEO optimization"
+  default_prompt: "Use $xiaohongshu-creator to create Xiaohongshu content"
+
+i18n:
+  zh:
+    name: "小红书内容创作"
+    description: "创建小红书爆款笔记，包括标题、正文、话题标签和图片风格建议，支持多种笔记类型。"

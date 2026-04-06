@@ -1,0 +1,8 @@
+interface:
+  display_name: Baoyu Article Illustrator
+  short_description: Analyzes article structure, identifies positions requiring vi...
+  default_prompt: Use $baoyu-article-illustrator
+i18n:
+  zh:
+    name: 文章配图
+    description: 智能分析文章结构，自动识别配图位置，Type×Style双维度生成一致风格插图

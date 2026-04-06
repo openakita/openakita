@@ -1,0 +1,9 @@
+interface:
+  display_name: Superpowers Receiving Review
+  short_description: Use when receiving code review feedback, before implementing
+    ...
+  default_prompt: Use $superpowers-receiving-review
+i18n:
+  zh:
+    name: 接收代码评审
+    description: 处理代码评审反馈：理解评论、分类问题、逐项修复、验证后回复

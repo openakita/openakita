@@ -1,0 +1,88 @@
+# OpenAkita MVP - 生产环境 Dockerfile
+# 多阶段构建，最小化镜像体积
+# 支持 x86_64 和 ARM64 架构
+# 版本：v1.0 | 日期：2026-03-11
+
+# ── Stage 1: 构建依赖 ──
+FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /app
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖文件
+COPY requirements.txt .
+
+# 创建虚拟环境并安装依赖
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ── Stage 2: 生产镜像 ──
+FROM python:3.11-slim-bookworm AS production
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    APP_HOME=/app \
+    LOGS_DIR=/app/logs \
+    DATA_DIR=/app/data
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# 创建非 root 用户
+RUN groupadd --gid 1000 appgroup && \
+    useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
+
+WORKDIR $APP_HOME
+
+# 从 builder 阶段复制虚拟环境
+COPY --from=builder /opt/venv /opt/venv
+
+# 复制应用代码
+COPY --chown=appuser:appgroup src/ src/
+COPY --chown=appuser:appgroup identity/ identity/
+COPY --chown=appuser:appgroup skills/ skills/
+COPY --chown=appuser:appgroup pyproject.toml .
+COPY --chown=appuser:appgroup VERSION .
+
+# 创建必要目录
+RUN mkdir -p $LOGS_DIR $DATA_DIR/uploads $DATA_DIR/temp && \
+    chown -R appuser:appgroup $APP_HOME
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# 切换到非 root 用户
+USER appuser
+
+# 暴露端口
+EXPOSE 8000
+
+# 默认命令（可在 docker-compose 中覆盖）
+CMD ["gunicorn", "src.openakita.api.main:app", \
+     "-k", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--workers", "4"]
+
+# ── 构建说明 ──
+# 本地构建：docker build -t openakita/app:latest -f Dockerfile.prod .
+# 多架构构建：docker buildx build --platform linux/amd64,linux/arm64 -t openakita/app:latest -f Dockerfile.prod . --push
+# 镜像体积：~450MB (压缩后 ~180MB)

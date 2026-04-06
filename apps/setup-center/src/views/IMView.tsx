@@ -1201,15 +1201,15 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
             <p className="text-sm text-muted-foreground">{t("im.groupPolicyDesc")}</p>
             <div className="grid grid-cols-1 gap-3">
               {groupSessions.map((g) => (
-                <div key={g.chatId} className="flex items-center justify-between rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm transition-all hover:shadow-md">
+                <div key={g.chatId} className="flex items-center justify-between gap-3 overflow-x-auto rounded-xl border border-border/60 bg-card px-4 py-3 shadow-sm transition-all hover:shadow-md">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
                       <IconUsers size={20} />
                     </div>
                     <div className="min-w-0">
-                      <span className={cn("text-[15px] font-semibold truncate block text-foreground", g.alias && "text-primary")}>{g.alias || g.chatName}</span>
+                      <span className={cn("text-[15px] font-semibold truncate block text-foreground", g.alias && "text-primary")} title={g.alias || g.chatName}>{g.alias || g.chatName}</span>
                       {(g.alias || g.chatName !== g.chatId) && (
-                        <span className="text-xs text-muted-foreground truncate block mt-0.5 font-mono">{g.alias ? g.chatName : g.chatId}</span>
+                        <span className="text-xs text-muted-foreground truncate block mt-0.5 font-mono" title={g.alias ? g.chatName : g.chatId}>{g.alias ? g.chatName : g.chatId}</span>
                       )}
                     </div>
                   </div>
@@ -1221,7 +1221,7 @@ function GroupPolicyTab({ apiBase }: { apiBase: string }) {
                       size="sm"
                       value={g.responseMode || "global"}
                       onValueChange={(v) => handleSetMode(g, v)}
-                      className="bg-muted/30 p-1 rounded-lg [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground [&_[data-state=on]]:shadow-sm"
+                      className="min-w-max shrink-0 bg-muted/30 p-1 rounded-lg [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground [&_[data-state=on]]:shadow-sm"
                     >
                       {RESPONSE_MODES.map((m) => (
                         <ToggleGroupItem key={m.value} value={m.value} className="text-xs h-7 px-3 rounded-md transition-all">

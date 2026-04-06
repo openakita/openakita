@@ -1,0 +1,8 @@
+interface:
+  display_name: Baoyu Slide Deck
+  short_description: Generates professional slide deck images from content
+  default_prompt: Use $baoyu-slide-deck
+i18n:
+  zh:
+    name: 幻灯片图片
+    description: 从内容生成专业幻灯片图片，支持多种布局和视觉风格

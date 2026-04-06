@@ -1,0 +1,9 @@
+interface:
+  display_name: "Todoist Task"
+  short_description: "Manage Todoist tasks, projects, and labels via API"
+  default_prompt: "Use $todoist-task to manage my Todoist tasks"
+
+i18n:
+  zh:
+    name: "Todoist 任务管理"
+    description: "通过 Todoist REST API 管理任务、项目、标签和过滤器，支持完整的 CRUD 操作和批量处理。"

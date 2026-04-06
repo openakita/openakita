@@ -827,26 +827,32 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
       {/* Header: Tabs + Search + Actions */}
       <Card className="gap-0 border-border/80 py-0 shadow-sm">
         <CardContent className="p-4">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center justify-between gap-4 overflow-x-auto">
             <ToggleGroup
               type="single"
               value={activeTab}
               onValueChange={(v) => { if (v) setActiveTab(v as TaskTab); }}
               variant="outline"
-              className="justify-start"
+              className="shrink-0 justify-start"
             >
-              <ToggleGroupItem value="active" className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                {t("scheduler.tabActive")} {countBadge(tabCounts.active, "active")}
+              <ToggleGroupItem value="active" className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary" title={t("scheduler.tabActive")}>
+                <span className="hidden xl:inline">{t("scheduler.tabActive")}</span>
+                <span className="xl:hidden">进行中</span>
+                {countBadge(tabCounts.active, "active")}
               </ToggleGroupItem>
-              <ToggleGroupItem value="completed" className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                {t("scheduler.tabCompleted")} {countBadge(tabCounts.completed, "completed")}
+              <ToggleGroupItem value="completed" className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary" title={t("scheduler.tabCompleted")}>
+                <span className="hidden xl:inline">{t("scheduler.tabCompleted")}</span>
+                <span className="xl:hidden">已完成</span>
+                {countBadge(tabCounts.completed, "completed")}
               </ToggleGroupItem>
-              <ToggleGroupItem value="all" className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                {t("scheduler.tabAll")} {countBadge(tabCounts.all, "all")}
+              <ToggleGroupItem value="all" className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary" title={t("scheduler.tabAll")}>
+                <span className="hidden xl:inline">{t("scheduler.tabAll")}</span>
+                <span className="xl:hidden">全部</span>
+                {countBadge(tabCounts.all, "all")}
               </ToggleGroupItem>
             </ToggleGroup>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative flex-1 min-w-[200px]">
+            <div className="flex min-w-max items-center gap-3">
+              <div className="relative w-[220px] min-w-[180px] md:w-[280px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 <Input
                   placeholder={t("scheduler.searchPlaceholder")}
@@ -855,12 +861,19 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   className="pl-9 h-9 text-sm"
                 />
               </div>
-              <Button variant="outline" size="sm" className="h-9" onClick={() => fetchTasks()} disabled={loading}>
+              <Button variant="outline" size="sm" className="h-9 shrink-0" onClick={() => fetchTasks()} disabled={loading} title={t("scheduler.refresh")}>
                 {loading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
-                <span className="hidden sm:inline ml-1.5">{t("scheduler.refresh")}</span>
+                <span className="ml-1.5 hidden xl:inline">{t("scheduler.refresh")}</span>
               </Button>
-              <Button size="sm" className="h-9 bg-gradient-to-br from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white border-0 shadow-md shadow-indigo-500/20" onClick={openCreate}>
-                <Plus size={14} className="mr-1.5" /> {t("scheduler.addTask")}
+              <Button
+                size="sm"
+                className="h-9 shrink-0 bg-gradient-to-br from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white border-0 shadow-md shadow-indigo-500/20"
+                onClick={openCreate}
+                title={t("scheduler.addTask")}
+              >
+                <Plus size={14} className="mr-1.5" />
+                <span className="hidden xl:inline">{t("scheduler.addTask")}</span>
+                <span className="xl:hidden">新建</span>
               </Button>
             </div>
           </div>

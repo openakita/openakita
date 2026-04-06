@@ -341,11 +341,13 @@ export function StatusView(props: StatusViewProps) {
       {/* LLM Endpoints compact table */}
       <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
-          <div>
-            <CardTitle className="text-sm">{t("status.llmEndpoints")} ({endpointSummary.length})</CardTitle>
-            <CardDescription className="mt-1 text-xs">模型端点状态与健康检查</CardDescription>
+          <div className="min-w-0">
+            <CardTitle className="truncate text-sm" title={`${t("status.llmEndpoints")} (${endpointSummary.length})`}>
+              {t("status.llmEndpoints")} ({endpointSummary.length})
+            </CardTitle>
+            <CardDescription className="mt-1 truncate text-xs" title="模型端点状态与健康检查">模型端点状态与健康检查</CardDescription>
           </div>
-          <Button size="sm" variant="outline" onClick={async () => {
+          <Button size="sm" variant="outline" className="shrink-0" title={t("status.checkAll")} onClick={async () => {
             setHealthChecking("all");
             try {
               let results: Array<{ name: string; status: string; latency_ms: number | null; error: string | null; error_category: string | null; consecutive_failures: number; cooldown_remaining: number; is_extended_cooldown: boolean; last_checked_at: string | null }>;
@@ -364,7 +366,9 @@ export function StatusView(props: StatusViewProps) {
               setEndpointHealth(h);
             } catch (e) { notifyError(String(e)); } finally { setHealthChecking(null); }
           }} disabled={!!healthChecking || !!busy}>
-            {healthChecking === "all" ? <><Loader2 className="animate-spin mr-1" size={14} />{t("status.checking")}</> : <><Activity size={14} className="mr-1" />{t("status.checkAll")}</>}
+            {healthChecking === "all"
+              ? <><Loader2 className="animate-spin mr-1" size={14} /><span className="hidden xl:inline">{t("status.checking")}</span></>
+              : <><Activity size={14} className="mr-1" /><span className="hidden xl:inline">{t("status.checkAll")}</span></>}
           </Button>
         </CardHeader>
         <CardContent className="px-0 pb-0">
@@ -452,8 +456,8 @@ export function StatusView(props: StatusViewProps) {
       <div className="statusGrid2">
         <Card className="gap-0 border-border/80 py-0 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
-            <CardTitle className="text-sm">{t("status.imChannels")}</CardTitle>
-            <Button size="sm" variant="outline" onClick={async () => {
+            <CardTitle className="min-w-0 truncate text-sm" title={t("status.imChannels")}>{t("status.imChannels")}</CardTitle>
+            <Button size="sm" variant="outline" className="shrink-0" title={t("status.checkAll")} onClick={async () => {
               setImChecking(true);
               try {
                 const healthUrl = shouldUseHttpApi() ? httpApiBase() : null;
@@ -479,7 +483,9 @@ export function StatusView(props: StatusViewProps) {
                 }
               } catch (err) { notifyError(String(err)); } finally { setImChecking(false); }
             }} disabled={imChecking || !!busy}>
-              {imChecking ? <><Loader2 className="animate-spin mr-1" size={14} />{t("status.checking")}</> : <><Activity size={14} className="mr-1" />{t("status.checkAll")}</>}
+              {imChecking
+                ? <><Loader2 className="animate-spin mr-1" size={14} /><span className="hidden xl:inline">{t("status.checking")}</span></>
+                : <><Activity size={14} className="mr-1" /><span className="hidden xl:inline">{t("status.checkAll")}</span></>}
             </Button>
           </CardHeader>
           <CardContent className="space-y-2 px-5 pb-4 pt-0">
@@ -537,9 +543,9 @@ export function StatusView(props: StatusViewProps) {
       {/* Service log */}
       {serviceStatus?.running && (
         <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between gap-3 px-5 py-4">
-            <CardTitle className="text-sm">{t("status.log")}</CardTitle>
-            <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 overflow-x-auto px-5 py-4">
+            <CardTitle className="min-w-0 shrink-0 truncate text-sm" title={t("status.log")}>{t("status.log")}</CardTitle>
+            <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0, whiteSpace: "nowrap" }}>
               {(["ERROR", "WARN", "INFO", "DEBUG"] as const).map((level) => {
                 const active = logLevelFilter.has(level);
                 return (

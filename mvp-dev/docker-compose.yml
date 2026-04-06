@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Qdrant 向量数据库
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mvp-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant_storage:/qdrant/storage:z
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    networks:
+      - mvp-network
+
+  # Redis (Celery Broker & Backend)
+  redis:
+    image: redis:7-alpine
+    container_name: mvp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - mvp-network
+
+  # MLflow 实验追踪平台
+  mlflow:
+    image: python:3.11-slim
+    container_name: mvp-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data/mlflow:/mlflow
+      - ./mlflow-platform:/app
+    working_dir: /app
+    command: >
+      bash -c "pip install mlflow && 
+               mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow/mlflow.db --default-artifact-root /mlflow/artifacts"
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5000
+    restart: unless-stopped
+    networks:
+      - mvp-network
+    depends_on:
+      - redis
+
+networks:
+  mvp-network:
+    driver: bridge

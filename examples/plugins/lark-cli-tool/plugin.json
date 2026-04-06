@@ -1,0 +1,32 @@
+{
+  "id": "lark-cli-tool",
+  "name": "Lark/Feishu CLI",
+  "version": "1.0.0",
+  "description": "Integrates the official @larksuite/cli (NOT @byted-apaas/cli) as LLM-callable tools — manage Calendar, Messenger, Docs, Drive, Sheets, Base, Tasks, Wiki, Contact, Mail, and Meetings via the Feishu/Lark Open Platform CLI. One-click quickstart setup, no manual tenant ID input needed.",
+  "author": "OpenAkita Team",
+  "license": "MIT",
+  "type": "python",
+  "entry": "plugin.py",
+  "homepage": "https://github.com/larksuite/cli",
+  "permissions": [
+    "tools.register",
+    "config.read",
+    "config.write",
+    "log"
+  ],
+  "requires": {
+    "openakita": ">=1.5.0",
+    "plugin_api": "~1",
+    "python": ">=3.11",
+    "npm": ["@larksuite/cli"]
+  },
+  "provides": {
+    "tools": ["lark_setup", "lark_run", "lark_schema"],
+    "config_schema": "config_schema.json"
+  },
+  "category": "tool",
+  "tags": ["feishu", "lark", "larksuite", "calendar", "messenger", "docs", "drive", "sheets", "base", "tasks", "wiki", "mail", "im"],
+  "icon": "brand-feishu",
+  "load_timeout": 10,
+  "hook_timeout": 5
+}

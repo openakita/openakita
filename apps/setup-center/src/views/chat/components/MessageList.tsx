@@ -1,5 +1,4 @@
-import { useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
+import { useRef, useCallback, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from "react";
 import type { ChatMessage, MdModules, ChatDisplayMode } from "../utils/chatTypes";
 import { MessageBubble } from "./MessageBubble";
 import { FlatMessageItem } from "./FlatMessageItem";
@@ -85,17 +84,27 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   },
   ref,
 ) {
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const scrollerElRef = useRef<HTMLElement | null>(null);
+  const scrollerElRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef(new Map<string, HTMLDivElement>());
   const forceFollowRef = useRef(false);
   const atBottomRef = useRef(true);
   const savedScrollTopRef = useRef<number | null>(null);
 
-  const handleAtBottomChange = useCallback((atBottom: boolean) => {
+  const emitAtBottomChange = useCallback((atBottom: boolean) => {
     atBottomRef.current = atBottom;
     onAtBottomChange?.(atBottom);
   }, [onAtBottomChange]);
+
+  const computeAtBottom = useCallback(() => {
+    const el = scrollerElRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= 80;
+  }, []);
+
+  const syncAtBottomState = useCallback(() => {
+    emitAtBottomChange(computeAtBottom());
+  }, [computeAtBottom, emitAtBottomChange]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -120,17 +129,25 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const el = scrollerElRef.current;
     if (el) {
       el.scrollTo({ top: el.scrollHeight, behavior });
-    } else {
-      virtuosoRef.current?.scrollTo({ top: 1_000_000_000, behavior });
     }
   }, []);
 
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, align: "start" | "center" | "end" = "center") => {
-      virtuosoRef.current?.scrollToIndex({ index, align, behavior: "smooth" });
+      const msg = messages[index];
+      if (!msg) return;
+      const target = itemRefs.current.get(msg.id);
+      if (!target) return;
+      target.scrollIntoView({
+        block: align === "end" ? "end" : align === "center" ? "center" : "start",
+        behavior: "smooth",
+      });
     },
     scrollToBottom: scrollToAbsoluteBottom,
-    forceFollow: () => { forceFollowRef.current = true; },
+    forceFollow: () => {
+      forceFollowRef.current = true;
+      requestAnimationFrame(() => scrollToAbsoluteBottom());
+    },
     cancelFollow: () => { forceFollowRef.current = false; },
     isAtBottom: () => atBottomRef.current,
     saveScrollPosition: () => {
@@ -142,17 +159,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       if (el && savedScrollTopRef.current !== null) {
         el.scrollTop = savedScrollTopRef.current;
         savedScrollTopRef.current = null;
+        syncAtBottomState();
       }
     },
-  }), [scrollToAbsoluteBottom]);
-
-  const followOutput = useCallback((isAtBottom: boolean) => {
-    if (forceFollowRef.current && isStreaming) {
-      return "auto";
-    }
-    if (isAtBottom) return isStreaming ? "auto" : "smooth";
-    return false;
-  }, [isStreaming]);
+  }), [messages, scrollToAbsoluteBottom, syncAtBottomState]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -160,31 +170,46 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
   }, [isStreaming]);
 
-  // Explicit scroll-to-bottom when messages count changes while forceFollow is active.
-  // Keep this lightweight to avoid fighting the user's manual scroll.
   useEffect(() => {
-    if (forceFollowRef.current && isStreaming && messages.length > 0) {
-      requestAnimationFrame(() => scrollToAbsoluteBottom());
-    }
-  }, [messages.length, isStreaming, scrollToAbsoluteBottom]);
+    const el = scrollerElRef.current;
+    if (!el) return;
 
-  // Keep scroll pinned to bottom during streaming content updates (same message count,
-  // but content grows). Throttled via rAF to avoid layout thrashing.
-  const streamScrollRaf = useRef(0);
-  useEffect(() => {
-    if (!isStreaming || !forceFollowRef.current) return;
-    if (streamScrollRaf.current) cancelAnimationFrame(streamScrollRaf.current);
-    streamScrollRaf.current = requestAnimationFrame(() => {
-      streamScrollRaf.current = 0;
-      scrollToAbsoluteBottom();
-    });
-    return () => {
-      if (streamScrollRaf.current) {
-        cancelAnimationFrame(streamScrollRaf.current);
-        streamScrollRaf.current = 0;
-      }
+    const onScroll = () => {
+      syncAtBottomState();
     };
-  }, [messages, isStreaming, scrollToAbsoluteBottom]);
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    syncAtBottomState();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [syncAtBottomState]);
+
+  useLayoutEffect(() => {
+    if (forceFollowRef.current || atBottomRef.current) {
+      scrollToAbsoluteBottom();
+      emitAtBottomChange(true);
+      return;
+    }
+    syncAtBottomState();
+  }, [messages, scrollToAbsoluteBottom, syncAtBottomState, emitAtBottomChange]);
+
+  useEffect(() => {
+    const el = scrollerElRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      if (forceFollowRef.current || atBottomRef.current) {
+        scrollToAbsoluteBottom();
+        emitAtBottomChange(true);
+      } else {
+        syncAtBottomState();
+      }
+    });
+
+    observer.observe(el);
+    const firstChild = el.firstElementChild;
+    if (firstChild instanceof HTMLElement) observer.observe(firstChild);
+    return () => observer.disconnect();
+  }, [messages.length, scrollToAbsoluteBottom, syncAtBottomState, emitAtBottomChange]);
 
   const computeItemKey = useCallback((_index: number, msg: ChatMessage) => msg.id, []);
 
@@ -218,20 +243,25 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   return (
     <div ref={containerRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <Virtuoso
-        ref={virtuosoRef}
-        scrollerRef={(el) => { scrollerElRef.current = el as HTMLElement | null; }}
-        data={messages}
-        computeItemKey={computeItemKey}
-        followOutput={followOutput}
-        initialTopMostItemIndex={Math.max(0, messages.length - 1)}
-        atBottomStateChange={handleAtBottomChange}
-        atBottomThreshold={80}
-        increaseViewportBy={{ top: 400, bottom: 200 }}
-        itemContent={itemContent}
-        components={{ Footer }}
-        style={{ flex: 1, minHeight: 0, overscrollBehavior: "contain" }}
-      />
+      <div
+        ref={scrollerElRef}
+        style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}
+      >
+        <div>
+          {messages.map((msg, index) => (
+            <div
+              key={computeItemKey(index, msg)}
+              ref={(el) => {
+                if (el) itemRefs.current.set(msg.id, el);
+                else itemRefs.current.delete(msg.id);
+              }}
+            >
+              {itemContent(index, msg)}
+            </div>
+          ))}
+          <Footer />
+        </div>
+      </div>
     </div>
   );
 });

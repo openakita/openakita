@@ -1,0 +1,49 @@
+# Project Phoenix MVP - 后端依赖
+
+# 核心框架
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# 数据库
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# 认证安全
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+bcrypt==4.1.2
+
+# Celery 异步任务
+celery==5.3.6
+redis==5.0.1
+
+# 向量数据库
+qdrant-client==1.7.0
+
+# 数据验证
+pydantic==2.5.3
+pydantic-settings==2.1.0
+email-validator==2.1.0
+
+# HTTP 客户端
+httpx==0.26.0
+aiohttp==3.9.1
+
+# 工具库
+python-dotenv==1.0.0
+tenacity==8.2.3  # 重试逻辑
+
+# 监控
+prometheus-client==0.19.0
+
+# 测试
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+httpx==0.26.0
+
+# 代码质量
+ruff==0.1.13
+mypy==1.8.0

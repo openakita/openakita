@@ -1,0 +1,14 @@
+# OpenAkita MVP API 集成示例 - 依赖列表
+
+# HTTP 客户端
+requests>=2.31.0
+
+# JWT 认证
+PyJWT>=2.8.0
+cryptography>=41.0.0
+
+# 阿里云 OSS
+oss2>=2.18.0
+
+# 开发工具
+python-dotenv>=1.0.0

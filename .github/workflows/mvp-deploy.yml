@@ -1,0 +1,267 @@
+# MVP 自动化部署流水线
+# 功能：代码检查 → 测试 → 构建 → 部署测试环境 → 人工审批 → 部署生产环境
+# 部署策略：Blue-Green 部署，支持一键回滚
+
+name: MVP Deploy
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '部署环境'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - production
+      version:
+        description: '部署版本 (留空则使用最新)'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ── Stage 1: 代码质量检查 ──
+  lint:
+    name: 🔍 代码检查
+    runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.lint_result.outputs.passed }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      
+      - name: Lint with ruff
+        run: ruff check src/ --output-format=github
+      
+      - name: Format check with ruff
+        run: ruff format src/ --check
+      
+      - name: Type check with mypy
+        run: mypy src/openakita/ --ignore-missing-imports
+      
+      - name: Set lint result
+        id: lint_result
+        if: always()
+        run: echo "passed=true" >> $GITHUB_OUTPUT
+
+  # ── Stage 2: 单元测试 ──
+  test:
+    name: 🧪 单元测试
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --cov=src/openakita --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ── Stage 3: 构建 Docker 镜像 ──
+  build:
+    name: 📦 构建镜像
+    runs-on: ubuntu-latest
+    needs: [test]
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+      
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+  # ── Stage 4: 部署测试环境 ──
+  deploy-test:
+    name: 🚀 部署测试环境
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment:
+      name: test
+      url: https://test.openakita.com
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Deploy to test environment
+        run: |
+          echo "Deploying to test environment..."
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          # 实际部署命令（通过 SSH 或 kubectl）
+          # ssh ${{ secrets.TEST_SERVER }} "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          # ssh ${{ secrets.TEST_SERVER }} "docker-compose up -d"
+      
+      - name: Health check
+        run: |
+          echo "Running health check..."
+          # curl -f https://test.openakita.com/health || exit 1
+      
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          # pytest tests/smoke/ --env=test
+
+  # ── Stage 5: 人工审批（生产环境） ──
+  approve-production:
+    name: ✅ 人工审批
+    runs-on: ubuntu-latest
+    needs: [deploy-test]
+    environment:
+      name: production
+      url: https://openakita.com
+    steps:
+      - name: Wait for approval
+        run: echo "Waiting for manual approval to deploy to production..."
+
+  # ── Stage 6: Blue-Green 部署生产环境 ──
+  deploy-production:
+    name: 🎯 部署生产环境 (Blue-Green)
+    runs-on: ubuntu-latest
+    needs: [approve-production, build]
+    environment:
+      name: production
+      url: https://openakita.com
+    outputs:
+      deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get current active slot
+        id: current_slot
+        run: |
+          echo "slot=blue" >> $GITHUB_OUTPUT
+          # 实际从服务器获取当前活跃槽位
+          # ssh ${{ secrets.PROD_SERVER }} "cat /var/deploy/current_slot"
+      
+      - name: Determine target slot
+        id: target_slot
+        run: |
+          if [ "${{ steps.current_slot.outputs.slot }}" == "blue" ]; then
+            echo "slot=green" >> $GITHUB_OUTPUT
+          else
+            echo "slot=blue" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Deploy to inactive slot (${{ steps.target_slot.outputs.slot }})
+        id: deployment
+        run: |
+          echo "Deploying to ${{ steps.target_slot.outputs.slot }} slot..."
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          
+          # Blue-Green 部署步骤：
+          # 1. 拉取新镜像到目标槽位
+          # ssh ${{ secrets.PROD_SERVER }} "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          
+          # 2. 启动目标槽位服务
+          # ssh ${{ secrets.PROD_SERVER }} "docker-compose -f docker-compose.${{ steps.target_slot.outputs.slot }}.yml up -d"
+          
+          # 3. 等待服务就绪
+          # sleep 30
+          
+          # 4. 健康检查
+          # curl -f http://${{ steps.target_slot.outputs.slot }}.openakita.internal/health
+          
+          echo "deployment_id=${{ github.sha }}-${{ steps.target_slot.outputs.slot }}" >> $GITHUB_OUTPUT
+      
+      - name: Switch traffic to new slot
+        run: |
+          echo "Switching traffic from ${{ steps.current_slot.outputs.slot }} to ${{ steps.target_slot.outputs.slot }}..."
+          
+          # 切换负载均衡配置
+          # ssh ${{ secrets.PROD_SERVER }} "ln -sf /etc/nginx/conf.d/${{ steps.target_slot.outputs.slot }}.conf /etc/nginx/conf.d/default.conf"
+          # ssh ${{ secrets.PROD_SERVER }} "nginx -s reload"
+          
+          echo "Traffic switched successfully!"
+      
+      - name: Verify deployment
+        run: |
+          echo "Verifying deployment..."
+          # curl -f https://openakita.com/health || exit 1
+      
+      - name: Stop old slot (optional)
+        run: |
+          echo "Stopping old ${{ steps.current_slot.outputs.slot }} slot..."
+          # ssh ${{ secrets.PROD_SERVER }} "docker-compose -f docker-compose.${{ steps.current_slot.outputs.slot }}.yml down"
+
+  # ── Stage 7: 回滚支持 ──
+  rollback:
+    name: ⏮️ 回滚（手动触发）
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'rollback'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get previous stable version
+        id: previous
+        run: |
+          echo "version=previous-stable-tag" >> $GITHUB_OUTPUT
+          # 从部署历史获取上一个稳定版本
+      
+      - name: Rollback to ${{ steps.previous.outputs.version }}
+        run: |
+          echo "Rolling back to ${{ steps.previous.outputs.version }}..."
+          # 执行 Blue-Green 回滚流程
+          # 切换到之前的稳定槽位

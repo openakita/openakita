@@ -6,7 +6,7 @@
 - 轮询扫码状态 (get_qrcode_status)
 - 扫码确认后返回 Bearer token + base_url
 
-iLink Bot API 扫码流程（对齐 @tencent-weixin/openclaw-weixin v1.0.2）：
+iLink Bot API 扫码流程（对齐 @tencent-weixin/openclaw-weixin v2.1.6）：
   1. GET get_bot_qrcode?bot_type=3 → 获取 qrcode / qrcode_img_content
   2. GET get_qrcode_status?qrcode=... → 轮询状态 (wait → scaned → confirmed)
   3. confirmed 时返回 bot_token / ilink_bot_id / baseurl
@@ -28,6 +28,23 @@ DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_ILINK_BOT_TYPE = "3"
 
 _QR_LONG_POLL_TIMEOUT_S = 35.0
+MAX_QR_REFRESH_COUNT = 3
+
+
+def _onboard_common_headers() -> dict[str, str]:
+    """Shared iLink headers for QR login requests (same constants as wechat adapter)."""
+    import os
+    compat_ver = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.6")
+    app_id = os.environ.get("WECHAT_ILINK_APP_ID", "bot")
+    parts = compat_ver.split(".")
+    major = int(parts[0]) if len(parts) > 0 else 0
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    patch = int(parts[2]) if len(parts) > 2 else 0
+    client_ver = str((major << 16) | (minor << 8) | patch)
+    return {
+        "iLink-App-Id": app_id,
+        "iLink-App-ClientVersion": client_ver,
+    }
 
 
 class WeChatOnboardError(Exception):
@@ -42,6 +59,7 @@ class WeChatOnboard:
 
     def __init__(self, *, base_url: str = "", timeout: float = 30.0):
         self._base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self._poll_base_url = self._base_url
         self._timeout = timeout
         self._client: httpx.AsyncClient | None = None
 
@@ -68,7 +86,11 @@ class WeChatOnboard:
         """
         client = await self._get_client()
         url = f"{self._base_url}/ilink/bot/get_bot_qrcode"
-        resp = await client.get(url, params={"bot_type": DEFAULT_ILINK_BOT_TYPE})
+        resp = await client.get(
+            url,
+            params={"bot_type": DEFAULT_ILINK_BOT_TYPE},
+            headers=_onboard_common_headers(),
+        )
         resp.raise_for_status()
         data = resp.json()
 
@@ -98,8 +120,8 @@ class WeChatOnboard:
             错误:   {"status": "error", "message": "..."}
         """
         client = await self._get_client()
-        url = f"{self._base_url}/ilink/bot/get_qrcode_status"
-        headers = {"iLink-App-ClientVersion": "1"}
+        url = f"{self._poll_base_url}/ilink/bot/get_qrcode_status"
+        headers = _onboard_common_headers()
         try:
             resp = await client.get(
                 url,
@@ -109,7 +131,15 @@ class WeChatOnboard:
             )
             resp.raise_for_status()
             data = resp.json()
-        except httpx.ReadTimeout:
+        except (httpx.ReadTimeout, httpx.ConnectTimeout):
+            return {"status": "wait"}
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "QR poll HTTP error %s, treating as wait", exc.response.status_code
+            )
+            return {"status": "wait"}
+        except httpx.TransportError as exc:
+            logger.warning("QR poll network error, treating as wait: %s", exc)
             return {"status": "wait"}
 
         status = data.get("status", "")
@@ -118,15 +148,24 @@ class WeChatOnboard:
             return {"status": "wait"}
         if status == "scaned":
             return {"status": "scaned"}
+        if status == "scaned_but_redirect":
+            redirect_host = data.get("redirect_host", "")
+            if redirect_host:
+                self._poll_base_url = f"https://{redirect_host}"
+                logger.info("IDC redirect, switching poll host to %s", redirect_host)
+            return {"status": "scaned"}
         if status == "confirmed":
             token = data.get("bot_token", "")
+            bot_id = data.get("ilink_bot_id", "")
             if not token:
                 return {"status": "error", "message": "确认成功但未返回 bot_token"}
+            if not bot_id:
+                return {"status": "error", "message": "确认成功但未返回 ilink_bot_id"}
             return {
                 "status": "confirmed",
                 "token": token,
                 "base_url": data.get("baseurl", ""),
-                "bot_id": data.get("ilink_bot_id", ""),
+                "bot_id": bot_id,
                 "user_id": data.get("ilink_user_id", ""),
             }
         if status == "expired":
@@ -140,8 +179,12 @@ class WeChatOnboard:
         *,
         interval: float = 2.0,
         max_attempts: int = 150,
+        on_qr_refresh: Any = None,
     ) -> dict[str, Any]:
         """持续轮询直到用户完成扫码或超时
+
+        Args:
+            on_qr_refresh: optional async callback(new_qrcode_info) called when QR is auto-refreshed
 
         Returns:
             成功: {"status": "confirmed", "token": "...", "base_url": "..."}
@@ -149,12 +192,29 @@ class WeChatOnboard:
         Raises:
             WeChatOnboardError: 超时或二维码过期
         """
+        current_qrcode = qrcode
+        qr_refresh_count = 0
+
         for _ in range(max_attempts):
-            result = await self.poll_status(qrcode)
+            result = await self.poll_status(current_qrcode)
             if result["status"] == "confirmed":
                 return result
             if result["status"] == "expired":
-                raise WeChatOnboardError("二维码已过期，请重新获取")
+                qr_refresh_count += 1
+                if qr_refresh_count > MAX_QR_REFRESH_COUNT:
+                    raise WeChatOnboardError(
+                        f"二维码已过期且已刷新 {MAX_QR_REFRESH_COUNT} 次，请重试"
+                    )
+                logger.info("QR expired, auto-refreshing (%d/%d)", qr_refresh_count, MAX_QR_REFRESH_COUNT)
+                self._poll_base_url = self._base_url
+                new_qr = await self.fetch_qrcode()
+                current_qrcode = new_qr["qrcode"]
+                if on_qr_refresh:
+                    try:
+                        await on_qr_refresh(new_qr)
+                    except Exception:
+                        logger.debug("on_qr_refresh callback failed", exc_info=True)
+                continue
             if result["status"] == "error":
                 raise WeChatOnboardError(result.get("message", "轮询失败"))
             await asyncio.sleep(interval)

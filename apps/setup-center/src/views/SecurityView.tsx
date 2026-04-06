@@ -179,28 +179,30 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1.5 min-w-0">
-          <h2 className="text-lg font-bold tracking-tight">
+          <h2 className="truncate text-lg font-bold tracking-tight" title={t("security.title", "安全控制")}>
             {t("security.title", "安全控制")}
           </h2>
-          <p className="text-xs text-muted-foreground leading-relaxed">
+          <p className="truncate text-xs text-muted-foreground leading-relaxed" title={t("security.desc", "配置系统安全策略，包括文件访问区域、命令拦截和沙箱环境。")}>
             {t("security.desc", "配置系统安全策略，包括文件访问区域、命令拦截和沙箱环境。")}
           </p>
         </div>
       </div>
 
       {/* Tab bar */}
-      <div className="flex items-center justify-between flex-shrink-0">
+      <div className="flex items-center justify-between overflow-x-auto flex-shrink-0">
         <ToggleGroup
           type="single"
           value={tab}
           onValueChange={(v) => { if (v) setTab(v as TabId); }}
           variant="outline"
+          className="min-w-max shrink-0"
         >
           {TABS.map((tb) => (
             <ToggleGroupItem
               key={tb.id}
               value={tb.id}
               className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+              title={t(tb.labelKey)}
             >
               {t(tb.labelKey)}
             </ToggleGroupItem>

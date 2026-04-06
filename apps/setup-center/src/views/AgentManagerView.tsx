@@ -1284,10 +1284,10 @@ export function AgentManagerView({
               <p className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{t("agentManager.isolationTitle")}</p>
 
               {/* Identity mode */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium leading-none">{t("agentManager.identityMode")}</Label>
-                  <p className="text-[11px] text-muted-foreground">{t("agentManager.identityModeHint")}</p>
+              <div className="flex items-center justify-between gap-4 overflow-x-auto">
+                <div className="min-w-0 space-y-0.5">
+                  <Label className="truncate text-sm font-medium leading-none" title={t("agentManager.identityMode")}>{t("agentManager.identityMode")}</Label>
+                  <p className="truncate text-[11px] text-muted-foreground" title={t("agentManager.identityModeHint")}>{t("agentManager.identityModeHint")}</p>
                 </div>
                 <Switch
                   checked={editingProfile.identity_mode === "custom"}
@@ -1303,10 +1303,10 @@ export function AgentManagerView({
               </div>
 
               {/* Memory mode */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium leading-none">{t("agentManager.memoryMode")}</Label>
-                  <p className="text-[11px] text-muted-foreground">{t("agentManager.memoryModeHint")}</p>
+              <div className="flex items-center justify-between gap-4 overflow-x-auto">
+                <div className="min-w-0 space-y-0.5">
+                  <Label className="truncate text-sm font-medium leading-none" title={t("agentManager.memoryMode")}>{t("agentManager.memoryMode")}</Label>
+                  <p className="truncate text-[11px] text-muted-foreground" title={t("agentManager.memoryModeHint")}>{t("agentManager.memoryModeHint")}</p>
                 </div>
                 <Switch
                   checked={editingProfile.memory_mode === "isolated"}
@@ -1320,25 +1320,25 @@ export function AgentManagerView({
 
               {/* Inherit global memory */}
               {editingProfile.memory_mode === "isolated" && (
-                <div className="flex items-center gap-2.5 rounded-md bg-muted/50 px-3 py-2">
+                <div className="flex items-center gap-2.5 overflow-x-auto rounded-md bg-muted/50 px-3 py-2">
                   <Checkbox
                     id="inherit-global"
                     checked={editingProfile.memory_inherit_global ?? true}
                     onCheckedChange={(checked) => setEditingProfile((p) => ({ ...p, memory_inherit_global: !!checked }))}
                   />
-                  <div className="space-y-0.5">
-                    <Label htmlFor="inherit-global" className="text-xs font-medium leading-none cursor-pointer">{t("agentManager.inheritGlobal")}</Label>
-                    <p className="text-[11px] text-muted-foreground">{t("agentManager.inheritGlobalHint")}</p>
+                  <div className="min-w-0 space-y-0.5">
+                    <Label htmlFor="inherit-global" className="truncate text-xs font-medium leading-none cursor-pointer" title={t("agentManager.inheritGlobal")}>{t("agentManager.inheritGlobal")}</Label>
+                    <p className="truncate text-[11px] text-muted-foreground" title={t("agentManager.inheritGlobalHint")}>{t("agentManager.inheritGlobalHint")}</p>
                   </div>
                 </div>
               )}
 
               {/* Memory stats */}
               {editingProfile.memory_mode === "isolated" && memoryStats && (
-                <div className="flex items-center gap-3 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                  <span>{t("agentManager.semanticCount", { count: memoryStats.semantic_count })}</span>
+                <div className="flex items-center gap-3 overflow-x-auto rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                  <span title={t("agentManager.semanticCount", { count: memoryStats.semantic_count })}>{t("agentManager.semanticCount", { count: memoryStats.semantic_count })}</span>
                   <span className="text-muted-foreground/50">·</span>
-                  <span>{(memoryStats.db_size_bytes / 1024).toFixed(0)} KB</span>
+                  <span title={`${(memoryStats.db_size_bytes / 1024).toFixed(0)} KB`}>{(memoryStats.db_size_bytes / 1024).toFixed(0)} KB</span>
                 </div>
               )}
 
@@ -1373,14 +1373,14 @@ export function AgentManagerView({
                         className="min-h-[120px] resize-y font-mono text-xs leading-relaxed"
                         placeholder={identitySource === "global" ? t("agentManager.identityInheritHint") : ""}
                       />
-                      <div className="flex items-center justify-between">
-                        <Badge variant="outline" className="text-[10px] font-normal">
+                      <div className="flex items-center justify-between gap-3 overflow-x-auto">
+                        <Badge variant="outline" className="shrink-0 text-[10px] font-normal" title={identitySource === "global" ? t("agentManager.sourceGlobal") : t("agentManager.sourceProfile")}>
                           {identitySource === "global" ? t("agentManager.sourceGlobal") : t("agentManager.sourceProfile")}
                         </Badge>
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-6 text-xs"
+                          className="h-6 shrink-0 text-xs"
                           onClick={() => saveIdentityFile(editingProfile.id, identityTab, identityContent)}
                         >
                           {t("agentManager.saveFile")}

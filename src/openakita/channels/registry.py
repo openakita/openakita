@@ -179,6 +179,7 @@ def _create_wechat(creds: dict, *, channel_name: str, bot_id: str, agent_profile
         cdn_base_url=creds.get("cdn_base_url", ""),
         channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id,
         footer_elapsed=_cred_bool(creds.get("footer_elapsed")),
+        route_tag=creds.get("route_tag", ""),
     )
 
 

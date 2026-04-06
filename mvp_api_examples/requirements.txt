@@ -1,0 +1,22 @@
+# MVP API 集成示例 - 依赖包
+
+# 核心依赖
+Flask==2.3.0
+PyJWT==2.8.0
+requests==2.31.0
+
+# 阿里云服务
+oss2==2.18.0
+
+# 向量数据库
+qdrant-client==1.7.0
+numpy==1.24.0
+
+# 缓存
+redis==5.0.0
+
+# 异步任务
+celery==5.3.0
+
+# 开发工具
+python-dotenv==1.0.0

@@ -1,0 +1,72 @@
+# API 集成配置文件示例
+# 复制此文件为 config.yaml 并填入真实配置
+
+# 邮件服务 - 阿里云邮件推送
+email:
+  access_key_id: "YOUR_ACCESS_KEY_ID"
+  access_key_secret: "YOUR_ACCESS_KEY_SECRET"
+  account_name: "noreply@yourdomain.com"
+  region: "cn-hangzhou"
+
+# 短信服务 - 阿里云短信
+sms:
+  access_key_id: "YOUR_ACCESS_KEY_ID"
+  access_key_secret: "YOUR_ACCESS_KEY_SECRET"
+  sign_name: "您的签名"
+  template_code: "SMS_123456789"
+
+# 企业微信
+wecom:
+  corp_id: "YOUR_CORP_ID"
+  agent_id: 1000001
+  secret: "YOUR_SECRET"
+
+# 钉钉机器人
+dingtalk:
+  webhook: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+  secret: "YOUR_SECRET"  # 如启用加签
+
+# 飞书
+feishu:
+  app_id: "cli_a1b2c3d4e5f6"
+  app_secret: "YOUR_APP_SECRET"
+
+# HTTP 客户端 (示例：GitHub API)
+http:
+  base_url: "https://api.github.com"
+  headers:
+    Accept: "application/vnd.github.v3+json"
+    User-Agent: "API-Integration-Test"
+  timeout: 30
+
+# OSS 对象存储
+oss:
+  access_key_id: "YOUR_ACCESS_KEY_ID"
+  access_key_secret: "YOUR_ACCESS_KEY_SECRET"
+  endpoint: "oss-cn-hangzhou.aliyuncs.com"
+  bucket_name: "your-bucket-name"
+
+# PostgreSQL 数据库
+postgresql:
+  host: "localhost"
+  port: 5432
+  database: "your_database"
+  user: "postgres"
+  password: "your_password"
+  sslmode: "prefer"
+
+# Google Calendar
+google_calendar:
+  credentials_file: "path/to/credentials.json"
+  calendar_id: "primary"
+  scopes:
+    - "https://www.googleapis.com/auth/calendar"
+
+# Salesforce CRM
+salesforce:
+  username: "user@example.com"
+  password: "your_password"
+  security_token: "YOUR_SECURITY_TOKEN"
+  # 或使用 token 方式:
+  # instance: "na1.salesforce.com"
+  # session_id: "YOUR_SESSION_ID"

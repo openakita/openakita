@@ -1,0 +1,9 @@
+interface:
+  display_name: "Internal Comms"
+  short_description: "Write status reports, newsletters, FAQs, and updates"
+  default_prompt: "Use $internal-comms to write an internal communication"
+
+i18n:
+  zh:
+    name: "内部沟通写作"
+    description: "撰写各类内部沟通文档，包括状态报告、领导力汇报、3P 更新、公司通讯、FAQ 和项目更新。"

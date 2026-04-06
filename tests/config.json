@@ -1,0 +1,30 @@
+{
+  "_comment": "MVP 项目 API 连通性测试配置文件 - 请填写各平台的 API 账号信息",
+  "_updated_by": "HR / 全栈工程师 A",
+  "_updated_at": "2026-03-18",
+  
+  "enterprise_wechat": {
+    "_comment": "企业微信自建应用配置",
+    "corp_id": "",
+    "agent_id": "",
+    "secret": "",
+    "webhook_url": ""
+  },
+  
+  "dingtalk": {
+    "_comment": "钉钉企业内部应用配置",
+    "app_key": "",
+    "app_secret": "",
+    "agent_id": "",
+    "webhook_url": ""
+  },
+  
+  "feishu": {
+    "_comment": "飞书企业自建应用配置",
+    "app_id": "",
+    "app_secret": "",
+    "webhook_url": "",
+    "bitable_app_token": "",
+    "bitable_table_id": ""
+  }
+}

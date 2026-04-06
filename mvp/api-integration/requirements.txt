@@ -1,0 +1,38 @@
+# 核心依赖
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.5.0
+httpx>=0.26.0
+python-dotenv>=1.0.0
+
+# 加密
+cryptography>=42.0.0
+
+# 邮件
+aiosmtplib>=3.0.0
+
+# 文件存储
+oss2>=2.18.0
+qiniu>=7.13.0
+
+# 数据库
+asyncpg>=0.29.0
+aiomysql>=0.2.0
+
+# 日历
+google-api-python-client>=2.111.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+# 企业微信/钉钉
+cryptography>=42.0.0
+
+# 测试
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# 开发工具
+black>=24.1.0
+ruff>=0.1.0
+mypy>=1.8.0

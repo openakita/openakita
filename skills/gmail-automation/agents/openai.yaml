@@ -1,0 +1,9 @@
+interface:
+  display_name: "Gmail Automation"
+  short_description: "Automate Gmail send, search, labels, and drafts via MCP"
+  default_prompt: "Use $gmail-automation to manage Gmail"
+
+i18n:
+  zh:
+    name: "Gmail 自动化"
+    description: "通过 Rube MCP 自动化 Gmail 邮件发送、搜索、标签管理、草稿和附件操作。"

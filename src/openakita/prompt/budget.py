@@ -4,7 +4,7 @@ Prompt Budget - Token 预算裁剪模块
 控制各部分的 token 预算，确保系统提示词不超出限制。
 
 预算分配:
-- identity_budget: 3000 tokens (SOUL.md ~60% + agent.core ~25% + user_policies ~15%)
+- identity_budget: 6000 tokens (SOUL.md ~60% + agent.core ~25% + user_policies ~15%)
   - SOUL.md 已精简为 ~60 行行为约束（~500 tokens）
   - agent.core 编译后约 ~600 tokens
   - 用户自定义策略（可选）
@@ -30,12 +30,14 @@ CHARS_PER_TOKEN = 4  # 保守估计，中文约 1.5-2，英文约 4
 class BudgetConfig:
     """Token 预算配置"""
 
-    identity_budget: int = 6000   # SOUL.md(60%) + AGENT.md(25%) + user_policies(15%)
-    catalogs_budget: int = 12000  # tools(33%) + skills(55%) + mcp(10%) 全量注入
+    # 各部分预算（tokens）
+    identity_budget: int = 6000   # SOUL.md(60%) + agent.core(25%) + user_policies(15%)
+    catalogs_budget: int = 8000   # tools(33%) + skills(55%) + mcp(10%) — 工具定义已通过 API tools 参数传递
     user_budget: int = 300        # user.summary + runtime_facts
     memory_budget: int = 2500     # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
 
-    total_budget: int = 21000
+    # 总预算（作为硬限制）
+    total_budget: int = 18000
 
     # 裁剪优先级（数字越小越先被裁剪）
     # 高优先级的内容会在预算不足时保留
@@ -63,28 +65,31 @@ class BudgetConfig:
         prompt_budget = int(context_window * 0.40)
 
         if context_window > 32000:
+            # sum: 5000+10000+300+2000 = 17300
             return cls(
-                identity_budget=2500,
+                identity_budget=5000,
                 catalogs_budget=10000,
                 user_budget=300,
                 memory_budget=2000,
-                total_budget=min(prompt_budget, 15000),
+                total_budget=min(prompt_budget, 18000),
             )
         elif context_window >= 16000:
+            # sum: 3500+6000+250+1500 = 11250
             return cls(
-                identity_budget=2000,
+                identity_budget=3500,
                 catalogs_budget=6000,
                 user_budget=250,
                 memory_budget=1500,
-                total_budget=min(prompt_budget, 10000),
+                total_budget=min(prompt_budget, 12000),
             )
         elif context_window >= 8000:
+            # sum: 2500+4000+200+1000 = 7700
             return cls(
-                identity_budget=1500,
+                identity_budget=2500,
                 catalogs_budget=4000,
                 user_budget=200,
                 memory_budget=1000,
-                total_budget=min(prompt_budget, 7000),
+                total_budget=min(prompt_budget, 8000),
             )
         else:
             return cls(

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package finance.v1;
+
+option go_package = "github.com/project-eagle/finance-svc/proto/finance/v1";
+
+service FinanceService {
+  // 获取月度损益表
+  rpc GetMonthlyProfitLoss (GetMonthlyProfitLossRequest) returns (GetMonthlyProfitLossResponse);
+}
+
+message GetMonthlyProfitLossRequest {
+  string tenant_id = 1;   // 企业租户ID
+  int32 year = 2;         // 年份
+  int32 month = 3;        // 月份
+}
+
+message GetMonthlyProfitLossResponse {
+  MonthlyProfitLoss data = 1;
+}
+
+message MonthlyProfitLoss {
+  string tenant_id = 1;
+  int32 year = 2;
+  int32 month = 3;
+  
+  // 收入类
+  double total_revenue = 4;        // 总收入
+  double sales_revenue = 5;        // 销售收入
+  double service_revenue = 6;      // 服务收入
+  double other_revenue = 7;        // 其他收入
+  
+  // 支出类
+  double total_expenses = 8;       // 总支出
+  double cost_of_goods_sold = 9;   // 销售成本
+  double operating_expenses = 10;  // 运营费用
+  double administrative_expenses = 11; // 管理费用
+  double financial_expenses = 12;  // 财务费用
+  double other_expenses = 13;      // 其他支出
+  
+  // 利润
+  double gross_profit = 14;        // 毛利润
+  double operating_profit = 15;    // 营业利润
+  double net_profit = 16;          // 净利润
+  
+  // 元数据
+  string calculated_at = 17;       // 计算时间
+  bool is_finalized = 18;          // 是否已定稿
+}

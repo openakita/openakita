@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAkita Workflow Editor - UI 原型</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563EB;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --bg: #F9FAFB;
+            --border: #E5E7EB;
+            --text-primary: #111827;
+            --text-secondary: #6B7280;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            height: 60px;
+            background: white;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--primary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1D4ED8;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg);
+        }
+
+        /* Main Container */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Left Panel */
+        .left-panel {
+            width: 280px;
+            background: white;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .panel-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+
+        .component-list {
+            padding: 12px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .component-category {
+            margin-bottom: 20px;
+        }
+
+        .category-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+            padding: 0 4px;
+        }
+
+        .component-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: var(--bg);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: grab;
+            transition: all 0.15s;
+            border: 1px solid transparent;
+        }
+
+        .component-item:hover {
+            background: white;
+            border-color: var(--primary);
+            transform: translateX(4px);
+        }
+
+        .component-item:active {
+            cursor: grabbing;
+        }
+
+        .component-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .component-icon.trigger {
+            background: #D1FAE5;
+            color: #059669;
+        }
+
+        .component-icon.action {
+            background: #DBEAFE;
+            color: #1D4ED8;
+        }
+
+        .component-icon.condition {
+            background: #FEF3C7;
+            color: #D97706;
+        }
+
+        .component-icon.loop {
+            background: #E9D5FF;
+            color: #7C3AED;
+        }
+
+        .component-icon.transform {
+            background: #FED7AA;
+            color: #EA580C;
+        }
+
+        .component-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        /* Canvas */
+        .canvas-container {
+            flex: 1;
+            background: var(--bg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transform-origin: 0 0;
+        }
+
+        .canvas-grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                linear-gradient(var(--border) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border) 1px, transparent 1px);
+            background-size: 20px 20px;
+            background-position: -1px -1px;
+            opacity: 0.5;
+        }
+
+        /* Nodes */
+        .node {
+            position: absolute;
+            width: 240px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+            border: 2px solid transparent;
+            transition: all 0.15s;
+            cursor: move;
+        }
+
+        .node:hover {
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1), 0 4px 8px rgba(0,0,0,0.04);
+        }
+
+        .node.selected {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .node.trigger { border-left: 4px solid var(--success); }
+        .node.action { border-left: 4px solid var(--primary); }
+        .node.condition { border-left: 4px solid var(--warning); }
+        .node.loop { border-left: 4px solid #7C3AED; }
+        .node.transform { border-left: 4px solid var(--danger); }
+
+        .node-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .node-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .node.trigger .node-icon { background: #D1FAE5; color: #059669; }
+        .node.action .node-icon { background: #DBEAFE; color: #1D4ED8; }
+        .node.condition .node-icon { background: #FEF3C7; color: #D97706; }
+        .node.loop .node-icon { background: #E9D5FF; color: #7C3AED; }
+        .node.transform .node-icon { background: #FED7AA; color: #EA580C; }
+
+        .node-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .node-body {
+            padding: 12px 16px;
+        }
+
+        .node-description {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* Connection Ports */
+        .port {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border: 2px solid var(--border);
+            border-radius: 50%;
+            top: 50%;
+            transform: translateY(-50%);
+            transition: all 0.15s;
+            cursor: crosshair;
+        }
+
+        .port:hover {
+            border-color: var(--primary);
+            background: var(--primary);
+        }
+
+        .port.input {
+            left: -8px;
+        }
+
+        .port.output {
+            right: -8px;
+        }
+
+        .port.connected {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        /* Right Panel */
+        .right-panel {
+            width: 320px;
+            background: white;
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .config-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .config-section:last-child {
+            border-bottom: none;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+            cursor: pointer;
+        }
+
+        /* Status Bar */
+        .status-bar {
+            height: 40px;
+            background: white;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .zoom-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .zoom-btn {
+            width: 28px;
+            height: 28px;
+            border: 1px solid var(--border);
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .zoom-btn:hover {
+            background: var(--bg);
+        }
+
+        /* Connection Line SVG */
+        .connections-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .connection-path {
+            fill: none;
+            stroke: #9CA3AF;
+            stroke-width: 2;
+            pointer-events: stroke;
+            cursor: pointer;
+        }
+
+        .connection-path:hover {
+            stroke: var(--primary);
+            stroke-width: 3;
+        }
+
+        .connection-path.selected {
+            stroke: var(--primary);
+            stroke-width: 3;
+        }
+
+        /* Empty State */
+        .empty-state {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .empty-state-desc {
+            font-size: 14px;
+        }
+
+        /* Mini Map */
+        .mini-map {
+            position: absolute;
+            bottom: 60px;
+            right: 20px;
+            width: 200px;
+            height: 120px;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .mini-map-content {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            background: var(--text-primary);
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .tooltip.visible {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="logo">
+            <div class="logo-icon">🔄</div>
+            <span>OpenAkita Workflow Editor</span>
+        </div>
+        <div class="toolbar">
+            <button class="btn btn-secondary">导入</button>
+            <button class="btn btn-secondary">导出</button>
+            <button class="btn btn-secondary">测试</button>
+            <button class="btn btn-primary">保存</button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Left Panel -->
+        <div class="left-panel">
+            <div class="panel-header">组件库</div>
+            <div class="component-list">
+                <div class="component-category">
+                    <div class="category-title">触发器</div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon trigger">🕐</div>
+                        <div class="component-name">定时触发</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon trigger">⚡</div>
+                        <div class="component-name">事件触发</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon trigger">🔗</div>
+                        <div class="component-name">Webhook</div>
+                    </div>
+                </div>
+
+                <div class="component-category">
+                    <div class="category-title">动作</div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">📧</div>
+                        <div class="component-name">发送邮件</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">📊</div>
+                        <div class="component-name">生成报表</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon action">🔌</div>
+                        <div class="component-name">API 调用</div>
+                    </div>
+                </div>
+
+                <div class="component-category">
+                    <div class="category-title">逻辑</div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon condition">🔀</div>
+                        <div class="component-name">条件分支</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon loop">🔄</div>
+                        <div class="component-name">循环</div>
+                    </div>
+                    <div class="component-item" draggable="true">
+                        <div class="component-icon transform">🔧</div>
+                        <div class="component-name">数据转换</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Canvas -->
+        <div class="canvas-container">
+            <div class="canvas" id="canvas">
+                <div class="canvas-grid"></div>
+                <svg class="connections-svg" id="connectionsSvg"></svg>
+
+                <!-- Empty State -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-state-icon">🎨</div>
+                    <div class="empty-state-title">开始创建工作流</div>
+                    <div class="empty-state-desc">从左侧拖拽组件到画布开始</div>
+                </div>
+
+                <!-- Sample Nodes (will be shown after drag) -->
+            </div>
+
+            <!-- Mini Map -->
+            <div class="mini-map">
+                <div class="mini-map-content"></div>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="right-panel">
+            <div class="panel-header">节点配置</div>
+            <div style="padding: 20px; text-align: center; color: var(--text-secondary);">
+                <p style="font-size: 14px; margin-bottom: 8px;">👈 点击节点进行配置</p>
+                <p style="font-size: 12px;">选择画布中的节点以查看和编辑其配置</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+        <div>
+            <span>工作流：未命名</span>
+            <span style="margin-left: 20px;">节点：0</span>
+        </div>
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomOut()">−</button>
+            <span id="zoomLevel">100%</span>
+            <button class="zoom-btn" onclick="zoomIn()">+</button>
+            <button class="zoom-btn" onclick="resetZoom()" style="margin-left: 8px;">适应</button>
+        </div>
+    </div>
+
+    <!-- Tooltip -->
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        let zoom = 1;
+        let nodeCount = 0;
+        let selectedNode = null;
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        let currentNode = null;
+
+        const canvas = document.getElementById('canvas');
+        const emptyState = document.getElementById('emptyState');
+        const connectionsSvg = document.getElementById('connectionsSvg');
+
+        // Component drag and drop
+        document.querySelectorAll('.component-item').forEach(item => {
+            item.addEventListener('dragstart', (e) => {
+                const componentName = item.querySelector('.component-name').textContent;
+                const componentIcon = item.querySelector('.component-icon').textContent;
+                const componentType = item.querySelector('.component-icon').className.split(' ')[1];
+                e.dataTransfer.setData('component', JSON.stringify({
+                    name: componentName,
+                    icon: componentIcon,
+                    type: componentType
+                }));
+            });
+        });
+
+        canvas.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+
+        canvas.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const componentData = JSON.parse(e.dataTransfer.getData('component'));
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / zoom;
+            const y = (e.clientY - rect.top) / zoom;
+            createNode(componentData, x, y);
+        });
+
+        function createNode(component, x, y) {
+            emptyState.style.display = 'none';
+            nodeCount++;
+
+            const node = document.createElement('div');
+            node.className = `node ${component.type}`;
+            node.style.left = `${x - 120}px`;
+            node.style.top = `${y - 40}px`;
+            node.dataset.id = `node-${nodeCount}`;
+
+            node.innerHTML = `
+                <div class="port input"></div>
+                <div class="node-header">
+                    <div class="node-icon">${component.icon}</div>
+                    <div class="node-title">${component.name}</div>
+                </div>
+                <div class="node-body">
+                    <div class="node-description">点击配置此节点</div>
+                </div>
+                <div class="port output"></div>
+            `;
+
+            // Node selection
+            node.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectNode(node);
+            });
+
+            // Node dragging
+            const header = node.querySelector('.node-header');
+            header.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                currentNode = node;
+                dragOffset.x = e.clientX - node.offsetLeft;
+                dragOffset.y = e.clientY - node.offsetTop;
+                selectNode(node);
+            });
+
+            canvas.appendChild(node);
+            updateNodeCount();
+        }
+
+        function selectNode(node) {
+            if (selectedNode) {
+                selectedNode.classList.remove('selected');
+            }
+            selectedNode = node;
+            node.classList.add('selected');
+            showConfigPanel(node);
+        }
+
+        function showConfigPanel(node) {
+            const rightPanel = document.querySelector('.right-panel');
+            const nodeTitle = node.querySelector('.node-title').textContent;
+            const nodeIcon = node.querySelector('.node-icon').textContent;
+
+            rightPanel.innerHTML = `
+                <div class="panel-header">
+                    <span>${nodeIcon} ${nodeTitle}</span>
+                </div>
+                <div class="config-section">
+                    <div class="section-title">基础配置</div>
+                    <div class="form-group">
+                        <label class="form-label">节点名称</label>
+                        <input type="text" class="form-input" value="${nodeTitle}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">描述</label>
+                        <input type="text" class="form-input" placeholder="输入节点描述">
+                    </div>
+                </div>
+                <div class="config-section">
+                    <div class="section-title">高级配置</div>
+                    <div class="form-group">
+                        <label class="form-label">重试次数</label>
+                        <input type="number" class="form-input" value="3" min="0" max="10">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">超时时间 (秒)</label>
+                        <input type="number" class="form-input" value="30" min="1" max="300">
+                    </div>
+                </div>
+                <div class="config-section">
+                    <button class="btn btn-primary" style="width: 100%;">保存配置</button>
+                </div>
+            `;
+        }
+
+        function updateNodeCount() {
+            document.querySelector('.status-bar span:nth-child(2)').textContent = `节点：${nodeCount}`;
+        }
+
+        // Zoom controls
+        function zoomIn() {
+            zoom = Math.min(zoom + 0.1, 2);
+            applyZoom();
+        }
+
+        function zoomOut() {
+            zoom = Math.max(zoom - 0.1, 0.5);
+            applyZoom();
+        }
+
+        function resetZoom() {
+            zoom = 1;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            canvas.style.transform = `scale(${zoom})`;
+            document.getElementById('zoomLevel').textContent = `${Math.round(zoom * 100)}%`;
+        }
+
+        // Global mouse events for node dragging
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging && currentNode) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - dragOffset.x) / zoom;
+                const y = (e.clientY - dragOffset.y) / zoom;
+                currentNode.style.left = `${e.clientX - dragOffset.x}px`;
+                currentNode.style.top = `${e.clientY - dragOffset.y}px`;
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            currentNode = null;
+        });
+
+        // Deselect on canvas click
+        canvas.addEventListener('click', (e) => {
+            if (e.target === canvas || e.target.classList.contains('canvas-grid')) {
+                if (selectedNode) {
+                    selectedNode.classList.remove('selected');
+                    selectedNode = null;
+                }
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Delete' && selectedNode) {
+                selectedNode.remove();
+                selectedNode = null;
+                nodeCount--;
+                updateNodeCount();
+                if (nodeCount === 0) {
+                    emptyState.style.display = 'block';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

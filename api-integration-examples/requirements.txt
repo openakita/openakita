@@ -1,0 +1,55 @@
+# MVP API 集成示例 - 依赖包
+
+# 核心框架
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.5.3
+python-dotenv==1.0.0
+
+# 认证相关
+PyJWT==2.8.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+oauthlib==3.2.2
+requests-oauthlib==1.3.1
+
+# 支付相关
+alipay-sdk-python==3.10.0
+wechatpayv3==1.5.0
+
+# 短信/邮件
+aliyun-python-sdk-core==2.14.0
+aliyun-python-sdk-dysmsapi==3.0.0
+tencentcloud-sdk-python==3.0.1000
+sendgrid==6.11.0
+
+# 对象存储
+oss2==2.18.4
+boto3==1.34.0
+
+# AI 大模型
+anthropic==0.8.0
+dashscope==1.14.0
+openai==1.10.0
+
+# 地图
+amap==0.0.1
+baidumap==0.1.0
+
+# 推送通知
+jiguang-jpush==1.0.0
+getui==1.0.0
+
+# 监控
+sentry-sdk[fastapi]==1.39.0
+elasticsearch==8.11.0
+
+# 数据库
+redis==5.0.1
+pymongo==4.6.1
+motor==3.3.2
+
+# 工具
+httpx==0.26.0
+aiohttp==3.9.1

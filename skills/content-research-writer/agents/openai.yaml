@@ -1,0 +1,9 @@
+interface:
+  display_name: "Content Research Writer"
+  short_description: "Research, outline, draft, and refine written content"
+  default_prompt: "Use $content-research-writer to help me write an article"
+
+i18n:
+  zh:
+    name: "内容研究写手"
+    description: "辅助撰写高质量内容，包括调研、添加引用、优化开头、迭代大纲和实时反馈。"

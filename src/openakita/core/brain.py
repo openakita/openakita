@@ -1144,7 +1144,7 @@ class Brain:
             request_id: 请求 ID，用于关联对应的 response 文件
         """
         try:
-            debug_dir = Path("data/llm_debug")
+            debug_dir = settings.project_root / "data" / "llm_debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1254,7 +1254,7 @@ class Brain:
             request_id: 对应的请求 ID（用于关联 request 文件）
         """
         try:
-            debug_dir = Path("data/llm_debug")
+            debug_dir = settings.project_root / "data" / "llm_debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

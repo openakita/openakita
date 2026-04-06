@@ -1,0 +1,8 @@
+interface:
+  display_name: Superpowers Brainstorming
+  short_description: You MUST use this before any creative work - creating feature...
+  default_prompt: Use $superpowers-brainstorming
+i18n:
+  zh:
+    name: 头脑风暴设计
+    description: 在编码前通过协作对话探索需求和设计，提出2-3种方案并权衡利弊，确保先设计再实现
