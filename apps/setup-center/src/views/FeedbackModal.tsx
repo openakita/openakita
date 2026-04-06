@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { downloadFile, showInFolder } from "../platform";
+import { downloadFile, showInFolder, invoke, IS_TAURI } from "../platform";
 import { IconX, IconInfo } from "../icons";
 import { safeFetch } from "../providers";
 import {
@@ -42,9 +42,11 @@ type FeedbackModalProps = {
   initialMode?: FeedbackMode;
   prefill?: FeedbackPrefill | null;
   onNavigateToMyFeedback?: () => void;
+  serviceRunning?: boolean;
+  currentWorkspaceId?: string | null;
 };
 
-export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", prefill, onNavigateToMyFeedback }: FeedbackModalProps) {
+export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", prefill, onNavigateToMyFeedback, serviceRunning = true, currentWorkspaceId }: FeedbackModalProps) {
   const { t } = useTranslation();
 
   const [mode, setMode] = useState<FeedbackMode>(initialMode);
@@ -73,6 +75,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
   } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const captchaTokenRef = useRef("");
+  const captchaNonceRef = useRef("");
   const captchaContainerRef = useRef<HTMLDivElement>(null);
   const captchaInstanceRef = useRef<any>(null);
   const handleSubmitRef = useRef<() => void>(() => {});
@@ -80,6 +83,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
 
   type Phase = "form" | "uploading" | "success";
   const [phase, setPhase] = useState<Phase>("form");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
 
   useEffect(() => {
     if (open) {
@@ -95,8 +99,24 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
     }
   }, [open, initialMode, prefill]);
 
+  const useOfflineIpc = IS_TAURI && !serviceRunning;
+
   useEffect(() => {
     if (!open) return;
+
+    if (useOfflineIpc) {
+      setSystemInfo({ os: navigator.userAgent, note: "collected_via_tauri_offline" });
+      const wsId = currentWorkspaceId || "default";
+      invoke<{ captcha_scene_id: string; captcha_prefix: string }>("get_feedback_config_offline", { workspaceId: wsId })
+        .then((cfg) => {
+          if (cfg.captcha_scene_id && cfg.captcha_prefix) {
+            setCaptchaCfg({ scene_id: cfg.captcha_scene_id, prefix: cfg.captcha_prefix });
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
     safeFetch(`${apiBase}/api/system-info`, { signal: AbortSignal.timeout(5000) })
       .then((r) => r.json())
       .then(setSystemInfo)
@@ -110,7 +130,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
         }
       })
       .catch(() => {});
-  }, [open, apiBase]);
+  }, [open, apiBase, useOfflineIpc, currentWorkspaceId]);
 
   useEffect(() => {
     if (!open || !captchaCfg) return;
@@ -161,7 +181,23 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             button: "#feedback-submit-btn",
             captchaVerifyCallback: async (captchaVerifyParam: string) => {
               captchaTokenRef.current = captchaVerifyParam;
-              return { captchaResult: true, bizResult: true };
+              captchaNonceRef.current = "";
+              try {
+                const resp = await safeFetch(`${apiBase}/api/captcha/verify`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ captcha_verify_param: captchaVerifyParam }),
+                  signal: AbortSignal.timeout(10000),
+                });
+                const data = await resp.json();
+                if (data.verified) {
+                  captchaNonceRef.current = data.nonce || "";
+                  return { captchaResult: true, bizResult: true };
+                }
+                return { captchaResult: false, bizResult: false };
+              } catch {
+                return { captchaResult: true, bizResult: true };
+              }
             },
             onBizResultCallback: () => {
               handleSubmitRef.current();
@@ -193,8 +229,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
       }
       captchaInstanceRef.current = null;
       captchaTokenRef.current = "";
+      captchaNonceRef.current = "";
     };
-  }, [open, captchaCfg]);
+  }, [open, captchaCfg, captchaResetKey]);
 
   const addImages = useCallback((files: FileList | File[]) => {
     const newFiles = Array.from(files).filter(
@@ -248,6 +285,82 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
     setSubmitResult(null);
   }, [initialMode]);
 
+  const friendlyErrorMsg = useCallback((data: any): string => {
+    const code = data?.friendly || "";
+    const detail = data?.detail || "";
+    if (code === "feedback_captcha_failed") return t("feedback.captchaFailed");
+    if (code === "feedback_rate_limit") return t("feedback.rateLimited");
+    if (code === "feedback_cloud_network_error") return t("feedback.cloudNetworkError");
+    if (code === "feedback_cloud_error") return t("feedback.cloudError", { detail });
+    return detail || t("feedback.uploadFailedNetwork");
+  }, [t]);
+
+  const handleSseError = useCallback((data: any) => {
+    setUploadProgress(null);
+    setSubmitResult({ ok: false, msg: friendlyErrorMsg(data) });
+    setPhase("form");
+    setCaptchaResetKey((k) => k + 1);
+  }, [friendlyErrorMsg]);
+
+  const handleSubmitViaIpc = useCallback(async () => {
+    const reportId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    const wsId = currentWorkspaceId || "default";
+
+    setUploadProgress({ percent: 10, phase: "building", detail: t("feedback.progressPacking") });
+
+    const images: { filename: string; dataBase64: string }[] = [];
+    for (const f of imageFiles) {
+      const buf = await f.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      images.push({ filename: f.name, dataBase64: btoa(binary) });
+    }
+
+    const zipPath = await invoke<string>("build_feedback_zip", {
+      workspaceId: wsId,
+      reportId,
+      title: title.trim(),
+      description: description.trim(),
+      reportType: mode,
+      steps: steps.trim() || null,
+      contactEmail: contactEmail.trim() || null,
+      images: images.length > 0 ? images : null,
+    });
+
+    setUploadProgress({ percent: 35, phase: "uploading", detail: "上传反馈数据..." });
+
+    const result = await invoke<{ reportId: string; feedbackToken: string | null; issueUrl: string | null }>(
+      "upload_feedback_to_cloud",
+      {
+        workspaceId: wsId,
+        zipPath,
+        reportId,
+        reportType: mode,
+        title: title.trim(),
+        summary: description.trim().slice(0, 2000),
+        captchaVerifyParam: captchaTokenRef.current || "none",
+        contactEmail: contactEmail.trim(),
+      },
+    );
+
+    setUploadProgress({ percent: 90, phase: "saving", detail: "保存本地记录..." });
+
+    await invoke("save_pending_feedback", {
+      record: {
+        reportId: result.reportId,
+        feedbackToken: result.feedbackToken,
+        title: title.trim(),
+        reportType: mode,
+        contactEmail: contactEmail.trim(),
+        submittedAt: new Date().toISOString(),
+        issueUrl: result.issueUrl,
+      },
+    });
+
+    return result;
+  }, [currentWorkspaceId, title, description, mode, steps, contactEmail, imageFiles, t]);
+
   const handleSubmit = useCallback(async () => {
     if (!title.trim() || !description.trim()) return;
     if (captchaCfg && !captchaTokenRef.current) return;
@@ -261,10 +374,29 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
     abortRef.current = controller;
 
     try {
+      // Offline IPC path: backend is down, submit via Tauri Rust commands
+      if (useOfflineIpc) {
+        try {
+          await handleSubmitViaIpc();
+          setUploadProgress(null);
+          resetForm();
+          setPhase("success");
+        } catch (err: any) {
+          setUploadProgress(null);
+          setSubmitResult({ ok: false, msg: err?.message || err?.toString() || t("feedback.uploadFailedNetwork") });
+          setPhase("form");
+          setCaptchaResetKey((k) => k + 1);
+        }
+        return;
+      }
+
       const form = new FormData();
       form.append("title", title.trim());
       form.append("description", description.trim());
       form.append("captcha_verify_param", captchaTokenRef.current || "none");
+      if (captchaNonceRef.current) {
+        form.append("captcha_nonce", captchaNonceRef.current);
+      }
       for (const img of imageFiles) {
         form.append("images", img);
       }
@@ -325,14 +457,13 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
                   downloadUrl: dlUrl,
                 });
                 setPhase("form");
+                setCaptchaResetKey((k) => k + 1);
               } else {
                 resetForm();
                 setPhase("success");
               }
             } else if (eventType === "error") {
-              setUploadProgress(null);
-              setSubmitResult({ ok: false, msg: data.detail || t("feedback.uploadFailedNetwork") });
-              setPhase("form");
+              handleSseError(data);
             }
           }
         }
@@ -347,6 +478,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             downloadUrl: dlUrl,
           });
           setPhase("form");
+          setCaptchaResetKey((k) => k + 1);
         } else {
           resetForm();
           setPhase("success");
@@ -360,12 +492,14 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
         setSubmitResult({ ok: false, msg: err?.message || t("feedback.uploadFailedNetwork") });
       }
       setPhase("form");
+      setCaptchaResetKey((k) => k + 1);
     } finally {
       captchaTokenRef.current = "";
+      captchaNonceRef.current = "";
       abortRef.current = null;
       setSubmitting(false);
     }
-  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, imageFiles, apiBase, t, resetForm]);
+  }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, imageFiles, apiBase, t, resetForm, useOfflineIpc, handleSubmitViaIpc, handleSseError]);
 
   handleSubmitRef.current = handleSubmit;
 

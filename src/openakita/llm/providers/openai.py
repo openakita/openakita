@@ -607,6 +607,7 @@ class OpenAIProvider(LLMProvider):
             request.messages, request.system,
             provider=self.config.provider,
             enable_thinking=thinking_enabled,
+            vision_available=self.config.has_capability("vision"),
         )
 
         body = {

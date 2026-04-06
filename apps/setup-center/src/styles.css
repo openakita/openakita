@@ -3259,6 +3259,19 @@ button.btnApplyRestart:hover {
   margin-bottom: 8px;
 }
 
+.endpointNotice {
+  text-align: center;
+  font-size: 12px;
+  color: rgba(142, 142, 147, 0.9);
+  padding: 6px 16px;
+  margin: 4px 0 8px;
+  line-height: 1.5;
+}
+
+[data-theme="dark"] .endpointNotice {
+  color: rgba(174, 174, 178, 0.85);
+}
+
 /* 思考模式关闭状态 */
 .chatInputIconBtnOff {
   color: rgba(156, 163, 175, 0.7) !important;

@@ -555,9 +555,21 @@ class LLMClient:
         # 多端点轮询：依次尝试每个端点
         # 流式特殊处理：一旦有事件产出就不再切换（避免混合响应）
         last_error: Exception | None = None
+        first_provider = eligible[0] if eligible else None
         for i, provider in enumerate(eligible):
             yielded = False
             try:
+                # Failover 通知：当实际使用的端点不是列表中的第一个
+                # （说明前面的端点失败了），yield 内部通知事件供上层拦截
+                if i > 0 and first_provider:
+                    yield {
+                        "type": "_internal_endpoint_notice",
+                        "notice_type": "switch",
+                        "from_endpoint": first_provider.name,
+                        "to_endpoint": provider.name,
+                        "reason_code": "failover",
+                    }
+
                 logger.info(
                     f"[LLM-Stream] endpoint={provider.name} model={provider.model} "
                     f"action=stream_request"
@@ -571,14 +583,12 @@ class LLMClient:
             except LLMError as e:
                 last_error = e
                 if yielded:
-                    # 已产出部分事件，不能切换端点（客户端会收到混合响应）
                     logger.error(
                         f"[LLM-Stream] endpoint={provider.name} mid-stream failure: {e}. "
                         f"Cannot failover (partial response already sent)."
                     )
                     raise
                 # 未产出任何事件 → 安全切换到下一个端点
-                # provider 内部已调用 mark_unhealthy()
                 logger.warning(
                     f"[LLM-Stream] endpoint={provider.name} error={e}"
                     + (", trying next endpoint..." if i < len(eligible) - 1 else "")
@@ -673,7 +683,7 @@ class LLMClient:
             and (not require_pdf or p.config.has_capability("pdf"))
         ]
 
-        # 多模态软降级: 视频/音频/PDF 端点不匹配时不硬失败
+        # 多模态软降级: 视频/音频/PDF/Vision 端点不匹配时不硬失败
         if not base_capability_matched:
             degraded = []
             if require_video:
@@ -696,6 +706,21 @@ class LLMClient:
                     if (not require_tools or p.config.has_capability("tools"))
                     and (not require_vision or p.config.has_capability("vision"))
                 ]
+
+        # Vision 降级: 所有端点（含上面降级后的集合）都不支持 vision
+        # 与 video/audio/pdf 同理 — 放弃 vision 要求让请求继续走，
+        # 图片将由 convert_content_blocks 的 _degrade_image 替换为文本占位符
+        if not base_capability_matched and require_vision:
+            logger.warning(
+                "[LLM] No endpoint supports vision. "
+                "Image content will be degraded to text placeholder."
+            )
+            require_vision = False
+            base_capability_matched = [
+                p
+                for p in providers_sorted
+                if (not require_tools or p.config.has_capability("tools"))
+            ]
 
         # thinking 降级标记 — 不立即修改 request，等确认确实需要降级时再改
         _thinking_downgraded = False
@@ -959,10 +984,6 @@ class LLMClient:
             eligible.insert(0, override_provider)
         elif override_provider and override_provider not in eligible:
             # 用户显式选择的端点因能力推断被排除。
-            # 设计原则：能力推断可能不准确（静态表/关键词匹配固有局限），
-            # 而用户的显式选择是最高优先级的意图信号。
-            # 因此仍然将端点加入列表（优先尝试），让 API 错误自然暴露，
-            # 这比静默替换到另一个模型对用户更友好。
             missing = []
             cfg = override_provider.config
             if require_tools and not cfg.has_capability("tools"):
@@ -978,16 +999,37 @@ class LLMClient:
             if require_pdf and not cfg.has_capability("pdf"):
                 missing.append("pdf")
 
-            if eligible:
+            # Vision 特殊处理：与 tools/thinking/audio/pdf 不同，
+            # 不支持 vision 的端点收到 image_url 时不会报 API 错误，
+            # 而是静默忽略图片内容。这导致 "override-first → API 报错 →
+            # failover" 的假设完全失效。
+            # 因此当 require_vision 且 override 不支持 vision 时，
+            # 将 override 放到 eligible 列表的末尾（而非最前面），
+            # 让 vision 端点优先处理图片，override 作为 fallback。
+            _vision_deprioritized = (
+                require_vision
+                and "vision" in missing
+                and eligible
+            )
+            if _vision_deprioritized:
+                eligible.append(override_provider)
+                logger.info(
+                    f"[LLM] User-selected endpoint {override_provider.name} "
+                    f"lacks vision; prioritizing vision-capable endpoints for "
+                    f"this image-containing request. "
+                    f"Override kept as fallback (position={len(eligible)})."
+                )
+            elif eligible:
                 eligible.insert(0, override_provider)
             else:
                 eligible.append(override_provider)
 
-            logger.warning(
-                f"[LLM] User-selected endpoint {override_provider.name} "
-                f"may lack capability: {', '.join(missing)}. "
-                f"Including it anyway (user intent > capability inference)."
-            )
+            if not _vision_deprioritized:
+                logger.warning(
+                    f"[LLM] User-selected endpoint {override_provider.name} "
+                    f"may lack capability: {', '.join(missing)}. "
+                    f"Including it anyway (user intent > capability inference)."
+                )
 
         return eligible
 
@@ -1128,6 +1170,9 @@ class LLMClient:
                     self._last_success_endpoint = provider.name
 
                     response.endpoint_name = provider.name
+                    # 标记 failover 信息供上层（reasoning_engine）发送通知
+                    if i > 0 and providers_to_try:
+                        response._failover_from = providers_to_try[0].name  # type: ignore[attr-defined]
                     return response
 
                 except (UserCancelledError, asyncio.CancelledError):

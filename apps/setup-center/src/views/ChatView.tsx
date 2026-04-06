@@ -245,8 +245,41 @@ type StreamEvent =
   | { type: "agent_handoff"; from_agent: string; to_agent: string; reason?: string }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
   | { type: "ui_preference"; theme?: string; language?: string }
+  | { type: "endpoint_notice"; notice_type: "switch" | "degraded" | "warning"; from_endpoint?: string; to_endpoint?: string; endpoint?: string; reason_code: string }
   | { type: "error"; message: string }
   | { type: "done"; usage?: { input_tokens: number; output_tokens: number; total_tokens?: number; context_tokens?: number; context_limit?: number } };
+
+// ─── 端点通知格式化 ───
+
+function formatEndpointNotice(
+  event: { notice_type: string; from_endpoint?: string; to_endpoint?: string; endpoint?: string; reason_code: string },
+  t: (key: string, opts?: Record<string, string>) => string,
+): string {
+  const rc = event.reason_code;
+  const reasonMap: Record<string, { icon: string; i18nKey: string }> = {
+    vision_required:    { icon: "🔀", i18nKey: "chat.endpointNotice.visionRequired" },
+    video_required:     { icon: "🔀", i18nKey: "chat.endpointNotice.videoRequired" },
+    audio_required:     { icon: "🔀", i18nKey: "chat.endpointNotice.audioRequired" },
+    pdf_required:       { icon: "🔀", i18nKey: "chat.endpointNotice.pdfRequired" },
+    thinking_degraded:  { icon: "⚡", i18nKey: "chat.endpointNotice.thinkingDegraded" },
+    failover:           { icon: "🔄", i18nKey: "chat.endpointNotice.failover" },
+    no_vision_endpoint: { icon: "⚠️", i18nKey: "chat.endpointNotice.noVisionEndpoint" },
+  };
+  const info = reasonMap[rc];
+  if (!info) return "";
+
+  const reason = t(info.i18nKey);
+  if (event.notice_type === "switch" && event.from_endpoint && event.to_endpoint) {
+    return `${info.icon} ${t("chat.endpointNotice.switchedTo", { to: event.to_endpoint })} · ${reason}`;
+  }
+  if (event.notice_type === "warning") {
+    return `${info.icon} ${reason}`;
+  }
+  if (event.notice_type === "degraded") {
+    return `${info.icon} ${reason}`;
+  }
+  return `${info.icon} ${reason}`;
+}
 
 // ─── 思维链工具函数 ───
 
@@ -1402,7 +1435,7 @@ const FlatMessageItem = memo(function FlatMessageItem({
 
   if (isSystem) {
     return (
-      <div className="flatMsgSystem">
+      <div className={msg._isEndpointNotice ? "endpointNotice" : "flatMsgSystem"}>
         <span>{msg.content}</span>
       </div>
     );
@@ -3220,6 +3253,22 @@ export function ChatView({
               case "context_compressed":
                 pendingCompressedInfo = { beforeTokens: event.before_tokens, afterTokens: event.after_tokens };
                 break;
+              case "endpoint_notice": {
+                const noticeText = formatEndpointNotice(event, t);
+                if (noticeText) {
+                  updateMessages((prev) => {
+                    const aIdx = prev.findIndex((m) => m.id === assistantMsg.id);
+                    const sysMsg = { id: genId(), role: "system" as const, content: noticeText, timestamp: Date.now(), _isEndpointNotice: true };
+                    if (aIdx >= 0) {
+                      const arr = [...prev];
+                      arr.splice(aIdx, 0, sysMsg);
+                      return arr;
+                    }
+                    return [...prev, sysMsg];
+                  });
+                }
+                break;
+              }
               case "iteration_start": {
                 // 新迭代 → 新 chain group
                 const newGroup: ChainGroup = {

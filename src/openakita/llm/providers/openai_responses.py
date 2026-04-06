@@ -186,6 +186,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
             request.messages, request.system,
             provider=self.config.provider,
             enable_thinking=request.enable_thinking,
+            vision_available=self.config.has_capability("vision"),
         )
 
         body: dict = {

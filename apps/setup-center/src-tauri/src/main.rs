@@ -2745,6 +2745,10 @@ fn main() {
             open_file_with_default,
             export_env_backup,
             export_diagnostic_bundle,
+            build_feedback_zip,
+            upload_feedback_to_cloud,
+            save_pending_feedback,
+            get_feedback_config_offline,
             open_external_url,
             openakita_list_processes,
             openakita_stop_all_processes,
@@ -6096,6 +6100,368 @@ fn export_diagnostic_bundle(
         .map_err(|e| format!("zip finish error: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Offline Feedback (when Python backend is down)
+// ═══════════════════════════════════════════════════════════════════════
+
+const DEFAULT_FEEDBACK_ENDPOINT: &str = "https://feedback-openakita.fzstack.com";
+const DEFAULT_CAPTCHA_SCENE_ID: &str = "jkyrkj0w";
+const DEFAULT_CAPTCHA_PREFIX: &str = "yiqg72";
+
+fn pending_feedback_path() -> PathBuf {
+    openakita_root_dir().join("pending_feedback.json")
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PendingFeedbackRecord {
+    report_id: String,
+    feedback_token: Option<String>,
+    title: String,
+    report_type: String,
+    contact_email: String,
+    submitted_at: String,
+    issue_url: Option<String>,
+}
+
+/// Read feedback endpoint from workspace config.yaml, falling back to default.
+fn read_feedback_endpoint(workspace_id: &str) -> String {
+    let cfg_path = workspace_dir(workspace_id).join("config.yaml");
+    if let Ok(content) = fs::read_to_string(&cfg_path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("bug_report_endpoint:") {
+                let val = trimmed.trim_start_matches("bug_report_endpoint:").trim().trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    return val.to_string();
+                }
+            }
+        }
+    }
+    DEFAULT_FEEDBACK_ENDPOINT.to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FeedbackImage {
+    filename: String,
+    data_base64: String,
+}
+
+/// Build a feedback ZIP with diagnostic data, metadata, and optional images.
+/// Returns the path to the generated ZIP file.
+#[tauri::command]
+fn build_feedback_zip(
+    workspace_id: String,
+    report_id: String,
+    title: String,
+    description: String,
+    report_type: String,
+    steps: Option<String>,
+    contact_email: Option<String>,
+    images: Option<Vec<FeedbackImage>>,
+) -> Result<String, String> {
+    let ws_dir = workspace_dir(&workspace_id);
+    let temp_dir = openakita_root_dir().join("temp-feedback");
+    fs::create_dir_all(&temp_dir).map_err(|e| format!("mkdir error: {e}"))?;
+    let dest = temp_dir.join(format!("{report_id}.zip"));
+
+    let file = fs::File::create(&dest).map_err(|e| format!("create zip: {e}"))?;
+    let mut zw = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // --- metadata.json ---
+    let now = {
+        let d = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let secs = d % 60; let mins = (d / 60) % 60; let hrs = (d / 3600) % 24;
+        let days = d / 86400;
+        let (y, m, day) = civil_from_days(days as i64);
+        format!("{y:04}-{m:02}-{day:02}T{hrs:02}:{mins:02}:{secs:02}Z")
+    };
+    let metadata = serde_json::json!({
+        "report_id": report_id,
+        "type": report_type,
+        "title": title,
+        "description": description,
+        "steps": steps.unwrap_or_default(),
+        "created_at": now,
+        "submitted_via": "tauri_offline",
+        "contact": { "email": contact_email.clone().unwrap_or_default() },
+        "system_info": {
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        }
+    });
+    zw.start_file("metadata.json", opts).map_err(|e| format!("zip: {e}"))?;
+    zw.write_all(serde_json::to_string_pretty(&metadata).unwrap_or_default().as_bytes())
+        .map_err(|e| format!("zip write: {e}"))?;
+
+    // --- images ---
+    if let Some(imgs) = images {
+        for (i, img) in imgs.iter().enumerate() {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&img.data_base64) {
+                let name = if img.filename.is_empty() {
+                    format!("images/image_{i}.png")
+                } else {
+                    format!("images/{}", img.filename)
+                };
+                zw.start_file(&name, opts).map_err(|e| format!("zip: {e}"))?;
+                let _ = zw.write_all(&bytes);
+            }
+        }
+    }
+
+    // --- Reuse diagnostic collection logic (same as export_diagnostic_bundle) ---
+    fn collect_files_recursive(dir: &Path) -> Vec<PathBuf> {
+        let mut result = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() { result.extend(collect_files_recursive(&p)); }
+                else { result.push(p); }
+            }
+        }
+        result
+    }
+    fn zip_add_dir(zw: &mut zip::ZipWriter<fs::File>, dir: &Path, prefix: &str,
+                   opts: zip::write::SimpleFileOptions) {
+        if !dir.exists() { return; }
+        for fp in collect_files_recursive(dir) {
+            if let Ok(rel) = fp.strip_prefix(dir) {
+                let name = format!("{}/{}", prefix, rel.to_string_lossy().replace('\\', "/"));
+                if zw.start_file(&name, opts).is_ok() {
+                    let _ = zw.write_all(&fs::read(&fp).unwrap_or_default());
+                }
+            }
+        }
+    }
+    fn zip_add_dir_capped(zw: &mut zip::ZipWriter<fs::File>, dir: &Path, prefix: &str,
+                          opts: zip::write::SimpleFileOptions, max_bytes: u64) {
+        if !dir.exists() { return; }
+        let mut files = collect_files_recursive(dir);
+        files.sort_by(|a, b| {
+            let ma = fs::metadata(a).and_then(|m| m.modified()).ok();
+            let mb = fs::metadata(b).and_then(|m| m.modified()).ok();
+            mb.cmp(&ma)
+        });
+        let mut total: u64 = 0;
+        for fp in files {
+            let sz = fs::metadata(&fp).map(|m| m.len()).unwrap_or(0);
+            if total + sz > max_bytes { continue; }
+            if let Ok(rel) = fp.strip_prefix(dir) {
+                let name = format!("{}/{}", prefix, rel.to_string_lossy().replace('\\', "/"));
+                if zw.start_file(&name, opts).is_ok() {
+                    let _ = zw.write_all(&fs::read(&fp).unwrap_or_default());
+                    total += sz;
+                }
+            }
+        }
+    }
+    fn zip_add_file(zw: &mut zip::ZipWriter<fs::File>, path: &Path, zip_name: &str,
+                    opts: zip::write::SimpleFileOptions) {
+        if !path.exists() || !path.is_file() { return; }
+        if zw.start_file(zip_name, opts).is_ok() {
+            let _ = zw.write_all(&fs::read(path).unwrap_or_default());
+        }
+    }
+
+    let logs_dir = ws_dir.join("logs");
+    let data_dir = ws_dir.join("data");
+    let llm_debug_dir = data_dir.join("llm_debug");
+
+    zip_add_dir(&mut zw, &logs_dir, "logs", opts);
+    zip_add_dir_capped(&mut zw, &llm_debug_dir, "llm_debug", opts, 10 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("delegation_logs"), "delegation_logs", opts, 2 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("react_traces"), "react_traces", opts, 5 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("traces"), "traces", opts, 2 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("orgs"), "orgs", opts, 2 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("tool_overflow"), "tool_overflow", opts, 2 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("failure_analysis"), "failure_analysis", opts, 1 * 1024 * 1024);
+    zip_add_dir_capped(&mut zw, &data_dir.join("retrospects"), "retrospects", opts, 1 * 1024 * 1024);
+
+    zip_add_file(&mut zw, &data_dir.join("runtime_state.json"), "state/runtime_state.json", opts);
+    zip_add_file(&mut zw, &data_dir.join("sub_agent_states.json"), "state/sub_agent_states.json", opts);
+    zip_add_file(&mut zw, &data_dir.join("backend.heartbeat"), "state/backend.heartbeat", opts);
+    zip_add_file(&mut zw, &data_dir.join("sessions").join("sessions.json"), "state/sessions.json", opts);
+    zip_add_file(&mut zw, &data_dir.join("sessions").join("channel_registry.json"), "state/channel_registry.json", opts);
+    zip_add_file(&mut zw, &data_dir.join("scheduler").join("tasks.json"), "state/scheduler_tasks.json", opts);
+    zip_add_file(&mut zw, &data_dir.join("scheduler").join("executions.json"), "state/scheduler_executions.json", opts);
+
+    let global_logs = setup_logs_dir();
+    zip_add_file(&mut zw, &global_logs.join("frontend.log"), "global_logs/frontend.log", opts);
+    zip_add_file(&mut zw, &global_logs.join("crash.log"), "global_logs/crash.log", opts);
+    for entry in fs::read_dir(&global_logs).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("onboarding-") && name_str.ends_with(".log") {
+            zip_add_file(&mut zw, &entry.path(), &format!("global_logs/{name_str}"), opts);
+        }
+    }
+
+    zw.finish().map_err(|e| format!("zip finish: {e}"))?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+/// Simple days-since-epoch to civil date (year, month, day).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// Upload a feedback ZIP to the cloud FC endpoint (3-phase: prepare → OSS PUT → complete).
+/// Returns { reportId, feedbackToken, issueUrl } on success.
+#[tauri::command]
+fn upload_feedback_to_cloud(
+    workspace_id: String,
+    zip_path: String,
+    report_id: String,
+    report_type: String,
+    title: String,
+    summary: String,
+    captcha_verify_param: String,
+    contact_email: String,
+) -> Result<serde_json::Value, String> {
+    let endpoint = read_feedback_endpoint(&workspace_id);
+    if endpoint.is_empty() {
+        return Err("Feedback endpoint not configured".into());
+    }
+    let zip_bytes = fs::read(&zip_path).map_err(|e| format!("read zip: {e}"))?;
+    let _ = fs::remove_file(&zip_path);
+    if zip_bytes.len() > 30 * 1024 * 1024 {
+        return Err(format!("ZIP too large: {:.1} MB (max 30 MB)", zip_bytes.len() as f64 / 1048576.0));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+
+    let base = endpoint.trim_end_matches('/');
+
+    fn truncate_chars(s: &str, max_chars: usize) -> &str {
+        match s.char_indices().nth(max_chars) {
+            Some((idx, _)) => &s[..idx],
+            None => s,
+        }
+    }
+
+    // Phase 1: prepare
+    let prepare_resp = client.post(format!("{base}/prepare"))
+        .json(&serde_json::json!({
+            "report_id": report_id,
+            "title": truncate_chars(&title, 200),
+            "type": report_type,
+            "summary": truncate_chars(&summary, 2000),
+            "system_info": format!("OS: {} {}", std::env::consts::OS, std::env::consts::ARCH),
+            "captcha_verify_param": captcha_verify_param,
+            "contact_email": contact_email,
+        }))
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .map_err(|e| format!("prepare failed: {e}"))?;
+
+    if prepare_resp.status().as_u16() == 429 { return Err("Rate limit, please try later".into()); }
+    if prepare_resp.status().as_u16() == 403 { return Err("CAPTCHA verification failed".into()); }
+    if prepare_resp.status().is_client_error() || prepare_resp.status().is_server_error() {
+        let text = prepare_resp.text().unwrap_or_default();
+        return Err(format!("Cloud error: {}", &text[..text.len().min(200)]));
+    }
+
+    let prepare_data: serde_json::Value = prepare_resp.json().map_err(|e| format!("parse prepare: {e}"))?;
+    let upload_url = prepare_data["upload_url"].as_str().ok_or("missing upload_url")?;
+    let report_date = prepare_data["report_date"].as_str().unwrap_or("");
+
+    // Phase 2: OSS upload
+    let oss_resp = client.put(upload_url)
+        .header("Content-Length", zip_bytes.len().to_string())
+        .body(zip_bytes)
+        .send()
+        .map_err(|e| format!("OSS upload failed: {e}"))?;
+
+    if oss_resp.status().is_client_error() || oss_resp.status().is_server_error() {
+        return Err(format!("OSS upload error: {}", oss_resp.status()));
+    }
+
+    // Phase 3: complete
+    let complete_resp = client.post(format!("{base}/complete/{report_id}"))
+        .json(&serde_json::json!({ "report_date": report_date }))
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .map_err(|e| format!("complete failed: {e}"))?;
+
+    let mut feedback_token: Option<String> = None;
+    let mut issue_url: Option<String> = None;
+    if complete_resp.status().is_success() {
+        if let Ok(data) = complete_resp.json::<serde_json::Value>() {
+            feedback_token = data["feedback_token"].as_str().map(|s| s.to_string());
+            issue_url = data["issue_url"].as_str().map(|s| s.to_string());
+        }
+    }
+
+    Ok(serde_json::json!({
+        "reportId": report_id,
+        "feedbackToken": feedback_token,
+        "issueUrl": issue_url,
+    }))
+}
+
+/// Save a pending feedback record to JSON file for later import by Python backend.
+#[tauri::command]
+fn save_pending_feedback(record: PendingFeedbackRecord) -> Result<(), String> {
+    let path = pending_feedback_path();
+    let mut records: Vec<PendingFeedbackRecord> = if path.exists() {
+        let data = fs::read_to_string(&path).unwrap_or_else(|_| "[]".to_string());
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    records.push(record);
+
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, serde_json::to_string_pretty(&records).unwrap_or_else(|_| "[]".into()))
+        .map_err(|e| format!("write pending: {e}"))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("rename pending: {e}"))?;
+    Ok(())
+}
+
+/// Get feedback config (captcha ids) when backend is offline.
+#[tauri::command]
+fn get_feedback_config_offline(workspace_id: String) -> serde_json::Value {
+    let cfg_path = workspace_dir(&workspace_id).join("config.yaml");
+    let mut scene_id = DEFAULT_CAPTCHA_SCENE_ID.to_string();
+    let mut prefix = DEFAULT_CAPTCHA_PREFIX.to_string();
+    if let Ok(content) = fs::read_to_string(&cfg_path) {
+        for line in content.lines() {
+            let t = line.trim();
+            if t.starts_with("captcha_scene_id:") {
+                let v = t.trim_start_matches("captcha_scene_id:").trim().trim_matches('"').trim_matches('\'');
+                if !v.is_empty() { scene_id = v.to_string(); }
+            }
+            if t.starts_with("captcha_prefix:") {
+                let v = t.trim_start_matches("captcha_prefix:").trim().trim_matches('"').trim_matches('\'');
+                if !v.is_empty() { prefix = v.to_string(); }
+            }
+        }
+    }
+    serde_json::json!({
+        "captcha_scene_id": scene_id,
+        "captcha_prefix": prefix,
+    })
 }
 
 /// Open an external URL in the OS default browser.

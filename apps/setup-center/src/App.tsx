@@ -34,7 +34,7 @@ import type {
 import {
   IconCheckCircle, IconXCircle, IconInfo,
 } from "./icons";
-import { ChevronRight, ChevronDown, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Loader2, AlertTriangle, CheckCircle2, FolderOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1046,6 +1046,25 @@ export function App() {
   }, [venvStatus]);
 
   /**
+   * Clear all workspace-scoped React state so that stale data from the
+   * previous workspace never leaks into the new one.  Called synchronously
+   * inside confirmWorkspaceChange right after the actual switch succeeds.
+   */
+  function resetWorkspaceData() {
+    setEndpointSummary([]);
+    setEndpointHealth({});
+    setImHealth({});
+    setSavedEndpoints([]);
+    setSavedCompilerEndpoints([]);
+    setSavedSttEndpoints([]);
+    setSkillSummary(null);
+    setSkillsDetail(null);
+    setSkillsSelection({});
+    setServiceLog(null);
+    setServiceLogError(null);
+  }
+
+  /**
    * Shared helper: show confirmation dialog before switching/creating workspace,
    * then auto-restart the backend if it was running.
    *
@@ -1075,6 +1094,7 @@ export function App() {
         try {
           await opts.performSwitch();
           resetEnvLoaded();
+          resetWorkspaceData();
 
           // ── Web/Capacitor: the API call already triggered a backend restart ──
           if (IS_WEB || IS_CAPACITOR) {
@@ -2103,10 +2123,8 @@ export function App() {
               };
             })
             .filter((e: any) => e.name);
-          if (list.length > 0) {
-            setEndpointSummary(list);
-            endpointSummaryResolved = true;
-          }
+          setEndpointSummary(list);
+          endpointSummaryResolved = true;
         } catch {
           // Config API not available — will fall back below
         }
@@ -2127,9 +2145,9 @@ export function App() {
               keyPresent: m?.has_api_key === true,
               enabled: m?.enabled !== false,
             })).filter((e: any) => e.name);
+            setEndpointSummary(list);
+            endpointSummaryResolved = true;
             if (list.length > 0) {
-              setEndpointSummary(list);
-              endpointSummaryResolved = true;
               const healthFromModels: Record<string, any> = {};
               for (const m of models) {
                 const n = String(m?.name || m?.endpoint || "");
@@ -2159,10 +2177,8 @@ export function App() {
                 enabled: e?.enabled !== false,
               };
             }).filter((e: any) => e.name);
-            if (list.length > 0) {
-              setEndpointSummary(list);
-              endpointSummaryResolved = true;
-            }
+            setEndpointSummary(list);
+            endpointSummaryResolved = true;
           } catch { /* ignore */ }
         }
 
@@ -2236,7 +2252,7 @@ export function App() {
               }
             }
           }
-          if (Object.keys(h).length > 0) setImHealth(h);
+          setImHealth(h);
         } catch { /* IM status is optional */ }
         return;
       }
@@ -2327,7 +2343,7 @@ export function App() {
               }
             }
           }
-          if (Object.keys(h).length > 0) setImHealth(h);
+          setImHealth(h);
         } catch { /* ignore - IM status is optional */ }
       }
       // ── Multi-process detection (local mode only) ──
@@ -4237,6 +4253,24 @@ export function App() {
                           placeholder={t("onboarding.welcome.customRootPlaceholder")}
                         />
                         <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 shrink-0 px-2"
+                          title={t("onboarding.welcome.customRootBrowse")}
+                          onClick={async () => {
+                            try {
+                              const { openFileDialog } = await import("./platform");
+                              const selected = await openFileDialog({ directory: true, title: t("onboarding.welcome.customRootToggle") });
+                              if (selected) {
+                                setObCustomRootInput(selected);
+                                setObCustomRootApplied(false);
+                              }
+                            } catch (e) { notifyError(String(e)); }
+                          }}
+                        >
+                          <FolderOpen className="size-4" />
+                        </Button>
+                        <Button
                           size="sm"
                           className="h-8 shrink-0"
                           disabled={!obCustomRootInput.trim() || obCustomRootApplied || obCustomRootBusy}
@@ -5434,6 +5468,8 @@ export function App() {
         apiBase={httpApiBase()}
         prefill={feedbackPrefill}
         onNavigateToMyFeedback={() => { setFeedbackRefreshKey((k) => k + 1); setView("my_feedback"); }}
+        serviceRunning={serviceStatus?.running ?? false}
+        currentWorkspaceId={currentWorkspaceId}
       />
     </div>
     </EnvFieldContext.Provider>

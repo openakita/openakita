@@ -55,17 +55,6 @@ ${StrRep}
   FileClose $R9
 !macroend
 
-!macro _OpenAkita_KillPid pid
-  StrCpy $0 "${pid}"
-  ${If} $0 != ""
-    nsExec::ExecToLog 'powershell -NoProfile -Command "Stop-Process -Id $0 -Force -ErrorAction SilentlyContinue"'
-    Pop $1
-    nsExec::ExecToStack 'cmd /c taskkill /PID $0 /T /F >nul 2>&1'
-    Pop $1
-    Pop $1
-  ${EndIf}
-!macroend
-
 ; 读取 custom_root.txt 获取实际数据根目录，结果写入 $R9
 ; 该文件由 Tauri 端在设置自定义路径时同步写入（纯文本，仅包含路径）
 ; 如果文件不存在或内容为空，$R9 = 默认路径
@@ -91,39 +80,6 @@ ${StrRep}
       ${EndIf}
     ${EndIf}
   ${EndIf}
-!macroend
-
-!macro _OpenAkita_KillServicePidsIn dir
-  FindFirst $R1 $R2 "${dir}\openakita-*.pid"
-  ${DoWhile} $R2 != ""
-    FileOpen $R4 "${dir}\$R2" "r"
-    ${IfNot} ${Errors}
-      FileRead $R4 $R5
-      FileClose $R4
-      ; Strip trailing \r\n from PID value
-      StrCpy $R6 $R5 1 -1
-      ${If} $R6 == "$\n"
-        StrCpy $R5 $R5 -1
-      ${EndIf}
-      StrCpy $R6 $R5 1 -1
-      ${If} $R6 == "$\r"
-        StrCpy $R5 $R5 -1
-      ${EndIf}
-      StrCpy $R6 $R5 32
-      !insertmacro _OpenAkita_KillPid $R6
-    ${EndIf}
-    FindNext $R1 $R2
-  ${Loop}
-  FindClose $R1
-!macroend
-
-!macro _OpenAkita_KillAllServicePids
-  ; 解析实际数据根目录并清理 PID 文件
-  !insertmacro _OpenAkita_ResolveRoot
-  !insertmacro _OpenAkita_KillServicePidsIn "$R9\run"
-  ; 始终也检查默认路径（兼容残留，重复检查是无害的）
-  ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\run"
-  !insertmacro _OpenAkita_KillServicePidsIn $R0
 !macroend
 
 ; 生成合并清理 PowerShell 脚本（环境组件 + 可选用户数据），单次调用替代逐目录多次调用
@@ -157,50 +113,85 @@ ${StrRep}
   FileClose $R8
 !macroend
 
-; Write a reusable PS1 script that kills all processes under a given directory.
-; Using -File avoids curly-brace parsing issues that occur when passing
-; Where-Object { ... } script blocks via powershell -Command "...".
-; Appends trailing backslash to prevent prefix collisions (e.g. C:\foo vs C:\foobar).
-!macro _OpenAkita_WriteKillByPathScript
+; ── Consolidated process-kill + verify script ──
+; Generates a single PowerShell script that:
+;   1. Kills by process name (Stop-Process + taskkill /T for child trees)
+;   2. Kills by PID files (reads openakita-*.pid from data dirs)
+;   3. Kills by install path (catches orphaned/detached child processes)
+;   4. Verifies file lock on VCRUNTIME140.dll (the most commonly locked file)
+;   5. Retries with increasing delays if still locked (handles AV scanning, slow I/O)
+; All logic in ONE PowerShell process — eliminates 6+ separate PS startup overhead.
+!macro _OpenAkita_WriteKillScript
   InitPluginsDir
-  FileOpen $R9 "$PLUGINSDIR\_oa_killbypath.ps1" w
-  FileWrite $R9 "param([string]$$Dir)$\r$\n"
-  FileWrite $R9 "if (-not $$Dir) { exit 0 }$\r$\n"
-  FileWrite $R9 "$$d = $$Dir.TrimEnd([char]92) + [char]92$\r$\n"
-  FileWrite $R9 "Get-Process | Where-Object {$\r$\n"
-  FileWrite $R9 "    $$_.Path -and $$_.Path.StartsWith($$d, [System.StringComparison]::OrdinalIgnoreCase)$\r$\n"
-  FileWrite $R9 "} | Stop-Process -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileOpen $R9 "$PLUGINSDIR\_oa_kill.ps1" w
+  FileWrite $R9 "param([string]$$InstDir)$\r$\n"
+  FileWrite $R9 "$$EA = 'SilentlyContinue'$\r$\n"
+  ; ── function: Kill all OpenAkita processes ──
+  FileWrite $R9 "function Kill-OA {$\r$\n"
+  FileWrite $R9 "    Get-Process -Name openakita-setup-center,openakita-server -EA $$EA |$\r$\n"
+  FileWrite $R9 "        Stop-Process -Force -EA $$EA$\r$\n"
+  FileWrite $R9 "    & cmd /c 'taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'$\r$\n"
+  FileWrite $R9 "    & cmd /c 'taskkill /IM openakita-server.exe /T /F >nul 2>&1'$\r$\n"
+  ; Kill by PID files (resolve custom data root first)
+  FileWrite $R9 "    $$root = Join-Path $$env:USERPROFILE '.openakita'$\r$\n"
+  FileWrite $R9 "    $$crf = Join-Path $$root 'custom_root.txt'$\r$\n"
+  FileWrite $R9 "    $$customRoot = $$null$\r$\n"
+  FileWrite $R9 "    if (Test-Path $$crf) {$\r$\n"
+  FileWrite $R9 "        $$cr = (Get-Content $$crf -First 1 -EA $$EA)$\r$\n"
+  FileWrite $R9 "        if ($$cr) { $$cr = $$cr.Trim() }$\r$\n"
+  FileWrite $R9 "        if ($$cr) { $$customRoot = $$cr }$\r$\n"
+  FileWrite $R9 "    }$\r$\n"
+  FileWrite $R9 "    foreach ($$rd in @($$root, $$customRoot)) {$\r$\n"
+  FileWrite $R9 "        if (-not $$rd) { continue }$\r$\n"
+  FileWrite $R9 "        $$runDir = Join-Path $$rd 'run'$\r$\n"
+  FileWrite $R9 "        if (-not (Test-Path $$runDir)) { continue }$\r$\n"
+  FileWrite $R9 "        Get-ChildItem (Join-Path $$runDir 'openakita-*.pid') -EA $$EA | ForEach-Object {$\r$\n"
+  FileWrite $R9 "            $$p = (Get-Content $$_.FullName -First 1 -EA $$EA)$\r$\n"
+  FileWrite $R9 "            if ($$p) { $$p = $$p.Trim() }$\r$\n"
+  FileWrite $R9 "            if ($$p -match '^\d+$$') {$\r$\n"
+  FileWrite $R9 "                Stop-Process -Id $$p -Force -EA $$EA$\r$\n"
+  FileWrite $R9 "                & cmd /c $\"taskkill /PID $$p /T /F >nul 2>&1$\"$\r$\n"
+  FileWrite $R9 "            }$\r$\n"
+  FileWrite $R9 "        }$\r$\n"
+  FileWrite $R9 "    }$\r$\n"
+  ; Kill by install path (catches detached/orphaned processes)
+  FileWrite $R9 "    foreach ($$dir in @($$InstDir, $$root, $$customRoot)) {$\r$\n"
+  FileWrite $R9 "        if (-not $$dir) { continue }$\r$\n"
+  FileWrite $R9 "        $$d = $$dir.TrimEnd([char]92) + [char]92$\r$\n"
+  FileWrite $R9 "        Get-Process | Where-Object {$\r$\n"
+  FileWrite $R9 "            $$_.Path -and $$_.Path.StartsWith($$d, [System.StringComparison]::OrdinalIgnoreCase)$\r$\n"
+  FileWrite $R9 "        } | Stop-Process -Force -EA $$EA$\r$\n"
+  FileWrite $R9 "    }$\r$\n"
+  FileWrite $R9 "}$\r$\n"
+  ; ── function: Test file lock ──
+  FileWrite $R9 "function Test-Locked([string]$$f) {$\r$\n"
+  FileWrite $R9 "    if (-not (Test-Path $$f)) { return $$false }$\r$\n"
+  FileWrite $R9 "    try {$\r$\n"
+  FileWrite $R9 "        $$s = [IO.File]::Open($$f, 'Open', 'ReadWrite', 'None')$\r$\n"
+  FileWrite $R9 "        $$s.Close(); return $$false$\r$\n"
+  FileWrite $R9 "    } catch { return $$true }$\r$\n"
+  FileWrite $R9 "}$\r$\n"
+  ; ── main: kill + verify + retry ──
+  FileWrite $R9 "$$sentinel = Join-Path $$InstDir 'resources\openakita-server\_internal\VCRUNTIME140.dll'$\r$\n"
+  FileWrite $R9 "for ($$i = 0; $$i -lt 3; $$i++) {$\r$\n"
+  FileWrite $R9 "    Kill-OA$\r$\n"
+  FileWrite $R9 "    Start-Sleep -Seconds (3 + $$i * 2)$\r$\n"
+  FileWrite $R9 "    if (-not (Test-Locked $$sentinel)) { exit 0 }$\r$\n"
+  FileWrite $R9 "}$\r$\n"
+  FileWrite $R9 "exit 0$\r$\n"
   FileClose $R9
 !macroend
 
-; Standalone process-killing macro — called both BEFORE running old uninstaller
-; (reinst_uninstall phase) and in Section Install (NSIS_HOOK_PREINSTALL).
-; Ensures file locks are released regardless of old uninstaller's capabilities.
+; Unified process-killing macro — one PowerShell process handles everything.
+; Called from: NSIS_HOOK_PREINSTALL, NSIS_HOOK_PREUNINSTALL, reinst_uninstall.
+; Only clobbers $0 (nsExec return code). No register side-effects.
 !macro NSIS_HOOK_PREINSTALL_KILLPROCS
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process -Name openakita-setup-center,openakita-server -EA SilentlyContinue | Stop-Process -Force"'
+  !insertmacro _OpenAkita_WriteKillScript
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_kill.ps1" -InstDir "$INSTDIR"'
   Pop $0
-  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
-  Pop $0
-  Pop $0
-  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
-  Pop $0
-  Pop $0
-  !insertmacro _OpenAkita_KillAllServicePids
-  !insertmacro _OpenAkita_WriteKillByPathScript
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$INSTDIR"'
-  Pop $0
-  ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$R0"'
-  Pop $0
-  Sleep 3000
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  ; 安装前（Section Install 入口处）：强制杀掉所有旧进程，防止文件锁定导致覆盖失败。
-  ; 所有清理操作统一在此执行（有进度日志），PageLeaveEnvCheck 仅设置标志位。
-  ;
-  ; 所有命令通过 nsExec 在隐藏控制台中执行，完全无弹窗。
-  ; 策略：四层递进式进程终止，确保文件锁完全释放。
   DetailPrint "Stopping OpenAkita processes..."
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
 
@@ -243,24 +234,7 @@ ${StrRep}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; 卸载前：强制杀掉残留进程（合并 PowerShell 调用，nsExec 无弹窗）
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process -Name openakita-setup-center,openakita-server -EA SilentlyContinue | Stop-Process -Force"'
-  Pop $0
-  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'
-  Pop $0
-  Pop $0
-  nsExec::ExecToStack 'cmd /c taskkill /IM openakita-server.exe /T /F >nul 2>&1'
-  Pop $0
-  Pop $0
-  !insertmacro _OpenAkita_KillAllServicePids
-  ; 兜底：杀掉安装目录和数据目录下所有残留进程（使用 -File 避免花括号解析问题）
-  !insertmacro _OpenAkita_WriteKillByPathScript
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$INSTDIR"'
-  Pop $0
-  ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_killbypath.ps1" -Dir "$R0"'
-  Pop $0
-  Sleep 3000
+  !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

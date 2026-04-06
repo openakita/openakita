@@ -167,35 +167,12 @@ class PersonaHandler:
 
         self.agent.persona_manager.add_trait(trait)
 
-        # 同时写入记忆系统（按 dimension 去重：同 dimension 只保留最新值）
         if hasattr(self.agent, "memory_manager") and self.agent.memory_manager:
-            from ...memory.types import Memory, MemoryPriority, MemoryType
-
-            mm = self.agent.memory_manager
-            store = getattr(mm, "store", None)
-
-            # 查找同 dimension 已有记忆，更新而非新建
-            if store:
-                existing = store.query_semantic(
-                    memory_type="persona_trait", limit=50
-                )
-                for old in existing:
-                    if old.content.startswith(f"{dimension}="):
-                        store.update_semantic(old.id, {
-                            "content": f"{dimension}={preference}",
-                            "importance_score": max(old.importance_score, trait.confidence),
-                        })
-                        return f"✅ 已更新人格偏好: {dimension} = {preference} (来源: {source})"
-
-            memory = Memory(
-                type=MemoryType.PERSONA_TRAIT,
-                priority=MemoryPriority.LONG_TERM,
-                content=f"{dimension}={preference}",
-                source=source,
-                tags=[f"dimension:{dimension}", f"preference:{preference}"],
-                importance_score=trait.confidence,
+            from ...core.persona import persist_trait_to_memory
+            persist_trait_to_memory(
+                self.agent.memory_manager, dimension, preference,
+                trait.confidence, source,
             )
-            mm.add_memory(memory)
 
         return f"✅ 已更新人格偏好: {dimension} = {preference} (来源: {source})"
 

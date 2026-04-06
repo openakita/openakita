@@ -98,6 +98,24 @@ export function isQianFanCodingPlanProvider(providerSlug: string | null, baseUrl
   return isQf && base.includes("coding");
 }
 
+export function isXfyunCodingPlanProvider(providerSlug: string | null, baseUrl: string): boolean {
+  const slug = (providerSlug || "").toLowerCase();
+  const base = (baseUrl || "").toLowerCase();
+  const isXfyun = slug === "xfyun" || base.includes("xf-yun.com");
+  return isXfyun && base.includes("maas-coding-api");
+}
+
+export function xfyunCodingPlanFallbackModels(providerSlug: string | null): ListedModel[] {
+  const ids = [
+    "astron-code-latest",
+  ];
+  return ids.map((id) => ({
+    id,
+    name: id,
+    capabilities: inferCapabilities(id, providerSlug),
+  }));
+}
+
 export function miniMaxFallbackModels(providerSlug: string | null): ListedModel[] {
   const ids = [
     "MiniMax-M2.7",
@@ -194,6 +212,9 @@ export async function fetchModelsDirectly(params: {
   }
   if (isQianFanCodingPlanProvider(providerSlug, baseUrl)) {
     return qianFanCodingPlanFallbackModels(providerSlug);
+  }
+  if (isXfyunCodingPlanProvider(providerSlug, baseUrl)) {
+    return xfyunCodingPlanFallbackModels(providerSlug);
   }
   if (isLongCatProvider(providerSlug, baseUrl)) {
     return longCatFallbackModels(providerSlug);

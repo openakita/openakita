@@ -218,10 +218,11 @@ Function PageReinstall
  StrCpy $R2 "$(addOrReinstall)"
  StrCpy $R3 "$(uninstallApp)"
  !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
- ; Upgrading — skip reinstall page and overwrite directly, UNLESS migrating
- ; from WiX (MSI must be uninstalled first since it's a different installer system).
- ; NSIS_HOOK_PREINSTALL already handles process killing and old env cleanup.
- ; Abort in a custom Page PRE function = skip this page entirely.
+ ; Upgrading or downgrading — skip reinstall page and overwrite directly,
+ ; UNLESS migrating from WiX (MSI must be uninstalled first).
+ ; NSIS_HOOK_PREINSTALL already handles process killing and old env cleanup;
+ ; running the old uninstaller is unnecessary and unreliable (file locks,
+ ; _?= path issues with spaces, etc.).
  ${ElseIf} $R0 = 1
  ${If} $WixMode <> 1
  Abort
@@ -230,8 +231,13 @@ Function PageReinstall
  StrCpy $R2 "$(uninstallBeforeInstalling)"
  StrCpy $R3 "$(dontUninstall)"
  !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
- ; Downgrading
+ ; Downgrading — same as upgrading: skip page and overwrite directly
  ${ElseIf} $R0 = -1
+ !if "${ALLOWDOWNGRADES}" == "true"
+ ${If} $WixMode <> 1
+ Abort
+ ${EndIf}
+ !endif
  StrCpy $R1 "$(newerVersionInstalled)"
  StrCpy $R2 "$(uninstallBeforeInstalling)"
  !if "${ALLOWDOWNGRADES}" == "true"
@@ -335,9 +341,8 @@ Function PageLeaveReinstall
 
   ; Kill all OpenAkita processes BEFORE running old uninstaller,
   ; because the old uninstaller may lack robust process-killing logic.
-  ; Save $R6 first — _OpenAkita_KillServicePidsIn clobbers $R1/$R2/$R6,
-  ; and $R6 holds the WiX registry key path when WixMode=1.
-  ; (Push/Pop is safe here: all nsExec Push/Pop pairs inside the macro are balanced.)
+  ; Push/Pop $R6 preserved for safety — the consolidated kill script only
+  ; clobbers $0, but $R6 holds the WiX registry key path when WixMode=1.
   Push $R6
   !ifmacrodef NSIS_HOOK_PREINSTALL_KILLPROCS
     !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS

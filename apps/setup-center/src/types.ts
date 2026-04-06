@@ -166,6 +166,7 @@ export type ChatMessage = {
   thinkingChain?: ChainGroup[] | null;
   timestamp: number;
   streaming?: boolean;
+  _isEndpointNotice?: boolean;
 };
 
 // ─── 思维链 (Thinking Chain) 类型 ───

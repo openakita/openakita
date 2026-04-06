@@ -340,6 +340,12 @@ DOCUMENT_CONVERTERS: dict[str, object] = {
 }
 
 
+def _degrade_image(block: ImageBlock) -> dict:
+    """图片降级: 无 vision 端点可用 → 文本占位符"""
+    _converter_logger.warning("Image content degraded to text (no vision endpoint available)")
+    return {"type": "text", "text": "[图片已附加，但当前无可用的图片识别端点，图片内容已跳过]"}
+
+
 def _degrade_video(block: VideoBlock) -> dict:
     """视频降级: 不支持视频的端点 → 文本描述"""
     _converter_logger.warning("Video content degraded to text (provider not supported)")
@@ -362,6 +368,8 @@ def _degrade_document(block: DocumentBlock) -> dict:
 def convert_content_blocks(
     blocks: list[ContentBlock],
     provider: str = "openai",
+    *,
+    vision_available: bool = True,
 ) -> str | list[dict]:
     """
     统一内容块转换器（策略表分发 + 优雅降级）
@@ -370,6 +378,7 @@ def convert_content_blocks(
     如果 provider 不在策略表中，自动走降级链。
 
     降级链:
+    - 图片不支持 → 文本描述 "[图片已附加，但当前无可用的图片识别端点]"
     - 视频不支持 → 文本描述 "[视频内容：该端点不支持视频输入]"
     - 音频不支持 → 文本描述 "[音频内容：该端点不支持音频输入]"
     - 文档不支持 → 文本描述 "[文档内容：该端点不支持文档输入]"
@@ -377,6 +386,8 @@ def convert_content_blocks(
     Args:
         blocks: 内容块列表
         provider: 服务商标识
+        vision_available: 当前端点是否支持图片识别。
+            False 时 ImageBlock 降级为文本占位符。
 
     Returns:
         如果只有一个文本块，返回字符串；否则返回列表
@@ -390,7 +401,10 @@ def convert_content_blocks(
             result.append({"type": "text", "text": block.text})
 
         elif isinstance(block, ImageBlock):
-            result.append(convert_image_to_openai(block.image))
+            if vision_available:
+                result.append(convert_image_to_openai(block.image))
+            else:
+                result.append(_degrade_image(block))
 
         elif isinstance(block, VideoBlock):
             converter = VIDEO_CONVERTERS.get(provider)

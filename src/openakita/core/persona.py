@@ -76,6 +76,64 @@ PERSONA_DIMENSIONS = {
     },
 }
 
+DIMENSION_LABELS: dict[str, str] = {
+    "formality": "正式程度",
+    "humor": "幽默感偏好",
+    "emoji_usage": "表情符号偏好",
+    "reply_length": "回复长度偏好",
+    "proactiveness": "主动消息偏好",
+    "emotional_distance": "情感距离偏好",
+    "encouragement": "鼓励程度偏好",
+    "sticker_preference": "表情包偏好",
+    "address_style": "称呼方式",
+    "care_topics": "关注话题",
+}
+
+
+def persist_trait_to_memory(
+    memory_manager: object,
+    dimension: str,
+    preference: str,
+    confidence: float,
+    source: str,
+) -> bool:
+    """将 PersonaTrait 持久化到记忆系统（tag-based 去重更新或新建）。
+
+    Returns True if written/updated, False if skipped (no store available).
+    """
+    store = getattr(memory_manager, "store", None)
+    if not store:
+        return False
+
+    label = DIMENSION_LABELS.get(dimension, dimension)
+    content = f"{label}: {preference}"
+    new_tags = [f"dimension:{dimension}", f"preference:{preference}"]
+
+    existing = store.query_semantic(memory_type="persona_trait", limit=50)
+    for old in existing:
+        old_tags = normalize_tags(getattr(old, "tags", []))
+        if f"dimension:{dimension}" in old_tags:
+            store.update_semantic(old.id, {
+                "content": content,
+                "importance_score": max(old.importance_score, confidence),
+                "tags": new_tags,
+            })
+            return True
+
+    from openakita.memory.types import Memory, MemoryPriority, MemoryType
+    mem = Memory(
+        type=MemoryType.PERSONA_TRAIT,
+        priority=MemoryPriority.LONG_TERM,
+        content=content,
+        source=source,
+        tags=new_tags,
+        importance_score=confidence,
+        subject="用户",
+        predicate=label,
+    )
+    memory_manager.add_memory(mem)
+    return True
+
 
 # ── 数据结构 ──────────────────────────────────────────────────────
 

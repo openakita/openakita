@@ -5,10 +5,10 @@ import {
   isLocalProvider, localProviderPlaceholderKey, friendlyFetchError,
   fetchModelsDirectly, safeFetch,
   isMiniMaxProvider, isVolcCodingPlanProvider, isDashScopeCodingPlanProvider,
-  isQianFanCodingPlanProvider, isLongCatProvider,
+  isQianFanCodingPlanProvider, isLongCatProvider, isXfyunCodingPlanProvider,
   miniMaxFallbackModels, volcCodingPlanFallbackModels,
   dashScopeCodingPlanFallbackModels, qianFanCodingPlanFallbackModels,
-  longCatFallbackModels,
+  longCatFallbackModels, xfyunCodingPlanFallbackModels,
 } from "../providers";
 import {
   suggestEndpointName, envGet, envSet,
@@ -256,6 +256,10 @@ export function LLMView(props: LLMViewProps) {
     }
     if (isQianFanCodingPlanProvider(selectedProvider.slug, effectiveBaseUrl)) {
       setModels(qianFanCodingPlanFallbackModels(selectedProvider.slug));
+      return;
+    }
+    if (isXfyunCodingPlanProvider(selectedProvider.slug, effectiveBaseUrl)) {
+      setModels(xfyunCodingPlanFallbackModels(selectedProvider.slug));
       return;
     }
     if (isLongCatProvider(selectedProvider.slug, effectiveBaseUrl)) {

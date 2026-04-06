@@ -63,6 +63,7 @@ _CLASS_MODULE_MAP: dict[str, str] = {
     "VolcEngineRegistry": ".volcengine",
     "ZhipuChinaRegistry": ".zhipu",
     "ZhipuInternationalRegistry": ".zhipu",
+    "XfyunRegistry": ".xfyun",
 }
 
 

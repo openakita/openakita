@@ -851,7 +851,7 @@ class Brain:
         }
         stop_reason = stop_reason_map.get(response.stop_reason, "end_turn")
 
-        return AnthropicMessage(
+        msg = AnthropicMessage(
             id=response.id,
             type="message",
             role="assistant",
@@ -864,6 +864,12 @@ class Brain:
                 output_tokens=response.usage.output_tokens,
             ),
         )
+        # 透传端点信息供 reasoning_engine 检测 failover
+        if hasattr(response, 'endpoint_name'):
+            msg.endpoint_name = response.endpoint_name  # type: ignore[attr-defined]
+        if hasattr(response, '_failover_from'):
+            msg._failover_from = response._failover_from  # type: ignore[attr-defined]
+        return msg
 
     # ========================================================================
     # 高级方法：think（向后兼容）

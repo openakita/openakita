@@ -1669,6 +1669,66 @@ class ReasoningEngine:
                 param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
                 return f"{name}({param_hash})"
 
+            # ==================== 端点通知（首轮预检） ====================
+            _endpoint_notice_emitted = False
+
+            def _check_proactive_endpoint_notice() -> dict | None:
+                """在 LLM 调用前检测 vision/capability 降级情况，返回通知事件或 None。"""
+                nonlocal _endpoint_notice_emitted
+                if _endpoint_notice_emitted:
+                    return None
+                llm_client = getattr(self._brain, "_llm_client", None)
+                if not llm_client:
+                    return None
+
+                # 检查当前消息是否包含图片
+                has_images = False
+                for msg_dict in working_messages:
+                    content = msg_dict.get("content")
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "image_url":
+                                has_images = True
+                                break
+                    if has_images:
+                        break
+                if not has_images:
+                    return None
+
+                # 检查是否存在 vision 端点
+                has_any_vision = llm_client.has_any_endpoint_with_capability("vision")
+
+                if not has_any_vision:
+                    _endpoint_notice_emitted = True
+                    return {
+                        "type": "endpoint_notice",
+                        "notice_type": "warning",
+                        "endpoint": current_model,
+                        "reason_code": "no_vision_endpoint",
+                    }
+
+                # 有 vision 端点时：检查用户选择的端点是否不支持 vision
+                if endpoint_override and _endpoint_switched:
+                    override_provider = llm_client._providers.get(endpoint_override)
+                    if override_provider and not override_provider.config.has_capability("vision"):
+                        # vision 端点存在但用户选的不支持 → 系统会自动切换
+                        # 找到实际会被选用的 vision 端点名
+                        vision_endpoint = None
+                        for name, prov in llm_client._providers.items():
+                            if prov.is_healthy and prov.config.has_capability("vision"):
+                                vision_endpoint = name
+                                break
+                        if vision_endpoint:
+                            _endpoint_notice_emitted = True
+                            return {
+                                "type": "endpoint_notice",
+                                "notice_type": "switch",
+                                "from_endpoint": endpoint_override,
+                                "to_endpoint": vision_endpoint,
+                                "reason_code": "vision_required",
+                            }
+                return None
+
             # ==================== 主循环 ====================
             logger.info(
                 f"[ReAct-Stream] === Loop started (max_iterations={max_iterations}, model={current_model}) ==="
@@ -1816,6 +1876,12 @@ class ReasoningEngine:
                 # --- 思维链: 迭代开始事件 ---
                 yield {"type": "iteration_start", "iteration": _iteration + 1}
 
+                # --- 端点通知（仅首轮） ---
+                if _iteration == 0:
+                    _notice = _check_proactive_endpoint_notice()
+                    if _notice:
+                        yield _notice
+
                 # --- Reason phase ---
                 _thinking_t0 = time.time()
                 yield {"type": "thinking_start"}
@@ -1839,6 +1905,19 @@ class ReasoningEngine:
                             decision = hb_event["decision"]
                     if decision is None:
                         raise RuntimeError("_reason returned no decision")
+
+                    # --- Failover 通知（LLM 调用后检查） ---
+                    if not _endpoint_notice_emitted and decision:
+                        _resp = getattr(decision, 'raw_response', None)
+                        if _resp and hasattr(_resp, '_failover_from'):
+                            _endpoint_notice_emitted = True
+                            yield {
+                                "type": "endpoint_notice",
+                                "notice_type": "switch",
+                                "from_endpoint": _resp._failover_from,
+                                "to_endpoint": getattr(_resp, 'endpoint_name', ''),
+                                "reason_code": "failover",
+                            }
 
                     if task_monitor:
                         task_monitor.reset_retry_count()
