@@ -218,6 +218,7 @@ class DingTalkAdapter(ChannelAdapter):
         self._thinking_cards: dict[str, _CardState] = {}
         # AI Card 可用性 (首次失败后降级为 StandardCard)
         self._ai_card_available: bool = True
+        self._ai_card_cooldown_until: float = 0.0  # epoch time after which to retry AI Card
 
         # 流式输出状态
         self._streaming_buffers: dict[str, str] = {}
@@ -911,14 +912,13 @@ class DingTalkAdapter(ChannelAdapter):
 
     def _is_group_chat(self, chat_id: str) -> bool:
         """判断 chat_id 是否为群聊会话"""
-        # 优先使用缓存的 conversationType（来自接收消息时的回调数据）
-        # "1" = 单聊, "2" = 群聊
         cached_type = self._conversation_types.get(chat_id)
         if cached_type is not None:
             return cached_type == "2"
-        # 没有缓存时保守地认为是单聊（避免误调群聊API导致 robot 不存在）
         logger.warning(
-            f"No cached conversationType for {chat_id[:20]}..., defaulting to private chat"
+            f"DingTalk: no cached conversationType for {chat_id[:20]}..., "
+            f"defaulting to private chat (cold start). "
+            f"If this is a group chat, the message may fail — it will be retried on next user message."
         )
         return False
 
@@ -960,15 +960,23 @@ class DingTalkAdapter(ChannelAdapter):
             await self._finish_card(card_state, "✅ 处理完成")
 
     async def _create_card(self, chat_id: str) -> _CardState:
-        """创建互动卡片。优先 AI Card，失败降级 StandardCard。"""
-        if self._ai_card_available:
+        """创建互动卡片。优先 AI Card，失败降级 StandardCard（临时故障冷却后自动恢复）。"""
+        now = time.time()
+        if self._ai_card_available is not False and now >= self._ai_card_cooldown_until:
             try:
                 card_id = await self._create_ai_card(chat_id)
                 if card_id:
+                    self._ai_card_available = True
                     return _CardState(card_id=card_id, is_ai_card=True)
             except Exception as e:
-                logger.info(f"DingTalk: AI Card unavailable, falling back to StandardCard: {e}")
-                self._ai_card_available = False
+                err_str = str(e).lower()
+                if any(kw in err_str for kw in ("template", "permission", "forbidden", "not exist")):
+                    self._ai_card_available = False
+                    self._ai_card_cooldown_until = float("inf")
+                    logger.warning(f"DingTalk: AI Card permanently disabled: {e}")
+                else:
+                    self._ai_card_cooldown_until = now + 120
+                    logger.info(f"DingTalk: AI Card temp failure, cooldown 120s: {e}")
         return await self._create_standard_card(chat_id)
 
     async def _finish_card(self, card_state: _CardState, content: str) -> None:
@@ -1196,6 +1204,26 @@ class DingTalkAdapter(ChannelAdapter):
         except Exception as e:
             logger.debug(f"DingTalk: _patch_card_content failed: {e}")
             return False
+
+    async def _with_send_retry(
+        self, coro_factory, *, max_retries: int = 1, base_delay: float = 1.0,
+        operation: str = "",
+    ):
+        """通用发送重试，用于 Webhook/OpenAPI/Card API 调用。"""
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await coro_factory()
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"DingTalk: {operation} failed (attempt {attempt + 1}), "
+                        f"retrying in {delay:.1f}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+        raise last_error
 
     # ==================== 消息发送 ====================
 
@@ -1497,7 +1525,10 @@ class DingTalkAdapter(ChannelAdapter):
                     "text": {"content": chunk},
                 }
 
-            response = await self._http_client.post(webhook_url, json=payload)
+            response = await self._with_send_retry(
+                lambda _p=payload: self._http_client.post(webhook_url, json=_p),
+                operation="webhook_send",
+            )
             result = response.json()
 
             if result.get("errcode", 0) != 0:

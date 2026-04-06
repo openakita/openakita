@@ -639,6 +639,17 @@ class OneBotAdapter(ChannelAdapter):
                 normalized = voice.local_path.replace("\\", "/")
                 msg_array.append({"type": "record", "data": {"file": f"file:///{normalized}"}})
 
+        if message.content.videos:
+            logger.info(
+                "OneBot v11: videos in OutgoingMessage are not sent via send_message; "
+                "use send_file() for individual files"
+            )
+        if message.content.files:
+            logger.info(
+                "OneBot v11: files in OutgoingMessage are not sent via send_message; "
+                "use send_file() for individual files"
+            )
+
         try:
             chat_id = int(message.chat_id)
         except (ValueError, TypeError):
@@ -666,9 +677,11 @@ class OneBotAdapter(ChannelAdapter):
         return mid
 
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
-        """发送"正在输入"状态（NapCat 扩展 API: set_input_status）。
+        """发送"正在输入"状态。
 
-        非标准 OneBot v11 接口，对其他实现（go-cqhttp 等）会静默失败。
+        使用 NapCat 扩展 API ``set_input_status``，这 **不是** OneBot v11 标准接口。
+        在其他 v11 实现（go-cqhttp、Lagrange、LLOneBot 等）上调用会静默失败
+        （被 except 捕获后忽略），不会影响正常消息流程。
         """
         try:
             chat_id_int = int(chat_id)

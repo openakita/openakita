@@ -242,6 +242,13 @@ class FeishuAdapter(ChannelAdapter):
         # "思考中..."占位卡片：session_key → 卡片 message_id
         # session_key = chat_id 或 chat_id:thread_id（话题模式）
         self._thinking_cards: dict[str, str] = {}
+        # CardKit streaming 状态: sk → (card_id, element_id)
+        # 若存在则使用 CardKit API 更新卡片（无编辑次数限制）
+        self._cardkit_cards: dict[str, tuple[str, str]] = {}
+        self._cardkit_available: bool | None = None  # None=未探测
+        self._tenant_token: str | None = None
+        self._tenant_token_expires: float = 0
+        self._tenant_token_lock: asyncio.Lock = asyncio.Lock()
         # 最近一条用户消息 ID：session_key → user_msg_id（供 send_typing 回复定位）
         self._last_user_msg: dict[str, str] = {}
         # 已消耗过 thinking card 的 session_key 集合，阻止 _keep_typing 重建卡片
@@ -572,6 +579,28 @@ class FeishuAdapter(ChannelAdapter):
                 )
         except Exception:
             pass
+
+        # 探测 CardKit 流式卡片权限 (cardkit:card:write)
+        try:
+            result = await self._cardkit_api(
+                "POST", "/open-apis/cardkit/v1/cards",
+                body={"type": "card_json", "data": "{}", "settings": {}},
+            )
+            code = result.get("code", -1)
+            if code == 0 or "card_id" in result.get("data", {}):
+                self._cardkit_available = True
+                self._capabilities.append("CardKit 流式卡片")
+            elif self._is_permission_error(result.get("msg", "")):
+                self._cardkit_available = False
+                logger.info(
+                    "Feishu: CardKit 权限不可用，流式输出将使用 PatchMessage（有 20-30 次编辑限制）。"
+                    "建议在飞书开放平台开通 cardkit:card:write 权限。"
+                )
+            else:
+                self._cardkit_available = True
+                self._capabilities.append("CardKit 流式卡片")
+        except Exception:
+            self._cardkit_available = False
 
         logger.info(f"Feishu capabilities: {self._capabilities}")
 
@@ -1094,6 +1123,93 @@ class FeishuAdapter(ChannelAdapter):
             "forbidden", "access denied", "scope",
         ))
 
+    @staticmethod
+    def _is_permission_error(msg: str) -> bool:
+        """判断 API 响应消息是否表明权限不足。"""
+        m = msg.lower()
+        return any(kw in m for kw in ("permission", "forbidden", "access denied", "scope", "not allowed"))
+
+    # ==================== CardKit 流式卡片 API ====================
+
+    async def _get_tenant_access_token(self) -> str:
+        """获取飞书 tenant_access_token（带缓存，CardKit API 用）。"""
+        if self._tenant_token and time.time() < self._tenant_token_expires:
+            return self._tenant_token
+        async with self._tenant_token_lock:
+            if self._tenant_token and time.time() < self._tenant_token_expires:
+                return self._tenant_token
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{self.config.api_domain}/open-apis/auth/v3/tenant_access_token/internal",
+                    json={"app_id": self.config.app_id, "app_secret": self.config.app_secret},
+                )
+                data = resp.json()
+            if data.get("code", -1) != 0 and "tenant_access_token" not in data:
+                raise RuntimeError(f"Failed to get tenant_access_token: {data}")
+            self._tenant_token = data["tenant_access_token"]
+            self._tenant_token_expires = time.time() + data.get("expire", 7200) - 300
+            return self._tenant_token
+
+    async def _cardkit_api(self, method: str, path: str, body: dict | None = None) -> dict:
+        """调用飞书 CardKit REST API。"""
+        token = await self._get_tenant_access_token()
+        import httpx
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        url = f"{self.config.api_domain}{path}"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if method.upper() == "POST":
+                resp = await client.post(url, json=body, headers=headers)
+            elif method.upper() == "PUT":
+                resp = await client.put(url, json=body, headers=headers)
+            elif method.upper() == "PATCH":
+                resp = await client.patch(url, json=body, headers=headers)
+            else:
+                resp = await client.get(url, headers=headers)
+        return resp.json()
+
+    async def _create_cardkit_card(self, content: str) -> tuple[str, str]:
+        """创建 CardKit 流式卡片，返回 (card_id, element_id)。"""
+        element_id = "streaming_content"
+        card_json = json.dumps({
+            "schema": "2.0",
+            "body": {
+                "direction": "vertical",
+                "elements": [{
+                    "tag": "markdown",
+                    "content": content,
+                    "text_size": "normal",
+                    "element_id": element_id,
+                }],
+            },
+        })
+        result = await self._cardkit_api("POST", "/open-apis/cardkit/v1/cards", body={
+            "type": "card_json",
+            "data": card_json,
+            "settings": {"config": {"streaming_mode": True}},
+        })
+        data = result.get("data", {})
+        card_id = data.get("card_id", "")
+        if not card_id:
+            raise RuntimeError(f"CardKit create failed: {result}")
+        return card_id, element_id
+
+    async def _update_cardkit_element(self, card_id: str, element_id: str, content: str) -> None:
+        """更新 CardKit 卡片元素内容（无编辑次数限制）。"""
+        await self._cardkit_api(
+            "PUT",
+            f"/open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content",
+            body={"content": json.dumps({"tag": "markdown", "content": content})},
+        )
+
+    async def _finish_cardkit_card(self, card_id: str) -> None:
+        """结束 CardKit 卡片流式状态。"""
+        await self._cardkit_api(
+            "PATCH",
+            f"/open-apis/cardkit/v1/cards/{card_id}",
+            body={"settings": {"config": {"streaming_mode": False}}},
+        )
+
     def _invalidate_token_cache(self) -> None:
         """将缓存的 tenant_access_token 标记过期，迫使下次请求重新获取。
 
@@ -1175,6 +1291,10 @@ class FeishuAdapter(ChannelAdapter):
         self._typing_start_time.pop(sk, None)
         self._typing_status.pop(sk, None)
         self._typing_suppressed.discard(sk)
+        ck = self._cardkit_cards.pop(sk, None)
+        if ck:
+            with contextlib.suppress(Exception):
+                await self._finish_cardkit_card(ck[0])
         card_id = self._thinking_cards.pop(sk, None)
         if card_id:
             logger.debug(f"Feishu: clear_typing removing leftover card {card_id}")
@@ -1227,7 +1347,58 @@ class FeishuAdapter(ChannelAdapter):
         self, chat_id: str, reply_to: str | None = None,
         sk: str | None = None,
     ) -> str | None:
-        """发送"思考中..."交互卡片，返回卡片 message_id。"""
+        """发送"思考中..."交互卡片，返回卡片 message_id。
+
+        优先使用 CardKit streaming（无编辑次数限制），
+        若权限不可用则回退至 PatchMessage（有 20-30 次限制）。
+        """
+        # --- CardKit 路径 ---
+        if self._cardkit_available and sk:
+            try:
+                card_id, element_id = await self._create_cardkit_card("💭 **思考中...**")
+                card_content = json.dumps({"type": "card", "data": {"card_id": card_id}})
+                if reply_to:
+                    request = (
+                        lark_oapi.api.im.v1.ReplyMessageRequest.builder()
+                        .message_id(reply_to)
+                        .request_body(
+                            lark_oapi.api.im.v1.ReplyMessageRequestBody.builder()
+                            .msg_type("interactive")
+                            .content(card_content)
+                            .build()
+                        )
+                        .build()
+                    )
+                    response = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: self._client.im.v1.message.reply(request)
+                    )
+                else:
+                    request = (
+                        lark_oapi.api.im.v1.CreateMessageRequest.builder()
+                        .receive_id_type("chat_id")
+                        .request_body(
+                            lark_oapi.api.im.v1.CreateMessageRequestBody.builder()
+                            .receive_id(chat_id)
+                            .msg_type("interactive")
+                            .content(card_content)
+                            .build()
+                        )
+                        .build()
+                    )
+                    response = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: self._client.im.v1.message.create(request)
+                    )
+                if response.success():
+                    mid = response.data.message_id if response.data else ""
+                    self._record_bot_msg_id(mid)
+                    self._cardkit_cards[sk] = (card_id, element_id)
+                    logger.debug(f"Feishu: CardKit thinking card sent to {chat_id}")
+                    return mid
+                logger.debug(f"Feishu: CardKit card send failed: {response.msg}")
+            except Exception as e:
+                logger.info(f"Feishu: CardKit path failed, falling back to PatchMessage: {e}")
+
+        # --- PatchMessage 回退路径 ---
         card = self._build_card_json("💭 **思考中...**", sk)
         content = json.dumps(card)
         try:
@@ -1276,7 +1447,21 @@ class FeishuAdapter(ChannelAdapter):
         self, message_id: str, new_content: str,
         sk: str | None = None, *, final: bool = False,
     ) -> bool:
-        """通过 PATCH API 将占位卡片更新为最终回复内容。"""
+        """更新占位卡片内容。优先 CardKit element update（无次数限制），
+        回退至 im.v1.message.patch（有 20-30 次限制）。"""
+        # --- CardKit 路径 ---
+        ck = self._cardkit_cards.get(sk) if sk else None
+        if ck:
+            card_id, element_id = ck
+            try:
+                await self._update_cardkit_element(card_id, element_id, new_content)
+                if final:
+                    await self._finish_cardkit_card(card_id)
+                return True
+            except Exception as e:
+                logger.debug(f"Feishu: CardKit element update failed, falling back: {e}")
+
+        # --- PatchMessage 回退 ---
         card = self._build_card_json(new_content, sk, final=final)
         request = (
             lark_oapi.api.im.v1.PatchMessageRequest.builder()
@@ -1474,6 +1659,7 @@ class FeishuAdapter(ChannelAdapter):
         self._streaming_chain.pop(sk, None)
 
         if not card_id:
+            self._cardkit_cards.pop(sk, None)
             return False
 
         try:
@@ -1481,6 +1667,7 @@ class FeishuAdapter(ChannelAdapter):
             if success:
                 self._streaming_finalized.add(sk)
                 self._thinking_cards.pop(sk, None)
+                self._cardkit_cards.pop(sk, None)
                 self._typing_suppressed.add(sk)
                 self._typing_start_time.pop(sk, None)
                 self._typing_status.pop(sk, None)
@@ -1492,6 +1679,7 @@ class FeishuAdapter(ChannelAdapter):
         with contextlib.suppress(Exception):
             await self._delete_feishu_message(card_id)
         self._thinking_cards.pop(sk, None)
+        self._cardkit_cards.pop(sk, None)
         self._typing_suppressed.add(sk)
         self._typing_start_time.pop(sk, None)
         self._typing_status.pop(sk, None)
@@ -2083,11 +2271,13 @@ class FeishuAdapter(ChannelAdapter):
                         self._typing_suppressed.add(sk)
                         try:
                             if await self._patch_card_content(thinking_card_id, text, sk, final=True):
+                                self._cardkit_cards.pop(sk, None)
                                 self._typing_start_time.pop(sk, None)
                                 self._typing_status.pop(sk, None)
                                 return thinking_card_id
                         except Exception as e:
                             logger.warning(f"Feishu: patch thinking card failed: {e}")
+                        self._cardkit_cards.pop(sk, None)
                         with contextlib.suppress(Exception):
                             await self._delete_feishu_message(thinking_card_id)
                         self._typing_start_time.pop(sk, None)
