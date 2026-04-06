@@ -341,9 +341,8 @@ Function PageLeaveReinstall
 
   ; Kill all OpenAkita processes BEFORE running old uninstaller,
   ; because the old uninstaller may lack robust process-killing logic.
-  ; Save $R6 first — _OpenAkita_KillServicePidsIn clobbers $R1/$R2/$R6,
-  ; and $R6 holds the WiX registry key path when WixMode=1.
-  ; (Push/Pop is safe here: all nsExec Push/Pop pairs inside the macro are balanced.)
+  ; Push/Pop $R6 preserved for safety — the consolidated kill script only
+  ; clobbers $0, but $R6 holds the WiX registry key path when WixMode=1.
   Push $R6
   !ifmacrodef NSIS_HOOK_PREINSTALL_KILLPROCS
     !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
