@@ -2911,7 +2911,6 @@ export function OrgEditorView({
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{selectedNode.role_title}</div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>
                 {selectedNode.department || "未分配部门"}
-                {liveMode && <span style={{ marginLeft: 6, fontSize: 10, color: "#9ca3af" }}>· 配置已锁定</span>}
               </div>
             </div>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -2962,6 +2961,22 @@ export function OrgEditorView({
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
+
+          {liveMode && selectedNodeId && (
+            <div style={{
+              margin: "8px 12px 0", padding: "6px 10px",
+              background: "rgba(234,179,8,0.12)",
+              border: "1px solid rgba(234,179,8,0.3)",
+              borderRadius: 6,
+              display: "flex", alignItems: "center", gap: 6,
+              fontSize: 11, color: "#a16207",
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span>运行中，配置已锁定</span>
+            </div>
+          )}
 
           <div style={{ padding: 12 }}>
 
@@ -3154,29 +3169,33 @@ export function OrgEditorView({
                         key={av.id}
                         avatarId={av.id}
                         size={36}
-                        onClick={() => updateNodeData("avatar", av.id)}
+                        onClick={liveMode ? undefined : () => updateNodeData("avatar", av.id)}
                         style={{
-                          cursor: "pointer",
+                          cursor: liveMode ? "not-allowed" : "pointer",
                           border: isSel ? "2.5px solid var(--primary)" : "2.5px solid transparent",
                           boxShadow: isSel ? "0 0 0 2px var(--primary)" : "none",
                           opacity: isSel ? 1 : 0.75,
                           transition: "all 0.15s",
+                          pointerEvents: liveMode ? "none" : undefined,
                         }}
                       />
                     );
                   })}
                   {/* Upload custom avatar */}
                   <label
-                    title="上传自定义头像"
+                    title={liveMode ? "运行中不可修改" : "上传自定义头像"}
                     style={{
                       width: 36, height: 36, borderRadius: 8,
                       border: "2px dashed var(--muted, #9ca3af)",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      cursor: "pointer", opacity: 0.6, transition: "opacity .15s",
+                      cursor: liveMode ? "not-allowed" : "pointer",
+                      opacity: liveMode ? 0.3 : 0.6,
+                      transition: "opacity .15s",
                       fontSize: 18, color: "var(--muted, #9ca3af)",
+                      pointerEvents: liveMode ? "none" : undefined,
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.6")}
+                    onMouseEnter={(e) => { if (!liveMode) e.currentTarget.style.opacity = "1"; }}
+                    onMouseLeave={(e) => { if (!liveMode) e.currentTarget.style.opacity = "0.6"; }}
                   >
                     +
                     <input
