@@ -1058,6 +1058,7 @@ export function OrgEditorView({
       user_persona: currentOrg.user_persona || { title: "负责人", display_name: "", description: "" },
       operation_mode: (currentOrg as any).operation_mode || "command",
       core_business: currentOrg.core_business || "",
+      workspace_dir: (currentOrg as any).workspace_dir || "",
       heartbeat_enabled: currentOrg.heartbeat_enabled,
       heartbeat_interval_s: currentOrg.heartbeat_interval_s,
       standup_enabled: currentOrg.standup_enabled,
