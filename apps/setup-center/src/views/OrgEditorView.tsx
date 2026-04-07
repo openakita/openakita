@@ -1165,7 +1165,6 @@ export function OrgEditorView({
   const [nodeThinking, setNodeThinking] = useState<any[]>([]);
   const [orgStats, setOrgStats] = useState<any>(null);
   const [expandedThinkingIdx, setExpandedThinkingIdx] = useState<number | string | null>(null);
-  const nodeNameMap = useMemo(() => new Map(nodes.map((n) => [n.id, (n.data as any)?.role_title || n.id])), [nodes]);
   const [nodeTasks, setNodeTasks] = useState<{ assigned: any[]; delegated: any[] } | null>(null);
   const [nodeActivePlan, setNodeActivePlan] = useState<any>(null);
   const [nodeTasksLoading, setNodeTasksLoading] = useState(false);
@@ -1207,6 +1206,7 @@ export function OrgEditorView({
   // React Flow state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([] as Edge[]);
+  const nodeNameMap = useMemo(() => new Map(nodes.map((n) => [n.id, (n.data as any)?.role_title || n.id])), [nodes]);
 
   const showToast = useCallback((message: string, type: "ok" | "error" = "ok") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
