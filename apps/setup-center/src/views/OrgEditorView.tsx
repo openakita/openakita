@@ -3098,7 +3098,7 @@ export function OrgEditorView({
                             color: a.type === "error" ? "#dc2626" : a.type === "stuck" ? "#b45309" : "#2563eb",
                             fontWeight: 500,
                           }}>
-                            {a.type === "error" ? "错误" : a.type === "stuck" ? "卡住" : a.type === "long_idle" ? "空闲" : "积压"}
+                            {a.type === "error" ? "错误" : a.type === "stuck" ? "卡住" : "积压"}
                           </span>
                           <div>
                             <span style={{ fontWeight: 500 }}>{a.role_title}</span>

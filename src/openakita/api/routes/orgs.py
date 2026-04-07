@@ -1635,20 +1635,6 @@ async def get_org_stats(request: Request, org_id: str):
                     "message": f"节点标记为忙碌但已 {round(idle_secs / 60)} 分钟无活动",
                 }
             )
-        elif (
-            n.status.value == "idle"
-            and idle_secs is not None
-            and idle_secs > 300
-            and not n.is_clone
-        ):
-            anomalies.append(
-                {
-                    "node_id": n.id,
-                    "role_title": n.role_title,
-                    "type": "long_idle",
-                    "message": f"空闲超过 {round(idle_secs / 60)} 分钟",
-                }
-            )
         if node_pending > 5:
             anomalies.append(
                 {
@@ -1670,7 +1656,6 @@ async def get_org_stats(request: Request, org_id: str):
             "error": InboxPriority.ALERT,
             "stuck": InboxPriority.WARNING,
             "backlog": InboxPriority.WARNING,
-            "long_idle": InboxPriority.NOTICE,
         }
         for a in anomalies:
             key = f"{org_id}:{a['node_id']}:{a['type']}"
