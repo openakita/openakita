@@ -140,10 +140,19 @@ fn write_root_config(config: &RootConfig) -> Result<(), String> {
     fs::write(&p, data).map_err(|e| format!("write root_config.json failed: {e}"))?;
 
     // 同步写入纯文本文件，供 NSIS 安装脚本简单读取（无需解析 JSON）
+    // NSIS Unicode 模式的 FileRead 在无 BOM 时按 ANSI(系统代码页) 解读，
+    // 含非 ASCII 字符（如中文路径）会乱码。写成 UTF-16LE + BOM 保证 NSIS 正确读取。
     let txt_path = default_dir.join("custom_root.txt");
     match &config.custom_root {
         Some(path) if !path.is_empty() => {
-            fs::write(&txt_path, path.trim()).map_err(|e| format!("write custom_root.txt failed: {e}"))?;
+            let trimmed = path.trim();
+            let mut bytes: Vec<u8> = Vec::with_capacity(2 + trimmed.len() * 2);
+            bytes.extend_from_slice(&[0xFF, 0xFE]); // UTF-16LE BOM
+            for code_unit in trimmed.encode_utf16() {
+                bytes.extend_from_slice(&code_unit.to_le_bytes());
+            }
+            fs::write(&txt_path, bytes)
+                .map_err(|e| format!("write custom_root.txt failed: {e}"))?;
         }
         _ => {
             let _ = fs::remove_file(&txt_path);
