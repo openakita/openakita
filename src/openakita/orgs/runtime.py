@@ -476,6 +476,9 @@ class OrgRuntime:
         org.updated_at = _now_iso()
         self._manager.update(org_id, {"status": org.status.value})
         self.get_event_store(org_id).emit("org_paused", "system")
+        await self._broadcast_ws("org:status_change", {
+            "org_id": org_id, "status": "paused"
+        })
         return org
 
     async def resume_org(self, org_id: str) -> Organization:
@@ -490,6 +493,9 @@ class OrgRuntime:
         if org_id not in self._active_orgs:
             self._activate_org(org)
         self.get_event_store(org_id).emit("org_resumed", "system")
+        await self._broadcast_ws("org:status_change", {
+            "org_id": org_id, "status": "active"
+        })
         return org
 
     # ------------------------------------------------------------------

@@ -819,7 +819,7 @@ export function OrgEditorView({
   }, [selectedOrgId, fetchOrg]);
 
 
-  // ── WebSocket for live mode ──
+  // ── WebSocket for real-time org events ──
 
   const triggerEdgeAnimation = useCallback((fromNode: string, toNode: string, color: string) => {
     const edgeKey = edges.find(
@@ -837,9 +837,11 @@ export function OrgEditorView({
     }, 5000);
   }, [edges]);
 
+  const currentOrgId = currentOrg?.id;
   useEffect(() => {
-    if (!visible || !liveMode || !currentOrg) return;
+    if (!visible || !currentOrgId) return;
     const wsUrl = apiBaseUrl.replace(/^http/, "ws") + "/ws";
+    const orgId = currentOrgId;
     let ws: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retryDelay = 1000;
@@ -850,12 +852,7 @@ export function OrgEditorView({
         const parsed = JSON.parse(evt.data);
         const ev = parsed.event as string;
         const d = parsed.data;
-        if (!d || d.org_id !== currentOrg.id) return;
-
-        if (ev !== "org:status_change" && currentOrg.status !== "active" && currentOrg.status !== "running") {
-          setCurrentOrg((prev) => prev ? { ...prev, status: "active" } : prev);
-          setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "active" } : o));
-        }
+        if (!d || d.org_id !== orgId) return;
 
         if (ev === "org:node_status") {
           const { node_id, status, current_task } = d;
@@ -883,8 +880,9 @@ export function OrgEditorView({
         } else if (ev === "org:status_change") {
           const newStatus = d.status;
           setCurrentOrg((prev) => prev ? { ...prev, status: newStatus } : prev);
-          setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: newStatus } : o));
-          if (newStatus === "dormant") setLayoutLocked(false);
+          setOrgList((prev) => prev.map((o) => o.id === orgId ? { ...o, status: newStatus } : o));
+          if (newStatus === "active" || newStatus === "running") setLayoutLocked(true);
+          else if (newStatus === "dormant" || newStatus === "paused") setLayoutLocked(false);
         } else if (ev === "org:task_complete") {
           triggerEdgeAnimation(d.node_id, d.node_id, "#22c55e");
         } else if (ev === "org:quota_exhausted") {
@@ -921,7 +919,7 @@ export function OrgEditorView({
       if (retryTimer) clearTimeout(retryTimer);
       ws?.close();
     };
-  }, [visible, liveMode, currentOrg, apiBaseUrl, setNodes, triggerEdgeAnimation, showToast, setLayoutLocked]);
+  }, [visible, currentOrgId, apiBaseUrl, setNodes, triggerEdgeAnimation, showToast, setLayoutLocked]);
 
   // ── Start/Stop org ──
   const handleStartOrg = useCallback(async () => {
